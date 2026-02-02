@@ -14,8 +14,7 @@
         "--volume=${localEnv:HOME}/docker/isaac-sim/logs:/isaac-sim/.nvidia-omniverse/logs:rw",
         "--volume=${localEnv:HOME}/docker/isaac-sim/config:/isaac-sim/.nvidia-omniverse/config:rw",
         "--volume=${localEnv:HOME}/docker/isaac-sim/data:/isaac-sim/.local/share/ov/data:rw",
-        "--volume=${localEnv:HOME}/docker/isaac-sim/pkg:/isaac-sim/.local/share/ov/pkg:rw",
-        "--volume=/usr/share/glvnd/egl_vendor.d:/usr/share/glvnd/egl_vendor.d:ro"
+        "--volume=${localEnv:HOME}/docker/isaac-sim/pkg:/isaac-sim/.local/share/ov/pkg:rw"
     ],
 
     // Environment variables for Isaac Sim and display
@@ -23,6 +22,7 @@
         "DISPLAY": "${localEnv:DISPLAY}",
         "ACCEPT_EULA": "Y",
         "PRIVACY_CONSENT": "Y",
+        "OMNI_KIT_ALLOW_ROOT": "1",
         "NVIDIA_VISIBLE_DEVICES": "all",
         "NVIDIA_DRIVER_CAPABILITIES": "graphics,utility,compute,display",
         "QT_X11_NO_MITSHM": "1",
@@ -72,9 +72,11 @@
                 "tomoki1207.pdf",
                 "twxs.cmake",
                 "yzane.markdown-pdf",
-                "ms-iot.vscode-ros",
                 "redhat.vscode-yaml",
-                "streetsidesoftware.code-spell-checker"
+                "streetsidesoftware.code-spell-checker",
+                "Ranch-Hand-Robotics.rde-ros-2",
+                "Ranch-Hand-Robotics.urdf-editor",
+                "Ranch-Hand-Robotics.rde-pack"
             ],
             "settings": {
                 "python.defaultInterpreterPath": "/isaac-sim/python.sh",
