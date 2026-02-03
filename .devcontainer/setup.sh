@@ -48,6 +48,9 @@ apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
     ros-jazzy-ros-base \
     python3-colcon-common-extensions \
     python3-rosdep \
+    ros-jazzy-cv-bridge \
+    ros-jazzy-image-geometry \
+    ros-jazzy-moveit \
     2>/dev/null || echo "Some ROS 2 packages may not be available, continuing..."
 
 # Initialize rosdep if not already done
