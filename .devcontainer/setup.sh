@@ -30,9 +30,16 @@ git config --global --add safe.directory /workspaces/welding_cell_ws
 # ==========================================
 # Isaac Sim Internal ROS 2 Setup
 # ==========================================
-# Isaac Sim 5.1.0 on Ubuntu 24.04 uses internal ROS 2 Jazzy libraries (Python 3.12)
-# We install system ROS 2 Jazzy for the ros2 CLI tools and external nodes
+# IMPORTANT: Isaac Sim 5.1.0 ONLY supports Python 3.11
+# ROS 2 Jazzy on Ubuntu 24.04 uses Python 3.12 (INCOMPATIBLE with Isaac Sim)
+#
+# Solution: Use Isaac Sim's internal ROS 2 libraries (compiled with Python 3.11)
+# - DO NOT source /opt/ros/jazzy/setup.bash before running Isaac Sim
+# - Isaac Sim auto-loads internal Jazzy libs on Ubuntu 24.04
+# - System ROS 2 Jazzy is ONLY for external nodes (separate terminal)
+#
 # Reference: https://docs.isaacsim.omniverse.nvidia.com/5.1.0/installation/install_ros.html
+# Reference: https://docs.isaacsim.omniverse.nvidia.com/5.1.0/ros2_tutorials/tutorial_ros2_launch.html
 
 ISAAC_SIM_PATH="/isaac-sim"
 
@@ -111,47 +118,75 @@ export ROS_DOMAIN_ID=0
 export ISAAC_SIM_PATH=/isaac-sim
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 
-# Source ROS 2 Jazzy (system installation)
-if [ -f /opt/ros/jazzy/setup.bash ]; then
-    source /opt/ros/jazzy/setup.bash
-fi
+# ==========================================
+# IMPORTANT: Python Version Compatibility
+# ==========================================
+# Isaac Sim 5.1.0 = Python 3.11 ONLY
+# ROS 2 Jazzy (Ubuntu 24.04) = Python 3.12
+#
+# DO NOT source /opt/ros/jazzy/setup.bash before running Isaac Sim!
+# Isaac Sim uses its internal ROS 2 Jazzy libraries (Python 3.11)
+#
+# Workflow:
+# - Terminal for Isaac Sim: DO NOT source system ROS 2
+# - Terminal for external ROS nodes: Source system ROS 2
+# ==========================================
 
-# Isaac Sim aliases
+# Function to source ROS 2 for external nodes (NOT for Isaac Sim terminal)
+source_ros2_external() {
+    if [ -f /opt/ros/jazzy/setup.bash ]; then
+        source /opt/ros/jazzy/setup.bash
+        echo "Sourced system ROS 2 Jazzy (Python 3.12) - DO NOT run Isaac Sim in this terminal"
+    fi
+}
+
+# Isaac Sim aliases (run WITHOUT sourcing system ROS 2)
 alias isaac-sim='${ISAAC_SIM_PATH}/runapp.sh'
 alias isaac-check='${ISAAC_SIM_PATH}/isaac-sim.compatibility_check.sh'
 alias isaac-python='${ISAAC_SIM_PATH}/python.sh'
 
-# ROS2 workspace aliases
-alias cb='cd /workspaces/welding_cell_ws/ros2_ws && colcon build --symlink-install'
-alias cbs='cd /workspaces/welding_cell_ws/ros2_ws && colcon build --symlink-install --packages-select'
-alias sw='source /workspaces/welding_cell_ws/ros2_ws/install/setup.bash 2>/dev/null || echo "Workspace not built yet"'
+# Alias to prepare terminal for Isaac Sim (ensures no conflicting ROS sourced)
+alias isaac-env='unset ROS_DISTRO AMENT_PREFIX_PATH COLCON_PREFIX_PATH CMAKE_PREFIX_PATH && echo "Terminal ready for Isaac Sim (internal ROS libs)"'
 
-# Isaac Sim ROS workspace
+# Alias to prepare terminal for external ROS nodes
+alias ros2-env='source_ros2_external'
+
+# ROS2 workspace aliases (for external nodes only)
+alias cb='cd /workspaces/welding_cell_ws/ros2_ws && source /opt/ros/jazzy/setup.bash && colcon build --symlink-install'
+alias cbs='cd /workspaces/welding_cell_ws/ros2_ws && source /opt/ros/jazzy/setup.bash && colcon build --symlink-install --packages-select'
+alias sw='source /opt/ros/jazzy/setup.bash && source /workspaces/welding_cell_ws/ros2_ws/install/setup.bash 2>/dev/null || echo "Workspace not built yet"'
+
+# Isaac Sim ROS workspace (Python 3.11 compatible - can be used with Isaac Sim)
 alias sw-isaac='source /workspaces/welding_cell_ws/IsaacSim-ros_workspaces/jazzy_ws/install/local_setup.bash 2>/dev/null || echo "Isaac ROS workspace not built yet"'
-
-# Source ROS2 workspace if it exists
-if [ -f /workspaces/welding_cell_ws/ros2_ws/install/setup.bash ]; then
-    source /workspaces/welding_cell_ws/ros2_ws/install/setup.bash
-fi
 
 # UR5e connection test
 alias ur5e-ping='ping -c 3 ${UR5E_ROBOT_IP}'
 
-# Quick ROS 2 commands
-alias ros2-topics='ros2 topic list'
-alias ros2-nodes='ros2 node list'
+# Quick ROS 2 commands (will source ROS 2 first)
+alias ros2-topics='source /opt/ros/jazzy/setup.bash && ros2 topic list'
+alias ros2-nodes='source /opt/ros/jazzy/setup.bash && ros2 node list'
 
 echo "=========================================="
 echo "UR5e Digital Twin Environment Ready!"
 echo "Robot IP: ${UR5E_ROBOT_IP}"
 echo "Isaac Sim: ${ISAAC_SIM_PATH}"
-echo "ROS 2 Distro: ${ROS_DISTRO}"
 echo "=========================================="
-echo "Quick commands:"
+echo ""
+echo "IMPORTANT: Python Version Compatibility"
+echo "  Isaac Sim uses Python 3.11 (internal ROS libs)"
+echo "  System ROS 2 Jazzy uses Python 3.12"
+echo "  DO NOT mix them in the same terminal!"
+echo ""
+echo "Isaac Sim commands (fresh terminal, no ROS sourced):"
 echo "  isaac-sim     - Start Isaac Sim GUI"
 echo "  isaac-check   - Run compatibility check"
 echo "  isaac-python  - Isaac Sim Python interpreter"
-echo "  ros2 topic list - List ROS 2 topics"
+echo "  isaac-env     - Prepare terminal for Isaac Sim"
+echo ""
+echo "External ROS 2 commands (separate terminal):"
+echo "  ros2-env      - Source system ROS 2 Jazzy"
+echo "  ros2-topics   - List ROS 2 topics"
+echo "  ros2-nodes    - List ROS 2 nodes"
 echo "  cb            - Build ROS2 workspace"
 echo "  sw            - Source ROS2 workspace"
 echo "  ur5e-ping     - Test connection to robot"
@@ -162,8 +197,12 @@ echo "=========================================="
 echo "Setup complete!"
 echo "=========================================="
 echo ""
-echo "ROS 2 Jazzy installed (Ubuntu 24.04 default)"
-echo "Isaac Sim uses internal ROS 2 Jazzy libraries"
+echo "ROS 2 Jazzy installed (for external nodes, Python 3.12)"
+echo "Isaac Sim uses internal ROS 2 Jazzy libraries (Python 3.11)"
+echo ""
+echo "WORKFLOW:"
+echo "  Terminal 1 (Isaac Sim): Run 'isaac-sim' directly (no ROS sourced)"
+echo "  Terminal 2 (ROS nodes): Run 'ros2-env' first, then ROS commands"
 echo ""
 echo "For more info: https://docs.isaacsim.omniverse.nvidia.com/5.1.0/installation/install_ros.html"
 echo "=========================================="
