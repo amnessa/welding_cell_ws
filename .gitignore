@@ -22,11 +22,11 @@ __pycache__/
 !.vscode/launch.json
 !.vscode/extensions.json
 
-# Isaac Sim local files
-*.usd
-*.usda
-*.usdc
-!**/assets/*.usd*
+# # Isaac Sim local files
+# *.usd
+# *.usda
+# *.usdc
+# !**/assets/*.usd*
 
 # Temporary files
 *.tmp
