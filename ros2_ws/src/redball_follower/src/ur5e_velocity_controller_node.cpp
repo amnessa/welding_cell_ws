@@ -143,6 +143,13 @@ private:
 
                 cmd_positions[0] += gain * eu * dt;   // shoulder_pan (left-right) - FLIPPED
                 cmd_positions[1] += -gain * ev * dt;  // shoulder_lift (up-down) - FLIPPED
+
+                RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                    "TRACKING: eu=%.1f, ev=%.1f, pan_delta=%.5f, lift_delta=%.5f",
+                    eu, ev, gain * eu * dt, -gain * ev * dt);
+            }
+
+            publish_joint_command(cmd_positions);
         }
         else
         {
