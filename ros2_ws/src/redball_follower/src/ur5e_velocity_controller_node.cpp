@@ -69,7 +69,14 @@ private:
         // Store current joint positions for potential use in Jacobian calculation
         current_joint_state_ = *msg;
         have_joint_state_ = true;
-        RCLCPP_DEBUG(this->get_logger(), "Received joint_states[%zu]", msg->position.size());
+
+        // Debug: log first reception
+        static bool first_msg = true;
+        if (first_msg)
+        {
+            RCLCPP_INFO(this->get_logger(), "First joint state received! Joints: %zu", msg->position.size());
+            first_msg = false;
+        }
     }
 
     void target_callback(const geometry_msgs::msg::Point::SharedPtr msg)
@@ -87,6 +94,14 @@ private:
         if (have_target_ && (now - last_target_time_).seconds() <= timeout_sec_)
             mode = Mode::TRACKING;
 
+        // Debug: log joint state status
+        static int loop_count = 0;
+        if (++loop_count % 50 == 0)  // Every 5 seconds
+        {
+            RCLCPP_INFO(this->get_logger(), "Control loop: have_joint_state=%d, mode=%s",
+                have_joint_state_, mode == Mode::SEARCHING ? "SEARCHING" : "TRACKING");
+        }
+
         geometry_msgs::msg::Twist twist;
 
         if (mode == Mode::SEARCHING)
@@ -99,6 +114,52 @@ private:
         }
 
         end_effector_velocity_pub_->publish(twist);
+
+        // For now, publish simple joint commands for testing
+        // TODO: Implement proper Jacobian-based IK for Twist → joint velocities
+        if (have_joint_state_ && current_joint_state_.position.size() >= 6)
+        {
+            std::vector<double> cmd_positions = current_joint_state_.position;
+            double dt = 0.1;  // 100ms control loop
+
+            if (mode == Mode::SEARCHING)
+            {
+                // Small search motion on wrist joints
+                cmd_positions[5] += 0.02 * std::sin(time_ * 0.5);  // wrist_3
+            }
+            else  // TRACKING mode
+            {
+                // Simple proportional control based on pixel error
+                // Map pixel error to joint velocity (simplified - not true IK)
+                double u0 = image_width_ * 0.5;
+                double v0 = image_height_ * 0.5;
+                double eu = last_target_px_.x - u0;  // horizontal error
+                double ev = last_target_px_.y - v0;  // vertical error
+
+                // Scale pixel error to joint velocity (rough approximation)
+                // Positive eu (ball to the right) -> rotate base left (negative velocity)
+                // Positive ev (ball below center) -> tilt down
+                double gain = 0.0001;  // Small gain for safety
+
+                cmd_positions[0] += -gain * eu * dt;  // shoulder_pan (left-right)
+                cmd_positions[1] += gain * ev * dt;   // shoulder_lift (up-down)
+
+                // Log tracking info
+                static int track_log = 0;
+                if (++track_log % 20 == 0)
+                {
+                    RCLCPP_INFO(this->get_logger(), "TRACKING: pixel_err=(%.1f, %.1f), adjusting joints", eu, ev);
+                }
+            }
+
+            publish_joint_command(cmd_positions);
+        }
+        else
+        {
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                "No joint state received yet, cannot publish commands");
+        }
+
         time_ += 0.1;
     }
 
