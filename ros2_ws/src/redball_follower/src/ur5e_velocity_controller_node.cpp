@@ -137,22 +137,12 @@ private:
                 double ev = last_target_px_.y - v0;  // vertical error
 
                 // Scale pixel error to joint velocity (rough approximation)
-                // Positive eu (ball to the right) -> rotate base left (negative velocity)
-                // Positive ev (ball below center) -> tilt down
+                // FLIPPED SIGNS: positive eu (ball to right) -> rotate base right (positive)
+                // positive ev (ball below center) -> tilt up (negative shoulder_lift)
                 double gain = 0.0001;  // Small gain for safety
 
-                cmd_positions[0] += -gain * eu * dt;  // shoulder_pan (left-right)
-                cmd_positions[1] += gain * ev * dt;   // shoulder_lift (up-down)
-
-                // Log tracking info
-                static int track_log = 0;
-                if (++track_log % 20 == 0)
-                {
-                    RCLCPP_INFO(this->get_logger(), "TRACKING: pixel_err=(%.1f, %.1f), adjusting joints", eu, ev);
-                }
-            }
-
-            publish_joint_command(cmd_positions);
+                cmd_positions[0] += gain * eu * dt;   // shoulder_pan (left-right) - FLIPPED
+                cmd_positions[1] += -gain * ev * dt;  // shoulder_lift (up-down) - FLIPPED
         }
         else
         {
