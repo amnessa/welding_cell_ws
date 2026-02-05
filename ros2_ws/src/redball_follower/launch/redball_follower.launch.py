@@ -4,19 +4,30 @@ Red Ball Follower - Main Launch File
 This is the unified launcher for the UR5e red ball tracking system.
 It launches all necessary nodes for:
 - Robot state publisher (UR5e URDF)
-- Ball tracker node (D435 camera vision)
+- Ball tracker node (D455 camera vision)
 - Velocity controller node (IBVS control)
 - Jacobian calculator node (manipulability)
 - Red ball spawner (dummy ball for testing)
+
+Isaac Sim Topics (expected from simulation):
+  - /d455/color/image_raw  (sensor_msgs/Image) - RGB camera
+  - /d455/depth/image_raw  (sensor_msgs/Image) - Depth camera
+  - /isaac_joint_states    (sensor_msgs/JointState) - Robot state
+  - /isaac_joint_commands  (sensor_msgs/JointState) - Robot commands
+  - /clock                 (rosgraph_msgs/Clock) - Simulation time
+
+Camera Transform (D455 mounted on wrist_3_link):
+  - Translation: (0, 0, 0.025) - 2.5cm along Z
+  - Orientation: quat(0.5, 0.5, 0.5, -0.5) - 90° rotation
 
 Usage:
   ros2 launch redball_follower redball_follower.launch.py
 
 For Isaac Sim:
-  1. Start Isaac Sim manually
-  2. Open/create your world with UR5e + D435 camera
-  3. Run this launch file
-  4. Press Play in Isaac Sim
+  1. Start Isaac Sim in a fresh terminal (no ROS sourced)
+  2. Open welding_world.usda
+  3. Press Play in Isaac Sim
+  4. In a separate terminal: ros2-env && ros2 launch redball_follower redball_follower.launch.py
 """
 
 import os
@@ -75,7 +86,8 @@ def generate_launch_description():
         ),
 
         # ================== Ball Tracker Node ==================
-        # Processes D435 camera images to detect and track red ball
+        # Processes D455 camera images to detect and track red ball
+        # Topics subscribed directly: /d455/color/image_raw, /d455/depth/image_raw
         Node(
             package='redball_follower',
             executable='ball_tracker_node',
@@ -86,12 +98,9 @@ def generate_launch_description():
                 'min_area': 150,
                 'ema_alpha': 0.35,
                 'depth_default': 0.8,
-                'depth_scale': 0.001
-            }],
-            remappings=[
-                ('/rsd455_img', '/d435/color/image_raw'),
-                ('/rsd455_depth', '/d435/depth/image_raw'),
-            ]
+                'depth_scale': 0.001  # Isaac Sim depth is in meters (32FC1)
+            }]
+            # No remappings needed - code subscribes to /d455/* directly
         ),
 
         # ================== UR5e Velocity Controller ==================
@@ -120,15 +129,17 @@ def generate_launch_description():
 
         # ================== Jacobian Calculator ==================
         # Computes manipulability measure for cost function
-        Node(
-            package='redball_follower',
-            executable='jacobian_calculator_node',
-            name='jacobian_calculator_node',
-            output='screen',
-            parameters=[{
-                'use_sim_time': use_sim_time
-            }]
-        ),
+        # NOTE: Disabled for now - requires SRDF for MoveIt
+        # TODO: Create ur5e.srdf and enable this node for manipulability-aware control
+        # Node(
+        #     package='redball_follower',
+        #     executable='jacobian_calculator_node',
+        #     name='jacobian_calculator_node',
+        #     output='screen',
+        #     parameters=[{
+        #         'use_sim_time': use_sim_time
+        #     }]
+        # ),
 
         # ================== Red Ball Spawner (Dummy) ==================
         # Spawns a moving red ball for testing without Isaac Sim ball

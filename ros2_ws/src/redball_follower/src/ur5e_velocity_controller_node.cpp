@@ -10,32 +10,37 @@
 #include <algorithm>
 #include <map>
 
-// This node no longer needs MoveIt or Eigen
-// #include <moveit/robot_model_loader/robot_model_loader.h>
-// #include <moveit/robot_state/robot_state.h>
-// #include <moveit/robot_state/conversions.h>
-// #include <Eigen/Dense>
-
-
 using namespace std::chrono_literals;
 
-// Let's use a structure closer to your original plan.
-// This node will generate a target end-effector velocity.
-class UR10EndEffectorControllerNode : public rclcpp::Node
+// UR5e joint names for Isaac Sim
+const std::vector<std::string> UR5E_JOINT_NAMES = {
+    "shoulder_pan_joint",
+    "shoulder_lift_joint",
+    "elbow_joint",
+    "wrist_1_joint",
+    "wrist_2_joint",
+    "wrist_3_joint"
+};
+
+// UR5e IBVS End-Effector Controller with Isaac Sim integration
+class UR5eEndEffectorControllerNode : public rclcpp::Node
 {
 public:
-    UR10EndEffectorControllerNode() : Node("ur10_end_effector_controller_node"), time_(0.0)
+    UR5eEndEffectorControllerNode() : Node("ur5e_velocity_controller_node"), time_(0.0)
     {
+        // Publisher for end-effector velocity commands (for external use/debugging)
         end_effector_velocity_pub_ = this->create_publisher<geometry_msgs::msg::Twist>("/end_effector_velocity", 10);
 
-        // REMOVE publisher to /isaac_joint_commands to avoid type conflict
-        // joint_velocity_command_pub_ = this->create_publisher<std_msgs::msg::Float64MultiArray>("/isaac_joint_commands", 10);
+        // Publisher for Isaac Sim joint commands (JointState type)
+        joint_command_pub_ = this->create_publisher<sensor_msgs::msg::JointState>("/isaac_joint_commands", 10);
 
-        // Keep subscription for diagnostics only
-        joint_velocity_sub_ = this->create_subscription<std_msgs::msg::Float64MultiArray>(
-            "/joint_velocities", 10, std::bind(&UR10EndEffectorControllerNode::joint_velocity_callback, this, std::placeholders::_1));
+        // Subscribe to joint states from Isaac Sim
+        joint_state_sub_ = this->create_subscription<sensor_msgs::msg::JointState>(
+            "/isaac_joint_states", 10, std::bind(&UR5eEndEffectorControllerNode::joint_state_callback, this, std::placeholders::_1));
+
+        // Subscribe to target pixel coordinates from ball tracker
         target_sub_ = this->create_subscription<geometry_msgs::msg::Point>(
-            "/target_pixel_coords", 10, std::bind(&UR10EndEffectorControllerNode::target_callback, this, std::placeholders::_1));
+            "/target_pixel_coords", 10, std::bind(&UR5eEndEffectorControllerNode::target_callback, this, std::placeholders::_1));
 
         image_width_  = this->declare_parameter<int>("image_width", 1280);
         image_height_ = this->declare_parameter<int>("image_height", 720);
@@ -51,19 +56,20 @@ public:
         w3_depth_ = this->declare_parameter<double>("w3_depth", 1.5);
 
         control_timer_ = this->create_wall_timer(
-            100ms, std::bind(&UR10EndEffectorControllerNode::control_loop, this));
+            100ms, std::bind(&UR5eEndEffectorControllerNode::control_loop, this));
 
-        RCLCPP_INFO(this->get_logger(), "UR10 End-Effector Controller started (cost weights active).");
+        RCLCPP_INFO(this->get_logger(), "UR5e Velocity Controller started (Isaac Sim integration).");
     }
 
 private:
-    // Add back the mode enum
     enum class Mode { SEARCHING, TRACKING };
 
-    void joint_velocity_callback(const std_msgs::msg::Float64MultiArray::SharedPtr msg)
+    void joint_state_callback(const sensor_msgs::msg::JointState::SharedPtr msg)
     {
-        // Do not forward to /isaac_joint_commands; just log optionally
-        RCLCPP_DEBUG(this->get_logger(), "Received joint_velocities[%zu]", msg->data.size());
+        // Store current joint positions for potential use in Jacobian calculation
+        current_joint_state_ = *msg;
+        have_joint_state_ = true;
+        RCLCPP_DEBUG(this->get_logger(), "Received joint_states[%zu]", msg->position.size());
     }
 
     void target_callback(const geometry_msgs::msg::Point::SharedPtr msg)
@@ -138,15 +144,30 @@ private:
         // to a manipulability topic, then scale here when too low.
     }
 
+    // Publish joint position commands to Isaac Sim
+    void publish_joint_command(const std::vector<double>& positions)
+    {
+        sensor_msgs::msg::JointState cmd;
+        cmd.header.stamp = this->now();
+        cmd.name = UR5E_JOINT_NAMES;
+        cmd.position = positions;
+        // Isaac Sim expects position commands; velocity/effort can be empty or zero
+        cmd.velocity.resize(6, 0.0);
+        cmd.effort.resize(6, 0.0);
+        joint_command_pub_->publish(cmd);
+    }
+
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr end_effector_velocity_pub_;
-    // rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr joint_velocity_command_pub_; // REMOVED
-    rclcpp::Subscription<std_msgs::msg::Float64MultiArray>::SharedPtr joint_velocity_sub_;
+    rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_command_pub_;
+    rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_sub_;
     rclcpp::Subscription<geometry_msgs::msg::Point>::SharedPtr target_sub_;
     rclcpp::TimerBase::SharedPtr control_timer_;
 
     geometry_msgs::msg::Point last_target_px_;
+    sensor_msgs::msg::JointState current_joint_state_;
     rclcpp::Time last_target_time_;
     bool have_target_{false};
+    bool have_joint_state_{false};
 
     int image_width_;
     int image_height_;
@@ -165,8 +186,8 @@ private:
 int main(int argc, char **argv)
 {
     rclcpp::init(argc, argv);
-    auto node = std::make_shared<UR10EndEffectorControllerNode>();
-    RCLCPP_INFO(node->get_logger(), "UR10 End-Effector Controller spinning...");
+    auto node = std::make_shared<UR5eEndEffectorControllerNode>();
+    RCLCPP_INFO(node->get_logger(), "UR5e Velocity Controller spinning...");
     rclcpp::spin(node);
     rclcpp::shutdown();
     return 0;

@@ -31,8 +31,9 @@ public:
         depth_default_ = this->declare_parameter<double>("depth_default", 0.8);
         depth_scale_ = this->declare_parameter<double>("depth_scale", 0.001); // if 16UC1 in millimeters
 
-        image_sub_.subscribe(this, "/rsd455_img");
-        depth_sub_.subscribe(this, "/rsd455_depth");
+        // Subscribe to D455 camera topics from Isaac Sim
+        image_sub_.subscribe(this, "/d455/color/image_raw");
+        depth_sub_.subscribe(this, "/d455/depth/image_raw");
         // NOTE: cam_info_sub_ is disabled as the topic is not available
 
         // Create a synchronizer for just image and depth
