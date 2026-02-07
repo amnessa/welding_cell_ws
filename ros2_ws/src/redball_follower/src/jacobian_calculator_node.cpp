@@ -47,8 +47,10 @@ public:
         ensure_param_double("damping_mu_reference", 0.05);
         ensure_param_double("w2_manipulability", 1.0);
         ensure_param_double("manipulability_gain", 0.4);
+        ensure_param_double("max_joint_velocity", 0.5);  // rad/s per joint
         ensure_param_str("joint_state_topic", "/joint_states");
         std::string joint_state_topic = this->get_parameter("joint_state_topic").as_string();
+        max_joint_vel_ = this->get_parameter("max_joint_velocity").as_double();
 
         planning_group_name_   = this->get_parameter("planning_group").as_string();
         end_effector_link_name_= this->get_parameter("end_effector_link").as_string();
@@ -227,7 +229,12 @@ private:
             qdot += posture_gain_ * N * posture_err;
         }
 
-        // Publish raw velocities (diagnostic / chaining)
+        // --- Per-joint velocity clamp (safety) ---
+        for (Eigen::Index i = 0; i < qdot.size(); ++i) {
+            qdot[i] = std::clamp(qdot[i], -max_joint_vel_, max_joint_vel_);
+        }
+
+        // Publish clamped velocities (diagnostic / chaining)
         std_msgs::msg::Float64MultiArray vel_arr;
         vel_arr.layout.dim.emplace_back();
         vel_arr.layout.dim[0].label="joint_velocities";
@@ -267,9 +274,15 @@ private:
                 (now - last_vel_time_).seconds() : default_dt_;
             last_vel_time_ = now;
 
+            // Clamp dt to avoid huge jumps from timing glitches
+            dt = std::clamp(dt, 0.001, 0.2);
+
             std::vector<double> new_pos(current.size());
-            for (size_t i=0;i<current.size();++i)
-                new_pos[i] = current[i] + qdot[i]*dt;
+            const double max_step = max_joint_vel_ * dt;  // max position delta per step
+            for (size_t i=0;i<current.size();++i) {
+                double delta = std::clamp(qdot[i]*dt, -max_step, max_step);
+                new_pos[i] = current[i] + delta;
+            }
 
             cmd.position = new_pos;
             cmd.velocity.assign(qdot.data(), qdot.data()+qdot.size()); // optional
@@ -346,6 +359,7 @@ private:
     sensor_msgs::msg::JointState last_joint_state_;
     rclcpp::Time last_vel_time_;
     double default_dt_{0.1};
+    double max_joint_vel_{0.5};  // rad/s per joint
 
     // New members for nullspace and damping
     double posture_gain_{0.4};

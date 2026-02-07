@@ -100,6 +100,7 @@ def generate_launch_description():
 
         # ================== UR5e Velocity Controller ==================
         # IBVS controller with manipulability-aware cost function
+        # Publishes Twist to /end_effector_velocity → Jacobian node does IK
         Node(
             package='redball_follower',
             executable='ur5e_velocity_controller_node',
@@ -111,14 +112,15 @@ def generate_launch_description():
                 'image_height': 720,
                 'fx': 600.0,
                 'fy': 600.0,
-                'depth_default': 0.8,
-                'depth_target': 0.5,
-                'k_pixel_gain': 1.8,
-                'k_depth_gain': 1.2,
-                'lost_timeout': 0.5,
+                'depth_target': 0.5,       # desired standoff distance (m)
+                'k_pixel_gain': 0.6,       # bearing → Cartesian velocity gain
+                'k_depth_gain': 0.4,       # range error → Z velocity gain
+                'lost_timeout': 2.0,       # seconds before HOLDING mode
                 'min_manipulability': 0.02,
-                'w1_pixel': 2.5,
-                'w3_depth': 1.5
+                'w1_pixel': 1.0,           # pixel/bearing cost weight
+                'w3_depth': 1.0,           # depth/range cost weight
+                'max_linear_vel': 0.15,    # m/s  — Twist saturation
+                'max_angular_vel': 0.30,   # rad/s — Twist saturation
             }]
         ),
 
@@ -148,6 +150,7 @@ def generate_launch_description():
                 'manipulability_gain': 0.4,
                 'damping_mu_reference': 0.05,
                 'slowdown_mu_threshold': 0.04,
+                'max_joint_velocity': 0.5,    # rad/s per joint clamp
                 # Nullspace optimization
                 'use_nullspace_posture': True,
                 'posture_gain': 0.4,

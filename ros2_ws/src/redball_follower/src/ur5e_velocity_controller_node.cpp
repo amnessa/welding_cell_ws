@@ -30,13 +30,15 @@ public:
         image_height_ = this->declare_parameter<int>("image_height", 720);
         fx_ = this->declare_parameter<double>("fx", 600.0);
         fy_ = this->declare_parameter<double>("fy", 600.0);
-        depth_target_  = this->declare_parameter<double>("depth_target", 0.200);  // desired standoff distance
-        k_pixel_ = this->declare_parameter<double>("k_pixel_gain", 1.8);
-        k_depth_ = this->declare_parameter<double>("k_depth_gain", 1.2);
+        depth_target_  = this->declare_parameter<double>("depth_target", 0.500);  // desired standoff distance (m)
+        k_pixel_ = this->declare_parameter<double>("k_pixel_gain", 0.6);
+        k_depth_ = this->declare_parameter<double>("k_depth_gain", 0.4);
         timeout_sec_ = this->declare_parameter<double>("lost_timeout", 2.0);
         min_manipulability_ = this->declare_parameter<double>("min_manipulability", 0.02);
-        w1_pixel_ = this->declare_parameter<double>("w1_pixel", 2.5);
-        w3_depth_ = this->declare_parameter<double>("w3_depth", 1.5);
+        w1_pixel_ = this->declare_parameter<double>("w1_pixel", 1.0);
+        w3_depth_ = this->declare_parameter<double>("w3_depth", 1.0);
+        max_linear_vel_  = this->declare_parameter<double>("max_linear_vel", 0.15);   // m/s
+        max_angular_vel_ = this->declare_parameter<double>("max_angular_vel", 0.30);  // rad/s
 
         control_timer_ = this->create_wall_timer(
             100ms, std::bind(&UR5eEndEffectorControllerNode::control_loop, this));
@@ -168,9 +170,28 @@ private:
         twist.angular.y = 0.0;
         twist.angular.z = 0.0;
 
-        // Manipulability scaling (optional external estimate fed later).
-        // For now we rely on Jacobian node logging; if you wish you can add a subscription
-        // to a manipulability topic, then scale here when too low.
+        // --- Velocity saturation ---
+        // Clamp linear velocity magnitude to max_linear_vel_
+        double lin_mag = std::sqrt(twist.linear.x * twist.linear.x +
+                                   twist.linear.y * twist.linear.y +
+                                   twist.linear.z * twist.linear.z);
+        if (lin_mag > max_linear_vel_ && lin_mag > 1e-6) {
+            double scale = max_linear_vel_ / lin_mag;
+            twist.linear.x *= scale;
+            twist.linear.y *= scale;
+            twist.linear.z *= scale;
+        }
+
+        // Clamp angular velocity magnitude
+        double ang_mag = std::sqrt(twist.angular.x * twist.angular.x +
+                                   twist.angular.y * twist.angular.y +
+                                   twist.angular.z * twist.angular.z);
+        if (ang_mag > max_angular_vel_ && ang_mag > 1e-6) {
+            double scale = max_angular_vel_ / ang_mag;
+            twist.angular.x *= scale;
+            twist.angular.y *= scale;
+            twist.angular.z *= scale;
+        }
     }
 
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr end_effector_velocity_pub_;
@@ -190,6 +211,8 @@ private:
     double min_manipulability_;
 
     double w1_pixel_{1.0}, w3_depth_{1.0};
+    double max_linear_vel_{0.15};
+    double max_angular_vel_{0.30};
 
     double time_;
 };
