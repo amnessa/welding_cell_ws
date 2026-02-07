@@ -1,42 +1,26 @@
 #include <rclcpp/rclcpp.hpp>
-#include <sensor_msgs/msg/joint_state.hpp>
-#include <std_msgs/msg/float64_multi_array.hpp>
-#include <geometry_msgs/msg/point_stamped.hpp>
 #include <geometry_msgs/msg/twist.hpp>
 #include <geometry_msgs/msg/point.hpp>
 #include <chrono>
-#include <vector>
 #include <cmath>
-#include <algorithm>
-#include <map>
 
 using namespace std::chrono_literals;
 
-// UR5e joint names for Isaac Sim
-const std::vector<std::string> UR5E_JOINT_NAMES = {
-    "shoulder_pan_joint",
-    "shoulder_lift_joint",
-    "elbow_joint",
-    "wrist_1_joint",
-    "wrist_2_joint",
-    "wrist_3_joint"
-};
-
-// UR5e IBVS End-Effector Controller with Isaac Sim integration
+// UR5e IBVS End-Effector Controller
+// Publishes Twist commands to /end_effector_velocity
+// jacobian_calculator_node handles IK with:
+//   - Damped pseudoinverse (adaptive λ based on manipulability)
+//   - Nullspace manipulability gradient ascent (cost w2/μ)
+//   - Nullspace posture optimization
+// Cost function: J = w1*||bearing_error||² + w2*(1/μ) + w3*||range_error||²
 class UR5eEndEffectorControllerNode : public rclcpp::Node
 {
 public:
     UR5eEndEffectorControllerNode() : Node("ur5e_velocity_controller_node"), time_(0.0)
     {
-        // Publisher for end-effector velocity commands (for external use/debugging)
+        // Publisher for end-effector velocity commands
+        // → jacobian_calculator_node subscribes to this and computes proper Jacobian-based IK
         end_effector_velocity_pub_ = this->create_publisher<geometry_msgs::msg::Twist>("/end_effector_velocity", 10);
-
-        // Publisher for Isaac Sim joint commands (JointState type)
-        joint_command_pub_ = this->create_publisher<sensor_msgs::msg::JointState>("/isaac_joint_commands", 10);
-
-        // Subscribe to joint states from Isaac Sim
-        joint_state_sub_ = this->create_subscription<sensor_msgs::msg::JointState>(
-            "/isaac_joint_states", 10, std::bind(&UR5eEndEffectorControllerNode::joint_state_callback, this, std::placeholders::_1));
 
         // Subscribe to target pixel coordinates from ball tracker
         target_sub_ = this->create_subscription<geometry_msgs::msg::Point>(
@@ -63,21 +47,6 @@ public:
 private:
     enum class Mode { SEARCHING, HOLDING, TRACKING };
 
-    void joint_state_callback(const sensor_msgs::msg::JointState::SharedPtr msg)
-    {
-        // Store current joint positions for potential use in Jacobian calculation
-        current_joint_state_ = *msg;
-        have_joint_state_ = true;
-
-        // Debug: log first reception
-        static bool first_msg = true;
-        if (first_msg)
-        {
-            RCLCPP_INFO(this->get_logger(), "First joint state received! Joints: %zu", msg->position.size());
-            first_msg = false;
-        }
-    }
-
     void target_callback(const geometry_msgs::msg::Point::SharedPtr msg)
     {
         last_target_px_ = *msg;
@@ -99,14 +68,14 @@ private:
         else
             mode = Mode::SEARCHING;
 
-        // Debug: log joint state status
+        // Debug: log mode status
         static int loop_count = 0;
         if (++loop_count % 50 == 0)  // Every 5 seconds
         {
             const char* mode_str = (mode == Mode::TRACKING) ? "TRACKING" :
                                    (mode == Mode::HOLDING)  ? "HOLDING" : "SEARCHING";
-            RCLCPP_INFO(this->get_logger(), "Control loop: have_joint_state=%d, mode=%s, last_target=%.1fs ago",
-                have_joint_state_, mode_str, time_since_target);
+            RCLCPP_INFO(this->get_logger(), "Control loop: mode=%s, last_target=%.1fs ago",
+                mode_str, time_since_target);
         }
 
         geometry_msgs::msg::Twist twist;
@@ -121,76 +90,34 @@ private:
         }
         // HOLDING: twist stays zero (hold position)
 
+        // Publish Twist command → jacobian_calculator_node handles IK with:
+        //   - Damped pseudoinverse (adaptive λ based on manipulability)
+        //   - Nullspace manipulability gradient ascent
+        //   - Nullspace posture optimization
+        // This properly implements the cost function:
+        //   J = w1*||pixel_error||² + w2*(1/μ) + w3*||depth_error||²
+        // where μ = sqrt(det(J*Jᵀ)) is manipulability
         end_effector_velocity_pub_->publish(twist);
 
-        // Publish joint commands
-        if (have_joint_state_ && current_joint_state_.position.size() >= 6)
+        // Log bearing/range info for debugging
+        if (mode == Mode::TRACKING)
         {
-            std::vector<double> cmd_positions = current_joint_state_.position;
-            double dt = 0.1;  // 100ms control loop
+            double u0 = image_width_ * 0.5;
+            double v0 = image_height_ * 0.5;
+            double eu = last_target_px_.x - u0;
+            double ev = last_target_px_.y - v0;
+            double bearing_h = std::atan2(eu, fx_);
+            double bearing_v = std::atan2(ev, fy_);
+            double range = last_target_px_.z;
+            bool have_depth = (range > 0.05);
+            double range_error = have_depth ? (range - depth_target_) : 0.0;
 
-            // Max joint delta per step (safety clamp) — 0.05 rad ≈ 2.9 deg per 100ms
-            const double max_delta = 0.05;
-
-            if (mode == Mode::SEARCHING)
-            {
-                // Search by sweeping wrist joints only (don't move base/elbow)
-                cmd_positions[3] += 0.015 * std::sin(time_ * 0.3);  // wrist_1 (vertical sweep)
-                cmd_positions[5] += 0.020 * std::sin(time_ * 0.5);  // wrist_3 (horizontal sweep)
-            }
-            else if (mode == Mode::TRACKING)
-            {
-                // Range-and-bearing control (more robust than raw pixel error)
-                double u0 = image_width_ * 0.5;
-                double v0 = image_height_ * 0.5;
-                double eu = last_target_px_.x - u0;  // pixel error horizontal
-                double ev = last_target_px_.y - v0;  // pixel error vertical
-
-                // Convert pixel error to bearing (angular error in radians)
-                double bearing_h = std::atan2(eu, fx_);  // horizontal bearing
-                double bearing_v = std::atan2(ev, fy_);  // vertical bearing
-
-                // Depth: only use if sensor gives valid reading
-                double range = last_target_px_.z;
-                bool have_depth = (range > 0.05);
-                double range_error = have_depth ? (range - depth_target_) : 0.0;
-
-                // --- Gains ---
-                double bearing_gain = 0.50;  // bearing → joint delta (rad/rad)
-                double range_gain   = 1.00;  // range error → elbow delta (rad/m)
-
-                // Compute raw deltas
-                double d_pan    =  bearing_gain * bearing_h * dt;
-                double d_lift   = -bearing_gain * bearing_v * dt;
-                double d_elbow  = have_depth ? (-range_gain * range_error * dt) : 0.0;
-                double d_wrist1 = -bearing_gain * 0.3 * bearing_v * dt;
-
-                // Clamp for safety
-                d_pan    = std::clamp(d_pan,    -max_delta, max_delta);
-                d_lift   = std::clamp(d_lift,   -max_delta, max_delta);
-                d_elbow  = std::clamp(d_elbow,  -max_delta, max_delta);
-                d_wrist1 = std::clamp(d_wrist1, -max_delta, max_delta);
-
-                cmd_positions[0] += d_pan;
-                cmd_positions[1] += d_lift;
-                cmd_positions[2] += d_elbow;
-                cmd_positions[3] += d_wrist1;
-
-                RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-                    "TRACKING: R=%s(err=%+.3f) Bh=%.1fdeg Bv=%.1fdeg | pan=%+.5f lift=%+.5f elbow=%+.5f wrist1=%+.5f",
-                    have_depth ? std::to_string(range).substr(0,5).c_str() : "N/A",
-                    range_error,
-                    bearing_h * 180.0 / M_PI, bearing_v * 180.0 / M_PI,
-                    d_pan, d_lift, d_elbow, d_wrist1);
-            }
-            // HOLDING: cmd_positions stays at current → robot holds still
-
-            publish_joint_command(cmd_positions);
-        }
-        else
-        {
-            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
-                "No joint state received yet, cannot publish commands");
+            RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                "TRACKING: R=%s(err=%+.3f) Bh=%.1fdeg Bv=%.1fdeg | Twist: vx=%.4f vy=%.4f vz=%.4f",
+                have_depth ? std::to_string(range).substr(0,5).c_str() : "N/A",
+                range_error,
+                bearing_h * 180.0 / M_PI, bearing_v * 180.0 / M_PI,
+                twist.linear.x, twist.linear.y, twist.linear.z);
         }
 
         time_ += 0.1;
@@ -198,10 +125,20 @@ private:
 
     void generate_search_motion(geometry_msgs::msg::Twist & twist)
     {
-        // Search uses only wrist joints (via cmd_positions above)
-        // Twist stays zero — no Cartesian motion during search
-        twist.linear.x = twist.linear.y = twist.linear.z = 0.0;
-        twist.angular.x = twist.angular.y = twist.angular.z = 0.0;
+        // Generate a gentle search pattern using end-effector motion
+        // The Jacobian node will convert this to joint velocities with manipulability optimization
+        double search_amp = 0.02;  // meters amplitude
+        double search_freq = 0.3;  // Hz
+
+        // Slow sinusoidal motion in Y-Z plane (camera view plane)
+        twist.linear.x = 0.0;
+        twist.linear.y = search_amp * std::sin(time_ * 2.0 * M_PI * search_freq);
+        twist.linear.z = search_amp * 0.5 * std::sin(time_ * 2.0 * M_PI * search_freq * 0.7);
+
+        // Small angular motion to scan
+        twist.angular.x = 0.0;
+        twist.angular.y = 0.05 * std::sin(time_ * 2.0 * M_PI * search_freq * 0.5);
+        twist.angular.z = 0.08 * std::sin(time_ * 2.0 * M_PI * search_freq * 0.3);
     }
 
     void generate_tracking_twist(geometry_msgs::msg::Twist & twist)
@@ -236,30 +173,13 @@ private:
         // to a manipulability topic, then scale here when too low.
     }
 
-    // Publish joint position commands to Isaac Sim
-    void publish_joint_command(const std::vector<double>& positions)
-    {
-        sensor_msgs::msg::JointState cmd;
-        cmd.header.stamp = this->now();
-        cmd.name = UR5E_JOINT_NAMES;
-        cmd.position = positions;
-        // Isaac Sim expects position commands; velocity/effort can be empty or zero
-        cmd.velocity.resize(6, 0.0);
-        cmd.effort.resize(6, 0.0);
-        joint_command_pub_->publish(cmd);
-    }
-
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr end_effector_velocity_pub_;
-    rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_command_pub_;
-    rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_sub_;
     rclcpp::Subscription<geometry_msgs::msg::Point>::SharedPtr target_sub_;
     rclcpp::TimerBase::SharedPtr control_timer_;
 
     geometry_msgs::msg::Point last_target_px_;
-    sensor_msgs::msg::JointState current_joint_state_;
     rclcpp::Time last_target_time_;
     bool have_target_{false};
-    bool have_joint_state_{false};
 
     int image_width_;
     int image_height_;

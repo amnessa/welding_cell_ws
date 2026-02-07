@@ -123,18 +123,36 @@ def generate_launch_description():
         ),
 
         # ================== Jacobian Calculator ==================
-        # Computes manipulability measure for cost function
-        # NOTE: Disabled for now - requires SRDF for MoveIt
-        # TODO: Create ur5e.srdf and enable this node for manipulability-aware control
-        # Node(
-        #     package='redball_follower',
-        #     executable='jacobian_calculator_node',
-        #     name='jacobian_calculator_node',
-        #     output='screen',
-        #     parameters=[{
-        #         'use_sim_time': use_sim_time
-        #     }]
-        # ),
+        # Proper Jacobian-based IK: Twist → joint commands
+        # Subscribes: /end_effector_velocity (Twist from velocity controller)
+        # Publishes:  /isaac_joint_commands (JointState to Isaac Sim)
+        # Cost function: J = w1*||bearing_error||² + w2*(1/μ) + w3*||range_error||²
+        Node(
+            package='redball_follower',
+            executable='jacobian_calculator_node',
+            name='jacobian_calculator_node',
+            output='screen',
+            parameters=[{
+                'use_sim_time': use_sim_time,
+                'robot_description': ParameterValue(robot_description, value_type=str),
+                'robot_description_semantic': ParameterValue(
+                    open(os.path.join(pkg_share, 'config', 'ur5e.srdf')).read(),
+                    value_type=str),
+                'planning_group': 'ur_manipulator',
+                'end_effector_link': 'tool0',
+                'control_mode': 'position',
+                'joint_state_topic': '/isaac_joint_states',
+                # Manipulability cost parameters
+                'min_manipulability': 0.02,
+                'w2_manipulability': 1.0,
+                'manipulability_gain': 0.4,
+                'damping_mu_reference': 0.05,
+                'slowdown_mu_threshold': 0.04,
+                # Nullspace optimization
+                'use_nullspace_posture': True,
+                'posture_gain': 0.4,
+            }]
+        ),
 
         # ================== Red Ball Spawner (Dummy) ==================
         # Spawns a moving red ball for testing without Isaac Sim ball

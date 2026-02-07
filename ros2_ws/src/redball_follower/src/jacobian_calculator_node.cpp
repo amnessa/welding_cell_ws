@@ -1,6 +1,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
 #include <std_msgs/msg/float64_multi_array.hpp>
+#include <std_msgs/msg/float64.hpp>
 #include <geometry_msgs/msg/twist.hpp>
 #include <Eigen/Dense>
 #include <memory>
@@ -88,9 +89,11 @@ public:
         joint_velocity_pub_   = this->create_publisher<std_msgs::msg::Float64MultiArray>("/joint_velocities", 10);
         // The ONLY publisher to /isaac_joint_commands (sensor_msgs/JointState)
         joint_state_cmd_pub_  = this->create_publisher<sensor_msgs::msg::JointState>("/isaac_joint_commands", 10);
+        // Publish manipulability for monitoring the cost function
+        manipulability_pub_   = this->create_publisher<std_msgs::msg::Float64>("/manipulability", 10);
 
-        RCLCPP_INFO(this->get_logger(), "Jacobian calculator ready. control_mode=%s; joint_state_topic=%s",
-                    control_mode_.c_str(), joint_state_topic.c_str());
+        RCLCPP_INFO(this->get_logger(), "Jacobian calculator ready. control_mode=%s; joint_state_topic=%s; w2_manip=%.2f",
+                    control_mode_.c_str(), joint_state_topic.c_str(), w2_manip_);
     }
 
 private:
@@ -137,7 +140,7 @@ private:
         Eigen::MatrixXd jacobian = calculate_jacobian();
         if (jacobian.rows() != 6) { RCLCPP_WARN(this->get_logger(), "Unexpected Jacobian size %ldx%ld", jacobian.rows(), jacobian.cols()); return; }
 
-        // Compute manipulability μ
+        // Compute manipulability μ = sqrt(det(J*J^T))
         double mu = 0.0;
         if (jacobian.cols() >= 6) {
             Eigen::MatrixXd JJt = jacobian * jacobian.transpose();
@@ -147,6 +150,17 @@ private:
                 last_manipulability_ = mu;
             }
         }
+
+        // Publish manipulability for monitoring
+        std_msgs::msg::Float64 mu_msg;
+        mu_msg.data = mu;
+        manipulability_pub_->publish(mu_msg);
+
+        // Log manipulability status periodically
+        RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+            "Manipulability: μ=%.4f (threshold=%.4f, damping_ref=%.4f) | Cost w2/μ=%.4f",
+            mu, slowdown_mu_threshold_, damping_mu_ref_,
+            (mu > 1e-8) ? (w2_manip_ / mu) : std::numeric_limits<double>::infinity());
 
         // Build damped pseudoinverse: λ grows as μ drops
         double lambda = 0.0;
@@ -316,6 +330,7 @@ private:
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr end_effector_velocity_sub_;
     rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr joint_velocity_pub_;
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_state_cmd_pub_;
+    rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr manipulability_pub_;
     double min_manipulability_{0.02};
     double last_manipulability_{0.0};
 
