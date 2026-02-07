@@ -36,6 +36,7 @@ from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.substitutions import LaunchConfiguration, Command, PathJoinSubstitution
 from launch.conditions import IfCondition
 from launch_ros.actions import Node
+from launch_ros.descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 from ament_index_python.packages import get_package_share_directory
 
@@ -49,16 +50,10 @@ def generate_launch_description():
     spawn_ball = LaunchConfiguration('spawn_ball', default='true')
 
     # URDF/Xacro file
-    urdf_file = os.path.join(pkg_share, 'urdf', 'ur.urdf.xacro')
+    urdf_file = os.path.join(pkg_share, 'urdf', 'ur5e.urdf.xacro')
 
-    # Robot description from xacro
-    robot_description = Command([
-        'xacro ', urdf_file,
-        ' name:=ur5e',
-        ' ur_type:=ur5e',
-        ' prefix:=""',
-        ' sim_isaac:=true'
-    ])
+    # Robot description from xacro (no extra args — ur5e.urdf.xacro is self-contained)
+    robot_description = Command(['xacro ', urdf_file])
 
     return LaunchDescription([
         # ================== Launch Arguments ==================
@@ -80,7 +75,7 @@ def generate_launch_description():
             name='robot_state_publisher',
             output='screen',
             parameters=[{
-                'robot_description': robot_description,
+                'robot_description': ParameterValue(robot_description, value_type=str),
                 'use_sim_time': use_sim_time
             }]
         ),
