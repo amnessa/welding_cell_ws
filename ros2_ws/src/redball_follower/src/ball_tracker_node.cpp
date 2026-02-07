@@ -30,6 +30,8 @@ public:
         depth_median_window_ = this->declare_parameter<int>("depth_median_window", 5);
         depth_default_ = this->declare_parameter<double>("depth_default", 0.8);
         depth_scale_ = this->declare_parameter<double>("depth_scale", 0.001); // if 16UC1 in millimeters
+        fx_ = this->declare_parameter<double>("fx", 600.0);
+        fy_ = this->declare_parameter<double>("fy", 600.0);
 
         // Subscribe to D455 camera topics from Isaac Sim
         image_sub_.subscribe(this, "/d455/color/image_raw");
@@ -127,14 +129,32 @@ private:
                     pt.z = z_ema_;
                     target_pixel_pub_->publish(pt);
 
+                    // Compute range and bearing from camera center
+                    double cx = image_msg->width  * 0.5;
+                    double cy = image_msg->height * 0.5;
+                    double eu = u_ema_ - cx;  // pixel error horizontal
+                    double ev = v_ema_ - cy;  // pixel error vertical
+                    double bearing_h = std::atan2(eu, fx_);  // horizontal bearing (rad)
+                    double bearing_v = std::atan2(ev, fy_);  // vertical bearing (rad)
+                    double range = z_ema_;                     // depth in meters
+
+                    double bearing_h_deg = bearing_h * 180.0 / M_PI;
+                    double bearing_v_deg = bearing_v * 180.0 / M_PI;
+
+                    RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                        "SENSOR: range=%.3fm, bearing_h=%.1fdeg (%.3frad), bearing_v=%.1fdeg (%.3frad)",
+                        range, bearing_h_deg, bearing_h, bearing_v_deg, bearing_v);
+
                     cv::rectangle(cv_ptr->image, bounding_box, cv::Scalar(0, 255, 0), 2);
                     cv::circle(cv_ptr->image, center, 5, cv::Scalar(0, 0, 255), -1);
                     cv::putText(cv_ptr->image,
-                                "u=" + std::to_string(int(pt.x)) +
-                                " v=" + std::to_string(int(pt.y)) +
-                                " z=" + cv::format("%.2f", pt.z),
+                                cv::format("R=%.2fm  Bh=%.1fdeg  Bv=%.1fdeg", range, bearing_h_deg, bearing_v_deg),
                                 center + cv::Point2f(10, -10),
-                                cv::FONT_HERSHEY_SIMPLEX, 0.4, {0,255,0}, 1);
+                                cv::FONT_HERSHEY_SIMPLEX, 0.45, {0,255,0}, 1);
+                    cv::putText(cv_ptr->image,
+                                cv::format("u=%d v=%d z=%.2f", int(pt.x), int(pt.y), pt.z),
+                                center + cv::Point2f(10, 10),
+                                cv::FONT_HERSHEY_SIMPLEX, 0.35, {0,200,200}, 1);
                 }
             }
         }
@@ -212,6 +232,7 @@ private:
     int depth_median_window_;
     double depth_default_;
     double depth_scale_;
+    double fx_, fy_;
     bool have_prev_{false};
     double u_ema_{0}, v_ema_{0}, z_ema_{0};
 

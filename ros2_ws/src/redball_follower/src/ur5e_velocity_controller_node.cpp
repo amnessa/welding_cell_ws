@@ -129,24 +129,29 @@ private:
             }
             else  // TRACKING mode
             {
-                // Simple proportional control based on pixel error
-                // Map pixel error to joint velocity (simplified - not true IK)
+                // Range-and-bearing control (more robust than raw pixel error)
                 double u0 = image_width_ * 0.5;
                 double v0 = image_height_ * 0.5;
-                double eu = last_target_px_.x - u0;  // horizontal error
-                double ev = last_target_px_.y - v0;  // vertical error
+                double eu = last_target_px_.x - u0;  // pixel error horizontal
+                double ev = last_target_px_.y - v0;  // pixel error vertical
 
-                // Scale pixel error to joint velocity (rough approximation)
-                // FLIPPED SIGNS: positive eu (ball to right) -> rotate base right (positive)
-                // positive ev (ball below center) -> tilt up (negative shoulder_lift)
-                double gain = 0.0001;  // Small gain for safety
+                // Convert pixel error to bearing (angular error in radians)
+                double bearing_h = std::atan2(eu, fx_);  // horizontal bearing
+                double bearing_v = std::atan2(ev, fy_);  // vertical bearing
+                double range = (last_target_px_.z > 0.05) ? last_target_px_.z : depth_default_;
 
-                cmd_positions[0] += gain * eu * dt;   // shoulder_pan (left-right) - FLIPPED
-                cmd_positions[1] += -gain * ev * dt;  // shoulder_lift (up-down) - FLIPPED
+                // Bearing-proportional control
+                // Gain maps bearing error (rad) to joint position delta (rad)
+                double gain = 0.09;  // ~50% faster than previous pixel-based control
+
+                cmd_positions[0] += gain * bearing_h * dt;   // shoulder_pan  (horizontal)
+                cmd_positions[1] += -gain * bearing_v * dt;  // shoulder_lift (vertical, inverted)
 
                 RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-                    "TRACKING: eu=%.1f, ev=%.1f, pan_delta=%.5f, lift_delta=%.5f",
-                    eu, ev, gain * eu * dt, -gain * ev * dt);
+                    "TRACKING: range=%.3fm, Bh=%.1fdeg, Bv=%.1fdeg, pan_d=%.5f, lift_d=%.5f",
+                    range,
+                    bearing_h * 180.0 / M_PI, bearing_v * 180.0 / M_PI,
+                    gain * bearing_h * dt, -gain * bearing_v * dt);
             }
 
             publish_joint_command(cmd_positions);
