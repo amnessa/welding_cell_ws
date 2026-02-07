@@ -46,11 +46,10 @@ public:
         image_height_ = this->declare_parameter<int>("image_height", 720);
         fx_ = this->declare_parameter<double>("fx", 600.0);
         fy_ = this->declare_parameter<double>("fy", 600.0);
-        depth_default_ = this->declare_parameter<double>("depth_default", 0.8);
-        depth_target_  = this->declare_parameter<double>("depth_target", 0.8);
+        depth_target_  = this->declare_parameter<double>("depth_target", 0.200);  // desired standoff distance
         k_pixel_ = this->declare_parameter<double>("k_pixel_gain", 1.8);
         k_depth_ = this->declare_parameter<double>("k_depth_gain", 1.2);
-        timeout_sec_ = this->declare_parameter<double>("lost_timeout", 0.5);
+        timeout_sec_ = this->declare_parameter<double>("lost_timeout", 2.0);
         min_manipulability_ = this->declare_parameter<double>("min_manipulability", 0.02);
         w1_pixel_ = this->declare_parameter<double>("w1_pixel", 2.5);
         w3_depth_ = this->declare_parameter<double>("w3_depth", 1.5);
@@ -62,7 +61,7 @@ public:
     }
 
 private:
-    enum class Mode { SEARCHING, TRACKING };
+    enum class Mode { SEARCHING, HOLDING, TRACKING };
 
     void joint_state_callback(const sensor_msgs::msg::JointState::SharedPtr msg)
     {
@@ -90,16 +89,24 @@ private:
     {
         // Decide mode
         auto now = this->now();
-        Mode mode = Mode::SEARCHING;
-        if (have_target_ && (now - last_target_time_).seconds() <= timeout_sec_)
+        double time_since_target = have_target_ ? (now - last_target_time_).seconds() : 999.0;
+
+        Mode mode;
+        if (time_since_target <= timeout_sec_)
             mode = Mode::TRACKING;
+        else if (time_since_target <= timeout_sec_ + 3.0)  // hold position 3s before searching
+            mode = Mode::HOLDING;
+        else
+            mode = Mode::SEARCHING;
 
         // Debug: log joint state status
         static int loop_count = 0;
         if (++loop_count % 50 == 0)  // Every 5 seconds
         {
-            RCLCPP_INFO(this->get_logger(), "Control loop: have_joint_state=%d, mode=%s",
-                have_joint_state_, mode == Mode::SEARCHING ? "SEARCHING" : "TRACKING");
+            const char* mode_str = (mode == Mode::TRACKING) ? "TRACKING" :
+                                   (mode == Mode::HOLDING)  ? "HOLDING" : "SEARCHING";
+            RCLCPP_INFO(this->get_logger(), "Control loop: have_joint_state=%d, mode=%s, last_target=%.1fs ago",
+                have_joint_state_, mode_str, time_since_target);
         }
 
         geometry_msgs::msg::Twist twist;
@@ -108,26 +115,30 @@ private:
         {
             generate_search_motion(twist);
         }
-        else
+        else if (mode == Mode::TRACKING)
         {
             generate_tracking_twist(twist);
         }
+        // HOLDING: twist stays zero (hold position)
 
         end_effector_velocity_pub_->publish(twist);
 
-        // For now, publish simple joint commands for testing
-        // TODO: Implement proper Jacobian-based IK for Twist → joint velocities
+        // Publish joint commands
         if (have_joint_state_ && current_joint_state_.position.size() >= 6)
         {
             std::vector<double> cmd_positions = current_joint_state_.position;
             double dt = 0.1;  // 100ms control loop
 
+            // Max joint delta per step (safety clamp) — 0.05 rad ≈ 2.9 deg per 100ms
+            const double max_delta = 0.05;
+
             if (mode == Mode::SEARCHING)
             {
-                // Small search motion on wrist joints
-                cmd_positions[5] += 0.02 * std::sin(time_ * 0.5);  // wrist_3
+                // Search by sweeping wrist joints only (don't move base/elbow)
+                cmd_positions[3] += 0.015 * std::sin(time_ * 0.3);  // wrist_1 (vertical sweep)
+                cmd_positions[5] += 0.020 * std::sin(time_ * 0.5);  // wrist_3 (horizontal sweep)
             }
-            else  // TRACKING mode
+            else if (mode == Mode::TRACKING)
             {
                 // Range-and-bearing control (more robust than raw pixel error)
                 double u0 = image_width_ * 0.5;
@@ -138,21 +149,41 @@ private:
                 // Convert pixel error to bearing (angular error in radians)
                 double bearing_h = std::atan2(eu, fx_);  // horizontal bearing
                 double bearing_v = std::atan2(ev, fy_);  // vertical bearing
-                double range = (last_target_px_.z > 0.05) ? last_target_px_.z : depth_default_;
 
-                // Bearing-proportional control
-                // Gain maps bearing error (rad) to joint position delta (rad)
-                double gain = 0.09;  // ~50% faster than previous pixel-based control
+                // Depth: only use if sensor gives valid reading
+                double range = last_target_px_.z;
+                bool have_depth = (range > 0.05);
+                double range_error = have_depth ? (range - depth_target_) : 0.0;
 
-                cmd_positions[0] += gain * bearing_h * dt;   // shoulder_pan  (horizontal)
-                cmd_positions[1] += -gain * bearing_v * dt;  // shoulder_lift (vertical, inverted)
+                // --- Gains ---
+                double bearing_gain = 0.50;  // bearing → joint delta (rad/rad)
+                double range_gain   = 1.00;  // range error → elbow delta (rad/m)
+
+                // Compute raw deltas
+                double d_pan    =  bearing_gain * bearing_h * dt;
+                double d_lift   = -bearing_gain * bearing_v * dt;
+                double d_elbow  = have_depth ? (-range_gain * range_error * dt) : 0.0;
+                double d_wrist1 = -bearing_gain * 0.3 * bearing_v * dt;
+
+                // Clamp for safety
+                d_pan    = std::clamp(d_pan,    -max_delta, max_delta);
+                d_lift   = std::clamp(d_lift,   -max_delta, max_delta);
+                d_elbow  = std::clamp(d_elbow,  -max_delta, max_delta);
+                d_wrist1 = std::clamp(d_wrist1, -max_delta, max_delta);
+
+                cmd_positions[0] += d_pan;
+                cmd_positions[1] += d_lift;
+                cmd_positions[2] += d_elbow;
+                cmd_positions[3] += d_wrist1;
 
                 RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-                    "TRACKING: range=%.3fm, Bh=%.1fdeg, Bv=%.1fdeg, pan_d=%.5f, lift_d=%.5f",
-                    range,
+                    "TRACKING: R=%s(err=%+.3f) Bh=%.1fdeg Bv=%.1fdeg | pan=%+.5f lift=%+.5f elbow=%+.5f wrist1=%+.5f",
+                    have_depth ? std::to_string(range).substr(0,5).c_str() : "N/A",
+                    range_error,
                     bearing_h * 180.0 / M_PI, bearing_v * 180.0 / M_PI,
-                    gain * bearing_h * dt, -gain * bearing_v * dt);
+                    d_pan, d_lift, d_elbow, d_wrist1);
             }
+            // HOLDING: cmd_positions stays at current → robot holds still
 
             publish_joint_command(cmd_positions);
         }
@@ -167,11 +198,9 @@ private:
 
     void generate_search_motion(geometry_msgs::msg::Twist & twist)
     {
-        double radius = 0.05;
-        double speed = 0.4;
-        twist.linear.x = radius * -std::sin(time_ * speed);
-        twist.linear.y = radius *  std::cos(time_ * speed);
-        twist.linear.z = 0.0;
+        // Search uses only wrist joints (via cmd_positions above)
+        // Twist stays zero — no Cartesian motion during search
+        twist.linear.x = twist.linear.y = twist.linear.z = 0.0;
         twist.angular.x = twist.angular.y = twist.angular.z = 0.0;
     }
 
@@ -183,7 +212,7 @@ private:
 
         double u = last_target_px_.x;
         double v = last_target_px_.y;
-        double Z = (last_target_px_.z > 0.05) ? last_target_px_.z : depth_default_;
+        double Z = (last_target_px_.z > 0.05) ? last_target_px_.z : 0.3;  // fallback for Twist only
 
         double eu = (u - u0);
         double ev = (v - v0);
@@ -235,7 +264,7 @@ private:
     int image_width_;
     int image_height_;
     double fx_, fy_;
-    double depth_default_, depth_target_;
+    double depth_target_;
     double k_pixel_, k_depth_;
     double timeout_sec_;
     double min_manipulability_;
