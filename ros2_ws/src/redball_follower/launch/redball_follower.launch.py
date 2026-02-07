@@ -113,8 +113,10 @@ def generate_launch_description():
                 'fx': 600.0,
                 'fy': 600.0,
                 'depth_target': 0.5,       # desired standoff distance (m)
-                'k_pixel_gain': 0.6,       # bearing → Cartesian velocity gain
-                'k_depth_gain': 0.4,       # range error → Z velocity gain
+                'k_pixel_gain': 0.6,       # Kp: bearing → Cartesian velocity
+                'k_depth_gain': 0.4,       # Kp: range error → Z velocity
+                'kd_pixel_gain': 0.30,     # Kd: bearing derivative damping
+                'kd_depth_gain': 0.10,     # Kd: range derivative damping
                 'lost_timeout': 2.0,       # seconds before HOLDING mode
                 'min_manipulability': 0.02,
                 'w1_pixel': 1.0,           # pixel/bearing cost weight

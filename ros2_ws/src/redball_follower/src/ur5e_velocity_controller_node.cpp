@@ -40,10 +40,15 @@ public:
         max_linear_vel_  = this->declare_parameter<double>("max_linear_vel", 0.15);   // m/s
         max_angular_vel_ = this->declare_parameter<double>("max_angular_vel", 0.30);  // rad/s
 
+        // PD controller derivative gains
+        kd_pixel_ = this->declare_parameter<double>("kd_pixel_gain", 0.15);  // derivative gain for bearing
+        kd_depth_ = this->declare_parameter<double>("kd_depth_gain", 0.10);  // derivative gain for range
+
         control_timer_ = this->create_wall_timer(
             100ms, std::bind(&UR5eEndEffectorControllerNode::control_loop, this));
 
-        RCLCPP_INFO(this->get_logger(), "UR5e Velocity Controller started (Isaac Sim integration).");
+        RCLCPP_INFO(this->get_logger(), "UR5e PD Controller started (Kp_pixel=%.2f Kd_pixel=%.2f Kp_depth=%.2f Kd_depth=%.2f).",
+            k_pixel_ * w1_pixel_, kd_pixel_, k_depth_ * w3_depth_, kd_depth_);
     }
 
 private:
@@ -78,6 +83,15 @@ private:
                                    (mode == Mode::HOLDING)  ? "HOLDING" : "SEARCHING";
             RCLCPP_INFO(this->get_logger(), "Control loop: mode=%s, last_target=%.1fs ago",
                 mode_str, time_since_target);
+        }
+
+        // Reset derivative state when leaving TRACKING
+        if (mode != Mode::TRACKING)
+        {
+            prev_err_u_ = 0.0;
+            prev_err_v_ = 0.0;
+            prev_err_depth_ = 0.0;
+            have_prev_error_ = false;
         }
 
         geometry_msgs::msg::Twist twist;
@@ -145,27 +159,42 @@ private:
 
     void generate_tracking_twist(geometry_msgs::msg::Twist & twist)
     {
+        const double dt = 0.1;  // 100ms control loop
+
         // Image center
         double u0 = image_width_  * 0.5;
         double v0 = image_height_ * 0.5;
 
         double u = last_target_px_.x;
         double v = last_target_px_.y;
-        double Z = (last_target_px_.z > 0.05) ? last_target_px_.z : 0.3;  // fallback for Twist only
+        double Z = (last_target_px_.z > 0.05) ? last_target_px_.z : 0.3;  // fallback depth
 
-        double eu = (u - u0);
-        double ev = (v - v0);
-        double depth_err = (Z - depth_target_);
+        // Normalized errors (bearing in radians, depth in meters)
+        double err_u = (u - u0) / fx_;           // horizontal bearing (rad)
+        double err_v = (v - v0) / fy_;           // vertical bearing (rad)
+        double err_depth = (Z - depth_target_);  // range error (m)
 
-        // Weighted IBVS style (w1, w3 just scale gains)
-        double pixel_gain = k_pixel_ * w1_pixel_;
-        double depth_gain = k_depth_ * w3_depth_;
+        // --- Derivative term (finite difference) ---
+        double derr_u = 0.0, derr_v = 0.0, derr_depth = 0.0;
+        if (have_prev_error_) {
+            derr_u     = (err_u     - prev_err_u_)     / dt;
+            derr_v     = (err_v     - prev_err_v_)     / dt;
+            derr_depth = (err_depth - prev_err_depth_) / dt;
+        }
+        prev_err_u_     = err_u;
+        prev_err_v_     = err_v;
+        prev_err_depth_ = err_depth;
+        have_prev_error_ = true;
 
-        twist.linear.x = -pixel_gain * (eu / fx_) * Z;
-        twist.linear.y = -pixel_gain * (ev / fy_) * Z;
-        twist.linear.z =  depth_gain * depth_err;
+        // --- PD output ---
+        double kp_pixel = k_pixel_ * w1_pixel_;
+        double kp_depth = k_depth_ * w3_depth_;
 
-        // No rotation yet
+        // P + D terms
+        twist.linear.x = -kp_pixel * err_u * Z     - kd_pixel_ * derr_u * Z;
+        twist.linear.y = -kp_pixel * err_v * Z     - kd_pixel_ * derr_v * Z;
+        twist.linear.z =  kp_depth * err_depth      + kd_depth_ * derr_depth;
+
         twist.angular.x = 0.0;
         twist.angular.y = 0.0;
         twist.angular.z = 0.0;
@@ -213,6 +242,16 @@ private:
     double w1_pixel_{1.0}, w3_depth_{1.0};
     double max_linear_vel_{0.15};
     double max_angular_vel_{0.30};
+
+    // PD controller parameters
+    double kd_pixel_{0.15};
+    double kd_depth_{0.10};
+
+    // Previous errors for derivative computation
+    double prev_err_u_{0.0};
+    double prev_err_v_{0.0};
+    double prev_err_depth_{0.0};
+    bool have_prev_error_{false};
 
     double time_;
 };
