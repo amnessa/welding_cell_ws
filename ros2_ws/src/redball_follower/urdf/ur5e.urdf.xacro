@@ -1,0 +1,74 @@
+<?xml version="1.0"?>
+<!--
+  Clean UR5e xacro wrapper for redball_follower project.
+  Uses ur_description package for the base robot macro,
+  parameterised specifically for UR5e.
+
+  Usage:
+    xacro ur5e.urdf.xacro
+
+  Or from launch file:
+    robot_description = Command(['xacro ', FindPackageShare('redball_follower'), '/urdf/ur5e.urdf.xacro'])
+-->
+<robot xmlns:xacro="http://wiki.ros.org/xacro" name="ur5e">
+
+  <!-- Import the UR macro from ur_description -->
+  <xacro:include filename="$(find ur_description)/urdf/ur_macro.xacro"/>
+
+  <!-- World link (root) -->
+  <link name="world"/>
+
+  <!-- UR5e arm, mounted to world -->
+  <xacro:ur_robot
+    name="ur5e"
+    tf_prefix=""
+    parent="world"
+    joint_limits_parameters_file="$(find ur_description)/config/ur5e/joint_limits.yaml"
+    kinematics_parameters_file="$(find ur_description)/config/ur5e/default_kinematics.yaml"
+    physical_parameters_file="$(find ur_description)/config/ur5e/physical_parameters.yaml"
+    visual_parameters_file="$(find ur_description)/config/ur5e/visual_parameters.yaml"
+    safety_limits="false"
+    generate_ros2_control_tag="false"
+  >
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </xacro:ur_robot>
+
+  <!-- ============================================ -->
+  <!--  Camera mount on wrist_3_link (D455)         -->
+  <!-- ============================================ -->
+  <link name="camera_link">
+    <visual>
+      <geometry>
+        <box size="0.025 0.09 0.025"/>
+      </geometry>
+      <material name="camera_grey">
+        <color rgba="0.3 0.3 0.3 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <box size="0.025 0.09 0.025"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.072"/>
+      <inertia ixx="0.00001" ixy="0" ixz="0" iyy="0.00001" iyz="0" izz="0.00001"/>
+    </inertial>
+  </link>
+
+  <joint name="camera_joint" type="fixed">
+    <parent link="wrist_3_link"/>
+    <child link="camera_link"/>
+    <!-- Same transform as in welding_world.usda -->
+    <origin xyz="0 0 0.025" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Optical frame (Z forward, X right, Y down — standard camera convention) -->
+  <link name="camera_optical_frame"/>
+  <joint name="camera_optical_joint" type="fixed">
+    <parent link="camera_link"/>
+    <child link="camera_optical_frame"/>
+    <origin xyz="0 0 0" rpy="${-pi/2} 0 ${-pi/2}"/>
+  </joint>
+
+</robot>
