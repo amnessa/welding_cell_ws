@@ -14,8 +14,8 @@
                 double radius = 500
             }
             dictionary Perspective = {
-                double3 position = (0.15810225932415117, 2.0405181394616765, 0.5340202447189972)
-                double3 target = (0.03861190239820214, -0.8343781207733185, -1.6495286102449567)
+                double3 position = (0.05452750488325108, 1.8387214768108358, 0.678528833398563)
+                double3 target = (0.08694090032739876, -0.8696128940817496, -1.55654635366415)
             }
             dictionary Right = {
                 double3 position = (0, -1688400, -3.7490011095542286e-10)
@@ -2210,79 +2210,12 @@ def Xform "Root" (
         }
     }
 
-    def Xform "Robot_Mount_Point" (
-        customData = {
-            dictionary omni = {
-                dictionary kit = {
-                    bool locked = 0
-                }
-            }
-        }
-    )
+    def Xform "Robot_Mount_Point"
     {
-        rel proxyPrim (
-            customData = {
-                dictionary omni = {
-                    dictionary kit = {
-                        bool locked = 0
-                    }
-                }
-            }
-        )
-        uniform token purpose (
-            customData = {
-                dictionary omni = {
-                    dictionary kit = {
-                        bool locked = 0
-                    }
-                }
-            }
-        )
-        token visibility (
-            customData = {
-                dictionary omni = {
-                    dictionary kit = {
-                        bool locked = 0
-                    }
-                }
-            }
-        )
-        quatd xformOp:orient = (1, 0, 0, 0) (
-            customData = {
-                dictionary omni = {
-                    dictionary kit = {
-                        bool locked = 0
-                    }
-                }
-            }
-        )
-        double3 xformOp:scale = (1, 1, 1) (
-            customData = {
-                dictionary omni = {
-                    dictionary kit = {
-                        bool locked = 0
-                    }
-                }
-            }
-        )
-        double3 xformOp:translate = (-0.015104557178157198, -0.04296525008096573, -0.6338755826798719) (
-            customData = {
-                dictionary omni = {
-                    dictionary kit = {
-                        bool locked = 0
-                    }
-                }
-            }
-        )
-        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"] (
-            customData = {
-                dictionary omni = {
-                    dictionary kit = {
-                        bool locked = 0
-                    }
-                }
-            }
-        )
+        quatd xformOp:orient = (1, 0, 0, 0)
+        double3 xformOp:scale = (1, 1, 1)
+        double3 xformOp:translate = (-0.015104557178157198, -0.04296525008096573, -0.6321252785647566)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
 
         def Xform "ur5e" (
             prepend references = @https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.1/Isaac/Robots/UniversalRobots/ur5e/ur5e.usd@
@@ -2530,370 +2463,26 @@ def Xform "Root" (
             quatf physics:localRot1 = (1, 0, 0, 0)
         }
 
-        def "robot_tablev1" (
-            prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysxRigidBodyAPI"]
-            customData = {
-                dictionary omni = {
-                    dictionary kit = {
-                        bool locked = 0
-                    }
-                }
-            }
-            displayName = "robot_tablev1"
-            prepend payload = @../../../../world_parts/robot_tablev1.usd@
+        def Xform "RedBall" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+            prepend references = @https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.1/Isaac/Props/Shapes/sphere.usd@
         )
         {
-            vector3f physics:angularVelocity = (0, 0, 0) (
-                customData = {
-                    dictionary omni = {
-                        dictionary kit = {
-                            bool locked = 0
-                        }
-                    }
-                }
+            rel material:binding = </Root/Looks/RedPaint> (
+                bindMaterialAs = "weakerThanDescendants"
             )
-            bool physics:kinematicEnabled = 0 (
-                customData = {
-                    dictionary omni = {
-                        dictionary kit = {
-                            bool locked = 0
-                        }
-                    }
-                }
-            )
-            bool physics:rigidBodyEnabled = 1 (
-                customData = {
-                    dictionary omni = {
-                        dictionary kit = {
-                            bool locked = 0
-                        }
-                    }
-                }
-            )
-            rel physics:simulationOwner (
-                customData = {
-                    dictionary omni = {
-                        dictionary kit = {
-                            bool locked = 0
-                        }
-                    }
-                }
-            )
-            uniform bool physics:startsAsleep (
-                customData = {
-                    dictionary omni = {
-                        dictionary kit = {
-                            bool locked = 0
-                        }
-                    }
-                }
-            )
-            vector3f physics:velocity = (0, 0, 0) (
-                customData = {
-                    dictionary omni = {
-                        dictionary kit = {
-                            bool locked = 0
-                        }
-                    }
-                }
-            )
-            float physxRigidBody:angularDamping (
-                customData = {
-                    dictionary omni = {
-                        dictionary kit = {
-                            bool locked = 0
-                        }
-                    }
-                }
-            )
-            float physxRigidBody:cfmScale (
-                customData = {
-                    dictionary omni = {
-                        dictionary kit = {
-                            bool locked = 0
-                        }
-                    }
-                }
-            )
-            float physxRigidBody:contactSlopCoefficient (
-                customData = {
-                    dictionary omni = {
-                        dictionary kit = {
-                            bool locked = 0
-                        }
-                    }
-                }
-            )
-            bool physxRigidBody:disableGravity = 0 (
-                customData = {
-                    dictionary omni = {
-                        dictionary kit = {
-                            bool locked = 0
-                        }
-                    }
-                }
-            )
-            bool physxRigidBody:enableCCD (
-                customData = {
-                    dictionary omni = {
-                        dictionary kit = {
-                            bool locked = 0
-                        }
-                    }
-                }
-            )
-            bool physxRigidBody:enableGyroscopicForces (
-                customData = {
-                    dictionary omni = {
-                        dictionary kit = {
-                            bool locked = 0
-                        }
-                    }
-                }
-            )
-            bool physxRigidBody:enableSpeculativeCCD (
-                customData = {
-                    dictionary omni = {
-                        dictionary kit = {
-                            bool locked = 0
-                        }
-                    }
-                }
-            )
-            float physxRigidBody:linearDamping (
-                customData = {
-                    dictionary omni = {
-                        dictionary kit = {
-                            bool locked = 0
-                        }
-                    }
-                }
-            )
-            int physxRigidBody:lockedPosAxis (
-                customData = {
-                    dictionary omni = {
-                        dictionary kit = {
-                            bool locked = 0
-                        }
-                    }
-                }
-            )
-            int physxRigidBody:lockedRotAxis (
-                customData = {
-                    dictionary omni = {
-                        dictionary kit = {
-                            bool locked = 0
-                        }
-                    }
-                }
-            )
-            float physxRigidBody:maxAngularVelocity (
-                customData = {
-                    dictionary omni = {
-                        dictionary kit = {
-                            bool locked = 0
-                        }
-                    }
-                }
-            )
-            float physxRigidBody:maxContactImpulse (
-                customData = {
-                    dictionary omni = {
-                        dictionary kit = {
-                            bool locked = 0
-                        }
-                    }
-                }
-            )
-            float physxRigidBody:maxDepenetrationVelocity (
-                customData = {
-                    dictionary omni = {
-                        dictionary kit = {
-                            bool locked = 0
-                        }
-                    }
-                }
-            )
-            float physxRigidBody:maxLinearVelocity (
-                customData = {
-                    dictionary omni = {
-                        dictionary kit = {
-                            bool locked = 0
-                        }
-                    }
-                }
-            )
-            bool physxRigidBody:retainAccelerations (
-                customData = {
-                    dictionary omni = {
-                        dictionary kit = {
-                            bool locked = 0
-                        }
-                    }
-                }
-            )
-            float physxRigidBody:sleepThreshold (
-                customData = {
-                    dictionary omni = {
-                        dictionary kit = {
-                            bool locked = 0
-                        }
-                    }
-                }
-            )
-            bool physxRigidBody:solveContact (
-                customData = {
-                    dictionary omni = {
-                        dictionary kit = {
-                            bool locked = 0
-                        }
-                    }
-                }
-            )
-            int physxRigidBody:solverPositionIterationCount (
-                customData = {
-                    dictionary omni = {
-                        dictionary kit = {
-                            bool locked = 0
-                        }
-                    }
-                }
-            )
-            int physxRigidBody:solverVelocityIterationCount (
-                customData = {
-                    dictionary omni = {
-                        dictionary kit = {
-                            bool locked = 0
-                        }
-                    }
-                }
-            )
-            float physxRigidBody:stabilizationThreshold (
-                customData = {
-                    dictionary omni = {
-                        dictionary kit = {
-                            bool locked = 0
-                        }
-                    }
-                }
-            )
-            rel proxyPrim (
-                customData = {
-                    dictionary omni = {
-                        dictionary kit = {
-                            bool locked = 0
-                        }
-                    }
-                }
-            )
-            uniform token purpose (
-                customData = {
-                    dictionary omni = {
-                        dictionary kit = {
-                            bool locked = 0
-                        }
-                    }
-                }
-            )
-            token visibility (
-                customData = {
-                    dictionary omni = {
-                        dictionary kit = {
-                            bool locked = 0
-                        }
-                    }
-                }
-            )
-            double3 xformOp:rotateZYX = (0, 0, 180)
-            double3 xformOp:scale = (0.0010000000474974513, 0.0010000000474974513, 0.0010000000474974513) (
-                customData = {
-                    dictionary omni = {
-                        dictionary kit = {
-                            bool locked = 0
-                        }
-                    }
-                }
-            )
-            double3 xformOp:translate = (0.6223538690277046, 0.7373603118619357, -0.13737472143524332) (
-                customData = {
-                    dictionary omni = {
-                        dictionary kit = {
-                            bool locked = 0
-                        }
-                    }
-                }
-            )
-            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateZYX", "xformOp:scale"] (
-                customData = {
-                    dictionary omni = {
-                        dictionary kit = {
-                            bool locked = 0
-                        }
-                    }
-                }
-            )
-
-            over "robot_tablev1"
-            {
-                over "Body001" (
-                    prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI", "PhysxConvexHullCollisionAPI", "PhysicsMeshCollisionAPI"]
-                )
-                {
-                    uniform token physics:approximation = "convexHull"
-                    bool physics:collisionEnabled = 1
-                    matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
-                }
-
-                over "Body004" (
-                    prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI", "PhysxConvexHullCollisionAPI", "PhysicsMeshCollisionAPI"]
-                )
-                {
-                    uniform token physics:approximation = "convexHull"
-                    bool physics:collisionEnabled = 1
-                }
-
-                over "Body003" (
-                    prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI", "PhysxConvexHullCollisionAPI", "PhysicsMeshCollisionAPI"]
-                )
-                {
-                    uniform token physics:approximation = "convexHull"
-                    bool physics:collisionEnabled = 1
-                }
-
-                over "Body002" (
-                    prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI", "PhysxConvexHullCollisionAPI", "PhysicsMeshCollisionAPI"]
-                )
-                {
-                    uniform token physics:approximation = "convexHull"
-                    bool physics:collisionEnabled = 1
-                }
-
-                over "Body" (
-                    prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI", "PhysxConvexHullCollisionAPI", "PhysicsMeshCollisionAPI"]
-                )
-                {
-                    uniform token physics:approximation = "convexHull"
-                    bool physics:collisionEnabled = 1
-                }
-            }
-        }
-    }
-
-    def Xform "RedBall" (
-        prepend apiSchemas = ["MaterialBindingAPI"]
-        prepend references = @https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.1/Isaac/Props/Shapes/sphere.usd@
-    )
-    {
-        rel material:binding = </Root/Looks/RedPaint> (
-            bindMaterialAs = "weakerThanDescendants"
-        )
-
-        over "Sphere"
-        {
-            double3 xformOp:rotateXYZ = (0, 0, 0)
-            double3 xformOp:scale = (0.001, 0.001, 0.001)
-            double3 xformOp:translate = (0.8195923982882625, 0.637638626525494, -0.5426866051412537)
+            double3 xformOp:rotateXYZ = (0, -0, 0)
+            double3 xformOp:scale = (1, 1, 1)
+            double3 xformOp:translate = (0.09150335266157336, 0.6297467603785698, -0.009212004422066933)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+
+            over "Sphere"
+            {
+                double3 xformOp:rotateXYZ = (0, 0, 0)
+                double3 xformOp:scale = (0.001, 0.001, 0.001)
+                double3 xformOp:translate = (0, 0, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+            }
         }
     }
 
@@ -3220,6 +2809,65 @@ def Xform "Root" (
             int node:typeVersion = 2
             uniform token ui:nodegraph:node:expansionState = "open"
             uniform float2 ui:nodegraph:node:pos = (82.26232, -320.37012)
+        }
+    }
+
+    def "robot_tablev1" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysxRigidBodyAPI"]
+        displayName = "robot_tablev1"
+        prepend payload = @../../../../world_parts/robot_tablev1.usd@
+    )
+    {
+        bool physics:kinematicEnabled = 0
+        bool physics:rigidBodyEnabled = 1
+        bool physxRigidBody:disableGravity = 0
+        double3 xformOp:rotateZYX = (0, 0, 180)
+        double3 xformOp:scale = (0.001, 0.001, 0.001)
+        double3 xformOp:translate = (0.6072493118495474, 0.69439506178097, -0.7695)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateZYX", "xformOp:scale"]
+
+        over "robot_tablev1"
+        {
+            over "Body001" (
+                prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI", "PhysxConvexHullCollisionAPI", "PhysicsMeshCollisionAPI"]
+            )
+            {
+                uniform token physics:approximation = "convexHull"
+                bool physics:collisionEnabled = 1
+                matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
+            }
+
+            over "Body004" (
+                prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI", "PhysxConvexHullCollisionAPI", "PhysicsMeshCollisionAPI"]
+            )
+            {
+                uniform token physics:approximation = "convexHull"
+                bool physics:collisionEnabled = 1
+            }
+
+            over "Body003" (
+                prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI", "PhysxConvexHullCollisionAPI", "PhysicsMeshCollisionAPI"]
+            )
+            {
+                uniform token physics:approximation = "convexHull"
+                bool physics:collisionEnabled = 1
+            }
+
+            over "Body002" (
+                prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI", "PhysxConvexHullCollisionAPI", "PhysicsMeshCollisionAPI"]
+            )
+            {
+                uniform token physics:approximation = "convexHull"
+                bool physics:collisionEnabled = 1
+            }
+
+            over "Body" (
+                prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI", "PhysxConvexHullCollisionAPI", "PhysicsMeshCollisionAPI"]
+            )
+            {
+                uniform token physics:approximation = "convexHull"
+                bool physics:collisionEnabled = 1
+            }
         }
     }
 
