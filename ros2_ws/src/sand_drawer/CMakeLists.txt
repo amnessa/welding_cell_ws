@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.8)
-project(redball_follower)
+project(sand_drawer)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
@@ -13,36 +13,17 @@ find_package(rclpy REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
-find_package(cv_bridge REQUIRED)
-find_package(message_filters REQUIRED)
-find_package(image_geometry REQUIRED)
-find_package(OpenCV REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(moveit_ros_planning REQUIRED)
 find_package(moveit_core REQUIRED)
-
-# Include directories for OpenCV
-include_directories(${OpenCV_INCLUDE_DIRS})
 
 # ============================================
 # C++ Executables
 # ============================================
 
-# Ball Tracker Node - D435 camera red ball detection
-add_executable(ball_tracker_node src/ball_tracker_node.cpp)
-ament_target_dependencies(ball_tracker_node
-  rclcpp
-  sensor_msgs
-  geometry_msgs
-  cv_bridge
-  message_filters
-  image_geometry
-)
-target_link_libraries(ball_tracker_node ${OpenCV_LIBRARIES})
-
 # UR5e Velocity Controller Node - IBVS control with manipulability
-add_executable(ur5e_velocity_controller_node src/ur5e_velocity_controller_node.cpp)
-ament_target_dependencies(ur5e_velocity_controller_node
+add_executable(sand_drawer_velocity_controller_node src/ur5e_velocity_controller_node.cpp)
+ament_target_dependencies(sand_drawer_velocity_controller_node
   rclcpp
   sensor_msgs
   std_msgs
@@ -50,8 +31,8 @@ ament_target_dependencies(ur5e_velocity_controller_node
 )
 
 # Jacobian Calculator Node - Manipulability computation
-add_executable(jacobian_calculator_node src/jacobian_calculator_node.cpp)
-ament_target_dependencies(jacobian_calculator_node
+add_executable(sand_drawer_jacobian_node src/jacobian_calculator_node.cpp)
+ament_target_dependencies(sand_drawer_jacobian_node
   rclcpp
   sensor_msgs
   std_msgs
@@ -59,13 +40,12 @@ ament_target_dependencies(jacobian_calculator_node
   moveit_ros_planning
   moveit_core
 )
-target_link_libraries(jacobian_calculator_node Eigen3::Eigen)
+target_link_libraries(sand_drawer_jacobian_node Eigen3::Eigen)
 
 # Install C++ executables
 install(TARGETS
-  ball_tracker_node
-  ur5e_velocity_controller_node
-  jacobian_calculator_node
+  sand_drawer_velocity_controller_node
+  sand_drawer_jacobian_node
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -73,7 +53,7 @@ install(TARGETS
 # Python scripts
 # ============================================
 install(PROGRAMS
-  scripts/red_ball_spawner.py
+  scripts/plane_solver_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -86,6 +66,7 @@ install(DIRECTORY
   model
   urdf
   meshes
+  world
   DESTINATION share/${PROJECT_NAME}
 )
 

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   UR5e Semantic Robot Description Format (SRDF)
-  Auto-generated for redball_follower project.
+  Auto-generated for sand_drawer project.
 
   This defines the planning groups, end-effectors, and collision
   matrix for MoveIt motion planning with the UR5e robot.

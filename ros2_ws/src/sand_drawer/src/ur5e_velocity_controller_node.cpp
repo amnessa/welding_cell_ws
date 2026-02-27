@@ -16,7 +16,7 @@ using namespace std::chrono_literals;
 class UR5eEndEffectorControllerNode : public rclcpp::Node
 {
 public:
-    UR5eEndEffectorControllerNode() : Node("ur5e_velocity_controller_node"), time_(0.0)
+    UR5eEndEffectorControllerNode() : Node("sand_drawer_velocity_controller_node"), time_(0.0)
     {
         // Publisher for end-effector velocity commands
         // → jacobian_calculator_node subscribes to this and computes proper Jacobian-based IK

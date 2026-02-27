@@ -19,7 +19,7 @@ class JacobianCalculatorNode : public rclcpp::Node
 {
 public:
     // Remove automatically_declare_parameters_from_overrides(true)
-    JacobianCalculatorNode() : Node("jacobian_calculator_node")
+    JacobianCalculatorNode() : Node("sand_drawer_jacobian_node")
     {
         // Constructor minimal; full setup in init()
     }
