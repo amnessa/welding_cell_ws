@@ -26,6 +26,7 @@ from isaacsim.core.utils.extensions import get_extension_path_from_name
 from isaacsim.core.utils.prims import get_prim_at_path
 from isaacsim.robot_motion.motion_generation import (
     ArticulationTrajectory,
+    LulaKinematicsSolver,
     LulaTaskSpaceTrajectoryGenerator,
 )
 
@@ -40,6 +41,7 @@ PHYSICS_DT = 1.0 / 60.0
 USE_PROJECTED_VECTOR = True
 USE_SIMPLE_LINEAR_TEST = True
 USE_SANITY_FIXED_POINTS = True
+USE_CURRENT_EE_SANITY = True
 
 # Reachability helpers for quick verification.
 PATH_SCALE = 0.30      # shrink trajectory around centroid
@@ -54,6 +56,69 @@ SANITY_POINTS = [
     np.array([0.34, 0.04, 0.35], dtype=float),
     np.array([0.30, 0.04, 0.35], dtype=float),
 ]
+
+
+def _rotm_to_xyzw(rot: np.ndarray) -> np.ndarray:
+    m00, m01, m02 = rot[0, 0], rot[0, 1], rot[0, 2]
+    m10, m11, m12 = rot[1, 0], rot[1, 1], rot[1, 2]
+    m20, m21, m22 = rot[2, 0], rot[2, 1], rot[2, 2]
+    trace = m00 + m11 + m22
+
+    if trace > 0.0:
+        s = np.sqrt(trace + 1.0) * 2.0
+        w = 0.25 * s
+        x = (m21 - m12) / s
+        y = (m02 - m20) / s
+        z = (m10 - m01) / s
+    elif m00 > m11 and m00 > m22:
+        s = np.sqrt(1.0 + m00 - m11 - m22) * 2.0
+        w = (m21 - m12) / s
+        x = 0.25 * s
+        y = (m01 + m10) / s
+        z = (m02 + m20) / s
+    elif m11 > m22:
+        s = np.sqrt(1.0 + m11 - m00 - m22) * 2.0
+        w = (m02 - m20) / s
+        x = (m01 + m10) / s
+        y = 0.25 * s
+        z = (m12 + m21) / s
+    else:
+        s = np.sqrt(1.0 + m22 - m00 - m11) * 2.0
+        w = (m10 - m01) / s
+        x = (m02 + m20) / s
+        y = (m12 + m21) / s
+        z = 0.25 * s
+
+    q = np.array([x, y, z, w], dtype=float)
+    q /= np.linalg.norm(q)
+    return q
+
+
+def _current_ee_sanity_points_and_orientation(
+    robot_description_path: str,
+    urdf_path: str,
+    end_effector_frame: str,
+    joint_positions: np.ndarray,
+):
+    kin = LulaKinematicsSolver(
+        robot_description_path=robot_description_path,
+        urdf_path=urdf_path,
+    )
+    ee_pos, ee_rot = kin.compute_forward_kinematics(end_effector_frame, joint_positions)
+
+    # Tiny square around current EE position, keep current orientation.
+    offsets = np.array(
+        [
+            [0.00, 0.00, 0.00],
+            [0.02, 0.00, 0.00],
+            [0.02, 0.02, 0.00],
+            [0.00, 0.02, 0.00],
+        ],
+        dtype=float,
+    )
+    points = [ee_pos + d for d in offsets]
+    quat_xyzw = _rotm_to_xyzw(ee_rot)
+    return points, quat_xyzw
 
 
 def _load_plane_points(plane_json_path: str) -> List[np.ndarray]:
@@ -136,9 +201,6 @@ def _resolve_robot_prim_path(preferred_path: str) -> str:
 
 
 async def run_once():
-    if not os.path.exists(PLANE_JSON_PATH):
-        raise RuntimeError(f"Plane JSON not found: {PLANE_JSON_PATH}")
-
     robot_description_path, urdf_path = _default_ur5e_config_paths()
 
     if not os.path.exists(robot_description_path):
@@ -146,11 +208,30 @@ async def run_once():
     if not os.path.exists(urdf_path):
         raise RuntimeError(f"URDF file not found: {urdf_path}")
 
-    if USE_SANITY_FIXED_POINTS:
+    resolved_path = _resolve_robot_prim_path(ROBOT_PRIM_PATH)
+    articulation = Articulation(resolved_path)
+    articulation.initialize()
+
+    if articulation.num_dof <= 0:
+        raise RuntimeError(f"Articulation at {resolved_path} has zero DoF or failed initialize.")
+
+    if USE_SANITY_FIXED_POINTS and USE_CURRENT_EE_SANITY:
+        joint_positions = np.array(articulation.get_joint_positions(), dtype=float)
+        points, current_quat = _current_ee_sanity_points_and_orientation(
+            robot_description_path,
+            urdf_path,
+            END_EFFECTOR_FRAME,
+            joint_positions,
+        )
+    elif USE_SANITY_FIXED_POINTS:
         points = [p.copy() for p in SANITY_POINTS]
+        current_quat = np.array([0.0, 1.0, 0.0, 0.0], dtype=float)
     else:
+        if not os.path.exists(PLANE_JSON_PATH):
+            raise RuntimeError(f"Plane JSON not found: {PLANE_JSON_PATH}")
         points = _load_plane_points(PLANE_JSON_PATH)
         points = _apply_test_transforms(points)
+        current_quat = np.array([0.0, 1.0, 0.0, 0.0], dtype=float)
 
     generator = LulaTaskSpaceTrajectoryGenerator(
         robot_description_path=robot_description_path,
@@ -159,7 +240,7 @@ async def run_once():
 
     if USE_SIMPLE_LINEAR_TEST:
         test_points = points[:max(2, min(MAX_TEST_POINTS, len(points)))]
-        orientations = np.tile(np.array([0.0, 1.0, 0.0, 0.0]), (len(test_points), 1))
+        orientations = np.tile(current_quat, (len(test_points), 1))
         trajectory = generator.compute_task_space_trajectory_from_points(
             np.array(test_points),
             orientations,
@@ -171,13 +252,6 @@ async def run_once():
 
     if trajectory is None:
         raise RuntimeError("Lula returned None (trajectory could not be computed).")
-
-    resolved_path = _resolve_robot_prim_path(ROBOT_PRIM_PATH)
-    articulation = Articulation(resolved_path)
-    articulation.initialize()
-
-    if articulation.num_dof <= 0:
-        raise RuntimeError(f"Articulation at {resolved_path} has zero DoF or failed initialize.")
 
     art_traj = ArticulationTrajectory(articulation, trajectory, PHYSICS_DT)
     actions = art_traj.get_action_sequence()
