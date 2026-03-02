@@ -4,7 +4,7 @@ import json
 import math
 import os
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import List, Optional, Tuple
 
 import numpy as np
 import rclpy
@@ -35,8 +35,38 @@ class PlaneSolverNode(Node):
         self.output_file = self.declare_parameter("output_file", "/tmp/sand_drawer_plane.json").value
         self.square_scale = float(self.declare_parameter("square_scale", 0.8).value)
         self.auto_solve_on_fourth = bool(self.declare_parameter("auto_solve_on_fourth", True).value)
+        self.use_manual_points = bool(self.declare_parameter("use_manual_points", True).value)
+        self.auto_solve_manual_on_start = bool(self.declare_parameter("auto_solve_manual_on_start", False).value)
         self.min_point_separation = float(self.declare_parameter("min_point_separation", 0.01).value)
         self.tf_timeout_sec = float(self.declare_parameter("tf_timeout_sec", 0.2).value)
+
+        # Manual rectangle corners in target_frame (base-relative test mode)
+        # Order: RU, RD, LU, LD
+        self.manual_right_upper = np.array(
+            self.declare_parameter("manual_right_upper", [-0.3924659490585327, 0.6478340029716492, -0.05970597267150879]).value,
+            dtype=float,
+        )
+        self.manual_right_down = np.array(
+            self.declare_parameter("manual_right_down", [0.08315126597881317, 0.6478340029716492, -0.05970597267150879]).value,
+            dtype=float,
+        )
+        self.manual_left_upper = np.array(
+            self.declare_parameter("manual_left_upper", [-0.3924659490585327, -0.6292856931686401, -0.05970597267150879]).value,
+            dtype=float,
+        )
+        self.manual_left_down = np.array(
+            self.declare_parameter("manual_left_down", [0.08005186915397644, -0.6292856931686401, -0.05970597267150879]).value,
+            dtype=float,
+        )
+
+        # Local UV polyline projected onto solved rectangle plane.
+        # [u0,v0,u1,v1,...] where u,v in [0,1] across rectangle basis.
+        self.vector_path_uv = list(
+            self.declare_parameter(
+                "vector_path_uv",
+                [0.2, 0.2, 0.8, 0.2, 0.8, 0.8, 0.2, 0.8, 0.2, 0.2],
+            ).value
+        )
 
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
@@ -61,6 +91,11 @@ class PlaneSolverNode(Node):
         self.get_logger().info(
             f"Plane solver ready. Listening on {self.input_point_topic}, transforming {self.source_frame} -> {self.target_frame}."
         )
+
+        if self.use_manual_points and self.auto_solve_manual_on_start:
+            ok, msg = self.solve_and_save()
+            log_fn = self.get_logger().info if ok else self.get_logger().error
+            log_fn(f"Manual startup solve: {msg}")
 
     def point_callback(self, msg: PointStamped) -> None:
         self.latest_source_point = msg
@@ -143,17 +178,37 @@ class PlaneSolverNode(Node):
         response.message = "Captured points and solved plane cleared."
         return response
 
-    def solve_and_save(self) -> (bool, str):
-        if len(self.captured_points) < 4:
-            return False, f"Need 4 points, have {len(self.captured_points)}"
+    def solve_and_save(self) -> Tuple[bool, str]:
+        points: List[np.ndarray]
+        if self.use_manual_points:
+            points = self.get_manual_points()
+            self.captured_points = [p.copy() for p in points]
+        else:
+            if len(self.captured_points) < 4:
+                return False, f"Need 4 points, have {len(self.captured_points)}"
+            points = self.captured_points
 
         try:
-            result = self.solve_plane(self.captured_points[0], self.captured_points[1], self.captured_points[2], self.captured_points[3])
+            result = self.solve_plane(points[0], points[1], points[2], points[3])
         except ValueError as exc:
             return False, str(exc)
 
         self.last_result = result
         return self.persist_result(result)
+
+    def get_manual_points(self) -> List[np.ndarray]:
+        points = [
+            self.manual_right_upper,
+            self.manual_right_down,
+            self.manual_left_upper,
+            self.manual_left_down,
+        ]
+
+        for idx, point in enumerate(points, start=1):
+            if point.shape != (3,):
+                raise ValueError(f"Manual point {idx} must have exactly 3 values [x,y,z].")
+
+        return [p.astype(float) for p in points]
 
     def solve_plane(self, p1: np.ndarray, p2: np.ndarray, p3: np.ndarray, p4: np.ndarray) -> PlaneResult:
         eps = 1e-8
@@ -209,10 +264,13 @@ class PlaneSolverNode(Node):
         quat = self.rotation_matrix_to_quaternion(np.column_stack([x_axis, y_axis, normal]))
         return PlaneResult(normal=normal, x_axis=x_axis, y_axis=y_axis, rectangle=rectangle, square=square, orientation_xyzw=quat)
 
-    def persist_result(self, result: PlaneResult) -> (bool, str):
+    def persist_result(self, result: PlaneResult) -> Tuple[bool, str]:
+        projected_vector = self.project_vector_path(result)
+
         payload = {
             "target_frame": self.target_frame,
             "source_topic": self.input_point_topic,
+            "points_source": "manual_parameters" if self.use_manual_points else "captured_from_topic",
             "captured_points_base": [p.tolist() for p in self.captured_points],
             "plane": {
                 "origin": self.captured_points[0].tolist(),
@@ -228,6 +286,14 @@ class PlaneSolverNode(Node):
                 }
                 for p in result.square
             ],
+            "vector_path_uv": self.vector_path_uv,
+            "projected_vector_trajectory": [
+                {
+                    "position": p.tolist(),
+                    "orientation_xyzw": result.orientation_xyzw,
+                }
+                for p in projected_vector
+            ],
         }
 
         try:
@@ -241,6 +307,21 @@ class PlaneSolverNode(Node):
             return True, msg
         except Exception as exc:
             return False, f"Failed writing {self.output_file}: {exc}"
+
+    def project_vector_path(self, result: PlaneResult) -> List[np.ndarray]:
+        if len(self.vector_path_uv) < 4 or len(self.vector_path_uv) % 2 != 0:
+            raise ValueError("vector_path_uv must contain an even number of values and at least 2 points.")
+
+        p1 = result.rectangle[0]
+        width_vec = result.rectangle[1] - result.rectangle[0]
+        height_vec = result.rectangle[3] - result.rectangle[0]
+
+        projected: List[np.ndarray] = []
+        for idx in range(0, len(self.vector_path_uv), 2):
+            u = float(np.clip(self.vector_path_uv[idx], 0.0, 1.0))
+            v = float(np.clip(self.vector_path_uv[idx + 1], 0.0, 1.0))
+            projected.append(p1 + u * width_vec + v * height_vec)
+        return projected
 
     @staticmethod
     def rotation_matrix_to_quaternion(rot: np.ndarray) -> List[float]:

@@ -15,7 +15,7 @@
             }
             dictionary Perspective = {
                 double3 position = (0.05452750488325108, 1.8387214768108358, 0.678528833398563)
-                double3 target = (0.08694090032739876, -0.8696128940817496, -1.55654635366415)
+                double3 target = (0.08694090032740465, -0.8696128940817505, -1.55654635366415)
             }
             dictionary Right = {
                 double3 position = (0, -1688400, -3.7490011095542286e-10)
@@ -2480,7 +2480,7 @@ def Xform "Root" (
             {
                 double3 xformOp:rotateXYZ = (0, 0, 0)
                 double3 xformOp:scale = (0.001, 0.001, 0.001)
-                double3 xformOp:translate = (0, 0, 0)
+                double3 xformOp:translate = (-0.44406974805559724, 0, 0)
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
             }
         }
@@ -2871,13 +2871,87 @@ def Xform "Root" (
         }
     }
 
-    def OmniGraph "ActionGraph"
+    def OmniGraph "redball_transform"
     {
         token evaluationMode = "Automatic"
         token evaluator:type = "execution"
-        token fabricCacheBacking = "StageWithoutHistory"
+        token fabricCacheBacking = "Shared"
         int2 fileFormatVersion = (1, 9)
         token pipelineStage = "pipelineStageSimulation"
+
+        def OmniGraphNode "on_playback_tick" (
+            prepend apiSchemas = ["NodeGraphNodeAPI"]
+        )
+        {
+            token node:type = "omni.graph.action.OnPlaybackTick"
+            int node:typeVersion = 2
+            custom double outputs:deltaSeconds
+            custom double outputs:frame
+            custom uint outputs:tick (
+                customData = {
+                    bool isExecution = 1
+                }
+            )
+            custom double outputs:time
+            uniform token ui:nodegraph:node:expansionState = "open"
+            uniform float2 ui:nodegraph:node:pos = (-1511.4382, 100.5115)
+        }
+
+        def OmniGraphNode "isaac_read_simulation_time" (
+            prepend apiSchemas = ["NodeGraphNodeAPI"]
+        )
+        {
+            custom uint64 inputs:referenceTimeDenominator
+            custom int64 inputs:referenceTimeNumerator
+            custom bool inputs:resetOnStop
+            token node:type = "isaacsim.core.nodes.IsaacReadSimulationTime"
+            int node:typeVersion = 1
+            custom double outputs:simulationTime
+            uniform token ui:nodegraph:node:expansionState = "open"
+            uniform float2 ui:nodegraph:node:pos = (-1260.8632, 4.799006)
+        }
+
+        def OmniGraphNode "ros2_publish_transform_tree" (
+            prepend apiSchemas = ["NodeGraphNodeAPI"]
+        )
+        {
+            custom uint64 inputs:context
+            custom uint inputs:execIn (
+                customData = {
+                    bool isExecution = 1
+                }
+            )
+            prepend uint inputs:execIn.connect = </Root/redball_transform/on_playback_tick.outputs:tick>
+            custom string inputs:nodeNamespace
+            custom rel inputs:parentPrim = </Root/Robot_Mount_Point> (
+                customData = {
+                    dictionary omni = {
+                        dictionary graph = {
+                            string relType = "target"
+                        }
+                    }
+                }
+            )
+            custom string inputs:qosProfile
+            custom uint64 inputs:queueSize
+            custom bool inputs:staticPublisher
+            custom rel inputs:targetPrims = </Root/Robot_Mount_Point/RedBall> (
+                customData = {
+                    dictionary omni = {
+                        dictionary graph = {
+                            string relType = "target"
+                        }
+                    }
+                }
+            )
+            custom double inputs:timeStamp
+            prepend double inputs:timeStamp.connect = </Root/redball_transform/isaac_read_simulation_time.outputs:simulationTime>
+            custom string inputs:topicName
+            token node:type = "isaacsim.ros2.bridge.ROS2PublishTransformTree"
+            int node:typeVersion = 1
+            uniform token ui:nodegraph:node:expansionState = "open"
+            uniform float2 ui:nodegraph:node:pos = (-1028.9055, 160.25833)
+        }
     }
 }
 
@@ -3085,6 +3159,26 @@ def "Render" (
                 custom bool overrideClipRange = 0
                 uniform int2 resolution = (1280, 720)
             }
+
+            def RenderProduct "Replicator_05" (
+                prepend apiSchemas = ["OmniRtxSettingsCommonAdvancedAPI_1", "OmniRtxSettingsRtAdvancedAPI_1", "OmniRtxSettingsPtAdvancedAPI_1", "OmniRtxPostColorGradingAPI_1", "OmniRtxPostChromaticAberrationAPI_1", "OmniRtxPostBloomPhysicalAPI_1", "OmniRtxPostMatteObjectAPI_1", "OmniRtxPostCompositingAPI_1", "OmniRtxPostDofAPI_1", "OmniRtxPostMotionBlurAPI_1", "OmniRtxPostTvNoiseAPI_1", "OmniRtxPostTonemapIrayReinhardAPI_1", "OmniRtxPostDebugSettingsAPI_1", "OmniRtxDebugSettingsAPI_1"]
+                hide_in_stage_window = true
+                no_delete = true
+            )
+            {
+                rel camera = </Root/Robot_Mount_Point/ur5e/wrist_3_link/rsd455/RSD455/Camera_OmniVision_OV9782_Color>
+                custom string ogPostProcessPath = "/Render/OmniverseKit/HydraTextures/Replicator_05/PostRender"
+                bool omni:rtx:material:db:syncLoads = 1
+                bool omni:rtx:rt:ecoMode:enabled = 0
+                bool omni:rtx:scene:hydra:materialSyncLoads = 1
+                rel orderedVars = [
+                    </Render/Vars/LdrColorSD>,
+                    </Render/Vars/DistanceToImagePlaneSD>,
+                    </Render/Vars/LdrColor>,
+                ]
+                custom bool overrideClipRange = 0
+                uniform int2 resolution = (1280, 720)
+            }
         }
     }
 
@@ -3100,6 +3194,7 @@ def "Render" (
             </Render/OmniverseKit/HydraTextures/Replicator_02>,
             </Render/OmniverseKit/HydraTextures/Replicator_03>,
             </Render/OmniverseKit/HydraTextures/Replicator_04>,
+            </Render/OmniverseKit/HydraTextures/Replicator_05>,
         ]
     }
 
