@@ -21,14 +21,23 @@ import numpy as np
 
 import lula
 import omni.kit.app
-from isaacsim.core.prims import Articulation
 from isaacsim.core.utils.extensions import get_extension_path_from_name
 from isaacsim.core.utils.prims import get_prim_at_path
-from isaacsim.robot_motion.motion_generation import (
-    ArticulationTrajectory,
-    LulaKinematicsSolver,
-    LulaTaskSpaceTrajectoryGenerator,
-)
+
+try:
+    from omni.isaac.core.prims import Articulation
+    from omni.isaac.motion_generation import (
+        ArticulationTrajectory,
+        LulaKinematicsSolver,
+        LulaTaskSpaceTrajectoryGenerator,
+    )
+except Exception:
+    from isaacsim.core.prims import Articulation
+    from isaacsim.robot_motion.motion_generation import (
+        ArticulationTrajectory,
+        LulaKinematicsSolver,
+        LulaTaskSpaceTrajectoryGenerator,
+    )
 
 
 # -------------------------
@@ -40,13 +49,21 @@ END_EFFECTOR_FRAME = "tool0"
 PHYSICS_DT = 1.0 / 60.0
 USE_PROJECTED_VECTOR = True
 USE_SIMPLE_LINEAR_TEST = True
-USE_SANITY_FIXED_POINTS = True
+USE_SANITY_FIXED_POINTS = False
 USE_CURRENT_EE_SANITY = True
+DRAW_LINE_ON_DEFINED_PLANE = True
 
 # Reachability helpers for quick verification.
 PATH_SCALE = 0.30      # shrink trajectory around centroid
 Z_OFFSET = 0.12        # lift path in world Z to avoid table/singularity issues
 MAX_TEST_POINTS = 5    # for vector mode; include closure point if available
+MIN_TARGET_Z = 0.20
+MAX_TARGET_XY_RADIUS = 0.72
+
+# Line on plane (UV coordinates in rectangle space [0,1]x[0,1]).
+LINE_UV_START = (0.2, 0.5)
+LINE_UV_END = (0.8, 0.5)
+LINE_NORMAL_OFFSET = -0.10  # meters along plane normal (negative lifts if normal points down)
 
 # Very small, typically reachable sanity line in front of the robot.
 # Used only when USE_SANITY_FIXED_POINTS=True.
@@ -56,6 +73,11 @@ SANITY_POINTS = [
     np.array([0.34, 0.04, 0.35], dtype=float),
     np.array([0.30, 0.04, 0.35], dtype=float),
 ]
+
+
+def _as_joint_vector(joint_positions) -> np.ndarray:
+    arr = np.array(joint_positions, dtype=float)
+    return arr.reshape(-1)
 
 
 def _rotm_to_xyzw(rot: np.ndarray) -> np.ndarray:
@@ -94,6 +116,50 @@ def _rotm_to_xyzw(rot: np.ndarray) -> np.ndarray:
     return q
 
 
+def _xyzw_to_wxyz(q_xyzw: np.ndarray) -> np.ndarray:
+    q_xyzw = np.array(q_xyzw, dtype=float)
+    return np.array([q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]], dtype=float)
+
+
+def _normalize_quat(q: np.ndarray) -> np.ndarray:
+    q = np.array(q, dtype=float)
+    norm = np.linalg.norm(q)
+    if norm <= 1e-12:
+        return np.array([1.0, 0.0, 0.0, 0.0], dtype=float)
+    return q / norm
+
+
+def _sanitize_points_for_reachability(points: List[np.ndarray]) -> List[np.ndarray]:
+    sanitized: List[np.ndarray] = []
+    for p in points:
+        pp = np.array(p, dtype=float).copy()
+        pp[2] = max(pp[2], MIN_TARGET_Z)
+
+        r_xy = np.linalg.norm(pp[:2])
+        if r_xy > MAX_TARGET_XY_RADIUS:
+            pp[:2] *= MAX_TARGET_XY_RADIUS / r_xy
+
+        sanitized.append(pp)
+
+    return sanitized
+
+
+def _orientation_candidates(primary_wxyz: np.ndarray) -> List[np.ndarray]:
+    primary = _normalize_quat(primary_wxyz)
+    candidates = [
+        primary,
+        _normalize_quat(-primary),
+        np.array([0.0, 1.0, 0.0, 0.0], dtype=float),
+        np.array([1.0, 0.0, 0.0, 0.0], dtype=float),
+    ]
+
+    deduped: List[np.ndarray] = []
+    for c in candidates:
+        if not any(np.allclose(c, d, atol=1e-6) for d in deduped):
+            deduped.append(c)
+    return deduped
+
+
 def _current_ee_sanity_points_and_orientation(
     robot_description_path: str,
     urdf_path: str,
@@ -104,7 +170,9 @@ def _current_ee_sanity_points_and_orientation(
         robot_description_path=robot_description_path,
         urdf_path=urdf_path,
     )
-    ee_pos, ee_rot = kin.compute_forward_kinematics(end_effector_frame, joint_positions)
+    q = _as_joint_vector(joint_positions)
+    print(f"[sand_drawer][in-app] joint vector shape for FK: {q.shape}")
+    ee_pos, ee_rot = kin.compute_forward_kinematics(end_effector_frame, q)
 
     # Tiny square around current EE position, keep current orientation.
     offsets = np.array(
@@ -117,8 +185,9 @@ def _current_ee_sanity_points_and_orientation(
         dtype=float,
     )
     points = [ee_pos + d for d in offsets]
-    quat_xyzw = _rotm_to_xyzw(ee_rot)
-    return points, quat_xyzw
+    points = _sanitize_points_for_reachability(points)
+    quat_wxyz = _xyzw_to_wxyz(_rotm_to_xyzw(ee_rot))
+    return points, quat_wxyz
 
 
 def _load_plane_points(plane_json_path: str) -> List[np.ndarray]:
@@ -132,6 +201,48 @@ def _load_plane_points(plane_json_path: str) -> List[np.ndarray]:
         return [np.array(item["position"], dtype=float) for item in payload["square_trajectory"]]
 
     raise RuntimeError("Plane JSON must contain projected_vector_trajectory or square_trajectory with at least 4 points.")
+
+
+def _xy_to_plane_uv(rectangle_corners: np.ndarray, u: float, v: float) -> np.ndarray:
+    c00 = rectangle_corners[0]
+    c10 = rectangle_corners[1]
+    c11 = rectangle_corners[2]
+    c01 = rectangle_corners[3]
+    return (
+        (1.0 - u) * (1.0 - v) * c00
+        + u * (1.0 - v) * c10
+        + u * v * c11
+        + (1.0 - u) * v * c01
+    )
+
+
+def _load_line_on_plane(plane_json_path: str):
+    with open(plane_json_path, "r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+
+    if "rectangle_corners" not in payload or len(payload["rectangle_corners"]) < 4:
+        raise RuntimeError("Plane JSON missing rectangle_corners for line drawing mode.")
+    if "plane" not in payload or "normal" not in payload["plane"]:
+        raise RuntimeError("Plane JSON missing plane.normal for line drawing mode.")
+
+    corners = np.array(payload["rectangle_corners"][:4], dtype=float)
+    normal = np.array(payload["plane"]["normal"], dtype=float)
+    normal_norm = np.linalg.norm(normal)
+    if normal_norm <= 1e-12:
+        raise RuntimeError("Plane normal is invalid (near zero norm).")
+    normal = normal / normal_norm
+
+    p0 = _xy_to_plane_uv(corners, LINE_UV_START[0], LINE_UV_START[1]) + LINE_NORMAL_OFFSET * normal
+    p1 = _xy_to_plane_uv(corners, LINE_UV_END[0], LINE_UV_END[1]) + LINE_NORMAL_OFFSET * normal
+    points = _sanitize_points_for_reachability([p0, p1])
+
+    quat_wxyz = np.array([0.0, 1.0, 0.0, 0.0], dtype=float)
+    if "square_trajectory" in payload and payload["square_trajectory"]:
+        ori_xyzw = payload["square_trajectory"][0].get("orientation_xyzw", None)
+        if ori_xyzw is not None and len(ori_xyzw) == 4:
+            quat_wxyz = _normalize_quat(_xyzw_to_wxyz(np.array(ori_xyzw, dtype=float)))
+
+    return points, quat_wxyz
 
 
 def _default_ur5e_config_paths():
@@ -175,7 +286,7 @@ def _apply_test_transforms(points: List[np.ndarray]) -> List[np.ndarray]:
     center = np.mean(pts, axis=0)
     pts = center + PATH_SCALE * (pts - center)
     pts[:, 2] += Z_OFFSET
-    return [p for p in pts]
+    return _sanitize_points_for_reachability([p for p in pts])
 
 
 def _resolve_robot_prim_path(preferred_path: str) -> str:
@@ -200,6 +311,28 @@ def _resolve_robot_prim_path(preferred_path: str) -> str:
     )
 
 
+def _action_to_joint_positions(action, num_dof: int, base_positions: np.ndarray):
+    target = np.array(base_positions, dtype=float).copy()
+    if target.size != num_dof:
+        target = np.zeros(num_dof, dtype=float)
+
+    joint_positions = getattr(action, "joint_positions", None)
+    if joint_positions is None:
+        return target, False
+
+    pos = np.array(joint_positions, dtype=float).reshape(-1)
+    joint_indices = getattr(action, "joint_indices", None)
+    if joint_indices is None or len(joint_indices) == 0:
+        n = min(num_dof, pos.size)
+        target[:n] = pos[:n]
+        return target, True
+
+    idx = np.array(joint_indices, dtype=int).reshape(-1)
+    n = min(idx.size, pos.size)
+    target[idx[:n]] = pos[:n]
+    return target, True
+
+
 async def run_once():
     robot_description_path, urdf_path = _default_ur5e_config_paths()
 
@@ -212,26 +345,48 @@ async def run_once():
     articulation = Articulation(resolved_path)
     articulation.initialize()
 
+    # Compatibility shim: some ArticulationTrajectory versions expect this flag.
+    if not hasattr(articulation, "handles_initialized"):
+        try:
+            setattr(articulation, "handles_initialized", True)
+        except Exception:
+            pass
+
     if articulation.num_dof <= 0:
         raise RuntimeError(f"Articulation at {resolved_path} has zero DoF or failed initialize.")
 
     if USE_SANITY_FIXED_POINTS and USE_CURRENT_EE_SANITY:
-        joint_positions = np.array(articulation.get_joint_positions(), dtype=float)
-        points, current_quat = _current_ee_sanity_points_and_orientation(
-            robot_description_path,
-            urdf_path,
-            END_EFFECTOR_FRAME,
-            joint_positions,
-        )
+        try:
+            joint_positions = _as_joint_vector(articulation.get_joint_positions())
+            points, current_quat_wxyz = _current_ee_sanity_points_and_orientation(
+                robot_description_path,
+                urdf_path,
+                END_EFFECTOR_FRAME,
+                joint_positions,
+            )
+        except Exception as exc:
+            print(f"[sand_drawer][in-app] FK sanity mode failed, fallback to fixed points: {exc}")
+            points = _sanitize_points_for_reachability([p.copy() for p in SANITY_POINTS])
+            current_quat_wxyz = np.array([0.0, 1.0, 0.0, 0.0], dtype=float)
     elif USE_SANITY_FIXED_POINTS:
-        points = [p.copy() for p in SANITY_POINTS]
-        current_quat = np.array([0.0, 1.0, 0.0, 0.0], dtype=float)
+        points = _sanitize_points_for_reachability([p.copy() for p in SANITY_POINTS])
+        current_quat_wxyz = np.array([0.0, 1.0, 0.0, 0.0], dtype=float)
+    elif DRAW_LINE_ON_DEFINED_PLANE:
+        if not os.path.exists(PLANE_JSON_PATH):
+            raise RuntimeError(f"Plane JSON not found: {PLANE_JSON_PATH}")
+        points, current_quat_wxyz = _load_line_on_plane(PLANE_JSON_PATH)
+        print(
+            "[sand_drawer][in-app] Line mode on plane: "
+            f"p0={np.array(points[0]).tolist()}, p1={np.array(points[1]).tolist()}"
+        )
     else:
         if not os.path.exists(PLANE_JSON_PATH):
             raise RuntimeError(f"Plane JSON not found: {PLANE_JSON_PATH}")
         points = _load_plane_points(PLANE_JSON_PATH)
         points = _apply_test_transforms(points)
-        current_quat = np.array([0.0, 1.0, 0.0, 0.0], dtype=float)
+        current_quat_wxyz = np.array([0.0, 1.0, 0.0, 0.0], dtype=float)
+
+    orientation_candidates = _orientation_candidates(current_quat_wxyz)
 
     generator = LulaTaskSpaceTrajectoryGenerator(
         robot_description_path=robot_description_path,
@@ -240,12 +395,40 @@ async def run_once():
 
     if USE_SIMPLE_LINEAR_TEST:
         test_points = points[:max(2, min(MAX_TEST_POINTS, len(points)))]
-        orientations = np.tile(current_quat, (len(test_points), 1))
-        trajectory = generator.compute_task_space_trajectory_from_points(
-            np.array(test_points),
-            orientations,
-            END_EFFECTOR_FRAME,
-        )
+        trajectory = None
+        feasible_points = test_points
+        used_quat = None
+        for q_candidate in orientation_candidates:
+            feasible_points = test_points
+            while len(feasible_points) >= 2 and trajectory is None:
+                orientations = np.tile(q_candidate, (len(feasible_points), 1))
+                trajectory = generator.compute_task_space_trajectory_from_points(
+                    np.array(feasible_points),
+                    orientations,
+                    END_EFFECTOR_FRAME,
+                )
+                if trajectory is not None:
+                    used_quat = q_candidate
+                    break
+                if len(feasible_points) > 2:
+                    feasible_points = feasible_points[:-1]
+                else:
+                    break
+            if trajectory is not None:
+                break
+
+        if trajectory is None:
+            raise RuntimeError(
+                "Lula could not find a trajectory even for 2-point test across orientation candidates. "
+                f"First target point: {np.array(test_points[0]).tolist()}"
+            )
+
+        if len(feasible_points) < len(test_points):
+            print(
+                f"[sand_drawer][in-app] Reduced path from {len(test_points)} to {len(feasible_points)} points to get a feasible trajectory."
+            )
+        if used_quat is not None:
+            print(f"[sand_drawer][in-app] Using orientation wxyz: {used_quat.tolist()}")
     else:
         path_spec = _build_complicated_path_spec(points)
         trajectory = generator.compute_task_space_trajectory_from_path_spec(path_spec, END_EFFECTOR_FRAME)
@@ -259,15 +442,29 @@ async def run_once():
         raise RuntimeError("Generated trajectory has no articulation actions.")
 
     # Teleport to first pose for clean start
-    initial_positions = np.zeros(articulation.num_dof)
-    initial_positions[actions[0].joint_indices] = actions[0].joint_positions
+    initial_positions, _ = _action_to_joint_positions(
+        actions[0], articulation.num_dof, np.zeros(articulation.num_dof)
+    )
     articulation.set_joint_positions(initial_positions)
     articulation.set_joint_velocities(np.zeros_like(initial_positions))
 
     app = omni.kit.app.get_app()
+    current_positions = initial_positions.copy()
     for action in actions:
-        articulation.apply_action(action)
-        await app.next_update_async()
+        try:
+            articulation.apply_action(action)
+        except Exception as exc:
+            if "joint_names" not in str(exc):
+                raise
+            current_positions, ok = _action_to_joint_positions(action, articulation.num_dof, current_positions)
+            if not ok:
+                raise RuntimeError(f"Action conversion failed for compatibility fallback: {exc}")
+            articulation.set_joint_positions(current_positions)
+            articulation.set_joint_velocities(np.zeros_like(current_positions))
+        if hasattr(app, "next_update_async"):
+            await app.next_update_async()
+        else:
+            app.update()
 
     print(f"[sand_drawer][in-app] Success. Applied {len(actions)} actions on {resolved_path}.")
 
