@@ -11,12 +11,18 @@ from ament_index_python.packages import get_package_share_directory
 def generate_launch_description():
     pkg_share = get_package_share_directory("sand_drawer")
     urdf_file = os.path.join(pkg_share, "urdf", "ur5e.urdf.xacro")
+    workspace_root = pkg_share.split("/install/sand_drawer/share/sand_drawer")[0] if "/install/sand_drawer/share/sand_drawer" in pkg_share else ""
+    default_output_file = (
+        os.path.join(workspace_root, "src", "sand_drawer", "generated_planes", "sand_drawer_plane.json")
+        if workspace_root
+        else "/tmp/sand_drawer_plane.json"
+    )
 
     use_sim_time = LaunchConfiguration("use_sim_time", default="true")
     point_topic = LaunchConfiguration("point_topic", default="/red_ball/ground_truth")
     source_frame = LaunchConfiguration("source_frame", default="world")
     target_frame = LaunchConfiguration("target_frame", default="base_link")
-    output_file = LaunchConfiguration("output_file", default="/tmp/sand_drawer_plane.json")
+    output_file = LaunchConfiguration("output_file", default=default_output_file)
 
     robot_description = Command(["xacro ", urdf_file])
 
@@ -25,7 +31,7 @@ def generate_launch_description():
         DeclareLaunchArgument("point_topic", default_value="/red_ball/ground_truth"),
         DeclareLaunchArgument("source_frame", default_value="world"),
         DeclareLaunchArgument("target_frame", default_value="base_link"),
-        DeclareLaunchArgument("output_file", default_value="/tmp/sand_drawer_plane.json"),
+        DeclareLaunchArgument("output_file", default_value=default_output_file),
 
         Node(
             package="robot_state_publisher",

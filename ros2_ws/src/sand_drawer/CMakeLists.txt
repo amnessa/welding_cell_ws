@@ -12,6 +12,7 @@ find_package(rclcpp REQUIRED)
 find_package(rclpy REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(moveit_ros_planning REQUIRED)
@@ -42,10 +43,18 @@ ament_target_dependencies(sand_drawer_jacobian_node
 )
 target_link_libraries(sand_drawer_jacobian_node Eigen3::Eigen)
 
+# Lula Position Control Node - ROS2 C++ trigger wrapper for Isaac Lula script
+add_executable(lula_position_control_node src/lula_position_control.cpp)
+ament_target_dependencies(lula_position_control_node
+  rclcpp
+  std_srvs
+)
+
 # Install C++ executables
 install(TARGETS
   sand_drawer_velocity_controller_node
   sand_drawer_jacobian_node
+  lula_position_control_node
   DESTINATION lib/${PROJECT_NAME}
 )
 

@@ -8,6 +8,12 @@ from typing import List
 import numpy as np
 
 
+def _default_plane_json_path() -> str:
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    package_root = os.path.dirname(script_dir)
+    return os.path.join(package_root, "generated_planes", "sand_drawer_plane.json")
+
+
 def _load_plane_points(plane_json_path: str) -> List[np.ndarray]:
     with open(plane_json_path, "r", encoding="utf-8") as handle:
         payload = json.load(handle)
@@ -123,46 +129,55 @@ def main():
     parser = argparse.ArgumentParser(
         description="Generate complicated Lula task-space trajectories from sand_drawer plane output."
     )
-    parser.add_argument("--plane-json", default="/tmp/sand_drawer_plane.json")
+    parser.add_argument("--plane-json", default=_default_plane_json_path())
     parser.add_argument("--end-effector-frame", default="tool0")
     parser.add_argument("--robot-description", default="")
     parser.add_argument("--urdf", default="")
     parser.add_argument("--robot-prim-path", default="")
     parser.add_argument("--physics-dt", type=float, default=1.0 / 60.0)
+    parser.add_argument("--headless", action="store_true")
     parser.add_argument("--execute", action="store_true")
     args = parser.parse_args()
 
-    if not args.robot_description or not args.urdf:
-        robot_description_path, urdf_path = _default_ur5e_config_paths()
-    else:
-        robot_description_path, urdf_path = args.robot_description, args.urdf
+    # IMPORTANT: SimulationApp must be created before importing isaacsim.core/robot_motion modules.
+    from isaacsim import SimulationApp
 
-    trajectory = generate_complicated_trajectory(
-        plane_json_path=args.plane_json,
-        end_effector_frame=args.end_effector_frame,
-        robot_description_path=robot_description_path,
-        urdf_path=urdf_path,
-    )
+    simulation_app = SimulationApp({"headless": args.headless})
 
-    if trajectory is None:
-        print("[sand_drawer] No trajectory could be computed from the given path spec.")
-        return
+    try:
+        if not args.robot_description or not args.urdf:
+            robot_description_path, urdf_path = _default_ur5e_config_paths()
+        else:
+            robot_description_path, urdf_path = args.robot_description, args.urdf
 
-    print("[sand_drawer] Lula complicated trajectory generated successfully.")
-    print(f"[sand_drawer] robot_description: {robot_description_path}")
-    print(f"[sand_drawer] urdf: {urdf_path}")
-
-    if args.execute:
-        if not args.robot_prim_path:
-            raise RuntimeError("--execute requires --robot-prim-path")
-
-        articulation, actions = maybe_execute_on_articulation(
-            trajectory=trajectory,
-            robot_prim_path=args.robot_prim_path,
-            physics_dt=args.physics_dt,
+        trajectory = generate_complicated_trajectory(
+            plane_json_path=args.plane_json,
+            end_effector_frame=args.end_effector_frame,
+            robot_description_path=robot_description_path,
+            urdf_path=urdf_path,
         )
-        print(f"[sand_drawer] Generated {len(actions)} articulation actions for {args.robot_prim_path}.")
-        print("[sand_drawer] Apply actions in your simulation update loop.")
+
+        if trajectory is None:
+            print("[sand_drawer] No trajectory could be computed from the given path spec.")
+            return
+
+        print("[sand_drawer] Lula complicated trajectory generated successfully.")
+        print(f"[sand_drawer] robot_description: {robot_description_path}")
+        print(f"[sand_drawer] urdf: {urdf_path}")
+
+        if args.execute:
+            if not args.robot_prim_path:
+                raise RuntimeError("--execute requires --robot-prim-path")
+
+            articulation, actions = maybe_execute_on_articulation(
+                trajectory=trajectory,
+                robot_prim_path=args.robot_prim_path,
+                physics_dt=args.physics_dt,
+            )
+            print(f"[sand_drawer] Generated {len(actions)} articulation actions for {args.robot_prim_path}.")
+            print("[sand_drawer] Apply actions in your simulation update loop.")
+    finally:
+        simulation_app.close()
 
 
 if __name__ == "__main__":

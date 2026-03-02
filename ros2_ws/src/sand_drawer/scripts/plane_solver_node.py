@@ -15,6 +15,21 @@ import tf2_ros
 from tf2_geometry_msgs import do_transform_point
 
 
+def _default_output_file() -> str:
+    # Prefer the source package path so other scripts can read a shared file.
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    package_root = os.path.dirname(script_dir)
+
+    if "/install/sand_drawer/lib/sand_drawer" in script_dir:
+        workspace_root = script_dir.split("/install/sand_drawer/lib/sand_drawer")[0]
+        source_package_root = os.path.join(workspace_root, "src", "sand_drawer")
+        output_root = source_package_root
+    else:
+        output_root = package_root
+
+    return os.path.join(output_root, "generated_planes", "sand_drawer_plane.json")
+
+
 @dataclass
 class PlaneResult:
     normal: np.ndarray
@@ -32,7 +47,7 @@ class PlaneSolverNode(Node):
         self.input_point_topic = self.declare_parameter("input_point_topic", "/red_ball/ground_truth").value
         self.source_frame = self.declare_parameter("source_frame", "world").value
         self.target_frame = self.declare_parameter("target_frame", "base_link").value
-        self.output_file = self.declare_parameter("output_file", "/tmp/sand_drawer_plane.json").value
+        self.output_file = self.declare_parameter("output_file", _default_output_file()).value
         self.square_scale = float(self.declare_parameter("square_scale", 0.8).value)
         self.auto_solve_on_fourth = bool(self.declare_parameter("auto_solve_on_fourth", True).value)
         self.use_manual_points = bool(self.declare_parameter("use_manual_points", True).value)
