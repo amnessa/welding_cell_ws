@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import sys
 from typing import List
 
 import numpy as np
@@ -125,6 +126,16 @@ def maybe_execute_on_articulation(trajectory, robot_prim_path: str, physics_dt: 
     return articulation, actions
 
 
+def play_action_sequence(simulation_app, articulation, actions):
+    if not actions:
+        return 0
+
+    for action in actions:
+        articulation.apply_action(action)
+        simulation_app.update()
+    return len(actions)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Generate complicated Lula task-space trajectories from sand_drawer plane output."
@@ -134,6 +145,7 @@ def main():
     parser.add_argument("--robot-description", default="")
     parser.add_argument("--urdf", default="")
     parser.add_argument("--robot-prim-path", default="")
+    parser.add_argument("--usd-stage", default="")
     parser.add_argument("--physics-dt", type=float, default=1.0 / 60.0)
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--execute", action="store_true")
@@ -145,6 +157,14 @@ def main():
     simulation_app = SimulationApp({"headless": args.headless})
 
     try:
+        if args.usd_stage:
+            from isaacsim.core.utils.stage import open_stage
+
+            if not open_stage(args.usd_stage):
+                print(f"[sand_drawer] Failed to open USD stage: {args.usd_stage}")
+                raise SystemExit(3)
+            simulation_app.update()
+
         if not args.robot_description or not args.urdf:
             robot_description_path, urdf_path = _default_ur5e_config_paths()
         else:
@@ -159,7 +179,7 @@ def main():
 
         if trajectory is None:
             print("[sand_drawer] No trajectory could be computed from the given path spec.")
-            return
+            raise SystemExit(2)
 
         print("[sand_drawer] Lula complicated trajectory generated successfully.")
         print(f"[sand_drawer] robot_description: {robot_description_path}")
@@ -174,8 +194,16 @@ def main():
                 robot_prim_path=args.robot_prim_path,
                 physics_dt=args.physics_dt,
             )
+            if articulation.num_dof <= 0:
+                print(
+                    "[sand_drawer] Robot articulation not found/initialized at "
+                    f"{args.robot_prim_path}. This script runs in its own Isaac process."
+                )
+                raise SystemExit(4)
+
             print(f"[sand_drawer] Generated {len(actions)} articulation actions for {args.robot_prim_path}.")
-            print("[sand_drawer] Apply actions in your simulation update loop.")
+            applied = play_action_sequence(simulation_app, articulation, actions)
+            print(f"[sand_drawer] Applied {applied} actions in this process.")
     finally:
         simulation_app.close()
 

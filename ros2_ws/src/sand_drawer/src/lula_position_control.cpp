@@ -6,6 +6,7 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <vector>
 
 class LulaPositionControlNode : public rclcpp::Node
 {
@@ -25,6 +26,8 @@ public:
     isaac_python_cmd_ = this->declare_parameter<std::string>("isaac_python_cmd", "isaac-python");
     execute_ = this->declare_parameter<bool>("execute", true);
     headless_ = this->declare_parameter<bool>("headless", true);
+    verbose_subprocess_output_ = this->declare_parameter<bool>("verbose_subprocess_output", false);
+    subprocess_tail_lines_ = this->declare_parameter<int>("subprocess_tail_lines", 30);
 
     trigger_service_ = this->create_service<std_srvs::srv::Trigger>(
       "~/generate_trajectory",
@@ -69,6 +72,36 @@ private:
     return rc;
   }
 
+  static bool contains(const std::string & text, const std::string & token)
+  {
+    return text.find(token) != std::string::npos;
+  }
+
+  std::string tail_lines(const std::string & text, int lines) const
+  {
+    if (lines <= 0) {
+      return text;
+    }
+
+    std::vector<size_t> newline_positions;
+    newline_positions.reserve(256);
+    for (size_t i = 0; i < text.size(); ++i) {
+      if (text[i] == '\n') {
+        newline_positions.push_back(i);
+      }
+    }
+
+    if (static_cast<int>(newline_positions.size()) < lines) {
+      return text;
+    }
+
+    size_t start = newline_positions[newline_positions.size() - static_cast<size_t>(lines)] + 1;
+    if (start >= text.size()) {
+      return text;
+    }
+    return text.substr(start);
+  }
+
   void handle_generate_trajectory(
     const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
     std::shared_ptr<std_srvs::srv::Trigger::Response> response)
@@ -99,15 +132,23 @@ private:
 
     std::string output;
     const int rc = run_command_capture(cmd.str(), output);
+    const bool logical_error =
+      contains(output, "No trajectory could be computed") ||
+      contains(output, "Error:") ||
+      contains(output, "Traceback") ||
+      contains(output, "Robot articulation not found/initialized");
 
-    if (rc == 0) {
+    const std::string summarized_output =
+      verbose_subprocess_output_ ? output : tail_lines(output, subprocess_tail_lines_);
+
+    if (rc == 0 && !logical_error) {
       response->success = true;
-      response->message = "Trajectory generation succeeded.\n" + output;
+      response->message = "Trajectory generation succeeded.\n" + summarized_output;
       RCLCPP_INFO(this->get_logger(), "Lula trajectory generation succeeded.");
     } else {
       response->success = false;
       response->message =
-        "Trajectory generation failed (exit code: " + std::to_string(rc) + ").\n" + output;
+        "Trajectory generation failed (exit code: " + std::to_string(rc) + ").\n" + summarized_output;
       RCLCPP_ERROR(this->get_logger(), "%s", response->message.c_str());
     }
   }
@@ -119,6 +160,8 @@ private:
   std::string isaac_python_cmd_;
   bool execute_{true};
   bool headless_{true};
+  bool verbose_subprocess_output_{false};
+  int subprocess_tail_lines_{30};
 
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr trigger_service_;
 };
