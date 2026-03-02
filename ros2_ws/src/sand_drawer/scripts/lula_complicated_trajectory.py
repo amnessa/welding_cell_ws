@@ -37,7 +37,11 @@ def _default_ur5e_config_paths():
     rmp_config_dir = os.path.join(mg_extension_path, "motion_policy_configs", "universal_robots", "ur5e")
 
     robot_description_path = os.path.join(rmp_config_dir, "rmpflow", "ur5e_robot_description.yaml")
-    urdf_path = os.path.join(rmp_config_dir, "ur5e_robot.urdf")
+
+    # Isaac 5.1 ships ur5e.urdf in this folder. Keep fallback for compatibility.
+    urdf_path = os.path.join(rmp_config_dir, "ur5e.urdf")
+    if not os.path.exists(urdf_path):
+        urdf_path = os.path.join(rmp_config_dir, "ur5e_robot.urdf")
 
     return robot_description_path, urdf_path
 

@@ -14,8 +14,8 @@
                 double radius = 500
             }
             dictionary Perspective = {
-                double3 position = (0.05452750488325108, 1.8387214768108358, 0.678528833398563)
-                double3 target = (0.08694090032740465, -0.8696128940817505, -1.55654635366415)
+                double3 position = (0.1975084475081674, 1.840432675355627, 0.678528833398563)
+                double3 target = (0.22992184295232115, -0.8679016955369592, -1.5565463536641508)
             }
             dictionary Right = {
                 double3 position = (0, -1688400, -3.7490011095542286e-10)
@@ -2258,87 +2258,14 @@ def Xform "Root" (
                     doc = "Name override for prim lookup in base name search"
                 )
 
-                def Xform "rsd455" (
-                    prepend apiSchemas = ["PhysicsArticulationRootAPI", "PhysxArticulationAPI"]
-                    prepend references = @https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.1/Isaac/Sensors/Intel/RealSense/rsd455.usd@
+                def "rsd455" (
+                    active = false
                 )
                 {
-                    bool physxArticulation:articulationEnabled = 0
-                    quatf xformOp:orient = (0.5, 0.5, 0.5, -0.5)
-                    float3 xformOp:scale = (1, 1, 1)
-                    double3 xformOp:translate = (0, 0, 0.025)
-                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
-
-                    over "RSD455"
+                    def "RSD455"
                     {
-                        bool physics:rigidBodyEnabled = 0
-                        quatd xformOp:orient = (1, 0, 0, 0)
-
-                        over "Visual"
+                        def Camera "Camera_OmniVision_OV9782_Color"
                         {
-                            over "Case_front" (
-                                prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI", "PhysxConvexHullCollisionAPI", "PhysicsMeshCollisionAPI"]
-                            )
-                            {
-                                uniform token physics:approximation = "convexHull"
-                                bool physics:collisionEnabled = 1
-                            }
-
-                            over "Glass" (
-                                prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI", "PhysxConvexHullCollisionAPI", "PhysicsMeshCollisionAPI"]
-                            )
-                            {
-                                uniform token physics:approximation = "convexHull"
-                                bool physics:collisionEnabled = 1
-                            }
-
-                            over "Case_back" (
-                                prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI", "PhysxConvexHullCollisionAPI", "PhysicsMeshCollisionAPI"]
-                            )
-                            {
-                                uniform token physics:approximation = "convexHull"
-                                bool physics:collisionEnabled = 1
-                            }
-
-                            over "USB_C" (
-                                prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI", "PhysxConvexHullCollisionAPI", "PhysicsMeshCollisionAPI"]
-                            )
-                            {
-                                uniform token physics:approximation = "convexHull"
-                                bool physics:collisionEnabled = 1
-                            }
-
-                            over "Mount" (
-                                prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI", "PhysxConvexHullCollisionAPI", "PhysicsMeshCollisionAPI"]
-                            )
-                            {
-                                uniform token physics:approximation = "convexHull"
-                                bool physics:collisionEnabled = 1
-                            }
-
-                            over "Camera_module" (
-                                prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI", "PhysxConvexHullCollisionAPI", "PhysicsMeshCollisionAPI"]
-                            )
-                            {
-                                uniform token physics:approximation = "convexHull"
-                                bool physics:collisionEnabled = 1
-                            }
-
-                            over "Front_mask" (
-                                prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI", "PhysxConvexHullCollisionAPI", "PhysicsMeshCollisionAPI"]
-                            )
-                            {
-                                uniform token physics:approximation = "convexHull"
-                                bool physics:collisionEnabled = 1
-                            }
-
-                            over "camera_mask" (
-                                prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI", "PhysxConvexHullCollisionAPI", "PhysicsMeshCollisionAPI"]
-                            )
-                            {
-                                uniform token physics:approximation = "convexHull"
-                                bool physics:collisionEnabled = 1
-                            }
                         }
                     }
                 }
@@ -2642,173 +2569,6 @@ def Xform "Root" (
             custom string inputs:topicName
             token node:type = "isaacsim.ros2.bridge.ROS2PublishClock"
             int node:typeVersion = 1
-        }
-    }
-
-    def OmniGraph "rgbd_sensor"
-    {
-        token evaluationMode = "Automatic"
-        token evaluator:type = "execution"
-        token fabricCacheBacking = "StageWithoutHistory"
-        int2 fileFormatVersion = (1, 9)
-        token pipelineStage = "pipelineStageSimulation"
-
-        def OmniGraphNode "on_playback_tick" (
-            prepend apiSchemas = ["NodeGraphNodeAPI"]
-        )
-        {
-            token node:type = "omni.graph.action.OnPlaybackTick"
-            int node:typeVersion = 2
-            custom double outputs:deltaSeconds
-            custom double outputs:frame
-            custom uint outputs:tick (
-                customData = {
-                    bool isExecution = 1
-                }
-            )
-            custom double outputs:time
-            uniform token ui:nodegraph:node:expansionState = "open"
-            uniform float2 ui:nodegraph:node:pos = (-727.7127, 204.37848)
-        }
-
-        def OmniGraphNode "ros2_context" (
-            prepend apiSchemas = ["NodeGraphNodeAPI"]
-        )
-        {
-            custom uchar inputs:domain_id
-            custom bool inputs:useDomainIDEnvVar
-            token node:type = "isaacsim.ros2.bridge.ROS2Context"
-            int node:typeVersion = 2
-            custom uint64 outputs:context
-            uniform token ui:nodegraph:node:expansionState = "open"
-            uniform float2 ui:nodegraph:node:pos = (-255.32425, 30.219978)
-        }
-
-        def OmniGraphNode "ros2_camera_helper" (
-            prepend apiSchemas = ["NodeGraphNodeAPI"]
-        )
-        {
-            custom uint64 inputs:context
-            prepend uint64 inputs:context.connect = </Root/rgbd_sensor/ros2_context.outputs:context>
-            custom bool inputs:enabled
-            custom bool inputs:enableSemanticLabels
-            custom uint inputs:execIn (
-                customData = {
-                    bool isExecution = 1
-                }
-            )
-            prepend uint inputs:execIn.connect = </Root/rgbd_sensor/isaac_create_render_product.outputs:execOut>
-            custom string inputs:frameId
-            custom uint inputs:frameSkipCount
-            custom string inputs:nodeNamespace
-            custom string inputs:qosProfile
-            custom uint64 inputs:queueSize
-            custom token inputs:renderProductPath
-            prepend token inputs:renderProductPath.connect = </Root/rgbd_sensor/isaac_create_render_product.outputs:renderProductPath>
-            custom bool inputs:resetSimulationTimeOnStop
-            custom string inputs:semanticLabelsTopicName
-            custom float2 inputs:stereoOffset
-            custom string inputs:topicName = "d455/color/image_raw"
-            custom token inputs:type (
-                allowedTokens = ["rgb", "depth", "depth_pcl", "instance_segmentation", "semantic_segmentation", "bbox_2d_tight", "bbox_2d_loose", "bbox_3d"]
-            )
-            custom bool inputs:useSystemTime
-            custom token inputs:viewport
-            token node:type = "isaacsim.ros2.bridge.ROS2CameraHelper"
-            int node:typeVersion = 2
-            uniform token ui:nodegraph:node:expansionState = "open"
-            uniform float2 ui:nodegraph:node:pos = (44.51866, 98.48883)
-        }
-
-        def OmniGraphNode "isaac_create_render_product" (
-            prepend apiSchemas = ["NodeGraphNodeAPI"]
-        )
-        {
-            custom rel inputs:cameraPrim = </Root/Robot_Mount_Point/ur5e/wrist_3_link/rsd455/RSD455/Camera_OmniVision_OV9782_Color> (
-                customData = {
-                    dictionary omni = {
-                        dictionary graph = {
-                            string relType = "target"
-                        }
-                    }
-                }
-            )
-            custom bool inputs:enabled
-            custom uint inputs:execIn (
-                customData = {
-                    bool isExecution = 1
-                }
-            )
-            prepend uint inputs:execIn.connect = </Root/rgbd_sensor/isaac_run_one_simulation_frame.outputs:step>
-            custom uint inputs:height
-            custom uint inputs:width
-            token node:type = "isaacsim.core.nodes.IsaacCreateRenderProduct"
-            int node:typeVersion = 2
-            custom uint outputs:execOut (
-                customData = {
-                    bool isExecution = 1
-                }
-            )
-            custom token outputs:renderProductPath
-            uniform token ui:nodegraph:node:expansionState = "open"
-            uniform float2 ui:nodegraph:node:pos = (-264.77585, 211.17422)
-        }
-
-        def OmniGraphNode "isaac_run_one_simulation_frame" (
-            prepend apiSchemas = ["NodeGraphNodeAPI"]
-        )
-        {
-            custom uint inputs:execIn (
-                customData = {
-                    bool isExecution = 1
-                }
-            )
-            prepend uint inputs:execIn.connect = </Root/rgbd_sensor/on_playback_tick.outputs:tick>
-            token node:type = "isaacsim.core.nodes.OgnIsaacRunOneSimulationFrame"
-            int node:typeVersion = 1
-            custom uint outputs:step (
-                customData = {
-                    bool isExecution = 1
-                }
-            )
-            uniform token ui:nodegraph:node:expansionState = "open"
-            uniform float2 ui:nodegraph:node:pos = (-512.01917, 228.54283)
-        }
-
-        def OmniGraphNode "ros2_camera_helper_01" (
-            prepend apiSchemas = ["NodeGraphNodeAPI"]
-        )
-        {
-            custom uint64 inputs:context
-            prepend uint64 inputs:context.connect = </Root/rgbd_sensor/ros2_context.outputs:context>
-            custom bool inputs:enabled
-            custom bool inputs:enableSemanticLabels
-            custom uint inputs:execIn (
-                customData = {
-                    bool isExecution = 1
-                }
-            )
-            prepend uint inputs:execIn.connect = </Root/rgbd_sensor/isaac_create_render_product.outputs:execOut>
-            custom string inputs:frameId
-            custom uint inputs:frameSkipCount
-            custom string inputs:nodeNamespace
-            custom string inputs:qosProfile
-            custom uint64 inputs:queueSize
-            custom token inputs:renderProductPath
-            prepend token inputs:renderProductPath.connect = </Root/rgbd_sensor/isaac_create_render_product.outputs:renderProductPath>
-            custom bool inputs:resetSimulationTimeOnStop
-            custom string inputs:semanticLabelsTopicName
-            custom float2 inputs:stereoOffset
-            custom string inputs:topicName = "d455/depth/image_raw"
-            custom token inputs:type = "depth" (
-                allowedTokens = ["rgb", "depth", "depth_pcl", "instance_segmentation", "semantic_segmentation", "bbox_2d_tight", "bbox_2d_loose", "bbox_3d"]
-            )
-            custom bool inputs:useSystemTime
-            custom token inputs:viewport
-            token node:type = "isaacsim.ros2.bridge.ROS2CameraHelper"
-            int node:typeVersion = 2
-            uniform token ui:nodegraph:node:expansionState = "open"
-            uniform float2 ui:nodegraph:node:pos = (82.26232, -320.37012)
         }
     }
 
@@ -3179,6 +2939,26 @@ def "Render" (
                 custom bool overrideClipRange = 0
                 uniform int2 resolution = (1280, 720)
             }
+
+            def RenderProduct "Replicator_06" (
+                prepend apiSchemas = ["OmniRtxSettingsCommonAdvancedAPI_1", "OmniRtxSettingsRtAdvancedAPI_1", "OmniRtxSettingsPtAdvancedAPI_1", "OmniRtxPostColorGradingAPI_1", "OmniRtxPostChromaticAberrationAPI_1", "OmniRtxPostBloomPhysicalAPI_1", "OmniRtxPostMatteObjectAPI_1", "OmniRtxPostCompositingAPI_1", "OmniRtxPostDofAPI_1", "OmniRtxPostMotionBlurAPI_1", "OmniRtxPostTvNoiseAPI_1", "OmniRtxPostTonemapIrayReinhardAPI_1", "OmniRtxPostDebugSettingsAPI_1", "OmniRtxDebugSettingsAPI_1"]
+                hide_in_stage_window = true
+                no_delete = true
+            )
+            {
+                rel camera = </Root/Robot_Mount_Point/ur5e/wrist_3_link/rsd455/RSD455/Camera_OmniVision_OV9782_Color>
+                custom string ogPostProcessPath = "/Render/OmniverseKit/HydraTextures/Replicator_06/PostRender"
+                bool omni:rtx:material:db:syncLoads = 1
+                bool omni:rtx:rt:ecoMode:enabled
+                bool omni:rtx:scene:hydra:materialSyncLoads = 1
+                rel orderedVars = [
+                    </Render/Vars/LdrColorSD>,
+                    </Render/Vars/DistanceToImagePlaneSD>,
+                    </Render/Vars/LdrColor>,
+                ]
+                custom bool overrideClipRange = 0
+                uniform int2 resolution = (1280, 720)
+            }
         }
     }
 
@@ -3195,6 +2975,7 @@ def "Render" (
             </Render/OmniverseKit/HydraTextures/Replicator_03>,
             </Render/OmniverseKit/HydraTextures/Replicator_04>,
             </Render/OmniverseKit/HydraTextures/Replicator_05>,
+            </Render/OmniverseKit/HydraTextures/Replicator_06>,
         ]
     }
 

@@ -64,6 +64,7 @@ install(TARGETS
 install(PROGRAMS
   scripts/plane_solver_node.py
   scripts/lula_complicated_trajectory.py
+  scripts/lula_in_app_executor.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
