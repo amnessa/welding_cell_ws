@@ -1,101 +1,78 @@
-This is an exciting feature to build! If you are designing a GUI where a user can "paint" a shape and have the robot draw it on a physical plane, you are creating a classic **Task-Space Trajectory** pipeline.
+# Define the Plane Dynamically via the Transform Framework
 
-Based on Isaac Sim's documentation for the Lula Trajectory Generator, here is how your architecture should be designed, how the solver handles the points, and why you actually want the `LulaTaskSpaceTrajectoryGenerator`, not just the C-Space one.
+Instead of using a fixed static transform, you will leverage the dynamic coordinate frame broadcasted by the spherical marker (the ball) inside your simulation. Your simulation environment publishes the transform of this marker relative to the robot base, which establishes the origin, orientation, and spatial anchor of your target surface.
 
-### 1. The Right Tool: LulaTaskSpaceTrajectoryGenerator
+Based on your design, the plane is defined such that the End Effector moves exclusively along the X and Z axes of this marker's coordinate frame. Consequently, the Y axis of this frame serves as the normal vector (the perpendicular line) to the surface.
 
-Since your user is drawing in X-Y coordinates on a screen (which maps to XYZ on the physical plane in the robot's workspace), you are generating points in **Task Space** (the Cartesian world).
+To maintain your constraints during teleoperation:
 
-You should use the `LulaTaskSpaceTrajectoryGenerator`.
+    Orientation Locking (Perpendicularity): By aligning the Y axis of your wrist_3_link with the Y axis of the marker's coordinate frame, the wrist remains strictly perpendicular to the drawing surface. Since this geometric relationship is continuously managed by the Transform Framework, you do not need to recalculate the surface orientation mathematically inside your node. You simply command velocities of zero for angular motion and the Y-axis linear motion relative to this marker's frame.
 
-**How it works under the hood:**
+    Enforcing the Rectangular Boundaries: To ensure the robot never goes over the edge of the defined shape, you will implement a bounding box check inside your teleoperation node. Because the origin of the plane is tied to the marker, you can continuously look up the current X and Z coordinates of the End Effector relative to the marker's frame. If an incoming velocity command from your input device would push the X or Z position beyond your defined rectangular limits, your node must clamp that specific velocity component to zero before publishing the twist command to the MoveIt 2 Servoing node.
 
-1. **Input:** You feed it a list of `(X, Y, Z)` position targets and an orientation (e.g., "keep the pen pointing straight down").
-2. **Internal Conversion:** The Task-Space Generator secretly uses the **Lula Kinematics Solver** to convert those Cartesian points into Joint Angles (C-Space).
-3. **Smoothing:** It then passes those joint angles to the `LulaCSpaceTrajectoryGenerator` to fit a time-optimal, smooth spline through them.
+This approach shifts the heavy lifting to the Transform Framework and the operational space control, allowing you to focus just on sending constrained X and Z velocities.
 
-### 2. How Lula Handles Singularities and Sharp Turns
 
-You mentioned assuming Lula will avoid singularities or sharp changes. Here is what Lula *actually* does:
+# The Initial Approach (Motion Planning)
 
-* **Time-Optimality (Speed Control):** Lula fits a spline based on the maximum velocity, acceleration, and jerk limits defined in your robot's YAML file. If there is a sharp corner in your drawing, Lula will automatically slow the robot down to make the turn without violating those acceleration limits.
-* **Singularities & Unreachable Points:** If the user draws a point that is outside the robot's reach, or if the kinematics solver gets trapped near a singularity where joint velocities would explode, the generator will return `None`. It will **fail safely** rather than breaking the robot.
+Before you start servoing, the robot needs to move to the starting point on the plane and align itself. You can use the standard MoveIt 2 MoveGroupInterface (in C++ or Python) for this.
 
-### 3. The Implementation Pipeline (Python)
+You will request a target pose where:
 
-Here is the Python skeleton for how you connect your GUI output to the Lula solver in Isaac Sim.
+    Position: x = 0, y = 0, z = 0 in the drawing_plane frame.
 
-**Step A: Initialize the Generator**
-You need the same URDF and YAML files you used for the RRT setup.
+    Orientation: You need the Y-axis of wrist_3_link to align with the Z-axis (normal) of the drawing_plane. You can apply a static rotation quaternion to align the axes correctly when calculating the target pose in your planner node.
 
-```python
-from omni.isaac.motion_generation.lula import LulaTaskSpaceTrajectoryGenerator
-from omni.isaac.motion_generation import ArticulationTrajectory
+MoveIt will plan an obstacle-free trajectory to get the arm into this starting position.
+3. Phase Two: Planar Servoing (Teleoperation)
 
-# 1. Initialize the Generator
-task_generator = LulaTaskSpaceTrajectoryGenerator(
-    robot_description_path="path/to/your/ur5e_robot_description.yaml",
-    urdf_path="path/to/your/ur5e.urdf"
-)
+Once the robot is in position, you switch to MoveIt Servo.
 
-```
+MoveIt Servo accepts geometry_msgs/msg/TwistStamped messages. The brilliant part about MoveIt Servo is that you can specify the frame_id in the header of the twist message. It will automatically apply the Jacobian transformations relative to that specific frame.
 
-**Step B: Process the GUI Points**
-Assume your GUI gives you a list of 2D points: `[(x1, y1), (x2, y2), ...]`.
+To constrain the movement strictly to your plane and lock the orientation, you simply publish your teleoperation commands with respect to the drawing_plane frame, intentionally zeroing out the restricted axes:
+Python
 
-```python
-import numpy as np
+from geometry_msgs.msg import TwistStamped
+import rclpy
+from rclpy.node import Node
 
-# Height of the drawing plane in the world (Z-axis)
-plane_z = 0.5
+class PlanarTeleoperationNode(Node):
+    def __init__(self):
+        super().__init__('planar_teleoperation_node')
+        # Publisher to MoveIt Servo's twist input topic
+        self.publisher_ = self.create_publisher(TwistStamped, '/servo_node/delta_twist_cmds', 10)
+        self.timer = self.create_timer(0.1, self.publish_twist)
 
-# Desired orientation (e.g., end-effector pointing straight down)
-# Usually represented as a quaternion [w, x, y, z] or rotation matrix
-pen_orientation = np.array([0, 1, 0, 0]) # Example: 180 deg around X-axis
+    def publish_twist(self):
+        msg = TwistStamped()
 
-target_positions = []
-target_orientations = []
+        # Crucial: Command the velocities relative to the custom plane frame
+        msg.header.frame_id = 'drawing_plane'
+        msg.header.stamp = self.get_clock().now().to_msg()
 
-for pt in gui_points:
-    # Map 2D screen coordinates to the 3D plane in the robot workspace
-    world_x = map_screen_to_world(pt.x)
-    world_y = map_screen_to_world(pt.y)
+        # Input from your keyboard/joystick goes here
+        input_velocity_x = 0.05  # Sliding along the plane
+        input_velocity_y = 0.02  # Sliding along the plane
 
-    target_positions.append(np.array([world_x, world_y, plane_z]))
-    target_orientations.append(pen_orientation) # Keep orientation constant
+        # Linear velocities
+        msg.twist.linear.x = input_velocity_x
+        msg.twist.linear.y = input_velocity_y
+        msg.twist.linear.z = 0.0  # LOCKED: No movement off the plane
 
-```
+        # Angular velocities
+        msg.twist.angular.x = 0.0 # LOCKED: Keep perpendicular
+        msg.twist.angular.y = 0.0 # LOCKED: Keep perpendicular
+        msg.twist.angular.z = 0.0 # Optional: Allow rotation around the plane normal, 0.0 locks it
 
-**Step C: Generate and Execute the Trajectory**
+        self.publisher_.publish(msg)
 
-```python
-# 2. Compute the Trajectory
-# You can use lula trajectory objects for complex paths, but linear interpolation
-# between close points is usually fine for "painting".
-trajectory = task_generator.compute_task_space_trajectory_from_points(
-    target_positions=target_positions,
-    target_orientations=target_orientations,
-    end_effector_frame_name="wrist_3_link" # or "tool0"
-)
+def main(args=None):
+    rclpy.init(args=args)
+    node = PlanarTeleoperationNode()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
 
-if trajectory is None:
-    print("Error: The drawing went out of bounds or passed near a singularity!")
-else:
-    # 3. Create the Articulation Controller
-    # Assuming 'robot_articulation' is your UR5e object from Isaac Sim
-    articulation_trajectory = ArticulationTrajectory(robot_articulation, trajectory)
-
-    # 4. In your physics loop, feed the actions to the robot
-    # action = articulation_trajectory.get_action_sequence(time_step)
-    # robot_articulation.apply_action(action)
-
-```
-
-### 4. A Critical Detail: The "Approach" Phase
-
-A trajectory only tells the robot what to do *once it starts*. You must use your **RRT Planner** to move the robot from its Home position to the *first point* of the drawing.
-
-1. **Lula RRT:** Move from `Home` $\to$ `target_positions[0]`.
-2. **Lula Task-Space Trajectory:** Draw the shape from `target_positions[0]` $\to$ `target_positions[-1]`.
-
-This combines both algorithms you've researched perfectly!
+if __name__ == '__main__':
+    main()

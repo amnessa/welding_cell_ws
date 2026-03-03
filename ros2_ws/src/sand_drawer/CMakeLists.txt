@@ -63,6 +63,8 @@ install(TARGETS
 # ============================================
 install(PROGRAMS
   scripts/plane_solver_node.py
+  scripts/plane_frame_broadcaster.py
+  scripts/planar_servo_controller.py
   scripts/lula_complicated_trajectory.py
   scripts/lula_in_app_executor.py
   DESTINATION lib/${PROJECT_NAME}
@@ -78,6 +80,7 @@ install(DIRECTORY
   urdf
   meshes
   world
+  generated_planes
   DESTINATION share/${PROJECT_NAME}
 )
 
