@@ -1,106 +1,151 @@
-Main ros2 folder is tiago_isaac_sim so we build all required packages like ur_config, cagopa_tiago_gazebo and others
+# Sand Drawer — UR5e Planar Servoing on Isaac Sim
 
-before running the ros2-humble docker use this for gui
+Draw shapes on a flat surface using a UR5e robot arm in Isaac Sim. The end-effector (`tool0`) is constrained to a previously-defined rectangular plane while a Jacobian-based IK engine handles singularity avoidance and manipulability optimization.
 
-xauth nlist $DISPLAY | sed -e 's/^..../ffff/' | xauth -f /tmp/.docker.xauth nmerge -
+## Project Structure
 
-source /opt/ros/humble/setup.bash && colcon build
-to build
+```
+sand_drawer/
+├── config/                  # Robot SRDF, kinematics, joint limits
+├── generated_planes/
+│   └── sand_drawer_plane.json   # Plane definition (from plane_solver_node)
+├── launch/
+│   └── sand_drawer.launch.py    # Main launch file
+├── meshes/ur5e/             # Collision & visual meshes
+├── scripts/
+│   ├── plane_solver_node.py         # Stage 0: capture 4 points → plane JSON
+│   ├── plane_frame_broadcaster.py   # Static TF: base_link → drawing_plane
+│   ├── planar_servo_controller.py   # Trajectory / teleop controller
+│   └── plane_teleop_keyboard.py     # Keyboard teleop for manual control
+├── src/
+│   └── jacobian_calculator_node.cpp # Twist → joint commands (Jacobian IK)
+├── urdf/                    # UR5e URDF/xacro
+└── world/                   # Isaac Sim USD scenes
+```
 
-also source ~/.bashrc
+## Data Flow
 
-ros-humble-rmw-cyclonedds-cpp or
-rmw_fastrtps_cpp package
-ros-humble-control-msgs
-sudo apt install ros-humble-moveit
-apt update && apt install ros-humble-joint-state-publisher-gui
-ros-humble-xacro
+```
+Isaac Sim ──/isaac_joint_states──► robot_state_publisher ──► TF tree
+                                   plane_frame_broadcaster ──► TF: base_link → drawing_plane
 
-apt update && apt install ros-humble-rmw-cyclonedds-cpp install ros-humble-rmw-fastrtps-cpp ros-humble-control-msgs ros-humble-moveit ros-humble-joint-state-publisher-gui ros-humble-xacro ros-humble-ros2-control ros-humble-ros2-controllers ros-humble-ur
+planar_servo_controller (reads JSON + TF + /teleop_plane_vel)
+    │  /end_effector_velocity (Twist)
+    ▼
+jacobian_calculator_node (damped pseudoinverse IK)
+    │  /isaac_joint_commands (JointState)
+    ▼
+Isaac Sim
+```
 
+## Prerequisites
 
-install everytime for docker
+- Isaac Sim 4.5+ running with the welding world scene
+- ROS 2 Jazzy (inside the dev container)
+- The following Isaac Sim topics must be active:
+  - `/isaac_joint_states` — `sensor_msgs/JointState`
+  - `/isaac_joint_commands` — `sensor_msgs/JointState`
+  - `/clock` — `rosgraph_msgs/Clock`
 
-Dont forget to source install/setup.bash after building
+## Home Position (Isaac Sim)
 
-https://docs.isaacsim.omniverse.nvidia.com/4.5.0/ros2_tutorials/tutorial_ros2_manipulation.html
+Set these joint angles in the Isaac Sim Articulation properties before pressing Play:
 
-# -isaac environment setup-
+| Joint               | Degrees | Radians  |
+|---------------------|---------|----------|
+| shoulder_pan_joint  |  -45    | -0.7854  |
+| shoulder_lift_joint |  -25    | -0.4363  |
+| elbow_joint         | -145    | -2.5307  |
+| wrist_1_joint       |  -10    | -0.1745  |
+| wrist_2_joint       |    0    |  0.0000  |
+| wrist_3_joint       |    0    |  0.0000  |
 
-## RedBall
+The servoing pipeline works regardless of starting position though these angles give a good manipulability configuration for the working plane.
 
-path /World/RedBall
+## Usage
 
-materials /World/Looks/OmniPBR
+Build:
+```bash
+cd ~/welding_cell_ws/ros2_ws
+source /opt/ros/jazzy/setup.bash
+colcon build --packages-select sand_drawer --symlink-install
+source install/setup.bash
+```
 
-rigid body enabled, kinematic enabled, collision enabled
+### Mode 1: Trajectory Following (default)
 
-scale 0.1
+Follows the `projected_vector_trajectory` waypoints from the plane JSON:
+```bash
+ros2 launch sand_drawer sand_drawer.launch.py
+```
 
-## Camera
+Loop the trajectory continuously:
+```bash
+ros2 launch sand_drawer sand_drawer.launch.py loop:=true
+```
 
-name : rsd455
+Use the wider square trajectory:
+```bash
+ros2 launch sand_drawer sand_drawer.launch.py trajectory_key:=square_trajectory
+```
 
-camera pseudo depth
+### Mode 2: Teleop (manual keyboard control)
 
-action graph here
+Launch the servoing pipeline in teleop mode — the EE moves to the center of the plane then waits for keyboard commands:
+```bash
+# Terminal 1 — launch the pipeline
+ros2 launch sand_drawer sand_drawer.launch.py mode:=teleop
 
-    on playback tick - no mods
-    isaac run one simulation frame - no mods
-    isaac create render product - inputs:cameraprim -> set to depth camera
-    ros2 context - no mods
-    ros2 camera helper - frameid -> depth, topic name -> rsd455_depth, type-> depth, use system time-> check
+# Terminal 2 — send keyboard commands
+ros2 run sand_drawer plane_teleop_keyboard.py
+```
 
-camera color
-    on playback tick - no mods
-    isaac run one simulation frame - no mods
-    isaac create render product - inputs:cameraprim -> set to color camera
-    ros2 context - no mods
-    ros2 camera helper - frameid -> rsd455, topic name -> rsd455_img, type-> rgb, use system time-> check
+Keyboard controls:
+```
+   W           ↑ move +Y (plane Y axis)
+ A S D       ← ↓ → move along plane X/Y axes
+   Q           quit
+```
 
-## Robot
+### Mode 3: Plane Capture (one-time setup)
 
+Capture 4 points using the red ball marker to define the plane:
+```bash
+ros2 launch sand_drawer sand_drawer.launch.py mode:=capture
+```
+Then call `ros2 service call /plane_solver_node/capture_point std_srvs/srv/Trigger` four times.
 
+## Effective Parameters
 
----
+### Planar Servo Controller
 
-for 2 separate docker containers for sim and ros2
+| Parameter                 | Default | Effect |
+|---------------------------|---------|--------|
+| `kp_linear`               | 0.5     | Position error gain → EE velocity. Higher = faster but risk overshoot |
+| `kp_angular`              | 1.0     | Orientation correction gain |
+| `max_linear_vel`          | 0.10    | Max EE speed in m/s |
+| `max_angular_vel`         | 0.30    | Max angular speed in rad/s |
+| `plane_z_correction_gain` | 2.0     | How hard the EE is pushed back onto the plane surface |
+| `approach_height`         | 0.08    | Hover distance above the plane during APPROACH phase |
+| `waypoint_threshold`      | 0.015   | Distance (m) to consider a waypoint reached |
+| `boundary_margin`         | 0.01    | Safety inset (m) from the rectangle edges |
+| `teleop_speed`            | 0.05    | Teleop velocity (m/s) per keypress |
 
-this was the working bashrc modification alias
+### Jacobian Calculator (IK Engine)
 
-# Alias to start Isaac Sim 4.5.0 container as the current user
-alias isaac-sim-4.5='docker run --name isaac-sim --entrypoint bash -it --runtime=nvidia --gpus all -e "ACCEPT_EULA=Y" --rm --network=host \
-    -v ~/docker/fastdds/fastdds_discovery_server.xml:/fastdds.xml:ro \
-    -e "FASTRTPS_DEFAULT_PROFILES_FILE=/fastdds.xml" \
-    --ipc=host \
-    -e "ROS_DOMAIN_ID=30" \
-    -e "RMW_IMPLEMENTATION=rmw_fastrtps_cpp" \
-    -e "ROS_DISTRO=humble" \
-    -e "LD_LIBRARY_PATH=/isaac-sim/exts/isaacsim.ros2.bridge/humble/lib" \
-    -e "PRIVACY_CONSENT=Y" \
-    -v ~/docker/isaac-sim/cache/kit:/isaac-sim/kit/cache:rw \
-    -v ~/docker/isaac-sim/cache/ov:/root/.cache/ov:rw \
-    -v ~/docker/isaac-sim/cache/pip:/root/.cache/pip:rw \
-    -v ~/docker/isaac-sim/cache/glcache:/root/.cache/nvidia/GLCache:rw \
-    -v ~/docker/isaac-sim/cache/computecache:/root/.nv/ComputeCache:rw \
-    -v ~/docker/isaac-sim/logs:/root/.nvidia-omniverse/logs:rw \
-    -v ~/docker/isaac-sim/data:/root/.local/share/ov/data:rw \
-    -v ~/docker/isaac-sim/documents:/root/Documents:rw \
-    nvcr.io/nvidia/isaac-sim:4.5.0'
+| Parameter                | Default | Effect |
+|--------------------------|---------|--------|
+| `max_joint_velocity`     | 0.5     | Per-joint velocity limit (rad/s). Main safety cap |
+| `damping_mu_reference`   | 0.05    | Below this manipulability μ, Jacobian damping activates |
+| `slowdown_mu_threshold`  | 0.04    | Below this μ, joint velocities are scaled down proportionally |
+| `w2_manipulability`      | 1.0     | Cost weight for manipulability optimization in nullspace |
+| `manipulability_gain`    | 0.4     | Gain for nullspace manipulability gradient ascent |
+| `posture_gain`           | 0.4     | Gain for nullspace mid-range posture optimization |
+| `control_mode`           | position| `position` integrates to joint targets; `velocity` sends raw velocities |
 
-#xauth nlist $DISPLAY | sed -e 's/^..../ffff/' | xauth -f /tmp/.docker.xauth nmerge -
-alias ros2-humble='docker run -it --rm --network=host \
-    -v ~/docker/fastdds/fastdds_discovery_server.xml:/fastdds.xml:ro \
-    -e "FASTRTPS_DEFAULT_PROFILES_FILE=/fastdds.xml" \
-    --ipc=host \
-    -e "ROS_DOMAIN_ID=30" \
-    -e "RMW_IMPLEMENTATION=rmw_fastrtps_cpp" \
-    -e "DISPLAY=${DISPLAY}" \
-    -e "QT_X11_NO_MITSHM=1" \
-    -e "XAUTHORITY=/tmp/.docker.xauth" \
-    -v ~/isaac_ws_cago:/ros2_ws \
-    -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
-    -v /tmp/.docker.xauth:/tmp/.docker.xauth:rw \
-    -v ~/.ros:/root/.ros:rw \
-    -w /ros2_ws \
-    osrf/ros:humble-desktop bash'
+----------
+
+Current modes are: mode:= teleop, loop:=true, mode:= capture
+
+"ros2 launch sand_drawer sand_drawer.launch.py mode:=teleop
+

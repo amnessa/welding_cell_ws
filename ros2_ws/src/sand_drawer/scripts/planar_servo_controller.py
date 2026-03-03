@@ -11,10 +11,11 @@ jacobian_calculator_node converts to joint commands via damped-pseudoinverse IK.
 
 Phases
 ------
-1. APPROACH  – Move to a point *above* the first waypoint, fix orientation
+1. APPROACH  – Move to a point *above* the first waypoint (or plane center in teleop), fix orientation
 2. LOWER     – Descend onto the plane surface
 3. SERVO     – Follow the waypoint trajectory on the plane
-4. DONE      – Hold (zero velocity)
+4. TELEOP    – Accept manual velocity commands from /teleop_plane_vel
+5. DONE      – Hold (zero velocity)
 """
 
 
@@ -91,6 +92,7 @@ class Phase(Enum):
     APPROACH = auto()
     LOWER    = auto()
     SERVO    = auto()
+    TELEOP   = auto()
     DONE     = auto()
 
 
@@ -114,6 +116,8 @@ class PlanarServoController(Node):
         self.declare_parameter('loop_trajectory', False)
         self.declare_parameter('trajectory_key', 'projected_vector_trajectory')
         self.declare_parameter('boundary_margin', 0.01)        # m
+        self.declare_parameter('teleop_mode', False)
+        self.declare_parameter('teleop_speed', 0.05)            # m/s default
 
         self._load_params()
         self._load_plane_json()
@@ -125,6 +129,14 @@ class PlanarServoController(Node):
         # ---- publisher ----
         self.twist_pub = self.create_publisher(Twist, '/end_effector_velocity', 10)
 
+        # ---- teleop subscription ----
+        self._teleop_vel = Twist()  # latest teleop command (in plane frame)
+        self._teleop_stamp = self.get_clock().now()
+        if self.teleop_mode:
+            self.teleop_sub = self.create_subscription(
+                Twist, '/teleop_plane_vel',
+                self._teleop_callback, 10)
+
         # ---- state ----
         self.phase        = Phase.APPROACH
         self.waypoint_idx = 0
@@ -134,7 +146,7 @@ class PlanarServoController(Node):
 
         self.get_logger().info(
             f'Planar servo controller started — {len(self.waypoints)} waypoints, '
-            f'trajectory_key={self.traj_key}')
+            f'trajectory_key={self.traj_key}, teleop_mode={self.teleop_mode}')
 
     # ------------------------------------------------------------------
     # Parameter helpers
@@ -155,6 +167,8 @@ class PlanarServoController(Node):
         self.do_loop          = g('loop_trajectory').value
         self.traj_key         = g('trajectory_key').value
         self.boundary_margin  = g('boundary_margin').value
+        self.teleop_mode      = g('teleop_mode').value
+        self.teleop_speed     = g('teleop_speed').value
 
     def _load_plane_json(self):
         json_path = self.get_parameter('plane_json_file').value
@@ -203,6 +217,13 @@ class PlanarServoController(Node):
         # Use the first waypoint's orientation as the fixed target orientation
         self.target_quat = self.waypoints[0][1]
 
+        # Compute rectangle center (in base frame) for teleop approach target
+        cx = (self.bounds['x_min'] + self.bounds['x_max']) / 2.0
+        cy = (self.bounds['y_min'] + self.bounds['y_max']) / 2.0
+        self.plane_center = (self.plane_origin
+                             + cx * self.plane_x
+                             + cy * self.plane_y)
+
     # ------------------------------------------------------------------
     # TF helper
     # ------------------------------------------------------------------
@@ -250,6 +271,13 @@ class PlanarServoController(Node):
         return vx, vy
 
     # ------------------------------------------------------------------
+    # Teleop callback
+    # ------------------------------------------------------------------
+    def _teleop_callback(self, msg: Twist):
+        self._teleop_vel = msg
+        self._teleop_stamp = self.get_clock().now()
+
+    # ------------------------------------------------------------------
     # Twist builder helpers
     # ------------------------------------------------------------------
     def _make_twist(self, lin_base, ang_base):
@@ -271,8 +299,11 @@ class PlanarServoController(Node):
     # Control phases
     # ------------------------------------------------------------------
     def _approach(self, pos, quat):
-        """Move to a hover point above the first waypoint."""
-        target = self.waypoints[0][0].copy()
+        """Move to a hover point above the first waypoint (or plane center in teleop)."""
+        if self.teleop_mode:
+            target = self.plane_center.copy()
+        else:
+            target = self.waypoints[0][0].copy()
         # Go against the normal to hover above the plane
         target -= self.plane_n * self.approach_height
 
@@ -295,8 +326,11 @@ class PlanarServoController(Node):
         return self._make_twist(lin, ang)
 
     def _lower(self, pos, quat):
-        """Descend onto the plane (first waypoint position exactly)."""
-        target = self.waypoints[0][0]
+        """Descend onto the plane (first waypoint or center position)."""
+        if self.teleop_mode:
+            target = self.plane_center.copy()
+        else:
+            target = self.waypoints[0][0]
         err = target - pos
         dist = np.linalg.norm(err)
 
@@ -309,9 +343,13 @@ class PlanarServoController(Node):
             throttle_duration_sec=1.0)
 
         if dist < self.wp_thresh:
-            self.get_logger().info('On plane → SERVO')
-            self.phase = Phase.SERVO
-            self.waypoint_idx = 1        # already at wp 0, head to wp 1
+            if self.teleop_mode:
+                self.get_logger().info('On plane → TELEOP (waiting for keyboard commands)')
+                self.phase = Phase.TELEOP
+            else:
+                self.get_logger().info('On plane → SERVO')
+                self.phase = Phase.SERVO
+                self.waypoint_idx = 1        # already at wp 0, head to wp 1
 
         return self._make_twist(lin, ang)
 
@@ -365,6 +403,39 @@ class PlanarServoController(Node):
 
         return self._make_twist(vel_base, ang)
 
+    def _teleop(self, pos, quat):
+        """Accept velocity commands from /teleop_plane_vel, constrained to the plane."""
+        # Check for stale teleop commands (> 0.5s old → stop)
+        dt = (self.get_clock().now() - self._teleop_stamp).nanoseconds * 1e-9
+        if dt > 0.5:
+            vx_cmd, vy_cmd = 0.0, 0.0
+        else:
+            vx_cmd = self._teleop_vel.linear.x   # plane X velocity
+            vy_cmd = self._teleop_vel.linear.y   # plane Y velocity
+
+        # Off-plane drift correction
+        _, _, ez = self._to_plane(pos)
+        vz = self.z_corr_gain * ez
+
+        # Boundary clamping
+        ex, ey, _ = self._to_plane(pos)
+        vx_cmd, vy_cmd = self._clamp_to_bounds(vx_cmd, vy_cmd, ex, ey)
+
+        # Convert plane-frame velocity to base frame
+        vel_base = (vx_cmd * self.plane_x +
+                    vy_cmd * self.plane_y +
+                    vz * self.plane_n)
+        vel_base = clamp_vec(vel_base, self.max_lin)
+
+        ang = self._orient_vel(quat)
+
+        self.get_logger().info(
+            f'TELEOP  plane_xy=({ex:.3f},{ey:.3f})  '
+            f'z_off={ez:.4f}m  cmd=({vx_cmd:.3f},{vy_cmd:.3f})',
+            throttle_duration_sec=2.0)
+
+        return self._make_twist(vel_base, ang)
+
     # ------------------------------------------------------------------
     # Main control loop (10 Hz)
     # ------------------------------------------------------------------
@@ -381,6 +452,8 @@ class PlanarServoController(Node):
             tw = self._lower(pos, quat)
         elif self.phase == Phase.SERVO:
             tw = self._servo(pos, quat)
+        elif self.phase == Phase.TELEOP:
+            tw = self._teleop(pos, quat)
         else:  # DONE
             tw = Twist()
 

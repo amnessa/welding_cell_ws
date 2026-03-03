@@ -43,7 +43,7 @@ public:
         ensure_param_str("control_mode", "position");
         ensure_param_double("posture_gain", 0.4);
         ensure_param_bool("use_nullspace_posture", true);
-        ensure_param_double("slowdown_mu_threshold", 0.04);
+        ensure_param_double("slowdown_mu_threshold", 0.1);
         ensure_param_double("damping_mu_reference", 0.05);
         ensure_param_double("w2_manipulability", 1.0);
         ensure_param_double("manipulability_gain", 0.4);
@@ -364,7 +364,7 @@ private:
     // New members for nullspace and damping
     double posture_gain_{0.4};
     bool use_nullspace_posture_{true};
-    double slowdown_mu_threshold_{0.04};
+    double slowdown_mu_threshold_{0.1};
     double damping_mu_ref_{0.05};
     double w2_manip_{1.0};
     double manip_gain_{0.4};

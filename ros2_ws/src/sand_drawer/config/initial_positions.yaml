@@ -1,9 +1,12 @@
-# Default initial positions for ur10e's ros2_control fake system
+# UR5e home position for sand drawer workspace
+# Set these same angles in Isaac Sim Articulation properties before pressing Play.
+#
+# Degrees:  Base=-45, Shoulder=-25, Elbow=-145, Wrist1=-10, Wrist2=0, Wrist3=0
 
 initial_positions:
-  elbow_joint: 0
-  shoulder_lift_joint: 0
-  shoulder_pan_joint: 0
-  wrist_1_joint: 0
-  wrist_2_joint: 0
-  wrist_3_joint: 0
+  shoulder_pan_joint:  -0.7854   # -45 deg
+  shoulder_lift_joint: -0.4363   # -25 deg
+  elbow_joint:         -2.5307   # -145 deg
+  wrist_1_joint:       -0.1745   # -10 deg
+  wrist_2_joint:        0.0      #   0 deg
+  wrist_3_joint:        0.0      #   0 deg
