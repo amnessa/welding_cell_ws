@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 
+#TODO redball node publishes tf at 60hz so this node should account for this and take only repeating points from the publish.
+# and easier manual tf parameter entry method for debugging.
+
 import json
 import math
 import os
@@ -57,20 +60,36 @@ class PlaneSolverNode(Node):
 
         # Manual rectangle corners in target_frame (base-relative test mode)
         # Order: RU, RD, LU, LD
+
         self.manual_right_upper = np.array(
-            self.declare_parameter("manual_right_upper", [-0.3924659490585327, 0.6478340029716492, -0.05970597267150879]).value,
+            self.declare_parameter(
+            "manual_right_upper",
+            [-0.6817477345466614, 0.6297467350959778, 0.007675349712371826],
+            ).value,
             dtype=float,
         )
+
         self.manual_right_down = np.array(
-            self.declare_parameter("manual_right_down", [0.08315126597881317, 0.6478340029716492, -0.05970597267150879]).value,
+            self.declare_parameter(
+            "manual_right_down",
+            [-0.1645941138267517, 0.6297467350959778, 0.007675349712371826],
+            ).value,
             dtype=float,
         )
+
         self.manual_left_upper = np.array(
-            self.declare_parameter("manual_left_upper", [-0.3924659490585327, -0.6292856931686401, -0.05970597267150879]).value,
+            self.declare_parameter(
+            "manual_left_upper",
+            [-0.6817477345466614, -0.578650176525116, 0.007675349712371826],
+            ).value,
             dtype=float,
         )
+
         self.manual_left_down = np.array(
-            self.declare_parameter("manual_left_down", [0.08005186915397644, -0.6292856931686401, -0.05970597267150879]).value,
+            self.declare_parameter(
+            "manual_left_down",
+            [-0.06875142455101013, -0.6292062997817993, 0.007675349712371826],
+            ).value,
             dtype=float,
         )
 
@@ -82,6 +101,8 @@ class PlaneSolverNode(Node):
                 [0.2, 0.2, 0.8, 0.2, 0.8, 0.8, 0.2, 0.8, 0.2, 0.2],
             ).value
         )
+
+
 
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
