@@ -36,13 +36,13 @@ HELP_TEXT = """
 ╔═══════════════════════════════════════════╗
 ║   Sand Drawer — Keyboard Teleop          ║
 ║                                           ║
-║         W / ↑   → plane +Y               ║
-║   A / ← S / ↓  D / → → plane X/Y        ║
-║                                           ║
-║   Q  → quit                               ║
+║         W / ↑   → plane +Y (forward)     ║
+║   A / ←         D / → → plane ±X (L/R)  ║
+║         S / ↓   → plane -Y (backward)   ║
 ║                                           ║
 ║   Speed: {speed:.3f} m/s                  ║
-║   +/- to change speed                     ║
+║   +/- to change speed  (0.01 – 0.30)     ║
+║   Q  → quit                               ║
 ╚═══════════════════════════════════════════╝
 """
 
@@ -70,7 +70,7 @@ def get_key(settings):
 class PlaneTeleopKeyboard(Node):
     def __init__(self):
         super().__init__('plane_teleop_keyboard')
-        self.declare_parameter('speed', 0.05)
+        self.declare_parameter('speed', 0.10)
         self.speed = self.get_parameter('speed').value
 
         self.pub = self.create_publisher(Twist, '/teleop_plane_vel', 10)
@@ -99,10 +99,10 @@ class PlaneTeleopKeyboard(Node):
                 elif key in ('d', 'D', ARROW_RIGHT):
                     tw.linear.x = self.speed
                 elif key == '+':
-                    self.speed = min(self.speed + 0.01, 0.20)
+                    self.speed = min(self.speed + 0.01, 0.30)
                     print(f'Speed: {self.speed:.3f} m/s')
                 elif key in ('-', '_'):
-                    self.speed = max(self.speed - 0.01, 0.005)
+                    self.speed = max(self.speed - 0.01, 0.01)
                     print(f'Speed: {self.speed:.3f} m/s')
                 else:
                     # Unknown key → publish zero (stop)

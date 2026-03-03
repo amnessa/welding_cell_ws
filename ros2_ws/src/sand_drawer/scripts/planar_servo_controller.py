@@ -105,19 +105,19 @@ class PlanarServoController(Node):
         self.declare_parameter('ee_link', 'tool0')
         self.declare_parameter('base_frame', 'base_link')
         self.declare_parameter('approach_height', 0.08)        # m above plane
-        self.declare_parameter('waypoint_threshold', 0.015)    # m — "close enough"
-        self.declare_parameter('approach_threshold', 0.025)    # m
+        self.declare_parameter('waypoint_threshold', 0.03)     # m — "close enough"
+        self.declare_parameter('approach_threshold', 0.06)     # m — generous for damped IK
         self.declare_parameter('orientation_threshold', 0.15)  # rad
-        self.declare_parameter('kp_linear', 0.5)
-        self.declare_parameter('kp_angular', 1.0)
-        self.declare_parameter('max_linear_vel', 0.10)         # m/s
-        self.declare_parameter('max_angular_vel', 0.30)        # rad/s
+        self.declare_parameter('kp_linear', 1.5)
+        self.declare_parameter('kp_angular', 1.5)
+        self.declare_parameter('max_linear_vel', 0.25)         # m/s
+        self.declare_parameter('max_angular_vel', 0.60)        # rad/s
         self.declare_parameter('plane_z_correction_gain', 2.0)
         self.declare_parameter('loop_trajectory', False)
         self.declare_parameter('trajectory_key', 'projected_vector_trajectory')
         self.declare_parameter('boundary_margin', 0.01)        # m
         self.declare_parameter('teleop_mode', False)
-        self.declare_parameter('teleop_speed', 0.05)            # m/s default
+        self.declare_parameter('teleop_speed', 0.10)            # m/s default
 
         self._load_params()
         self._load_plane_json()
@@ -140,6 +140,12 @@ class PlanarServoController(Node):
         # ---- state ----
         self.phase        = Phase.APPROACH
         self.waypoint_idx = 0
+
+        # ---- stuck detection ----
+        self._stuck_dist      = float('inf')  # last recorded distance
+        self._stuck_time      = self.get_clock().now()  # when dist last improved
+        self._stuck_patience  = 8.0   # seconds without progress before forcing transition
+        self._stuck_improve   = 0.005 # m — minimum improvement to reset timer
 
         # ---- control timer 10 Hz ----
         self.timer = self.create_timer(0.1, self._control_loop)
@@ -278,6 +284,22 @@ class PlanarServoController(Node):
         self._teleop_stamp = self.get_clock().now()
 
     # ------------------------------------------------------------------
+    # Stuck detection helpers
+    # ------------------------------------------------------------------
+    def _update_stuck(self, dist):
+        """Track distance progress; return seconds since last significant improvement."""
+        if dist < self._stuck_dist - self._stuck_improve:
+            # Made meaningful progress — reset timer
+            self._stuck_dist = dist
+            self._stuck_time = self.get_clock().now()
+        return (self.get_clock().now() - self._stuck_time).nanoseconds * 1e-9
+
+    def _reset_stuck(self):
+        """Reset stuck detector for next phase."""
+        self._stuck_dist = float('inf')
+        self._stuck_time = self.get_clock().now()
+
+    # ------------------------------------------------------------------
     # Twist builder helpers
     # ------------------------------------------------------------------
     def _make_twist(self, lin_base, ang_base):
@@ -315,13 +337,24 @@ class PlanarServoController(Node):
         lin = clamp_vec(self.kp_lin * err, self.max_lin)
         ang = self._orient_vel(quat)
 
+        # Stuck detection: force transition if not making progress
+        stuck_elapsed = self._update_stuck(dist)
+
         self.get_logger().info(
-            f'APPROACH  dist={dist:.4f}m  orient_err={orient_err_mag:.3f}rad',
+            f'APPROACH  dist={dist:.4f}m  orient_err={orient_err_mag:.3f}rad  '
+            f'stuck={stuck_elapsed:.1f}s',
             throttle_duration_sec=1.0)
 
-        if dist < self.approach_thresh and orient_err_mag < self.orient_thresh:
+        threshold_ok = dist < self.approach_thresh and orient_err_mag < self.orient_thresh
+        patience_ok  = (stuck_elapsed > self._stuck_patience
+                        and orient_err_mag < self.orient_thresh)
+        if threshold_ok or patience_ok:
+            if patience_ok and not threshold_ok:
+                self.get_logger().warn(
+                    f'Approach forced by patience (dist={dist:.4f}m > thresh={self.approach_thresh}m)')
             self.get_logger().info('Approach complete → LOWER')
             self.phase = Phase.LOWER
+            self._reset_stuck()
 
         return self._make_twist(lin, ang)
 
@@ -338,11 +371,19 @@ class PlanarServoController(Node):
         lin = clamp_vec(0.5 * self.kp_lin * err, 0.5 * self.max_lin)
         ang = self._orient_vel(quat)
 
+        # Stuck detection
+        stuck_elapsed = self._update_stuck(dist)
+
         self.get_logger().info(
-            f'LOWER  dist={dist:.4f}m',
+            f'LOWER  dist={dist:.4f}m  stuck={stuck_elapsed:.1f}s',
             throttle_duration_sec=1.0)
 
-        if dist < self.wp_thresh:
+        threshold_ok = dist < self.wp_thresh
+        patience_ok  = stuck_elapsed > self._stuck_patience
+        if threshold_ok or patience_ok:
+            if patience_ok and not threshold_ok:
+                self.get_logger().warn(
+                    f'Lower forced by patience (dist={dist:.4f}m > thresh={self.wp_thresh}m)')
             if self.teleop_mode:
                 self.get_logger().info('On plane → TELEOP (waiting for keyboard commands)')
                 self.phase = Phase.TELEOP
@@ -350,6 +391,7 @@ class PlanarServoController(Node):
                 self.get_logger().info('On plane → SERVO')
                 self.phase = Phase.SERVO
                 self.waypoint_idx = 1        # already at wp 0, head to wp 1
+            self._reset_stuck()
 
         return self._make_twist(lin, ang)
 
@@ -414,8 +456,11 @@ class PlanarServoController(Node):
             vy_cmd = self._teleop_vel.linear.y   # plane Y velocity
 
         # Off-plane drift correction
+        # ez is the EE position projected onto plane normal; drive it to zero.
+        # Sign: _to_plane returns signed distance along normal, and
+        # vel_base += vz * plane_n, so we need to negate to push BACK to the surface.
         _, _, ez = self._to_plane(pos)
-        vz = self.z_corr_gain * ez
+        vz = -self.z_corr_gain * ez
 
         # Boundary clamping
         ex, ey, _ = self._to_plane(pos)
