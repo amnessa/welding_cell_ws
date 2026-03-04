@@ -11,18 +11,25 @@ jacobian_calculator_node converts to joint commands via damped-pseudoinverse IK.
 
 Phases
 ------
-1. APPROACH  – Move to a point *above* the first waypoint (or plane center in teleop), fix orientation
-2. LOWER     – Descend onto the plane surface
-3. SERVO     – Follow the waypoint trajectory on the plane
-4. TELEOP    – Accept manual velocity commands from /teleop_plane_vel
-5. DONE      – Hold (zero velocity)
+1. HOME      – Send robot to home joint configuration, hold 2s
+2. PLANNING  – Compute RRT-Connect path in C-space to plane target
+3. EXECUTING – Follow the planned joint-space path
+4. SERVO     – Follow the waypoint trajectory on the plane
+5. TELEOP    – Accept manual velocity commands from /teleop_plane_vel
+6. DONE      – Hold (zero velocity)
 """
 
 
 import json
 import math
 import os
+import sys
 from enum import Enum, auto
+
+# Ensure the scripts directory is on sys.path so ur5e_rrt_planner can be imported
+_scripts_dir = os.path.dirname(os.path.realpath(__file__))
+if _scripts_dir not in sys.path:
+    sys.path.insert(0, _scripts_dir)
 
 import numpy as np
 import rclpy
@@ -90,12 +97,12 @@ def clamp_vec(v, max_mag):
 # ---------------------------------------------------------------------------
 
 class Phase(Enum):
-    HOME     = auto()
-    APPROACH = auto()
-    LOWER    = auto()
-    SERVO    = auto()
-    TELEOP   = auto()
-    DONE     = auto()
+    HOME      = auto()
+    PLANNING  = auto()
+    EXECUTING = auto()
+    SERVO     = auto()
+    TELEOP    = auto()
+    DONE      = auto()
 
 
 class PlanarServoController(Node):
@@ -132,6 +139,12 @@ class PlanarServoController(Node):
         self.twist_pub = self.create_publisher(Twist, '/end_effector_velocity', 10)
         self.joint_cmd_pub = self.create_publisher(JointState, '/isaac_joint_commands', 10)
 
+        # ---- joint state subscriber (for RRT planning) ----
+        self._last_joint_state = None
+        self.joint_state_sub = self.create_subscription(
+            JointState, '/isaac_joint_states',
+            self._joint_state_callback, 10)
+
         # ---- home position ----
         self._home_joint_names = [
             'shoulder_pan_joint', 'shoulder_lift_joint', 'elbow_joint',
@@ -142,6 +155,11 @@ class PlanarServoController(Node):
         ]
         self._home_reached_time = None  # timestamp when home was reached
         self._home_hold_duration = 2.0  # seconds to hold at home before transitioning
+
+        # ---- RRT path execution state ----
+        self._rrt_path = []       # dense joint-space path
+        self._rrt_path_idx = 0    # current index in path
+        self._rrt_exec_rate = 10  # waypoints per second (matches 10 Hz timer)
 
         # ---- teleop subscription ----
         self._teleop_vel = Twist()  # latest teleop command (in plane frame)
@@ -155,18 +173,18 @@ class PlanarServoController(Node):
         self.phase        = Phase.HOME
         self.waypoint_idx = 0
 
-        # ---- stuck detection ----
-        self._stuck_dist      = float('inf')  # last recorded distance
-        self._stuck_time      = self.get_clock().now()  # when dist last improved
-        self._stuck_patience  = 8.0   # seconds without progress before forcing transition
-        self._stuck_improve   = 0.005 # m — minimum improvement to reset timer
-
         # ---- control timer 10 Hz ----
         self.timer = self.create_timer(0.1, self._control_loop)
 
         self.get_logger().info(
             f'Planar servo controller started — {len(self.waypoints)} waypoints, '
             f'trajectory_key={self.traj_key}, teleop_mode={self.teleop_mode}')
+
+    # ------------------------------------------------------------------
+    # Joint state callback
+    # ------------------------------------------------------------------
+    def _joint_state_callback(self, msg: JointState):
+        self._last_joint_state = msg
 
     # ------------------------------------------------------------------
     # Parameter helpers
@@ -298,22 +316,6 @@ class PlanarServoController(Node):
         self._teleop_stamp = self.get_clock().now()
 
     # ------------------------------------------------------------------
-    # Stuck detection helpers
-    # ------------------------------------------------------------------
-    def _update_stuck(self, dist):
-        """Track distance progress; return seconds since last significant improvement."""
-        if dist < self._stuck_dist - self._stuck_improve:
-            # Made meaningful progress — reset timer
-            self._stuck_dist = dist
-            self._stuck_time = self.get_clock().now()
-        return (self.get_clock().now() - self._stuck_time).nanoseconds * 1e-9
-
-    def _reset_stuck(self):
-        """Reset stuck detector for next phase."""
-        self._stuck_dist = float('inf')
-        self._stuck_time = self.get_clock().now()
-
-    # ------------------------------------------------------------------
     # HOME phase
     # ------------------------------------------------------------------
     def _home(self):
@@ -336,9 +338,125 @@ class PlanarServoController(Node):
             throttle_duration_sec=1.0)
 
         if elapsed >= self._home_hold_duration:
-            self.get_logger().info('Home hold complete → APPROACH')
-            self.phase = Phase.APPROACH
-            self._reset_stuck()
+            self.get_logger().info('Home hold complete → PLANNING')
+            self.phase = Phase.PLANNING
+
+    # ------------------------------------------------------------------
+    # PLANNING phase (RRT-Connect in C-space)
+    # ------------------------------------------------------------------
+    def _plan(self):
+        """Compute RRT-Connect path from current joints to plane target."""
+        # Need current joint positions
+        if self._last_joint_state is None:
+            self.get_logger().warn('Waiting for joint states…',
+                                   throttle_duration_sec=2.0)
+            # Keep publishing home position while waiting
+            cmd = JointState()
+            cmd.header.stamp = self.get_clock().now().to_msg()
+            cmd.name = self._home_joint_names
+            cmd.position = self._home_joint_positions
+            self.joint_cmd_pub.publish(cmd)
+            return
+
+        # Get current joint angles in the correct order
+        q_current = self._get_ordered_joints()
+        if q_current is None:
+            self.get_logger().warn('Cannot extract joint positions',
+                                   throttle_duration_sec=2.0)
+            return
+
+        # Import planner (deferred to avoid load-time cost)
+        from ur5e_rrt_planner import ur5e_fk, plan_to_pose
+
+        # Build target 4×4 pose: plane target position + tool-down orientation
+        if self.teleop_mode:
+            target_pos = self.plane_center.copy()
+        else:
+            target_pos = self.waypoints[0][0].copy()
+
+        # Target orientation: tool pointing down
+        # quat [1,0,0,0] xyzw = 180° about X → R = diag(1, -1, -1)
+        T_target = np.eye(4)
+        T_target[:3, :3] = quat_to_rotmat(self.target_quat)
+        T_target[:3, 3] = target_pos
+
+        self.get_logger().info(
+            f'PLANNING  target_pos=[{target_pos[0]:.3f}, '
+            f'{target_pos[1]:.3f}, {target_pos[2]:.3f}]')
+        self.get_logger().info(
+            f'PLANNING  q_current={np.round(q_current, 3).tolist()}')
+
+        # Plan
+        path = plan_to_pose(
+            q_current, T_target,
+            ik_seeds=[np.array(self._home_joint_positions)],
+            rrt_step=0.2,
+            rrt_max_iter=10000,
+            smooth_attempts=200,
+            interp_step=0.02,
+        )
+
+        if path is None:
+            self.get_logger().error('RRT planning FAILED — retrying…')
+            return  # will retry on next timer tick
+
+        self._rrt_path = path
+        self._rrt_path_idx = 0
+        self.get_logger().info(
+            f'PLANNING complete — {len(path)} waypoints. → EXECUTING')
+
+        # Verify goal FK
+        T_goal = ur5e_fk(path[-1])
+        self.get_logger().info(
+            f'  Goal FK pos=[{T_goal[0,3]:.4f}, {T_goal[1,3]:.4f}, '
+            f'{T_goal[2,3]:.4f}]  Z-axis=[{T_goal[0,2]:.3f}, '
+            f'{T_goal[1,2]:.3f}, {T_goal[2,2]:.3f}]')
+
+        self.phase = Phase.EXECUTING
+
+    def _get_ordered_joints(self):
+        """Extract joint positions in UR order from the last JointState message."""
+        if self._last_joint_state is None:
+            return None
+        msg = self._last_joint_state
+        name_map = {n: p for n, p in zip(msg.name, msg.position)}
+        try:
+            return np.array([name_map[n] for n in self._home_joint_names])
+        except KeyError:
+            return None
+
+    # ------------------------------------------------------------------
+    # EXECUTING phase (follow planned joint-space path)
+    # ------------------------------------------------------------------
+    def _execute(self):
+        """Step through the RRT path, sending joint position commands."""
+        if self._rrt_path_idx >= len(self._rrt_path):
+            # Path complete
+            if self.teleop_mode:
+                self.get_logger().info('RRT execution complete → TELEOP')
+                self.phase = Phase.TELEOP
+            else:
+                self.get_logger().info('RRT execution complete → SERVO')
+                self.phase = Phase.SERVO
+                self.waypoint_idx = 1  # first waypoint is the start, head to next
+            return
+
+        q_cmd = self._rrt_path[self._rrt_path_idx]
+
+        cmd = JointState()
+        cmd.header.stamp = self.get_clock().now().to_msg()
+        cmd.name = self._home_joint_names
+        cmd.position = q_cmd.tolist()
+        self.joint_cmd_pub.publish(cmd)
+
+        if self._rrt_path_idx % 10 == 0 or \
+           self._rrt_path_idx == len(self._rrt_path) - 1:
+            pct = 100.0 * self._rrt_path_idx / (len(self._rrt_path) - 1)
+            self.get_logger().info(
+                f'EXECUTING  step {self._rrt_path_idx}/{len(self._rrt_path)-1}  '
+                f'({pct:.0f}%)')
+
+        self._rrt_path_idx += 1
 
     # ------------------------------------------------------------------
     # Twist builder helpers
@@ -359,83 +477,8 @@ class PlanarServoController(Node):
         return clamp_vec(self.kp_ang * err, self.max_ang)
 
     # ------------------------------------------------------------------
-    # Control phases
+    # Control phases (on-plane)
     # ------------------------------------------------------------------
-    def _approach(self, pos, quat):
-        """Move to a hover point above the first waypoint (or plane center in teleop)."""
-        if self.teleop_mode:
-            target = self.plane_center.copy()
-        else:
-            target = self.waypoints[0][0].copy()
-        # Go against the normal to hover above the plane
-        target -= self.plane_n * self.approach_height
-
-        err = target - pos
-        dist = np.linalg.norm(err)
-        orient_err_mag = np.linalg.norm(
-            orientation_error_aa(quat, self.target_quat))
-
-        lin = clamp_vec(self.kp_lin * err, self.max_lin)
-        ang = self._orient_vel(quat)
-
-        # Stuck detection: force transition if not making progress
-        stuck_elapsed = self._update_stuck(dist)
-
-        self.get_logger().info(
-            f'APPROACH  dist={dist:.4f}m  orient_err={orient_err_mag:.3f}rad  '
-            f'stuck={stuck_elapsed:.1f}s',
-            throttle_duration_sec=1.0)
-
-        threshold_ok = dist < self.approach_thresh and orient_err_mag < self.orient_thresh
-        patience_ok  = (stuck_elapsed > self._stuck_patience
-                        and orient_err_mag < self.orient_thresh)
-        if threshold_ok or patience_ok:
-            if patience_ok and not threshold_ok:
-                self.get_logger().warn(
-                    f'Approach forced by patience (dist={dist:.4f}m > thresh={self.approach_thresh}m)')
-            self.get_logger().info('Approach complete → LOWER')
-            self.phase = Phase.LOWER
-            self._reset_stuck()
-
-        return self._make_twist(lin, ang)
-
-    def _lower(self, pos, quat):
-        """Descend onto the plane (first waypoint or center position)."""
-        if self.teleop_mode:
-            target = self.plane_center.copy()
-        else:
-            target = self.waypoints[0][0]
-        err = target - pos
-        dist = np.linalg.norm(err)
-
-        # Slower descent
-        lin = clamp_vec(0.5 * self.kp_lin * err, 0.5 * self.max_lin)
-        ang = self._orient_vel(quat)
-
-        # Stuck detection
-        stuck_elapsed = self._update_stuck(dist)
-
-        self.get_logger().info(
-            f'LOWER  dist={dist:.4f}m  stuck={stuck_elapsed:.1f}s',
-            throttle_duration_sec=1.0)
-
-        threshold_ok = dist < self.wp_thresh
-        patience_ok  = stuck_elapsed > self._stuck_patience
-        if threshold_ok or patience_ok:
-            if patience_ok and not threshold_ok:
-                self.get_logger().warn(
-                    f'Lower forced by patience (dist={dist:.4f}m > thresh={self.wp_thresh}m)')
-            if self.teleop_mode:
-                self.get_logger().info('On plane → TELEOP (waiting for keyboard commands)')
-                self.phase = Phase.TELEOP
-            else:
-                self.get_logger().info('On plane → SERVO')
-                self.phase = Phase.SERVO
-                self.waypoint_idx = 1        # already at wp 0, head to wp 1
-            self._reset_stuck()
-
-        return self._make_twist(lin, ang)
-
     def _servo(self, pos, quat):
         """Follow trajectory waypoints, constrained to the plane."""
         if self.waypoint_idx >= len(self.waypoints):
@@ -526,9 +569,15 @@ class PlanarServoController(Node):
     # Main control loop (10 Hz)
     # ------------------------------------------------------------------
     def _control_loop(self):
-        # HOME phase doesn't need EE pose — just sends joint commands
+        # HOME and PLANNING/EXECUTING phases send joint commands directly
         if self.phase == Phase.HOME:
             self._home()
+            return
+        if self.phase == Phase.PLANNING:
+            self._plan()
+            return
+        if self.phase == Phase.EXECUTING:
+            self._execute()
             return
 
         pos, quat = self._get_ee_pose()
@@ -537,11 +586,7 @@ class PlanarServoController(Node):
             self.twist_pub.publish(Twist())
             return
 
-        if self.phase == Phase.APPROACH:
-            tw = self._approach(pos, quat)
-        elif self.phase == Phase.LOWER:
-            tw = self._lower(pos, quat)
-        elif self.phase == Phase.SERVO:
+        if self.phase == Phase.SERVO:
             tw = self._servo(pos, quat)
         elif self.phase == Phase.TELEOP:
             tw = self._teleop(pos, quat)

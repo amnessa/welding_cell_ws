@@ -124,11 +124,11 @@ def ur5e_fk(q: np.ndarray) -> np.ndarray:
     # wrist_1_joint
     T = T @ _trans(-0.3922, 0, 0.1333) @ _rotz(q[3])
 
-    # wrist_2_joint
-    T = T @ _rpy(PI/2, 0, 0) @ _trans(0, -0.0997, 0) @ _rotz(q[4])
+    # wrist_2_joint  (URDF origin: xyz then rpy)
+    T = T @ _trans(0, -0.0997, 0) @ _rpy(PI/2, 0, 0) @ _rotz(q[4])
 
-    # wrist_3_joint
-    T = T @ _rpy(PI/2, PI, PI) @ _trans(0, 0.0996, 0) @ _rotz(q[5])
+    # wrist_3_joint  (URDF origin: xyz then rpy)
+    T = T @ _trans(0, 0.0996, 0) @ _rpy(PI/2, PI, PI) @ _rotz(q[5])
 
     # wrist_3_link → flange (fixed)
     T = T @ _rpy(0, -PI/2, -PI/2)

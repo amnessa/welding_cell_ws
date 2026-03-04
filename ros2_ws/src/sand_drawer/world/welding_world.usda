@@ -15,7 +15,7 @@
             }
             dictionary Perspective = {
                 double3 position = (0.0556952610147938, 2.8912045189709197, 1.1374956768696949)
-                double3 target = (0.15913100182635675, -1.1677343705100682, -1.1581481085645486)
+                double3 target = (0.1591309979326889, -1.1677342177179346, -1.1581483788924807)
             }
             dictionary Right = {
                 double3 position = (0, -1688400, -3.7490011095542286e-10)
@@ -2241,7 +2241,11 @@ def Xform "Root" (
                     displayName = "Name Override"
                     doc = "Name override for prim lookup in base name search"
                 )
+                vector3f physics:angularVelocity = (0, 0, 0)
                 rel physics:simulationOwner
+                vector3f physics:velocity = (0, 0, 0)
+                quatd xformOp:orient = (-0.27230760270809395, 0.28929594051489227, -0.6452191327661422, 0.6525708383167932)
+                double3 xformOp:translate = (0.11049326808914828, -0.07706408791612772, 0.4323280505860503)
             }
 
             over "wrist_2_link"
@@ -2250,7 +2254,11 @@ def Xform "Root" (
                     displayName = "Name Override"
                     doc = "Name override for prim lookup in base name search"
                 )
+                vector3f physics:angularVelocity = (0, 0, 0)
                 rel physics:simulationOwner
+                vector3f physics:velocity = (0, 0, 0)
+                quatd xformOp:orient = (-0.39711367181617063, 0.012012583248776106, 0.005198402257737553, 0.9176760899763798)
+                double3 xformOp:translate = (0.11227975709369167, -0.07516165293133086, 0.5319938488329108)
             }
 
             over "wrist_3_link"
@@ -2259,7 +2267,11 @@ def Xform "Root" (
                     displayName = "Name Override"
                     doc = "Name override for prim lookup in base name search"
                 )
+                vector3f physics:angularVelocity = (0, 0, 0)
                 rel physics:simulationOwner
+                vector3f physics:velocity = (0, 0, 0)
+                quatd xformOp:orient = (-0.2723076246318875, 0.28929596416846937, -0.6452190584531038, 0.6525708921581357)
+                double3 xformOp:translate = (0.18488498452178695, -0.14334255708384347, 0.5319938562834914)
 
                 def "rsd455" (
                     active = false
@@ -2292,7 +2304,11 @@ def Xform "Root" (
                     displayName = "Name Override"
                     doc = "Name override for prim lookup in base name search"
                 )
+                vector3f physics:angularVelocity = (0, 0, 0)
                 rel physics:simulationOwner
+                vector3f physics:velocity = (0, 0, 0)
+                quatd xformOp:orient = (0.9177546995426108, -3.008300631795069e-9, -1.3026024338536459e-7, 0.397147719957493)
+                double3 xformOp:translate = (1.4589167790513002e-9, -1.1628177865041778e-9, 0.16249992475158526)
             }
 
             over "upper_arm_link"
@@ -2301,7 +2317,11 @@ def Xform "Root" (
                     displayName = "Name Override"
                     doc = "Name override for prim lookup in base name search"
                 )
+                vector3f physics:angularVelocity = (0, 0, 0)
                 rel physics:simulationOwner
+                vector3f physics:velocity = (0, 0, 0)
+                quatd xformOp:orient = (0.6994308009238331, 0.5545382495141199, 0.4387336946612297, 0.10390683189168938)
+                double3 xformOp:translate = (4.751639318123502e-9, 2.1299047595069176e-9, 0.16249989494926287)
             }
 
             over "forearm_link"
@@ -2310,7 +2330,11 @@ def Xform "Root" (
                     displayName = "Name Override"
                     doc = "Name override for prim lookup in base name search"
                 )
+                vector3f physics:angularVelocity = (0, 0, 0)
                 rel physics:simulationOwner
+                vector3f physics:velocity = (0, 0, 0)
+                quatd xformOp:orient = (0.32814658945714126, -0.23196059502218375, 0.6679777022094665, -0.626354442417041)
+                double3 xformOp:translate = (-0.2522086280773775, -0.26857481042163506, 0.3743569158042128)
             }
 
             over "base_link" (
@@ -2321,48 +2345,52 @@ def Xform "Root" (
                     displayName = "Name Override"
                     doc = "Name override for prim lookup in base name search"
                 )
+                vector3f physics:angularVelocity = (0, 0, 0)
                 bool physics:rigidBodyEnabled = 1
                 rel physics:simulationOwner
+                vector3f physics:velocity = (0, 0, 0)
+                quatd xformOp:orient = (0.9999999999999982, 0, 0, 5.9604644775390605e-8)
+                double3 xformOp:translate = (1.4589167790513002e-9, -1.1628177865041778e-9, 2.0119016896913422e-8)
             }
 
             over "joints"
             {
                 over "shoulder_pan_joint"
                 {
-                    float drive:angular:physics:targetPosition = 0
+                    float drive:angular:physics:targetPosition = -133.2
                     custom string isaac:nameOverride (
                         displayName = "Name Override"
                         doc = "Name override for prim lookup in base name search"
                     )
                     float physics:lowerLimit = -360
                     float physics:upperLimit = 360
-                    float state:angular:physics:position = 0
+                    float state:angular:physics:position = -133.20001
                     float state:angular:physics:velocity = 0
                 }
 
                 over "shoulder_lift_joint"
                 {
-                    float drive:angular:physics:targetPosition = 0
+                    float drive:angular:physics:targetPosition = -29.9
                     custom string isaac:nameOverride (
                         displayName = "Name Override"
                         doc = "Name override for prim lookup in base name search"
                     )
                     float physics:lowerLimit = -360
                     float physics:upperLimit = 360
-                    float state:angular:physics:position = 0
+                    float state:angular:physics:position = -29.9
                     float state:angular:physics:velocity = 0
                 }
 
                 over "elbow_joint"
                 {
-                    float drive:angular:physics:targetPosition = 0
+                    float drive:angular:physics:targetPosition = -141.6
                     custom string isaac:nameOverride (
                         displayName = "Name Override"
                         doc = "Name override for prim lookup in base name search"
                     )
                     float physics:lowerLimit = -180
                     float physics:upperLimit = 180
-                    float state:angular:physics:position = 0
+                    float state:angular:physics:position = -141.59999
                     float state:angular:physics:velocity = 0
                 }
 
@@ -2375,7 +2403,7 @@ def Xform "Root" (
                     )
                     float physics:lowerLimit = -360
                     float physics:upperLimit = 360
-                    float state:angular:physics:position = 0
+                    float state:angular:physics:position = -9.999999
                     float state:angular:physics:velocity = 0
                 }
 
@@ -2388,7 +2416,7 @@ def Xform "Root" (
                     )
                     float physics:lowerLimit = -360
                     float physics:upperLimit = 360
-                    float state:angular:physics:position = 0
+                    float state:angular:physics:position = 8.558383e-9
                     float state:angular:physics:velocity = 0
                 }
 
@@ -2401,7 +2429,7 @@ def Xform "Root" (
                     )
                     float physics:lowerLimit = -360
                     float physics:upperLimit = 360
-                    float state:angular:physics:position = 0
+                    float state:angular:physics:position = -4.7820253e-10
                     float state:angular:physics:velocity = 0
                 }
 

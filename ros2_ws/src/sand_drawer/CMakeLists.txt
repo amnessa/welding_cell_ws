@@ -47,6 +47,7 @@ install(PROGRAMS
   scripts/plane_frame_broadcaster.py
   scripts/planar_servo_controller.py
   scripts/plane_teleop_keyboard.py
+  scripts/ur5e_rrt_planner.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
