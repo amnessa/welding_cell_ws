@@ -71,8 +71,8 @@ def _trans(x: float, y: float, z: float) -> np.ndarray:
     return T
 
 def _rpy(r: float, p: float, y: float) -> np.ndarray:
-    """RPY (roll-pitch-yaw = Rx*Ry*Rz) → 4×4 rotation matrix."""
-    return _rotx(r) @ _roty(p) @ _rotz(y)
+    """RPY (URDF convention: extrinsic X-Y-Z = Rz(y)·Ry(p)·Rx(r)) → 4×4."""
+    return _rotz(y) @ _roty(p) @ _rotx(r)
 
 
 # ---------------------------------------------------------------------------
