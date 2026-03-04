@@ -111,7 +111,7 @@ def _interpolate_cartesian_smooth(
     orientation_xyzw: list,
     v_max: float = 0.05,   # Maximum cruising speed (m/s)
     a_max: float = 0.05,   # Maximum acceleration (m/s^2)
-    dt: float = 0.1        # Timer tick duration (1.0 / execution_hz)
+    dt: float = 1.0/60.0   # Timer tick duration (1.0 / execution_hz)
 ) -> List[Tuple[np.ndarray, list]]:
     """
     Generates a dense Cartesian path using a Trapezoidal Velocity Profile.
@@ -208,7 +208,7 @@ class CartesianDrawController(Node):
         self.declare_parameter('max_linear_vel', 0.05)        # m/s cruising speed
         self.declare_parameter('max_linear_accel', 0.05)      # m/s^2 max acceleration
         self.declare_parameter('ik_damping', 0.05)
-        self.declare_parameter('execution_hz', 10.0)          # joint command rate
+        self.declare_parameter('execution_hz', 60.0)          # joint command rate
         self.declare_parameter('waypoints_per_tick', 1)       # Cartesian wp to advance per tick
         self.declare_parameter('loop_trajectory', False)
         self.declare_parameter('trajectory_key', 'line')      # 'line' | 'square_trajectory' | ...
@@ -436,7 +436,7 @@ class CartesianDrawController(Node):
             return
 
         from ur5e_rrt_planner import (ur5e_fk, rrt_connect,
-                                        smooth_path, interpolate_path)
+                                        smooth_path, bezier_smooth_path)
 
         # Approach pose: above the first vertex, offset along plane normal
         approach_pos = self.draw_positions[0] - self.approach_height * self.plane_n
@@ -462,9 +462,9 @@ class CartesianDrawController(Node):
             self.get_logger().error('RRT planning FAILED — retrying next tick…')
             return
 
-        # Step 3: Smooth + interpolate
+        # Step 3: Smooth + Bezier spline interpolation
         smoothed = smooth_path(raw_path, max_attempts=200)
-        path = interpolate_path(smoothed, max_step=0.02)
+        path = bezier_smooth_path(smoothed, max_step=0.02)
 
         self._rrt_path = path
         self._rrt_idx = 0

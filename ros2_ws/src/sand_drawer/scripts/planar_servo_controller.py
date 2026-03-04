@@ -130,6 +130,7 @@ class PlanarServoController(Node):
         self.declare_parameter('boundary_margin', 0.01)        # m
         self.declare_parameter('teleop_mode', False)
         self.declare_parameter('teleop_speed', 0.10)            # m/s default
+        self.declare_parameter('execution_hz', 60.0)            # control loop rate
         self.declare_parameter('descent_step', 0.002)           # m per tick during descent
         # Elbow-up configuration constraints (same as cartesian controller)
         self.declare_parameter('shoulder_lift_max', 0.0)
@@ -176,7 +177,7 @@ class PlanarServoController(Node):
         # ---- RRT path execution state ----
         self._rrt_path = []       # dense joint-space path
         self._rrt_path_idx = 0    # current index in path
-        self._rrt_exec_rate = 10  # waypoints per second (matches 10 Hz timer)
+        self._rrt_exec_rate = int(self.execution_hz)  # waypoints per second (matches timer)
 
         # ---- descent state (position-controlled, like cartesian controller) ----
         self._descent_waypoints = []   # list of (pos, quat) tuples
@@ -195,8 +196,8 @@ class PlanarServoController(Node):
         self.phase        = Phase.HOME
         self.waypoint_idx = 0
 
-        # ---- control timer 10 Hz ----
-        self.timer = self.create_timer(0.1, self._control_loop)
+        # ---- control timer ----
+        self.timer = self.create_timer(1.0 / self.execution_hz, self._control_loop)
 
         self.get_logger().info(
             f'Planar servo controller started — {len(self.waypoints)} waypoints, '
@@ -231,6 +232,7 @@ class PlanarServoController(Node):
         self.boundary_margin  = g('boundary_margin').value
         self.teleop_mode      = g('teleop_mode').value
         self.teleop_speed     = g('teleop_speed').value
+        self.execution_hz     = g('execution_hz').value
         self.descent_step     = g('descent_step').value
         self.shoulder_lift_max = g('shoulder_lift_max').value
         self.shoulder_lift_min = g('shoulder_lift_min').value
@@ -520,7 +522,7 @@ class PlanarServoController(Node):
             return
 
         from ur5e_rrt_planner import (ur5e_fk, rrt_connect,
-                                      smooth_path, interpolate_path)
+                                      smooth_path, bezier_smooth_path)
 
         # Approach position: above first waypoint (or plane center for teleop)
         if self.teleop_mode:
@@ -553,9 +555,9 @@ class PlanarServoController(Node):
             self.get_logger().error('RRT planning FAILED — retrying…')
             return
 
-        # Step 3: Smooth + interpolate
+        # Step 3: Smooth + Bezier spline interpolation
         smoothed = smooth_path(raw_path, max_attempts=200)
-        path = interpolate_path(smoothed, max_step=0.02)
+        path = bezier_smooth_path(smoothed, max_step=0.02)
 
         self._rrt_path = path
         self._rrt_path_idx = 0
@@ -729,7 +731,7 @@ class PlanarServoController(Node):
         if self._prev_time is not None:
             dt = (now - self._prev_time).nanoseconds * 1e-9
         else:
-            dt = 0.1  # first tick, assume 10 Hz
+            dt = 1.0 / self.execution_hz  # first tick
         dt = max(dt, 1e-6)  # safety
 
         # ---- Derivative of position error (in plane frame) ----
@@ -812,7 +814,7 @@ class PlanarServoController(Node):
         return self._make_twist(vel_base, ang)
 
     # ------------------------------------------------------------------
-    # Main control loop (10 Hz)
+    # Main control loop
     # ------------------------------------------------------------------
     def _control_loop(self):
         # HOME, PLANNING, EXECUTING, DESCENDING send joint commands directly

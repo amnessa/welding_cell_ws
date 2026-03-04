@@ -504,6 +504,111 @@ def interpolate_path(
 
 
 # ---------------------------------------------------------------------------
+# Bezier (Catmull-Rom) spline smoothing for C-space paths
+# ---------------------------------------------------------------------------
+
+def _catmull_rom_segment(
+    p0: np.ndarray, p1: np.ndarray, p2: np.ndarray, p3: np.ndarray,
+    n_points: int, alpha: float = 0.5,
+) -> List[np.ndarray]:
+    """
+    Evaluate a centripetal Catmull-Rom spline segment between p1 and p2.
+
+    Parameters
+    ----------
+    p0, p1, p2, p3 : Control points (the curve passes through p1 → p2)
+    n_points : Number of points to generate for this segment (excluding p1)
+    alpha : 0.0 = uniform, 0.5 = centripetal (default), 1.0 = chordal
+
+    Returns
+    -------
+    points : list of np.ndarray (n_points items, from just-after p1 to p2)
+    """
+    def _knot(ti, pi, pj):
+        d = np.linalg.norm(pj - pi)
+        return ti + max(d ** (2.0 * alpha), 1e-10)
+
+    t0 = 0.0
+    t1 = _knot(t0, p0, p1)
+    t2 = _knot(t1, p1, p2)
+    t3 = _knot(t2, p2, p3)
+
+    points = []
+    for i in range(1, n_points + 1):
+        t = t1 + (t2 - t1) * (i / n_points)
+
+        a1 = (t1 - t) / (t1 - t0) * p0 + (t - t0) / (t1 - t0) * p1
+        a2 = (t2 - t) / (t2 - t1) * p1 + (t - t1) / (t2 - t1) * p2
+        a3 = (t3 - t) / (t3 - t2) * p2 + (t - t2) / (t3 - t2) * p3
+
+        b1 = (t2 - t) / (t2 - t0) * a1 + (t - t0) / (t2 - t0) * a2
+        b2 = (t3 - t) / (t3 - t1) * a2 + (t - t1) / (t3 - t1) * a3
+
+        c = (t2 - t) / (t2 - t1) * b1 + (t - t1) / (t2 - t1) * b2
+        points.append(c)
+
+    return points
+
+
+def bezier_smooth_path(
+    path: List[np.ndarray],
+    max_step: float = 0.02,
+) -> List[np.ndarray]:
+    """
+    Replace linear interpolation with centripetal Catmull-Rom spline
+    interpolation.  Produces a C1-continuous joint-space path that passes
+    exactly through every waypoint.
+
+    Parameters
+    ----------
+    path : RRT waypoints (typically after shortcut-smoothing)
+    max_step : approximate max joint-space distance between consecutive
+               output points.
+
+    Returns
+    -------
+    dense : Densely sampled smooth path through all waypoints.
+    """
+    if len(path) <= 1:
+        return [q.copy() for q in path]
+
+    if len(path) == 2:
+        # Fall back to linear for a single segment
+        return interpolate_path(path, max_step=max_step)
+
+    # Build extended control point list with phantom end-points
+    # (reflect first/last segment to create virtual p0 / p_{n+1})
+    pts = [q.copy() for q in path]
+    pts.insert(0, 2.0 * pts[0] - pts[1])            # phantom start
+    pts.append(2.0 * pts[-1] - pts[-2])              # phantom end
+
+    dense = [path[0].copy()]
+
+    for i in range(1, len(pts) - 2):
+        p0, p1, p2, p3 = pts[i - 1], pts[i], pts[i + 1], pts[i + 2]
+        seg_dist = float(np.linalg.norm(p2 - p1))
+        n_seg = max(int(math.ceil(seg_dist / max_step)), 2)
+        seg_pts = _catmull_rom_segment(p0, p1, p2, p3, n_seg)
+
+        # Validate every point stays in joint limits
+        valid = True
+        for q in seg_pts:
+            if not _in_limits(q):
+                valid = False
+                break
+
+        if valid:
+            dense.extend(seg_pts)
+        else:
+            # Fall back to linear interpolation for this segment
+            for j in range(1, n_seg + 1):
+                alpha = j / n_seg
+                dense.append(p1 + alpha * (p2 - p1))
+
+    return dense
+
+
+# ---------------------------------------------------------------------------
 # High-level: plan from current joints to a target Cartesian pose
 # ---------------------------------------------------------------------------
 
@@ -555,7 +660,7 @@ def plan_to_pose(
     # Smooth
     smoothed = smooth_path(raw_path, max_attempts=smooth_attempts)
 
-    # Interpolate
-    dense = interpolate_path(smoothed, max_step=interp_step)
+    # Bezier spline interpolation (C1-continuous)
+    dense = bezier_smooth_path(smoothed, max_step=interp_step)
 
     return dense

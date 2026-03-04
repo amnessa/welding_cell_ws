@@ -181,6 +181,7 @@ def launch_setup(context, *args, **kwargs):
             "boundary_margin": 0.01,
             "teleop_mode": is_teleop,
             "teleop_speed": 0.10,
+            "execution_hz": 60.0,
             "descent_step": 0.002,
             # Elbow-up configuration constraints
             "shoulder_lift_max": 0.0,
