@@ -64,7 +64,7 @@ class PlaneSolverNode(Node):
         self.manual_right_upper = np.array(
             self.declare_parameter(
             "manual_right_upper",
-            [-0.6817477345466614, 0.6297467350959778, 0.007675349712371826],
+            [1.0048720836639404, 0.055128008127212524, 0.019999977201223373],
             ).value,
             dtype=float,
         )
@@ -72,7 +72,7 @@ class PlaneSolverNode(Node):
         self.manual_right_down = np.array(
             self.declare_parameter(
             "manual_right_down",
-            [-0.1645941138267517, 0.6297467350959778, 0.007675349712371826],
+            [0.5914214253425598, -0.3583225905895233, 0.019999977201223373],
             ).value,
             dtype=float,
         )
@@ -80,7 +80,7 @@ class PlaneSolverNode(Node):
         self.manual_left_upper = np.array(
             self.declare_parameter(
             "manual_left_upper",
-            [-0.6817477345466614, -0.578650176525116, 0.007675349712371826],
+            [0.1386730968952179, 0.9213270545005798, 0.019999977201223373],
             ).value,
             dtype=float,
         )
@@ -88,11 +88,10 @@ class PlaneSolverNode(Node):
         self.manual_left_down = np.array(
             self.declare_parameter(
             "manual_left_down",
-            [-0.06875142455101013, -0.6292062997817993, 0.007675349712371826],
+            [-0.344485342502594, 0.5775842666625977, 0.019999977201223373],
             ).value,
             dtype=float,
         )
-
         # Local UV polyline projected onto solved rectangle plane.
         # [u0,v0,u1,v1,...] where u,v in [0,1] across rectangle basis.
         self.vector_path_uv = list(
