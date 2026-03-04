@@ -14,8 +14,8 @@
                 double radius = 500
             }
             dictionary Perspective = {
-                double3 position = (-0.48719956576391105, 2.5479802242857783, 0.8584024213657949)
-                double3 target = (-0.09422325399781722, -2.5579299279488286, -2.319659866906686)
+                double3 position = (-1.4336546566221948, 0.8654232988315211, 0.19857411835805383)
+                double3 target = (1.3075676757109262, -2.144989552471763, -2.6048679792704488)
             }
             dictionary Right = {
                 double3 position = (0, -1688400, -3.7490011095542286e-10)
@@ -2465,7 +2465,7 @@ def Xform "Root" (
             )
             double3 xformOp:rotateXYZ = (0, -0, 0)
             double3 xformOp:scale = (1, 1, 1)
-            double3 xformOp:translate = (0.17172157692818998, 0.19776995374244977, 0.03942263669516444)
+            double3 xformOp:translate = (0.13867302133303935, 0.9213269786669742, 0.020000000000000018)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
 
             over "Sphere"
