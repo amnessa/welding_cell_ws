@@ -149,3 +149,8 @@ Current modes are: mode:= teleop, loop:=true, mode:= capture
 
 "ros2 launch sand_drawer sand_drawer.launch.py mode:=teleop
 
+
+python3 src/sand_drawer/scripts/pd_auto_tuner.py \
+  --kp_init 1.5 --kd_init 0.0 \
+  --step_kp 0.3 --step_kd 0.05 \
+  --max_iters 30 --jiggle_weight 0.5 --timeout 120

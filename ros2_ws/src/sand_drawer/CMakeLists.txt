@@ -49,6 +49,7 @@ install(PROGRAMS
   scripts/plane_teleop_keyboard.py
   scripts/ur5e_rrt_planner.py
   scripts/cartesian_square_controller.py
+  scripts/pd_auto_tuner.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

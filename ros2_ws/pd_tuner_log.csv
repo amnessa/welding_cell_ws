@@ -1,0 +1,3 @@
+iter,param,direction,Kp,Kd,cost,rmse,jiggle,aborted,accepted
+0,baseline,-,1.5,0.0,99999.0,99.0,99.0,True,True
+1,Kp,+,1.8,0.0,99999.0,99.0,99.0,True,False

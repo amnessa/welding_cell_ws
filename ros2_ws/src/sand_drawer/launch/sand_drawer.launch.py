@@ -58,6 +58,10 @@ def launch_setup(context, *args, **kwargs):
     line_v_start_str = LaunchConfiguration("line_v_start").perform(context)
     line_u_end_str   = LaunchConfiguration("line_u_end").perform(context)
     line_v_end_str   = LaunchConfiguration("line_v_end").perform(context)
+    kp_linear_str    = LaunchConfiguration("kp_linear").perform(context)
+    kd_linear_str    = LaunchConfiguration("kd_linear").perform(context)
+    kp_angular_str   = LaunchConfiguration("kp_angular").perform(context)
+    kd_angular_str   = LaunchConfiguration("kd_angular").perform(context)
 
     from subprocess import check_output
     robot_description_str = check_output(
@@ -165,8 +169,10 @@ def launch_setup(context, *args, **kwargs):
             "waypoint_threshold": 0.03,
             "approach_threshold": 0.06,
             "orientation_threshold": 0.15,
-            "kp_linear": 1.5,
-            "kp_angular": 1.5,
+            "kp_linear": float(kp_linear_str),
+            "kd_linear": float(kd_linear_str),
+            "kp_angular": float(kp_angular_str),
+            "kd_angular": float(kd_angular_str),
             "max_linear_vel": 0.25,
             "max_angular_vel": 0.60,
             "plane_z_correction_gain": 2.0,
@@ -175,6 +181,11 @@ def launch_setup(context, *args, **kwargs):
             "boundary_margin": 0.01,
             "teleop_mode": is_teleop,
             "teleop_speed": 0.10,
+            # Line UV coordinates (used when trajectory_key='line')
+            "line_u_start": float(line_u_start_str),
+            "line_v_start": float(line_v_start_str),
+            "line_u_end":   float(line_u_end_str),
+            "line_v_end":   float(line_v_end_str),
         }],
     ))
 
@@ -228,10 +239,15 @@ def generate_launch_description():
         DeclareLaunchArgument("trajectory_key", default_value="projected_vector_trajectory"),
         DeclareLaunchArgument("mode",           default_value="trajectory",
                               description="trajectory | teleop | cartesian | capture"),
-        # Line UV coordinates (cartesian mode)
+        # Line UV coordinates (shared by cartesian & velocity modes)
         DeclareLaunchArgument("line_u_start",   default_value="0.5"),
         DeclareLaunchArgument("line_v_start",   default_value="0.3"),
         DeclareLaunchArgument("line_u_end",     default_value="0.5"),
         DeclareLaunchArgument("line_v_end",     default_value="0.7"),
+        # PD gains (velocity controller)
+        DeclareLaunchArgument("kp_linear",      default_value="1.5"),
+        DeclareLaunchArgument("kd_linear",      default_value="0.0"),
+        DeclareLaunchArgument("kp_angular",     default_value="1.5"),
+        DeclareLaunchArgument("kd_angular",     default_value="0.0"),
         OpaqueFunction(function=launch_setup),
     ])

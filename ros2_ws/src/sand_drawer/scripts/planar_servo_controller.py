@@ -118,7 +118,9 @@ class PlanarServoController(Node):
         self.declare_parameter('approach_threshold', 0.06)     # m — generous for damped IK
         self.declare_parameter('orientation_threshold', 0.15)  # rad
         self.declare_parameter('kp_linear', 1.5)
+        self.declare_parameter('kd_linear', 0.0)               # D-gain for linear vel
         self.declare_parameter('kp_angular', 1.5)
+        self.declare_parameter('kd_angular', 0.0)              # D-gain for angular vel
         self.declare_parameter('max_linear_vel', 0.25)         # m/s
         self.declare_parameter('max_angular_vel', 0.60)        # rad/s
         self.declare_parameter('plane_z_correction_gain', 2.0)
@@ -127,6 +129,11 @@ class PlanarServoController(Node):
         self.declare_parameter('boundary_margin', 0.01)        # m
         self.declare_parameter('teleop_mode', False)
         self.declare_parameter('teleop_speed', 0.10)            # m/s default
+        # Line trajectory UV parameters (used when trajectory_key='line')
+        self.declare_parameter('line_u_start', 0.5)
+        self.declare_parameter('line_v_start', 0.3)
+        self.declare_parameter('line_u_end', 0.5)
+        self.declare_parameter('line_v_end', 0.7)
 
         self._load_params()
         self._load_plane_json()
@@ -198,7 +205,9 @@ class PlanarServoController(Node):
         self.approach_thresh  = g('approach_threshold').value
         self.orient_thresh    = g('orientation_threshold').value
         self.kp_lin           = g('kp_linear').value
+        self.kd_lin           = g('kd_linear').value
         self.kp_ang           = g('kp_angular').value
+        self.kd_ang           = g('kd_angular').value
         self.max_lin          = g('max_linear_vel').value
         self.max_ang          = g('max_angular_vel').value
         self.z_corr_gain      = g('plane_z_correction_gain').value
@@ -207,6 +216,17 @@ class PlanarServoController(Node):
         self.boundary_margin  = g('boundary_margin').value
         self.teleop_mode      = g('teleop_mode').value
         self.teleop_speed     = g('teleop_speed').value
+        self.line_u_start     = g('line_u_start').value
+        self.line_v_start     = g('line_v_start').value
+        self.line_u_end       = g('line_u_end').value
+        self.line_v_end       = g('line_v_end').value
+
+        # ---- Derivative state (previous errors for D-term) ----
+        self._prev_err_px = 0.0
+        self._prev_err_py = 0.0
+        self._prev_err_pz = 0.0
+        self._prev_orient_err = np.zeros(3)
+        self._prev_time = None
 
     def _load_plane_json(self):
         json_path = self.get_parameter('plane_json_file').value
@@ -242,13 +262,45 @@ class PlanarServoController(Node):
             f'X=[{self.bounds["x_min"]:.3f}, {self.bounds["x_max"]:.3f}] '
             f'Y=[{self.bounds["y_min"]:.3f}, {self.bounds["y_max"]:.3f}]')
 
+        # ---- plane rectangle bounds (for UV → world conversion) ----
+        corners = [np.array(c, dtype=float) for c in data['rectangle_corners']]
+        self.rect_origin = corners[0]
+        self.rect_width_vec = corners[1] - corners[0]
+        self.rect_height_vec = corners[3] - corners[0]
+
         # ---- trajectory waypoints ----
-        traj = data.get(self.traj_key) or data.get('square_trajectory', [])
-        self.waypoints = []
-        for wp in traj:
-            pos  = np.array(wp['position'], dtype=float)
-            quat = list(wp['orientation_xyzw'])          # [x, y, z, w]
-            self.waypoints.append((pos, quat))
+        if self.traj_key == 'line':
+            # Generate line from UV parameters on the rectangle
+            p_start = (self.rect_origin
+                       + self.line_u_start * self.rect_width_vec
+                       + self.line_v_start * self.rect_height_vec)
+            p_end = (self.rect_origin
+                     + self.line_u_end * self.rect_width_vec
+                     + self.line_v_end * self.rect_height_vec)
+            # Grab orientation from square_trajectory
+            sq = data.get('square_trajectory', [])
+            if not sq:
+                raise RuntimeError('Need square_trajectory for orientation')
+            quat = list(sq[0]['orientation_xyzw'])
+            # Discretize the line at the same resolution as cartesian controller
+            line_vec = p_end - p_start
+            line_len = float(np.linalg.norm(line_vec))
+            n_pts = max(int(line_len / 0.005), 2)  # ~5 mm spacing
+            self.waypoints = []
+            for i in range(n_pts + 1):
+                t = i / n_pts
+                self.waypoints.append((p_start + t * line_vec, quat))
+            self.get_logger().info(
+                f'Line trajectory: UV ({self.line_u_start},{self.line_v_start})→'
+                f'({self.line_u_end},{self.line_v_end})  '
+                f'length={line_len:.3f}m  {len(self.waypoints)} waypoints')
+        else:
+            traj = data.get(self.traj_key) or data.get('square_trajectory', [])
+            self.waypoints = []
+            for wp in traj:
+                pos  = np.array(wp['position'], dtype=float)
+                quat = list(wp['orientation_xyzw'])          # [x, y, z, w]
+                self.waypoints.append((pos, quat))
         if not self.waypoints:
             raise RuntimeError('No waypoints in plane JSON')
 
@@ -472,15 +524,26 @@ class PlanarServoController(Node):
         return tw
 
     def _orient_vel(self, quat_now):
-        """Angular velocity to correct orientation towards target_quat."""
+        """Angular velocity to correct orientation towards target_quat (PD)."""
         err = orientation_error_aa(quat_now, self.target_quat)
-        return clamp_vec(self.kp_ang * err, self.max_ang)
+
+        # Derivative
+        now = self.get_clock().now()
+        if self._prev_time is not None:
+            dt = max((now - self._prev_time).nanoseconds * 1e-9, 1e-6)
+        else:
+            dt = 0.1
+        d_err = (err - self._prev_orient_err) / dt
+        self._prev_orient_err = err.copy()
+
+        cmd = self.kp_ang * err + self.kd_ang * d_err
+        return clamp_vec(cmd, self.max_ang)
 
     # ------------------------------------------------------------------
     # Control phases (on-plane)
     # ------------------------------------------------------------------
     def _servo(self, pos, quat):
-        """Follow trajectory waypoints, constrained to the plane."""
+        """Follow trajectory waypoints using PD control, constrained to the plane."""
         if self.waypoint_idx >= len(self.waypoints):
             if self.do_loop:
                 self.waypoint_idx = 0
@@ -498,10 +561,29 @@ class PlanarServoController(Node):
         err_py = float(np.dot(err_base, self.plane_y))
         err_pz = float(np.dot(err_base, self.plane_n))  # off-plane drift
 
-        # Planar velocity + Z drift correction
-        vx = self.kp_lin * err_px
-        vy = self.kp_lin * err_py
-        vz = self.z_corr_gain * err_pz  # push back to plane
+        # ---- Compute dt for derivative term ----
+        now = self.get_clock().now()
+        if self._prev_time is not None:
+            dt = (now - self._prev_time).nanoseconds * 1e-9
+        else:
+            dt = 0.1  # first tick, assume 10 Hz
+        dt = max(dt, 1e-6)  # safety
+
+        # ---- Derivative of position error (in plane frame) ----
+        d_err_px = (err_px - self._prev_err_px) / dt
+        d_err_py = (err_py - self._prev_err_py) / dt
+        d_err_pz = (err_pz - self._prev_err_pz) / dt
+
+        # Store for next iteration
+        self._prev_err_px = err_px
+        self._prev_err_py = err_py
+        self._prev_err_pz = err_pz
+        self._prev_time = now
+
+        # ---- PD: Planar velocity + Z drift correction ----
+        vx = self.kp_lin * err_px + self.kd_lin * d_err_px
+        vy = self.kp_lin * err_py + self.kd_lin * d_err_py
+        vz = self.z_corr_gain * err_pz  # Z uses its own gain (no D needed)
 
         # Get current plane coords for boundary check
         ex, ey, _ = self._to_plane(pos)
@@ -519,7 +601,8 @@ class PlanarServoController(Node):
         self.get_logger().info(
             f'SERVO  wp={self.waypoint_idx}/{len(self.waypoints)}  '
             f'dist={dist:.4f}m  z_off={err_pz:.4f}m  '
-            f'plane_xy=({ex:.3f},{ey:.3f})',
+            f'plane_xy=({ex:.3f},{ey:.3f})  '
+            f'Kp={self.kp_lin:.2f} Kd={self.kd_lin:.3f}',
             throttle_duration_sec=1.0)
 
         if dist < self.wp_thresh:
