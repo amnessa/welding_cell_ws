@@ -14,8 +14,8 @@
                 double radius = 500
             }
             dictionary Perspective = {
-                double3 position = (0.1975084475081674, 1.840432675355627, 0.678528833398563)
-                double3 target = (0.22992184295232115, -0.8679016955369592, -1.5565463536641508)
+                double3 position = (0.0556952610147938, 2.8912045189709197, 1.1374956768696949)
+                double3 target = (0.15913100182635675, -1.1677343705100682, -1.1581481085645486)
             }
             dictionary Right = {
                 double3 position = (0, -1688400, -3.7490011095542286e-10)
@@ -2212,7 +2212,7 @@ def Xform "Root" (
 
     def Xform "Robot_Mount_Point"
     {
-        quatd xformOp:orient = (1, 0, 0, 0)
+        quatd xformOp:orient = (0.38268343236508984, 0, 0, 0.9238795325112867)
         double3 xformOp:scale = (1, 1, 1)
         double3 xformOp:translate = (-0.015104557178157198, -0.04296525008096573, -0.6321252785647566)
         uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
@@ -2241,6 +2241,7 @@ def Xform "Root" (
                     displayName = "Name Override"
                     doc = "Name override for prim lookup in base name search"
                 )
+                rel physics:simulationOwner
             }
 
             over "wrist_2_link"
@@ -2249,6 +2250,7 @@ def Xform "Root" (
                     displayName = "Name Override"
                     doc = "Name override for prim lookup in base name search"
                 )
+                rel physics:simulationOwner
             }
 
             over "wrist_3_link"
@@ -2257,6 +2259,7 @@ def Xform "Root" (
                     displayName = "Name Override"
                     doc = "Name override for prim lookup in base name search"
                 )
+                rel physics:simulationOwner
 
                 def "rsd455" (
                     active = false
@@ -2289,6 +2292,7 @@ def Xform "Root" (
                     displayName = "Name Override"
                     doc = "Name override for prim lookup in base name search"
                 )
+                rel physics:simulationOwner
             }
 
             over "upper_arm_link"
@@ -2297,6 +2301,7 @@ def Xform "Root" (
                     displayName = "Name Override"
                     doc = "Name override for prim lookup in base name search"
                 )
+                rel physics:simulationOwner
             }
 
             over "forearm_link"
@@ -2305,6 +2310,7 @@ def Xform "Root" (
                     displayName = "Name Override"
                     doc = "Name override for prim lookup in base name search"
                 )
+                rel physics:simulationOwner
             }
 
             over "base_link" (
@@ -2316,54 +2322,85 @@ def Xform "Root" (
                     doc = "Name override for prim lookup in base name search"
                 )
                 bool physics:rigidBodyEnabled = 1
+                rel physics:simulationOwner
             }
 
             over "joints"
             {
                 over "shoulder_pan_joint"
                 {
+                    float drive:angular:physics:targetPosition = 0
                     custom string isaac:nameOverride (
                         displayName = "Name Override"
                         doc = "Name override for prim lookup in base name search"
                     )
+                    float physics:lowerLimit = -360
+                    float physics:upperLimit = 360
                     float state:angular:physics:position = 0
                     float state:angular:physics:velocity = 0
                 }
 
                 over "shoulder_lift_joint"
                 {
+                    float drive:angular:physics:targetPosition = 0
                     custom string isaac:nameOverride (
                         displayName = "Name Override"
                         doc = "Name override for prim lookup in base name search"
                     )
+                    float physics:lowerLimit = -360
+                    float physics:upperLimit = 360
                     float state:angular:physics:position = 0
                     float state:angular:physics:velocity = 0
                 }
 
                 over "elbow_joint"
                 {
+                    float drive:angular:physics:targetPosition = 0
                     custom string isaac:nameOverride (
                         displayName = "Name Override"
                         doc = "Name override for prim lookup in base name search"
                     )
+                    float physics:lowerLimit = -180
+                    float physics:upperLimit = 180
                     float state:angular:physics:position = 0
                     float state:angular:physics:velocity = 0
                 }
 
                 over "wrist_1_joint"
                 {
+                    float drive:angular:physics:targetPosition = -10
+                    custom string isaac:nameOverride (
+                        displayName = "Name Override"
+                        doc = "Name override for prim lookup in base name search"
+                    )
+                    float physics:lowerLimit = -360
+                    float physics:upperLimit = 360
                     float state:angular:physics:position = 0
                     float state:angular:physics:velocity = 0
                 }
 
                 over "wrist_2_joint"
                 {
+                    float drive:angular:physics:targetPosition = 0
+                    custom string isaac:nameOverride (
+                        displayName = "Name Override"
+                        doc = "Name override for prim lookup in base name search"
+                    )
+                    float physics:lowerLimit = -360
+                    float physics:upperLimit = 360
                     float state:angular:physics:position = 0
                     float state:angular:physics:velocity = 0
                 }
 
                 over "wrist_3_joint"
                 {
+                    float drive:angular:physics:targetPosition = 0
+                    custom string isaac:nameOverride (
+                        displayName = "Name Override"
+                        doc = "Name override for prim lookup in base name search"
+                    )
+                    float physics:lowerLimit = -360
+                    float physics:upperLimit = 360
                     float state:angular:physics:position = 0
                     float state:angular:physics:velocity = 0
                 }
@@ -2711,6 +2748,42 @@ def Xform "Root" (
             int node:typeVersion = 1
             uniform token ui:nodegraph:node:expansionState = "open"
             uniform float2 ui:nodegraph:node:pos = (-1028.9055, 160.25833)
+        }
+    }
+
+    def OmniGraph "PushGraph"
+    {
+        token evaluationMode = "Automatic"
+        token evaluator:type = "push"
+        token fabricCacheBacking = "StageWithoutHistory"
+        int2 fileFormatVersion = (1, 9)
+        token pipelineStage = "pipelineStageSimulation"
+
+        def OmniGraphNode "shoulder_pan_jointCurveNode"
+        {
+            custom string inputs:IndividualOutputs
+            custom rel inputs:Prim = </Root/Robot_Mount_Point/ur5e/joints/shoulder_pan_joint> (
+                customData = {
+                    dictionary omni = {
+                        dictionary graph = {
+                            string relType = "target"
+                        }
+                    }
+                }
+            )
+            custom timecode inputs:Time
+            custom bool inputs:UseGlobalTime
+            token node:type = "omni.anim.curve.core.AnimCurve"
+            int node:typeVersion = 5
+            custom rel outputs_AnimFrame (
+                customData = {
+                    dictionary omni = {
+                        dictionary graph = {
+                            string relType = "bundle"
+                        }
+                    }
+                }
+            )
         }
     }
 }

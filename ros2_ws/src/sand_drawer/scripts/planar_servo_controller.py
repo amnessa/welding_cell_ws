@@ -28,6 +28,7 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
+from sensor_msgs.msg import JointState
 import tf2_ros
 from tf2_ros import TransformException
 
@@ -89,6 +90,7 @@ def clamp_vec(v, max_mag):
 # ---------------------------------------------------------------------------
 
 class Phase(Enum):
+    HOME     = auto()
     APPROACH = auto()
     LOWER    = auto()
     SERVO    = auto()
@@ -128,6 +130,18 @@ class PlanarServoController(Node):
 
         # ---- publisher ----
         self.twist_pub = self.create_publisher(Twist, '/end_effector_velocity', 10)
+        self.joint_cmd_pub = self.create_publisher(JointState, '/isaac_joint_commands', 10)
+
+        # ---- home position ----
+        self._home_joint_names = [
+            'shoulder_pan_joint', 'shoulder_lift_joint', 'elbow_joint',
+            'wrist_1_joint', 'wrist_2_joint', 'wrist_3_joint'
+        ]
+        self._home_joint_positions = [
+            -0.7854, -0.4363, -2.5307, -0.1745, 0.0, 0.0
+        ]
+        self._home_reached_time = None  # timestamp when home was reached
+        self._home_hold_duration = 2.0  # seconds to hold at home before transitioning
 
         # ---- teleop subscription ----
         self._teleop_vel = Twist()  # latest teleop command (in plane frame)
@@ -138,7 +152,7 @@ class PlanarServoController(Node):
                 self._teleop_callback, 10)
 
         # ---- state ----
-        self.phase        = Phase.APPROACH
+        self.phase        = Phase.HOME
         self.waypoint_idx = 0
 
         # ---- stuck detection ----
@@ -298,6 +312,33 @@ class PlanarServoController(Node):
         """Reset stuck detector for next phase."""
         self._stuck_dist = float('inf')
         self._stuck_time = self.get_clock().now()
+
+    # ------------------------------------------------------------------
+    # HOME phase
+    # ------------------------------------------------------------------
+    def _home(self):
+        """Publish home joint positions directly, wait 2s, then transition."""
+        cmd = JointState()
+        cmd.header.stamp = self.get_clock().now().to_msg()
+        cmd.name = self._home_joint_names
+        cmd.position = self._home_joint_positions
+        self.joint_cmd_pub.publish(cmd)
+
+        # Check if joints have arrived (via last joint state from TF/subscriber)
+        # For simplicity, just start the hold timer on first call
+        if self._home_reached_time is None:
+            self._home_reached_time = self.get_clock().now()
+            self.get_logger().info('HOME  Sending robot to home position…')
+
+        elapsed = (self.get_clock().now() - self._home_reached_time).nanoseconds * 1e-9
+        self.get_logger().info(
+            f'HOME  holding ({elapsed:.1f}/{self._home_hold_duration:.1f}s)',
+            throttle_duration_sec=1.0)
+
+        if elapsed >= self._home_hold_duration:
+            self.get_logger().info('Home hold complete → APPROACH')
+            self.phase = Phase.APPROACH
+            self._reset_stuck()
 
     # ------------------------------------------------------------------
     # Twist builder helpers
@@ -485,6 +526,11 @@ class PlanarServoController(Node):
     # Main control loop (10 Hz)
     # ------------------------------------------------------------------
     def _control_loop(self):
+        # HOME phase doesn't need EE pose — just sends joint commands
+        if self.phase == Phase.HOME:
+            self._home()
+            return
+
         pos, quat = self._get_ee_pose()
         if pos is None:
             # No TF yet — publish zero
