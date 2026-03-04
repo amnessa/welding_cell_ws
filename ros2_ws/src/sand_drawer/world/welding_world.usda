@@ -14,8 +14,8 @@
                 double radius = 500
             }
             dictionary Perspective = {
-                double3 position = (-1.4336546566221948, 0.8654232988315211, 0.19857411835805383)
-                double3 target = (1.3075676757109262, -2.144989552471763, -2.6048679792704488)
+                double3 position = (-1.854670778200249, 1.1843950513693389, 0.619322028851883)
+                double3 target = (1.726599074308347, -1.890598691430152, -2.456301121992156)
             }
             dictionary Right = {
                 double3 position = (0, -1688400, -3.7490011095542286e-10)
@@ -2358,6 +2358,7 @@ def Xform "Root" (
                 over "shoulder_pan_joint"
                 {
                     float drive:angular:physics:targetPosition = -133.2
+                    uniform token drive:angular:physics:type = "acceleration"
                     custom string isaac:nameOverride (
                         displayName = "Name Override"
                         doc = "Name override for prim lookup in base name search"
@@ -2371,6 +2372,7 @@ def Xform "Root" (
                 over "shoulder_lift_joint"
                 {
                     float drive:angular:physics:targetPosition = -29.9
+                    uniform token drive:angular:physics:type = "acceleration"
                     custom string isaac:nameOverride (
                         displayName = "Name Override"
                         doc = "Name override for prim lookup in base name search"
@@ -2384,6 +2386,7 @@ def Xform "Root" (
                 over "elbow_joint"
                 {
                     float drive:angular:physics:targetPosition = -141.6
+                    uniform token drive:angular:physics:type = "acceleration"
                     custom string isaac:nameOverride (
                         displayName = "Name Override"
                         doc = "Name override for prim lookup in base name search"
@@ -2397,6 +2400,7 @@ def Xform "Root" (
                 over "wrist_1_joint"
                 {
                     float drive:angular:physics:targetPosition = -10
+                    uniform token drive:angular:physics:type = "acceleration"
                     custom string isaac:nameOverride (
                         displayName = "Name Override"
                         doc = "Name override for prim lookup in base name search"
@@ -2410,6 +2414,7 @@ def Xform "Root" (
                 over "wrist_2_joint"
                 {
                     float drive:angular:physics:targetPosition = 0
+                    uniform token drive:angular:physics:type = "acceleration"
                     custom string isaac:nameOverride (
                         displayName = "Name Override"
                         doc = "Name override for prim lookup in base name search"
@@ -2423,6 +2428,7 @@ def Xform "Root" (
                 over "wrist_3_joint"
                 {
                     float drive:angular:physics:targetPosition = 0
+                    uniform token drive:angular:physics:type = "acceleration"
                     custom string isaac:nameOverride (
                         displayName = "Name Override"
                         doc = "Name override for prim lookup in base name search"
