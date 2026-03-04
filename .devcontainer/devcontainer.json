@@ -15,8 +15,6 @@
         "--volume=${localEnv:HOME}/docker/isaac-sim/config:/isaac-sim/.nvidia-omniverse/config:rw",
         "--volume=${localEnv:HOME}/docker/isaac-sim/data:/isaac-sim/.local/share/ov/data:rw",
         "--volume=${localEnv:HOME}/docker/isaac-sim/pkg:/isaac-sim/.local/share/ov/pkg:rw",
-        "--volume=/usr/lib/x86_64-linux-gnu/libnvidia-ngx.so.1:/usr/lib/x86_64-linux-gnu/libnvidia-ngx.so.1:ro",
-        "--volume=/usr/lib/x86_64-linux-gnu/libnvidia-ngx.so.570.211.01:/usr/lib/x86_64-linux-gnu/libnvidia-ngx.so.570.211.01:ro",
         "--ipc=host"
     ],
 
