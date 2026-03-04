@@ -48,6 +48,7 @@ install(PROGRAMS
   scripts/planar_servo_controller.py
   scripts/plane_teleop_keyboard.py
   scripts/ur5e_rrt_planner.py
+  scripts/cartesian_square_controller.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

@@ -4,13 +4,16 @@ Sand Drawer — Planar Servo Launch File
 Launches the full pipeline for constrained plane servoing on a UR5e in Isaac Sim.
 
 Modes (via mode:= launch argument):
-  trajectory (default) — follow waypoints from the plane JSON
+  trajectory (default) — follow waypoints from the plane JSON (velocity servo)
   teleop               — move EE to plane center, then accept keyboard commands
+  cartesian            — position-controlled square drawing via Cartesian IK
   capture              — run plane_solver_node to capture 4 points
 
 Usage:
   ros2 launch sand_drawer sand_drawer.launch.py
   ros2 launch sand_drawer sand_drawer.launch.py mode:=teleop
+  ros2 launch sand_drawer sand_drawer.launch.py mode:=cartesian
+  ros2 launch sand_drawer sand_drawer.launch.py mode:=cartesian loop:=true
   ros2 launch sand_drawer sand_drawer.launch.py loop:=true
   ros2 launch sand_drawer sand_drawer.launch.py mode:=capture
 """
@@ -51,6 +54,10 @@ def launch_setup(context, *args, **kwargs):
     loop_str         = LaunchConfiguration("loop").perform(context)
     traj_key_str     = LaunchConfiguration("trajectory_key").perform(context)
     mode_str         = LaunchConfiguration("mode").perform(context)
+    line_u_start_str = LaunchConfiguration("line_u_start").perform(context)
+    line_v_start_str = LaunchConfiguration("line_v_start").perform(context)
+    line_u_end_str   = LaunchConfiguration("line_u_end").perform(context)
+    line_v_end_str   = LaunchConfiguration("line_v_end").perform(context)
 
     from subprocess import check_output
     robot_description_str = check_output(
@@ -87,6 +94,42 @@ def launch_setup(context, *args, **kwargs):
                 "source_frame": "world",
                 "target_frame": "base_link",
                 "output_file": plane_json_str or default_plane_json,
+            }],
+        ))
+        return nodes
+
+    if mode_str == "cartesian":
+        # ---- Position-controlled Cartesian drawing ----
+        # Default to 'line' unless user explicitly set a different trajectory_key
+        cart_traj_key = traj_key_str if traj_key_str != "projected_vector_trajectory" else "line"
+        nodes.append(Node(
+            package="sand_drawer",
+            executable="cartesian_square_controller.py",
+            name="cartesian_draw_controller",
+            output="screen",
+            parameters=[{
+                "use_sim_time": use_sim_time_str == "true",
+                "plane_json_file": plane_json_str or default_plane_json,
+                "approach_height": 0.08,
+                "cartesian_step": 0.005,
+                "ik_damping": 0.05,
+                "execution_hz": 10.0,
+                "waypoints_per_tick": 1,
+                "loop_trajectory": loop_str == "true",
+                "trajectory_key": cart_traj_key,
+                "descent_step": 0.002,
+                "max_joint_step": 0.15,
+                # Elbow-up constraints to prevent table collisions
+                "shoulder_lift_max": 0.0,
+                "shoulder_lift_min": -2.5,
+                "elbow_max": -0.3,
+                "elbow_min": -3.14,
+                "ik_num_seeds": 30,
+                # Line UV coordinates (used when trajectory_key='line')
+                "line_u_start": float(line_u_start_str),
+                "line_v_start": float(line_v_start_str),
+                "line_u_end":   float(line_u_end_str),
+                "line_v_end":   float(line_v_end_str),
             }],
         ))
         return nodes
@@ -184,6 +227,11 @@ def generate_launch_description():
         DeclareLaunchArgument("loop",           default_value="false"),
         DeclareLaunchArgument("trajectory_key", default_value="projected_vector_trajectory"),
         DeclareLaunchArgument("mode",           default_value="trajectory",
-                              description="trajectory | teleop | capture"),
+                              description="trajectory | teleop | cartesian | capture"),
+        # Line UV coordinates (cartesian mode)
+        DeclareLaunchArgument("line_u_start",   default_value="0.5"),
+        DeclareLaunchArgument("line_v_start",   default_value="0.3"),
+        DeclareLaunchArgument("line_u_end",     default_value="0.5"),
+        DeclareLaunchArgument("line_v_end",     default_value="0.7"),
         OpaqueFunction(function=launch_setup),
     ])
