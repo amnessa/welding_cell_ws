@@ -106,43 +106,77 @@ def rotmat_to_quat(R: np.ndarray) -> list:
 # Cartesian interpolation helpers
 # ---------------------------------------------------------------------------
 
-def _interpolate_cartesian(
+def _interpolate_cartesian_smooth(
     positions: List[np.ndarray],
     orientation_xyzw: list,
-    max_step: float = 0.005,
+    v_max: float = 0.05,   # Maximum cruising speed (m/s)
+    a_max: float = 0.05,   # Maximum acceleration (m/s^2)
+    dt: float = 0.1        # Timer tick duration (1.0 / execution_hz)
 ) -> List[Tuple[np.ndarray, list]]:
     """
-    Densely interpolate a piecewise-linear Cartesian path.
-
-    Each segment between consecutive positions is subdivided so that no two
-    successive waypoints are more than *max_step* metres apart (in Euclidean
-    distance).  The orientation is constant (tool perpendicular to surface).
-
-    Parameters
-    ----------
-    positions : list of 3-vectors (xyz in base frame)
-    orientation_xyzw : fixed orientation [x, y, z, w]
-    max_step : maximum Cartesian distance between consecutive waypoints (m)
-
-    Returns
-    -------
-    waypoints : list of (position_3, orientation_xyzw) tuples
+    Generates a dense Cartesian path using a Trapezoidal Velocity Profile.
+    This guarantees smooth acceleration and deceleration between all points.
     """
-    if not positions:
-        return []
+    if not positions or len(positions) < 2:
+        return [(positions[0].copy(), orientation_xyzw)] if positions else []
 
-    waypoints: List[Tuple[np.ndarray, list]] = [(positions[0].copy(), orientation_xyzw)]
+    waypoints = []
 
+    # Loop through each line segment
     for i in range(len(positions) - 1):
         p_start = positions[i]
         p_end = positions[i + 1]
+
         dist = float(np.linalg.norm(p_end - p_start))
-        n_steps = max(int(math.ceil(dist / max_step)), 1)
-        for j in range(1, n_steps + 1):
-            alpha = j / n_steps
-            p = p_start + alpha * (p_end - p_start)
+        if dist < 1e-5:
+            continue
+
+        line_dir = (p_end - p_start) / dist
+
+        # 1. Calculate the time needed to accelerate and decelerate
+        t_accel = v_max / a_max
+        d_accel = 0.5 * a_max * (t_accel ** 2)
+
+        # 2. Check if the line is too short to reach max velocity
+        if 2 * d_accel > dist:
+            # Triangle profile: We must start braking before reaching v_max
+            d_accel = dist / 2.0
+            t_accel = math.sqrt(2 * d_accel / a_max)
+            actual_v_max = a_max * t_accel
+            t_cruise = 0.0
+            d_cruise = 0.0
+        else:
+            # Trapezoid profile: Accelerate, Cruise, Decelerate
+            actual_v_max = v_max
+            d_cruise = dist - (2 * d_accel)
+            t_cruise = d_cruise / actual_v_max
+
+        total_time = (2 * t_accel) + t_cruise
+        n_steps = max(int(total_time / dt), 1)
+
+        # 3. Generate the precise point for every time step
+        for step in range(n_steps):
+            t = step * dt
+
+            if t < t_accel:
+                # Acceleration phase
+                s = 0.5 * a_max * (t ** 2)
+            elif t < t_accel + t_cruise:
+                # Cruising phase
+                s = d_accel + actual_v_max * (t - t_accel)
+            else:
+                # Deceleration phase
+                t_dec = t - t_accel - t_cruise
+                s = d_accel + d_cruise + (actual_v_max * t_dec) - (0.5 * a_max * (t_dec ** 2))
+
+            # Clamp to ensure no floating point overshoot
+            s = min(s, dist)
+
+            p = p_start + (line_dir * s)
             waypoints.append((p.copy(), orientation_xyzw))
 
+    # Always append the exact final point of the entire sequence
+    waypoints.append((positions[-1].copy(), orientation_xyzw))
     return waypoints
 
 
@@ -171,13 +205,13 @@ class CartesianDrawController(Node):
         # ---- parameters ----
         self.declare_parameter('plane_json_file', '')
         self.declare_parameter('approach_height', 0.08)
-        self.declare_parameter('cartesian_step', 0.005)       # m between Cartesian waypoints
+        self.declare_parameter('max_linear_vel', 0.05)        # m/s cruising speed
+        self.declare_parameter('max_linear_accel', 0.05)      # m/s^2 max acceleration
         self.declare_parameter('ik_damping', 0.05)
         self.declare_parameter('execution_hz', 10.0)          # joint command rate
         self.declare_parameter('waypoints_per_tick', 1)       # Cartesian wp to advance per tick
         self.declare_parameter('loop_trajectory', False)
         self.declare_parameter('trajectory_key', 'line')      # 'line' | 'square_trajectory' | ...
-        self.declare_parameter('descent_step', 0.002)         # m per tick during descent
         self.declare_parameter('max_joint_step', 0.15)        # rad — reject IK jumps larger than this
         # Elbow-up configuration constraints — prevents table collisions
         self.declare_parameter('shoulder_lift_max', 0.0)
@@ -248,13 +282,13 @@ class CartesianDrawController(Node):
     def _load_params(self):
         g = self.get_parameter
         self.approach_height  = g('approach_height').value
-        self.cartesian_step   = g('cartesian_step').value
+        self.v_max            = g('max_linear_vel').value
+        self.a_max            = g('max_linear_accel').value
         self.ik_damping       = g('ik_damping').value
         self.execution_hz     = g('execution_hz').value
         self.wp_per_tick      = g('waypoints_per_tick').value
         self.do_loop          = g('loop_trajectory').value
         self.traj_key         = g('trajectory_key').value
-        self.descent_step        = g('descent_step').value
         self.max_joint_step      = g('max_joint_step').value
         self.shoulder_lift_max   = g('shoulder_lift_max').value
         self.shoulder_lift_min   = g('shoulder_lift_min').value
@@ -461,10 +495,12 @@ class CartesianDrawController(Node):
             # Prepare descent: from approach height to on-plane
             approach_pos = self.draw_positions[0] - self.approach_height * self.plane_n
             on_plane_pos = self.draw_positions[0].copy()
-            self._descent_waypoints = _interpolate_cartesian(
-                [approach_pos, on_plane_pos],
-                self.target_quat,
-                max_step=self.descent_step,
+            self._descent_waypoints = _interpolate_cartesian_smooth(
+                positions=[approach_pos, on_plane_pos],
+                orientation_xyzw=self.target_quat,
+                v_max=self.v_max,
+                a_max=self.a_max,
+                dt=(1.0 / self.execution_hz),
             )
             self._descent_idx = 0
             self.phase = Phase.DESCENDING
@@ -659,9 +695,12 @@ class CartesianDrawController(Node):
         if self._descent_idx >= len(self._descent_waypoints):
             self.get_logger().info('Descent complete → DRAWING')
             # Build the full Cartesian drawing path
-            self._cart_waypoints = _interpolate_cartesian(
-                self.draw_positions, self.target_quat,
-                max_step=self.cartesian_step,
+            self._cart_waypoints = _interpolate_cartesian_smooth(
+                positions=self.draw_positions,
+                orientation_xyzw=self.target_quat,
+                v_max=self.v_max,
+                a_max=self.a_max,
+                dt=(1.0 / self.execution_hz),
             )
             self._cart_idx = 0
             self.phase = Phase.DRAWING
@@ -706,10 +745,12 @@ class CartesianDrawController(Node):
                 # Prepare ascent: from last on-plane pos to approach height
                 last_pos = self._cart_waypoints[-1][0]
                 ascent_pos = last_pos - self.approach_height * self.plane_n
-                self._ascent_waypoints = _interpolate_cartesian(
-                    [last_pos, ascent_pos],
-                    self.target_quat,
-                    max_step=self.descent_step,
+                self._ascent_waypoints = _interpolate_cartesian_smooth(
+                    positions=[last_pos, ascent_pos],
+                    orientation_xyzw=self.target_quat,
+                    v_max=self.v_max,
+                    a_max=self.a_max,
+                    dt=(1.0 / self.execution_hz),
                 )
                 self._ascent_idx = 0
                 self.phase = Phase.ASCENDING
