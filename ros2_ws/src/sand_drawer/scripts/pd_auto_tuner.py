@@ -109,9 +109,11 @@ class TunerMonitorNode(Node):
         self.create_subscription(Twist, '/end_effector_velocity',
                                  self._twist_cb, 10)
 
-        # We also watch the servo controller's log via /rosout — but it's
-        # simpler to just detect phase transitions by watching whether
-        # twist commands are being published.
+        # Detect servo phase by watching twist commands.
+        # Descent is position-controlled (no Twists), so the *first*
+        # idle→active Twist transition marks the start of SERVO.
+        self._twist_active_phases = 0     # count idle→active transitions
+        self._was_active = False
         self._servo_started = False
         self._servo_start_time: Optional[float] = None
         self._last_twist_time: Optional[float] = None
@@ -128,18 +130,26 @@ class TunerMonitorNode(Node):
         self.record.timestamps.append(time.monotonic())
         self._last_twist_time = time.monotonic()
 
-        # Detect servo phase: non-trivial twist
+        # Descent is now position-controlled (publishes joint commands,
+        # NOT Twists).  The first idle→active Twist transition = SERVO.
         lin_mag = np.linalg.norm(v[:3])
-        if lin_mag > 0.001:
-            if not self._servo_started:
-                self._servo_started = True
-                self._servo_start_time = time.monotonic()
+        is_active = lin_mag > 0.001
+
+        if is_active and not self._was_active:
+            self._twist_active_phases += 1
+        self._was_active = is_active
+
+        # First active twist phase = servo (descent uses joint cmds now)
+        if self._twist_active_phases >= 1 and not self._servo_started:
+            self._servo_started = True
+            self._servo_start_time = time.monotonic()
+
+        if is_active:
             self._zero_twist_streak = 0
         else:
             if self._servo_started:
                 self._zero_twist_streak += 1
-                # If we've had 20 consecutive zero twists (~2 s at 10 Hz publish)
-                # after servo started, assume trajectory is done
+                # 20 consecutive zero twists (~2 s) after servo → done
                 if self._zero_twist_streak >= 20:
                     self.record.trajectory_done = True
 

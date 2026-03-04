@@ -97,12 +97,13 @@ def clamp_vec(v, max_mag):
 # ---------------------------------------------------------------------------
 
 class Phase(Enum):
-    HOME      = auto()
-    PLANNING  = auto()
-    EXECUTING = auto()
-    SERVO     = auto()
-    TELEOP    = auto()
-    DONE      = auto()
+    HOME       = auto()
+    PLANNING   = auto()
+    EXECUTING  = auto()
+    DESCENDING = auto()   # velocity-controlled lowering onto the surface
+    SERVO      = auto()
+    TELEOP     = auto()
+    DONE       = auto()
 
 
 class PlanarServoController(Node):
@@ -129,6 +130,15 @@ class PlanarServoController(Node):
         self.declare_parameter('boundary_margin', 0.01)        # m
         self.declare_parameter('teleop_mode', False)
         self.declare_parameter('teleop_speed', 0.10)            # m/s default
+        self.declare_parameter('descent_step', 0.002)           # m per tick during descent
+        # Elbow-up configuration constraints (same as cartesian controller)
+        self.declare_parameter('shoulder_lift_max', 0.0)
+        self.declare_parameter('shoulder_lift_min', -2.5)
+        self.declare_parameter('elbow_max', -0.3)
+        self.declare_parameter('elbow_min', -3.14)
+        self.declare_parameter('ik_num_seeds', 30)
+        self.declare_parameter('ik_damping', 0.05)
+        self.declare_parameter('max_joint_step', 0.15)
         # Line trajectory UV parameters (used when trajectory_key='line')
         self.declare_parameter('line_u_start', 0.5)
         self.declare_parameter('line_v_start', 0.3)
@@ -167,6 +177,11 @@ class PlanarServoController(Node):
         self._rrt_path = []       # dense joint-space path
         self._rrt_path_idx = 0    # current index in path
         self._rrt_exec_rate = 10  # waypoints per second (matches 10 Hz timer)
+
+        # ---- descent state (position-controlled, like cartesian controller) ----
+        self._descent_waypoints = []   # list of (pos, quat) tuples
+        self._descent_idx = 0
+        self._last_q = None            # IK seed for descent
 
         # ---- teleop subscription ----
         self._teleop_vel = Twist()  # latest teleop command (in plane frame)
@@ -216,6 +231,14 @@ class PlanarServoController(Node):
         self.boundary_margin  = g('boundary_margin').value
         self.teleop_mode      = g('teleop_mode').value
         self.teleop_speed     = g('teleop_speed').value
+        self.descent_step     = g('descent_step').value
+        self.shoulder_lift_max = g('shoulder_lift_max').value
+        self.shoulder_lift_min = g('shoulder_lift_min').value
+        self.elbow_max        = g('elbow_max').value
+        self.elbow_min        = g('elbow_min').value
+        self.ik_num_seeds     = g('ik_num_seeds').value
+        self.ik_damping       = g('ik_damping').value
+        self.max_joint_step   = g('max_joint_step').value
         self.line_u_start     = g('line_u_start').value
         self.line_v_start     = g('line_v_start').value
         self.line_u_end       = g('line_u_end').value
@@ -394,15 +417,95 @@ class PlanarServoController(Node):
             self.phase = Phase.PLANNING
 
     # ------------------------------------------------------------------
-    # PLANNING phase (RRT-Connect in C-space)
+    # Elbow-up configuration check (matches cartesian controller)
+    # ------------------------------------------------------------------
+    def _config_ok(self, q):
+        """Return True if joint config satisfies elbow-up constraints."""
+        shoulder_lift = q[1]
+        elbow = q[2]
+        if shoulder_lift > self.shoulder_lift_max or shoulder_lift < self.shoulder_lift_min:
+            return False
+        if elbow > self.elbow_max or elbow < self.elbow_min:
+            return False
+        return True
+
+    # ------------------------------------------------------------------
+    # Constrained multi-seed IK (same algorithm as cartesian controller)
+    # ------------------------------------------------------------------
+    def _constrained_ik_for_pose(self, T_target):
+        """Solve IK with many seeds, return best elbow-up solution."""
+        from ur5e_rrt_planner import ik_solve
+        import random
+
+        home = np.array(self._home_joint_positions, dtype=float)
+        candidates = []
+
+        seeds = [home.copy()]
+        for _ in range(self.ik_num_seeds):
+            s = home.copy()
+            s[0] += random.uniform(-1.5, 1.5)
+            s[1] += random.uniform(-1.0, 0.3)
+            s[2] += random.uniform(-0.5, 0.5)
+            s[3] += random.uniform(-1.0, 1.0)
+            s[4] += random.uniform(-1.0, 1.0)
+            s[5] += random.uniform(-1.0, 1.0)
+            seeds.append(s)
+
+        for seed in seeds:
+            q_sol = ik_solve(T_target, seed, max_iter=300,
+                             pos_tol=5e-4, orient_tol=1e-3,
+                             damping=self.ik_damping)
+            if q_sol is not None and self._config_ok(q_sol):
+                dist_to_home = float(np.linalg.norm(q_sol - home))
+                candidates.append((dist_to_home, q_sol))
+
+        if not candidates:
+            self.get_logger().error(
+                f'Constrained IK failed: {len(seeds)} seeds, none satisfy '
+                f'elbow-up [shoulder_lift≤{self.shoulder_lift_max:.2f}, '
+                f'elbow≤{self.elbow_max:.2f}]')
+            return None
+
+        candidates.sort(key=lambda x: x[0])
+        best_q = candidates[0][1]
+        self.get_logger().info(
+            f'Constrained IK: {len(candidates)}/{len(seeds)} valid  '
+            f'best shoulder_lift={best_q[1]:.3f} elbow={best_q[2]:.3f}  '
+            f'joints={np.round(best_q, 3).tolist()}')
+        return best_q
+
+    # ------------------------------------------------------------------
+    # IK with jump + config rejection (for descent waypoints)
+    # ------------------------------------------------------------------
+    def _safe_ik(self, T_target, q_seed):
+        """IK solve with elbow-up check + joint-jump rejection."""
+        from ur5e_rrt_planner import ik_solve
+        q_sol = ik_solve(T_target, q_seed, max_iter=300,
+                         pos_tol=5e-4, orient_tol=1e-3,
+                         damping=self.ik_damping)
+        if q_sol is None:
+            return None
+        if not self._config_ok(q_sol):
+            return None
+        if float(np.max(np.abs(q_sol - q_seed))) > self.max_joint_step:
+            return None
+        return q_sol
+
+    @staticmethod
+    def _pose44(pos, quat_xyzw):
+        T = np.eye(4)
+        T[:3, :3] = quat_to_rotmat(quat_xyzw)
+        T[:3, 3] = pos
+        return T
+
+    # ------------------------------------------------------------------
+    # PLANNING phase (constrained elbow-up IK + RRT, like cartesian ctrl)
     # ------------------------------------------------------------------
     def _plan(self):
-        """Compute RRT-Connect path from current joints to plane target."""
-        # Need current joint positions
+        """Plan RRT path to approach pose using constrained IK (elbow-up)."""
         if self._last_joint_state is None:
             self.get_logger().warn('Waiting for joint states…',
                                    throttle_duration_sec=2.0)
-            # Keep publishing home position while waiting
             cmd = JointState()
             cmd.header.stamp = self.get_clock().now().to_msg()
             cmd.name = self._home_joint_names
@@ -410,59 +513,61 @@ class PlanarServoController(Node):
             self.joint_cmd_pub.publish(cmd)
             return
 
-        # Get current joint angles in the correct order
         q_current = self._get_ordered_joints()
         if q_current is None:
             self.get_logger().warn('Cannot extract joint positions',
                                    throttle_duration_sec=2.0)
             return
 
-        # Import planner (deferred to avoid load-time cost)
-        from ur5e_rrt_planner import ur5e_fk, plan_to_pose
+        from ur5e_rrt_planner import (ur5e_fk, rrt_connect,
+                                      smooth_path, interpolate_path)
 
-        # Build target 4×4 pose: plane target position + tool-down orientation
+        # Approach position: above first waypoint (or plane center for teleop)
         if self.teleop_mode:
-            target_pos = self.plane_center.copy()
+            on_plane_pos = self.plane_center.copy()
         else:
-            target_pos = self.waypoints[0][0].copy()
+            on_plane_pos = self.waypoints[0][0].copy()
 
-        # Target orientation: tool pointing down
-        # quat [1,0,0,0] xyzw = 180° about X → R = diag(1, -1, -1)
-        T_target = np.eye(4)
-        T_target[:3, :3] = quat_to_rotmat(self.target_quat)
-        T_target[:3, 3] = target_pos
+        approach_pos = on_plane_pos - self.approach_height * self.plane_n
+        T_approach = self._pose44(approach_pos, self.target_quat)
 
         self.get_logger().info(
-            f'PLANNING  target_pos=[{target_pos[0]:.3f}, '
-            f'{target_pos[1]:.3f}, {target_pos[2]:.3f}]')
+            f'PLANNING  approach_pos=[{approach_pos[0]:.3f}, '
+            f'{approach_pos[1]:.3f}, {approach_pos[2]:.3f}]  '
+            f'(above surface by {self.approach_height:.3f}m)')
         self.get_logger().info(
             f'PLANNING  q_current={np.round(q_current, 3).tolist()}')
 
-        # Plan
-        path = plan_to_pose(
-            q_current, T_target,
-            ik_seeds=[np.array(self._home_joint_positions)],
-            rrt_step=0.2,
-            rrt_max_iter=10000,
-            smooth_attempts=200,
-            interp_step=0.02,
-        )
+        # Step 1: Constrained IK — find elbow-up goal
+        q_goal = self._constrained_ik_for_pose(T_approach)
+        if q_goal is None:
+            self.get_logger().error(
+                'PLANNING FAILED — no elbow-up IK solution. '
+                'Try widening shoulder_lift_max / elbow_max.')
+            return
 
-        if path is None:
+        # Step 2: RRT-Connect in joint space
+        raw_path = rrt_connect(q_current, q_goal,
+                               step_size=0.2, max_iter=10000)
+        if raw_path is None:
             self.get_logger().error('RRT planning FAILED — retrying…')
-            return  # will retry on next timer tick
+            return
+
+        # Step 3: Smooth + interpolate
+        smoothed = smooth_path(raw_path, max_attempts=200)
+        path = interpolate_path(smoothed, max_step=0.02)
 
         self._rrt_path = path
         self._rrt_path_idx = 0
-        self.get_logger().info(
-            f'PLANNING complete — {len(path)} waypoints. → EXECUTING')
 
-        # Verify goal FK
         T_goal = ur5e_fk(path[-1])
+        goal_pos = T_goal[:3, 3]
         self.get_logger().info(
-            f'  Goal FK pos=[{T_goal[0,3]:.4f}, {T_goal[1,3]:.4f}, '
-            f'{T_goal[2,3]:.4f}]  Z-axis=[{T_goal[0,2]:.3f}, '
-            f'{T_goal[1,2]:.3f}, {T_goal[2,2]:.3f}]')
+            f'PLANNING complete — {len(path)} joint waypoints → EXECUTING')
+        self.get_logger().info(
+            f'  Goal FK pos=[{goal_pos[0]:.4f}, {goal_pos[1]:.4f}, '
+            f'{goal_pos[2]:.4f}]  shoulder_lift={path[-1][1]:.3f}  '
+            f'elbow={path[-1][2]:.3f}')
 
         self.phase = Phase.EXECUTING
 
@@ -483,14 +588,29 @@ class PlanarServoController(Node):
     def _execute(self):
         """Step through the RRT path, sending joint position commands."""
         if self._rrt_path_idx >= len(self._rrt_path):
-            # Path complete
+            self.get_logger().info('RRT path complete → DESCENDING (position-controlled)')
+            self._last_q = self._rrt_path[-1].copy()
+
+            # Prepare descent waypoints: approach → on-plane (like cartesian)
             if self.teleop_mode:
-                self.get_logger().info('RRT execution complete → TELEOP')
-                self.phase = Phase.TELEOP
+                on_plane_pos = self.plane_center.copy()
             else:
-                self.get_logger().info('RRT execution complete → SERVO')
-                self.phase = Phase.SERVO
-                self.waypoint_idx = 1  # first waypoint is the start, head to next
+                on_plane_pos = self.waypoints[0][0].copy()
+            approach_pos = on_plane_pos - self.approach_height * self.plane_n
+
+            # Dense interpolation from approach to surface
+            dist = float(np.linalg.norm(on_plane_pos - approach_pos))
+            n_steps = max(int(dist / self.descent_step), 2)
+            self._descent_waypoints = []
+            for i in range(n_steps + 1):
+                t = i / n_steps
+                pos = approach_pos + t * (on_plane_pos - approach_pos)
+                self._descent_waypoints.append((pos, self.target_quat))
+            self._descent_idx = 0
+            self.get_logger().info(
+                f'  Descent: {len(self._descent_waypoints)} waypoints, '
+                f'{self.descent_step:.3f}m steps')
+            self.phase = Phase.DESCENDING
             return
 
         q_cmd = self._rrt_path[self._rrt_path_idx]
@@ -509,6 +629,49 @@ class PlanarServoController(Node):
                 f'({pct:.0f}%)')
 
         self._rrt_path_idx += 1
+
+    # ------------------------------------------------------------------
+    # DESCENDING — position-controlled IK descent (like cartesian ctrl)
+    # ------------------------------------------------------------------
+    def _descend(self):
+        """Lower the EE via position-controlled IK joint commands."""
+        if self._descent_idx >= len(self._descent_waypoints):
+            if self.teleop_mode:
+                self.get_logger().info('Descent complete → TELEOP')
+                self.phase = Phase.TELEOP
+            else:
+                self.get_logger().info('Descent complete → SERVO')
+                self.phase = Phase.SERVO
+                self.waypoint_idx = 0
+            return
+
+        pos, quat = self._descent_waypoints[self._descent_idx]
+        T = self._pose44(pos, quat)
+        q_sol = self._safe_ik(T, self._last_q)
+
+        if q_sol is None:
+            self.get_logger().warn(
+                f'DESCEND IK failed at step {self._descent_idx}/'
+                f'{len(self._descent_waypoints)} — skipping')
+            self._descent_idx += 1
+            return
+
+        cmd = JointState()
+        cmd.header.stamp = self.get_clock().now().to_msg()
+        cmd.name = self._home_joint_names
+        cmd.position = q_sol.tolist()
+        self.joint_cmd_pub.publish(cmd)
+        self._last_q = q_sol.copy()
+
+        total = len(self._descent_waypoints)
+        if self._descent_idx % 5 == 0 or self._descent_idx >= total - 1:
+            _, _, z_off = self._to_plane(pos)
+            ex, ey, _ = self._to_plane(pos)
+            self.get_logger().info(
+                f'DESCEND  wp={self._descent_idx}/{total}  '
+                f'z_off={z_off:.4f}m  plane_xy=({ex:.3f},{ey:.3f})')
+
+        self._descent_idx += 1
 
     # ------------------------------------------------------------------
     # Twist builder helpers
@@ -652,7 +815,7 @@ class PlanarServoController(Node):
     # Main control loop (10 Hz)
     # ------------------------------------------------------------------
     def _control_loop(self):
-        # HOME and PLANNING/EXECUTING phases send joint commands directly
+        # HOME, PLANNING, EXECUTING, DESCENDING send joint commands directly
         if self.phase == Phase.HOME:
             self._home()
             return
@@ -662,10 +825,13 @@ class PlanarServoController(Node):
         if self.phase == Phase.EXECUTING:
             self._execute()
             return
+        if self.phase == Phase.DESCENDING:
+            self._descend()        # position-controlled, no twist needed
+            return
 
+        # SERVO / TELEOP / DONE use velocity commands via Jacobian node
         pos, quat = self._get_ee_pose()
         if pos is None:
-            # No TF yet — publish zero
             self.twist_pub.publish(Twist())
             return
 

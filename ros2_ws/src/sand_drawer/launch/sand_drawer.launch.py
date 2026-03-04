@@ -181,6 +181,15 @@ def launch_setup(context, *args, **kwargs):
             "boundary_margin": 0.01,
             "teleop_mode": is_teleop,
             "teleop_speed": 0.10,
+            "descent_step": 0.002,
+            # Elbow-up configuration constraints
+            "shoulder_lift_max": 0.0,
+            "shoulder_lift_min": -2.5,
+            "elbow_max": -0.3,
+            "elbow_min": -3.14,
+            "ik_num_seeds": 30,
+            "ik_damping": 0.05,
+            "max_joint_step": 0.15,
             # Line UV coordinates (used when trajectory_key='line')
             "line_u_start": float(line_u_start_str),
             "line_v_start": float(line_v_start_str),
