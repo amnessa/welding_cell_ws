@@ -99,6 +99,7 @@ ros2 launch ur_robot_driver ur_control.launch.py \
 ```bash
 using realtime data exchange between the physical robot
 pip3 install --user ur_rtde
+sudo apt-get install ros-distro{jazzy}-ur
 ```
 
 ### Network Configuration
@@ -153,3 +154,12 @@ Isaac Sim 5.1.0 includes ROS2 Humble support. Key features:
 ## License
 
 [Add your license here]
+
+
+## Velocity and Acceleration Limits
+
+* Maximum Tool (TCP) Speed: Approximately 1 m/s (39.4 in/s). (Note: In manual hand-guiding or Recovery modes, this is strictly limited to 250 mm/s to prevent hazards near singularities.)
+
+* Maximum Joint Speed: 180°/s for all six joints.
+
+* Acceleration: The UR5e does not have one static acceleration limit. The controller software automatically calculates and adjusts the maximum available acceleration based on the payload mass, center of gravity offset, and inertia that you configure. If your payload's center of gravity offset is very long, the robot's capacity to accelerate is naturally reduced
