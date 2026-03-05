@@ -64,6 +64,8 @@ def launch_setup(context, *args, **kwargs):
     kd_linear_str    = LaunchConfiguration("kd_linear").perform(context)
     kp_angular_str   = LaunchConfiguration("kp_angular").perform(context)
     kd_angular_str   = LaunchConfiguration("kd_angular").perform(context)
+    real_robot_str   = LaunchConfiguration("real_robot").perform(context)
+    real_robot        = real_robot_str == "true"
 
     from subprocess import check_output
     robot_description_str = check_output(
@@ -74,18 +76,19 @@ def launch_setup(context, *args, **kwargs):
 
     nodes = []
 
-    # ---- Robot State Publisher (always) ----
-    nodes.append(Node(
-        package="robot_state_publisher",
-        executable="robot_state_publisher",
-        name="robot_state_publisher",
-        output="screen",
-        parameters=[{
-            "robot_description": robot_description_str,
-            "use_sim_time": use_sim_time_str == "true",
-        }],
-        remappings=[("joint_states", "/isaac_joint_states")],
-    ))
+    # ---- Robot State Publisher (skip when real robot — UR driver provides its own) ----
+    if not real_robot:
+        nodes.append(Node(
+            package="robot_state_publisher",
+            executable="robot_state_publisher",
+            name="robot_state_publisher",
+            output="screen",
+            parameters=[{
+                "robot_description": robot_description_str,
+                "use_sim_time": use_sim_time_str == "true",
+            }],
+            remappings=[("joint_states", "/isaac_joint_states")],
+        ))
 
     if mode_str == "capture":
         # ---- Plane capture mode (simulation — uses red ball TF) ----
@@ -154,6 +157,8 @@ def launch_setup(context, *args, **kwargs):
                 "line_v_start": float(line_v_start_str),
                 "line_u_end":   float(line_u_end_str),
                 "line_v_end":   float(line_v_end_str),
+                # Real robot
+                "real_robot": real_robot,
             }],
         ))
         return nodes
@@ -216,6 +221,8 @@ def launch_setup(context, *args, **kwargs):
             "line_v_start": float(line_v_start_str),
             "line_u_end":   float(line_u_end_str),
             "line_v_end":   float(line_v_end_str),
+            # Real robot
+            "real_robot": real_robot,
         }],
     ))
 
@@ -279,5 +286,7 @@ def generate_launch_description():
         DeclareLaunchArgument("kd_linear",      default_value="0.0"),
         DeclareLaunchArgument("kp_angular",     default_value="1.5"),
         DeclareLaunchArgument("kd_angular",     default_value="0.0"),
+        DeclareLaunchArgument("real_robot",      default_value="false",
+                              description="Enable bridging to real UR robot via JointTrajectory"),
         OpaqueFunction(function=launch_setup),
     ])

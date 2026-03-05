@@ -35,9 +35,11 @@ if _scripts_dir not in sys.path:
 
 import numpy as np
 import rclpy
+from builtin_interfaces.msg import Duration
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import JointState
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 import tf2_ros
 from tf2_ros import TransformException
 
@@ -149,6 +151,12 @@ class PlanarServoController(Node):
         self.declare_parameter('line_v_start', 0.3)
         self.declare_parameter('line_u_end', 0.5)
         self.declare_parameter('line_v_end', 0.7)
+        # Real-robot bridging
+        self.declare_parameter('real_robot', False)
+        self.declare_parameter('real_robot_joint_state_topic', '/joint_states')
+        self.declare_parameter('real_robot_trajectory_topic',
+                               '/scaled_joint_trajectory_controller/joint_trajectory')
+        self.declare_parameter('real_robot_trajectory_duration', 0.2)
 
         self._load_params()
         self._load_plane_json()
@@ -160,6 +168,25 @@ class PlanarServoController(Node):
         # ---- publisher ----
         self.twist_pub = self.create_publisher(Twist, '/end_effector_velocity', 10)
         self.joint_cmd_pub = self.create_publisher(JointState, '/isaac_joint_commands', 10)
+
+        # ---- real-robot bridging ----
+        self._real_robot = self.get_parameter('real_robot').value
+        self._real_traj_pub = None
+        if self._real_robot:
+            real_js_topic = self.get_parameter(
+                'real_robot_joint_state_topic').value
+            real_traj_topic = self.get_parameter(
+                'real_robot_trajectory_topic').value
+            self._real_traj_duration = float(self.get_parameter(
+                'real_robot_trajectory_duration').value)
+            self._real_traj_pub = self.create_publisher(
+                JointTrajectory, real_traj_topic, 10)
+            self._real_joint_sub = self.create_subscription(
+                JointState, real_js_topic,
+                self._joint_state_callback, 10)
+            self.get_logger().info(
+                f'REAL ROBOT mode: subscribing {real_js_topic}, '
+                f'publishing {real_traj_topic}')
 
         # ---- joint state subscriber (for RRT planning) ----
         self._last_joint_state = None
@@ -220,6 +247,27 @@ class PlanarServoController(Node):
     # ------------------------------------------------------------------
     def _joint_state_callback(self, msg: JointState):
         self._last_joint_state = msg
+
+    # ------------------------------------------------------------------
+    # Publish joint command helper (sim + optional real robot)
+    # ------------------------------------------------------------------
+    def _pub_joint_cmd(self, cmd: JointState):
+        """Publish a JointState command.  Also send a JointTrajectory
+        to the real robot if enabled."""
+        self.joint_cmd_pub.publish(cmd)
+        if self._real_traj_pub is not None:
+            traj = JointTrajectory()
+            traj.header.stamp = cmd.header.stamp
+            traj.joint_names = list(cmd.name)
+            pt = JointTrajectoryPoint()
+            pt.positions = list(cmd.position)
+            dur_sec = int(self._real_traj_duration)
+            dur_nsec = int(
+                (self._real_traj_duration - dur_sec) * 1e9)
+            pt.time_from_start = Duration(
+                sec=dur_sec, nanosec=dur_nsec)
+            traj.points = [pt]
+            self._real_traj_pub.publish(traj)
 
     # ------------------------------------------------------------------
     # Parameter helpers
@@ -482,7 +530,7 @@ class PlanarServoController(Node):
         cmd.header.stamp = self.get_clock().now().to_msg()
         cmd.name = self._home_joint_names
         cmd.position = q_sol.tolist()
-        self.joint_cmd_pub.publish(cmd)
+        self._pub_joint_cmd(cmd)
         self._last_q = q_sol.copy()
         self._retract_idx += 1
 
@@ -533,7 +581,7 @@ class PlanarServoController(Node):
         cmd.header.stamp = self.get_clock().now().to_msg()
         cmd.name = self._home_joint_names
         cmd.position = q_cmd.tolist()
-        self.joint_cmd_pub.publish(cmd)
+        self._pub_joint_cmd(cmd)
         self._last_q = q_cmd.copy()
         self._retract_home_idx += 1
 
@@ -553,7 +601,7 @@ class PlanarServoController(Node):
         cmd.header.stamp = self.get_clock().now().to_msg()
         cmd.name = self._home_joint_names
         cmd.position = self._home_joint_positions
-        self.joint_cmd_pub.publish(cmd)
+        self._pub_joint_cmd(cmd)
 
         if self._home_reached_time is None:
             self._home_reached_time = self.get_clock().now()
@@ -662,7 +710,7 @@ class PlanarServoController(Node):
             cmd.header.stamp = self.get_clock().now().to_msg()
             cmd.name = self._home_joint_names
             cmd.position = self._home_joint_positions
-            self.joint_cmd_pub.publish(cmd)
+            self._pub_joint_cmd(cmd)
             return
 
         q_current = self._get_ordered_joints()
@@ -771,7 +819,7 @@ class PlanarServoController(Node):
         cmd.header.stamp = self.get_clock().now().to_msg()
         cmd.name = self._home_joint_names
         cmd.position = q_cmd.tolist()
-        self.joint_cmd_pub.publish(cmd)
+        self._pub_joint_cmd(cmd)
 
         if self._rrt_path_idx % 10 == 0 or \
            self._rrt_path_idx == len(self._rrt_path) - 1:
@@ -812,7 +860,7 @@ class PlanarServoController(Node):
         cmd.header.stamp = self.get_clock().now().to_msg()
         cmd.name = self._home_joint_names
         cmd.position = q_sol.tolist()
-        self.joint_cmd_pub.publish(cmd)
+        self._pub_joint_cmd(cmd)
         self._last_q = q_sol.copy()
 
         total = len(self._descent_waypoints)

@@ -54,8 +54,10 @@ if _scripts_dir not in sys.path:
 
 import numpy as np
 import rclpy
+from builtin_interfaces.msg import Duration
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +232,12 @@ class CartesianDrawController(Node):
         self.declare_parameter('line_v_start', 0.3)
         self.declare_parameter('line_u_end', 0.5)
         self.declare_parameter('line_v_end', 0.7)
+        # Real-robot bridging
+        self.declare_parameter('real_robot', False)
+        self.declare_parameter('real_robot_joint_state_topic', '/joint_states')
+        self.declare_parameter('real_robot_trajectory_topic',
+                               '/scaled_joint_trajectory_controller/joint_trajectory')
+        self.declare_parameter('real_robot_trajectory_duration', 0.2)
 
         self._load_params()
         self._load_plane_json()
@@ -243,6 +251,26 @@ class CartesianDrawController(Node):
         # ---- joint command publisher ----
         self.joint_cmd_pub = self.create_publisher(
             JointState, '/isaac_joint_commands', 10)
+
+        # ---- real-robot bridging ----
+        self._real_robot = self.get_parameter('real_robot').value
+        self._real_traj_pub = None
+        if self._real_robot:
+            real_js_topic = self.get_parameter(
+                'real_robot_joint_state_topic').value
+            real_traj_topic = self.get_parameter(
+                'real_robot_trajectory_topic').value
+            self._real_traj_duration = float(self.get_parameter(
+                'real_robot_trajectory_duration').value)
+            self._real_traj_pub = self.create_publisher(
+                JointTrajectory, real_traj_topic, 10)
+            # also subscribe to real joint states so IK seeding works
+            self._real_joint_sub = self.create_subscription(
+                JointState, real_js_topic,
+                self._joint_state_cb, 10)
+            self.get_logger().info(
+                f'REAL ROBOT mode: subscribing {real_js_topic}, '
+                f'publishing {real_traj_topic}')
 
         # ---- home configuration (same as planar_servo_controller) ----
         self._joint_names = [
@@ -403,6 +431,21 @@ class CartesianDrawController(Node):
         msg.name = self._joint_names
         msg.position = q.tolist()
         self.joint_cmd_pub.publish(msg)
+
+        # Also send to real robot if enabled
+        if self._real_traj_pub is not None:
+            traj = JointTrajectory()
+            traj.header.stamp = self.get_clock().now().to_msg()
+            traj.joint_names = list(self._joint_names)
+            pt = JointTrajectoryPoint()
+            pt.positions = q.tolist()
+            dur_sec = int(self._real_traj_duration)
+            dur_nsec = int(
+                (self._real_traj_duration - dur_sec) * 1e9)
+            pt.time_from_start = Duration(
+                sec=dur_sec, nanosec=dur_nsec)
+            traj.points = [pt]
+            self._real_traj_pub.publish(traj)
 
     # ------------------------------------------------------------------
     # Build a 4×4 target pose from position + quaternion
