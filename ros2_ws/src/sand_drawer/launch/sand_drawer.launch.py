@@ -68,6 +68,8 @@ def launch_setup(context, *args, **kwargs):
     real_robot        = real_robot_str == "true"
     max_joint_speed_deg = float(
         LaunchConfiguration("max_joint_speed_deg").perform(context))
+    max_joint_accel_deg = float(
+        LaunchConfiguration("max_joint_accel_deg").perform(context))
 
     # When real_robot is active, force use_sim_time=false (wall clock)
     use_sim_time = False if real_robot else (use_sim_time_str == "true")
@@ -82,6 +84,9 @@ def launch_setup(context, *args, **kwargs):
     nodes = []
 
     # ---- Robot State Publisher (always — needed so sim mirrors real robot) ----
+    # When real_robot=true, listen to the real robot's /joint_states
+    # so TF frames stay in sync with wall-clock timestamps.
+    rsp_joint_remap = "/joint_states" if real_robot else "/isaac_joint_states"
     nodes.append(Node(
         package="robot_state_publisher",
         executable="robot_state_publisher",
@@ -91,7 +96,7 @@ def launch_setup(context, *args, **kwargs):
             "robot_description": robot_description_str,
             "use_sim_time": use_sim_time,
         }],
-        remappings=[("joint_states", "/isaac_joint_states")],
+        remappings=[("joint_states", rsp_joint_remap)],
     ))
 
     if mode_str == "capture":
@@ -164,6 +169,7 @@ def launch_setup(context, *args, **kwargs):
                 # Real robot
                 "real_robot": real_robot,
                 "max_joint_speed_deg": max_joint_speed_deg,
+                "max_joint_accel_deg": max_joint_accel_deg,
             }],
         ))
         return nodes
@@ -229,6 +235,7 @@ def launch_setup(context, *args, **kwargs):
             # Real robot
             "real_robot": real_robot,
             "max_joint_speed_deg": max_joint_speed_deg,
+            "max_joint_accel_deg": max_joint_accel_deg,
         }],
     ))
 
@@ -296,5 +303,7 @@ def generate_launch_description():
                               description="Enable bridging to real UR robot via JointTrajectory"),
         DeclareLaunchArgument("max_joint_speed_deg", default_value="45.0",
                               description="Maximum joint speed in deg/s (all joints)"),
+        DeclareLaunchArgument("max_joint_accel_deg", default_value="40.0",
+                              description="Maximum joint acceleration in deg/s² (all joints)"),
         OpaqueFunction(function=launch_setup),
     ])

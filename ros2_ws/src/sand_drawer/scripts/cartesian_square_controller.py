@@ -239,15 +239,18 @@ class CartesianDrawController(Node):
                                '/scaled_joint_trajectory_controller/joint_trajectory')
         self.declare_parameter('real_robot_trajectory_duration', 0.2)
         self.declare_parameter('max_joint_speed_deg', 45.0)
+        self.declare_parameter('max_joint_accel_deg', 40.0)
 
         self._load_params()
         self._load_plane_json()
 
-        # ---- joint state subscriber ----
+        # ---- joint state subscribers ----
         self._last_joint_state: Optional[JointState] = None
+        self._last_sim_joint_state: Optional[JointState] = None
+        self._last_real_joint_state: Optional[JointState] = None
         self.joint_state_sub = self.create_subscription(
             JointState, '/isaac_joint_states',
-            self._joint_state_cb, 10)
+            self._sim_joint_state_cb, 10)
 
         # ---- joint command publisher ----
         self.joint_cmd_pub = self.create_publisher(
@@ -256,6 +259,7 @@ class CartesianDrawController(Node):
         # ---- real-robot bridging ----
         self._real_robot = self.get_parameter('real_robot').value
         self._real_traj_pub = None
+        self._real_converge_tol = math.radians(2.0)  # 2° tolerance for convergence
         if self._real_robot:
             real_js_topic = self.get_parameter(
                 'real_robot_joint_state_topic').value
@@ -265,22 +269,26 @@ class CartesianDrawController(Node):
                 'real_robot_trajectory_duration').value)
             self._real_traj_pub = self.create_publisher(
                 JointTrajectory, real_traj_topic, 10)
-            # also subscribe to real joint states so IK seeding works
             self._real_joint_sub = self.create_subscription(
                 JointState, real_js_topic,
-                self._joint_state_cb, 10)
+                self._real_joint_state_cb, 10)
             self.get_logger().info(
                 f'REAL ROBOT mode: subscribing {real_js_topic}, '
-                f'publishing {real_traj_topic}')
+                f'publishing {real_traj_topic} '
+                f'(sim syncs to real robot)')
 
-        # ---- joint speed limit ----
+        # ---- joint speed / acceleration limits ----
         self._max_joint_speed_deg = float(self.get_parameter('max_joint_speed_deg').value)
         self._max_joint_speed_rad = math.radians(self._max_joint_speed_deg)
+        self._max_joint_accel_deg = float(self.get_parameter('max_joint_accel_deg').value)
+        self._max_joint_accel_rad = math.radians(self._max_joint_accel_deg)
         self._dt = 1.0 / self.execution_hz
         self._prev_cmd_q: Optional[np.ndarray] = None
         self.get_logger().info(
             f'Max joint speed: {self._max_joint_speed_deg:.1f} deg/s '
-            f'({self._max_joint_speed_rad:.4f} rad/s)')
+            f'({self._max_joint_speed_rad:.4f} rad/s), '
+            f'accel: {self._max_joint_accel_deg:.1f} deg/s² '
+            f'({self._max_joint_accel_rad:.4f} rad/s²)')
 
         # ---- home configuration (same as planar_servo_controller) ----
         self._joint_names = [
@@ -304,6 +312,10 @@ class CartesianDrawController(Node):
         # ---- RRT execution state ----
         self._rrt_path: List[np.ndarray] = []
         self._rrt_idx = 0
+        self._rrt_traj_sent = False  # real-robot: full trajectory already sent?
+
+        # ---- RETRACT_HOME full-trajectory flag ----
+        self._retract_home_traj_sent = False
 
         # ---- Cartesian drawing state ----
         self._cart_waypoints: List[Tuple[np.ndarray, list]] = []
@@ -418,10 +430,19 @@ class CartesianDrawController(Node):
     # ------------------------------------------------------------------
     # Joint state callback
     # ------------------------------------------------------------------
-    def _joint_state_cb(self, msg: JointState):
-        self._last_joint_state = msg
+    def _sim_joint_state_cb(self, msg: JointState):
+        self._last_sim_joint_state = msg
+        if not self._real_robot:
+            self._last_joint_state = msg
+
+    def _real_joint_state_cb(self, msg: JointState):
+        self._last_real_joint_state = msg
+        if self._real_robot:
+            self._last_joint_state = msg
 
     def _get_ordered_joints(self) -> Optional[np.ndarray]:
+        """Return ordered joint positions from the primary feedback source.
+        When real_robot=true, this returns the REAL robot's joint state."""
         if self._last_joint_state is None:
             return None
         name_map = {n: p for n, p in
@@ -432,52 +453,143 @@ class CartesianDrawController(Node):
         except KeyError:
             return None
 
+    def _get_real_ordered_joints(self) -> Optional[np.ndarray]:
+        """Return ordered joint positions from the REAL robot only."""
+        if self._last_real_joint_state is None:
+            return None
+        name_map = {n: p for n, p in
+                    zip(self._last_real_joint_state.name,
+                        self._last_real_joint_state.position)}
+        try:
+            return np.array([name_map[n] for n in self._joint_names])
+        except KeyError:
+            return None
+
+    def _real_robot_converged(self, target_q: np.ndarray) -> bool:
+        """Check if real robot has reached target_q within tolerance.
+        Always returns True when real_robot is disabled."""
+        if not self._real_robot:
+            return True
+        real_q = self._get_real_ordered_joints()
+        if real_q is None:
+            return False
+        return float(np.max(np.abs(target_q - real_q))) < self._real_converge_tol
+
+    def _mirror_real_to_sim(self):
+        """Publish the real robot's actual joint state to sim so it stays
+        in sync with the physical arm."""
+        if not self._real_robot:
+            return
+        real_q = self._get_real_ordered_joints()
+        if real_q is None:
+            return
+        msg = JointState()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.name = list(self._joint_names)
+        msg.position = real_q.tolist()
+        self.joint_cmd_pub.publish(msg)
+
+    # ------------------------------------------------------------------
+    # Trapezoidal timing for joint-space paths
+    # ------------------------------------------------------------------
+    def _compute_joint_path_timing(self, path: List[np.ndarray]) -> List[float]:
+        """Compute timestamp for each waypoint using trapezoidal velocity profile.
+        Returns a list of cumulative time_from_start values (seconds)."""
+        if len(path) <= 1:
+            return [0.0] * len(path)
+        v_max = self._max_joint_speed_rad
+        a_max = self._max_joint_accel_rad
+        times = [0.0]
+        for i in range(1, len(path)):
+            delta = float(np.max(np.abs(path[i] - path[i - 1])))
+            if delta < 1e-9:
+                times.append(times[-1] + 0.01)  # small gap for zero-delta
+                continue
+            # Trapezoidal: if distance too short to reach v_max → triangle
+            if delta <= v_max * v_max / a_max:
+                dt_seg = 2.0 * math.sqrt(delta / a_max)
+            else:
+                dt_seg = delta / v_max + v_max / a_max
+            times.append(times[-1] + max(dt_seg, 0.01))
+        return times
+
+    def _send_full_trajectory(self, path: List[np.ndarray],
+                              times: List[float]) -> None:
+        """Send an entire joint-space path as one multi-point JointTrajectory
+        to the real robot.  This lets the UR controller interpolate smoothly."""
+        if self._real_traj_pub is None:
+            return
+        traj = JointTrajectory()
+        traj.header.stamp = self.get_clock().now().to_msg()
+        traj.joint_names = list(self._joint_names)
+        for q, t in zip(path, times):
+            pt = JointTrajectoryPoint()
+            pt.positions = q.tolist()
+            dur_sec = int(t)
+            dur_nsec = int((t - dur_sec) * 1e9)
+            pt.time_from_start = Duration(sec=dur_sec, nanosec=dur_nsec)
+            traj.points.append(pt)
+        self._real_traj_pub.publish(traj)
+        self.get_logger().info(
+            f'Sent full trajectory ({len(path)} points, '
+            f'{times[-1]:.1f} s) to real robot')
+
+    def _accel_aware_duration(self, delta_rad: float) -> float:
+        """Compute minimum duration for a joint move of *delta_rad*
+        respecting both velocity and acceleration limits."""
+        if delta_rad < 1e-9:
+            return self._dt
+        v = self._max_joint_speed_rad
+        a = self._max_joint_accel_rad
+        if delta_rad <= v * v / a:
+            return max(2.0 * math.sqrt(delta_rad / a), self._dt)
+        return max(delta_rad / v + v / a, self._dt)
+
     # ------------------------------------------------------------------
     # Publish joint command helper
     # ------------------------------------------------------------------
     def _pub_joints(self, q: np.ndarray):
-        # ---- joint velocity clamping ----
-        if self._prev_cmd_q is None:
-            # Initialise from current feedback so the first command is zero-delta
-            cur = self._get_ordered_joints()
-            if cur is not None:
-                self._prev_cmd_q = cur.copy()
-        if self._prev_cmd_q is not None:
-            delta = q - self._prev_cmd_q
-            max_delta = float(np.max(np.abs(delta)))
-            max_allowed = self._max_joint_speed_rad * self._dt
-            if max_delta > max_allowed and max_delta > 1e-9:
-                scale = max_allowed / max_delta
-                q = self._prev_cmd_q + delta * scale
-        self._prev_cmd_q = q.copy()
+        # ---- velocity clamping (sim-only mode) ----
+        if not self._real_robot:
+            if self._prev_cmd_q is None:
+                cur = self._get_ordered_joints()
+                if cur is not None:
+                    self._prev_cmd_q = cur.copy()
+            if self._prev_cmd_q is not None:
+                delta = q - self._prev_cmd_q
+                max_delta = float(np.max(np.abs(delta)))
+                max_allowed = self._max_joint_speed_rad * self._dt
+                if max_delta > max_allowed and max_delta > 1e-9:
+                    scale = max_allowed / max_delta
+                    q = self._prev_cmd_q + delta * scale
+            self._prev_cmd_q = q.copy()
 
-        msg = JointState()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.name = self._joint_names
-        msg.position = q.tolist()
-        self.joint_cmd_pub.publish(msg)
+            msg = JointState()
+            msg.header.stamp = self.get_clock().now().to_msg()
+            msg.name = self._joint_names
+            msg.position = q.tolist()
+            self.joint_cmd_pub.publish(msg)
+            return
 
-        # Also send to real robot if enabled
-        if self._real_traj_pub is not None:
-            traj = JointTrajectory()
-            traj.header.stamp = self.get_clock().now().to_msg()
-            traj.joint_names = list(self._joint_names)
-            pt = JointTrajectoryPoint()
-            pt.positions = q.tolist()
-            # Compute duration from actual robot state so the real arm
-            # never exceeds the joint speed limit
-            dur = self._real_traj_duration  # fallback
-            cur = self._get_ordered_joints()
-            if cur is not None:
-                real_delta = float(np.max(np.abs(q - cur)))
-                needed = real_delta / self._max_joint_speed_rad
-                dur = max(needed, self._dt)
-            dur_sec = int(dur)
-            dur_nsec = int((dur - dur_sec) * 1e9)
-            pt.time_from_start = Duration(
-                sec=dur_sec, nanosec=dur_nsec)
-            traj.points = [pt]
-            self._real_traj_pub.publish(traj)
+        # ---- real-robot mode: mirror real→sim, send trajectory to real ----
+        self._mirror_real_to_sim()
+
+        traj = JointTrajectory()
+        traj.header.stamp = self.get_clock().now().to_msg()
+        traj.joint_names = list(self._joint_names)
+        pt = JointTrajectoryPoint()
+        pt.positions = q.tolist()
+        # Compute duration from real robot's actual position (accel-aware)
+        dur = self._real_traj_duration  # fallback
+        real_q = self._get_real_ordered_joints()
+        if real_q is not None:
+            real_delta = float(np.max(np.abs(q - real_q)))
+            dur = self._accel_aware_duration(real_delta)
+        dur_sec = int(dur)
+        dur_nsec = int((dur - dur_sec) * 1e9)
+        pt.time_from_start = Duration(sec=dur_sec, nanosec=dur_nsec)
+        traj.points = [pt]
+        self._real_traj_pub.publish(traj)
 
     # ------------------------------------------------------------------
     # Build a 4×4 target pose from position + quaternion
@@ -548,7 +660,8 @@ class CartesianDrawController(Node):
 
         self._pub_joints(q_sol)
         self._last_q = q_sol.copy()
-        self._retract_idx += 1
+        if self._real_robot_converged(q_sol):
+            self._retract_idx += 1
 
         total = len(self._retract_waypoints)
         if self._retract_idx % 10 == 0 or self._retract_idx >= total:
@@ -563,8 +676,8 @@ class CartesianDrawController(Node):
     # ------------------------------------------------------------------
     def _retract_home(self):
         """Smoothly interpolate in joint-space from the current (retracted)
-        position to the home configuration.  Uses a simple linear interpolation
-        with many small steps so the robot moves slowly and predictably."""
+        position to the home configuration.  In real-robot mode the entire
+        path is sent as one multi-point trajectory with trapezoidal timing."""
         if not self._retract_home_path:
             q_current = self._last_q if self._last_q is not None else self._get_ordered_joints()
             if q_current is None:
@@ -585,10 +698,32 @@ class CartesianDrawController(Node):
 
             self._retract_home_path = path
             self._retract_home_idx = 0
+            self._retract_home_traj_sent = False
+            self._retract_home_times = self._compute_joint_path_timing(path)
             self.get_logger().info(
                 f'RETRACT_HOME — interpolating to home in {n_steps} steps '
-                f'(~{n_steps / self.execution_hz:.1f} s)')
+                f'(~{self._retract_home_times[-1]:.1f} s)')
 
+        # -- Real-robot mode: send full trajectory once, then monitor --
+        if self._real_robot:
+            if not self._retract_home_traj_sent:
+                self._send_full_trajectory(
+                    self._retract_home_path, self._retract_home_times)
+                self._retract_home_traj_sent = True
+
+            self._mirror_real_to_sim()
+
+            q_home = np.array(self._home_positions, dtype=float)
+            if self._real_robot_converged(q_home):
+                self.get_logger().info('RETRACT_HOME complete → HOME_HOLD')
+                self.phase = Phase.HOME_HOLD
+            else:
+                self.get_logger().info(
+                    'RETRACT_HOME  waiting for real robot…',
+                    throttle_duration_sec=1.0)
+            return
+
+        # -- Sim-only mode: step through one-by-one --
         if self._retract_home_idx >= len(self._retract_home_path):
             self.get_logger().info('RETRACT_HOME complete → HOME_HOLD')
             self.phase = Phase.HOME_HOLD
@@ -622,7 +757,8 @@ class CartesianDrawController(Node):
             f'HOME_HOLD — ({elapsed:.1f}/{self._home_hold_sec:.1f} s)',
             throttle_duration_sec=1.0)
 
-        if elapsed >= self._home_hold_sec:
+        if elapsed >= self._home_hold_sec and self._real_robot_converged(
+                np.array(self._home_positions)):
             self.get_logger().info('HOME_HOLD complete → PLANNING')
             self.phase = Phase.PLANNING
 
@@ -673,6 +809,9 @@ class CartesianDrawController(Node):
 
         self._rrt_path = path
         self._rrt_idx = 0
+        self._rrt_traj_sent = False
+        # Pre-compute trapezoidal timing for the full path
+        self._rrt_times = self._compute_joint_path_timing(path)
 
         # Verify goal FK and report
         T_goal = ur5e_fk(path[-1])
@@ -693,6 +832,44 @@ class CartesianDrawController(Node):
     # EXECUTING  (play back RRT joint-space path)
     # ------------------------------------------------------------------
     def _execute(self):
+        # -- Real-robot mode: send the FULL trajectory once, then monitor --
+        if self._real_robot:
+            if not self._rrt_traj_sent:
+                self._send_full_trajectory(self._rrt_path, self._rrt_times)
+                self._rrt_traj_sent = True
+
+            self._mirror_real_to_sim()
+
+            # Progress logging based on real robot position
+            real_q = self._get_real_ordered_joints()
+            if real_q is not None:
+                dists = [float(np.max(np.abs(real_q - q))) for q in self._rrt_path]
+                closest = int(np.argmin(dists))
+                total = len(self._rrt_path) - 1
+                pct = 100.0 * closest / max(total, 1)
+                self.get_logger().info(
+                    f'EXECUTING  ~step {closest}/{total}  ({pct:.0f}%)',
+                    throttle_duration_sec=1.0)
+
+            # Check convergence to final waypoint
+            final_q = self._rrt_path[-1]
+            if self._real_robot_converged(final_q):
+                self.get_logger().info('RRT path complete → DESCENDING')
+                self._last_q = final_q.copy()
+                approach_pos = self.draw_positions[0] - self.approach_height * self.plane_n
+                on_plane_pos = self.draw_positions[0].copy()
+                self._descent_waypoints = _interpolate_cartesian_smooth(
+                    positions=[approach_pos, on_plane_pos],
+                    orientation_xyzw=self.target_quat,
+                    v_max=self.v_max,
+                    a_max=self.a_max,
+                    dt=(1.0 / self.execution_hz),
+                )
+                self._descent_idx = 0
+                self.phase = Phase.DESCENDING
+            return
+
+        # -- Sim-only mode: step through waypoints one-by-one (instant) --
         if self._rrt_idx >= len(self._rrt_path):
             self.get_logger().info('RRT path complete → DESCENDING')
             self._last_q = self._rrt_path[-1].copy()
@@ -925,7 +1102,8 @@ class CartesianDrawController(Node):
 
         self._pub_joints(q_sol)
         self._last_q = q_sol.copy()
-        self._descent_idx += 1
+        if self._real_robot_converged(q_sol):
+            self._descent_idx += 1
 
         total = len(self._descent_waypoints)
         if self._descent_idx % 5 == 0 or self._descent_idx >= total:
@@ -964,6 +1142,15 @@ class CartesianDrawController(Node):
         # Advance by wp_per_tick waypoints per timer tick
         for _ in range(self.wp_per_tick):
             if self._cart_idx >= len(self._cart_waypoints):
+                break
+
+            # In real-robot mode, wait for convergence before advancing
+            if not self._real_robot_converged(
+                    self._last_q if self._last_q is not None
+                    else np.array(self._home_positions)):
+                # Re-publish the current target and wait
+                if self._last_q is not None:
+                    self._pub_joints(self._last_q)
                 break
 
             pos, quat = self._cart_waypoints[self._cart_idx]
@@ -1038,7 +1225,8 @@ class CartesianDrawController(Node):
 
         self._pub_joints(q_sol)
         self._last_q = q_sol.copy()
-        self._ascent_idx += 1
+        if self._real_robot_converged(q_sol):
+            self._ascent_idx += 1
 
         total = len(self._ascent_waypoints)
         if self._ascent_idx % 5 == 0 or self._ascent_idx >= total:
