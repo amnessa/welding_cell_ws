@@ -96,6 +96,10 @@ ros2 launch ur_robot_driver ur_control.launch.py \
     robot_ip:=192.168.8.4 \
     launch_rviz:=true
 ```
+```bash
+using realtime data exchange between the physical robot
+pip3 install --user ur_rtde
+```
 
 ### Network Configuration
 Ensure your host machine's network interface is configured to reach `192.168.8.4`:
