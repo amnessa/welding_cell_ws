@@ -231,12 +231,16 @@ class PlanarServoController(Node):
         self._retract_home_path = []  # joint-space interpolation to home
         self._retract_home_idx = 0
         self._retract_initialized = False
+        self._retract_up_traj_sent = False  # real-robot: full trajectory flag
 
         # ---- RRT path execution state ----
         self._rrt_path = []       # dense joint-space path
         self._rrt_path_idx = 0    # current index in path
         self._rrt_exec_rate = int(self.execution_hz)  # waypoints per second (matches timer)
         self._rrt_traj_sent = False  # real-robot: full trajectory already published?
+
+        # ---- descent full-trajectory flag ----
+        self._descent_traj_sent = False
 
         # ---- RETRACT_HOME full-trajectory flag ----
         self._retract_home_traj_sent = False
@@ -380,6 +384,38 @@ class PlanarServoController(Node):
         if delta_rad <= v * v / a:
             return max(2.0 * math.sqrt(delta_rad / a), self._dt)
         return max(delta_rad / v + v / a, self._dt)
+
+    # ------------------------------------------------------------------
+    # Batch IK solve for Cartesian waypoints
+    # ------------------------------------------------------------------
+    def _ik_solve_cartesian_path(self, cart_wps, q_seed, label='path'):
+        """Batch-solve IK for (pos, quat) waypoints → joint path."""
+        path = []
+        seed = q_seed.copy()
+        fails = 0
+        for pos, quat in cart_wps:
+            T = self._pose44(pos, quat)
+            q_sol = self._safe_ik(T, seed)
+            if q_sol is not None:
+                path.append(q_sol)
+                seed = q_sol.copy()
+            else:
+                fails += 1
+        self.get_logger().info(
+            f'{label}: IK batch-solved {len(path)}/{len(cart_wps)} '
+            f'waypoints ({fails} fails)')
+        return path
+
+    def _send_cartesian_as_trajectory(self, cart_wps, q_seed, label='path'):
+        """Batch-solve IK → trapezoidal timing → send full trajectory.
+        Returns the joint path (or None if too few solutions)."""
+        path = self._ik_solve_cartesian_path(cart_wps, q_seed, label)
+        if len(path) < 2:
+            self.get_logger().warn(f'{label}: too few IK solutions to send')
+            return None
+        times = self._compute_joint_path_timing(path)
+        self._send_full_trajectory(path, times)
+        return path
 
     def _pub_joint_cmd(self, cmd: JointState):
         """Publish joint command.  In real-robot mode, mirrors real→sim
@@ -612,7 +648,8 @@ class PlanarServoController(Node):
     # ------------------------------------------------------------------
     def _retract_up(self):
         """Lift the end-effector vertically (world Z+) to a safe clearance
-        height using Cartesian IK interpolation."""
+        height using Cartesian IK interpolation.  In real-robot mode the
+        entire IK path is sent as one trajectory."""
         if not self._retract_initialized:
             q_current = self._get_ordered_joints()
             if q_current is None:
@@ -652,7 +689,6 @@ class PlanarServoController(Node):
                 f'(+{self._retract_height:.3f} m)')
 
             # Build dense waypoints for the lift
-            dist = self._retract_height
             n_steps = max(int(2.0 * self.execution_hz), 20)  # ~2 sec
             self._retract_waypoints = []
             for i in range(n_steps + 1):
@@ -665,6 +701,37 @@ class PlanarServoController(Node):
             self._last_q = q_current.copy()
             self._retract_initialized = True
 
+            # Real robot: batch-solve IK and send full trajectory
+            if self._real_robot:
+                self._retract_up_path = self._ik_solve_cartesian_path(
+                    self._retract_waypoints, q_current, 'RETRACT_UP')
+                if self._retract_up_path:
+                    times = self._compute_joint_path_timing(
+                        self._retract_up_path)
+                    self._send_full_trajectory(self._retract_up_path, times)
+                    self._retract_up_traj_sent = True
+                    self._last_q = self._retract_up_path[-1].copy()
+
+        # ---- Real-robot mode: just monitor convergence ----
+        if self._real_robot:
+            self._mirror_real_to_sim()
+            if self._retract_up_traj_sent and hasattr(self, '_retract_up_path') \
+                    and self._retract_up_path:
+                final_q = self._retract_up_path[-1]
+                if self._real_robot_converged(final_q):
+                    self._last_q = final_q.copy()
+                    self.get_logger().info('RETRACT_UP complete → RETRACT_HOME')
+                    self.phase = Phase.RETRACT_HOME
+                else:
+                    self.get_logger().info(
+                        'RETRACT_UP  waiting for real robot…',
+                        throttle_duration_sec=1.0)
+            else:
+                self.get_logger().warn('RETRACT_UP  no IK path → RETRACT_HOME')
+                self.phase = Phase.RETRACT_HOME
+            return
+
+        # ---- Sim-only mode ----
         if self._retract_idx >= len(self._retract_waypoints):
             self.get_logger().info('RETRACT_UP complete → RETRACT_HOME')
             self.phase = Phase.RETRACT_HOME
@@ -687,8 +754,7 @@ class PlanarServoController(Node):
         cmd.position = q_sol.tolist()
         self._pub_joint_cmd(cmd)
         self._last_q = q_sol.copy()
-        if self._real_robot_converged(q_sol):
-            self._retract_idx += 1
+        self._retract_idx += 1
 
         total = len(self._retract_waypoints)
         if self._retract_idx % 10 == 0 or self._retract_idx >= total:
@@ -1052,7 +1118,41 @@ class PlanarServoController(Node):
     # DESCENDING — position-controlled IK descent (like cartesian ctrl)
     # ------------------------------------------------------------------
     def _descend(self):
-        """Lower the EE via position-controlled IK joint commands."""
+        """Lower the EE via position-controlled IK joint commands.
+        In real-robot mode the entire IK path is sent as one trajectory."""
+        # ---- Real-robot: send full trajectory once, monitor ----
+        if self._real_robot:
+            if not self._descent_traj_sent:
+                seed = self._last_q if self._last_q is not None \
+                    else self._get_ordered_joints()
+                if seed is None:
+                    return
+                path = self._send_cartesian_as_trajectory(
+                    self._descent_waypoints, seed, 'DESCENDING')
+                self._descent_ik_path = path or []
+                self._descent_traj_sent = True
+                if path:
+                    self._last_q = path[-1].copy()
+
+            self._mirror_real_to_sim()
+
+            target_q = (self._descent_ik_path[-1]
+                        if self._descent_ik_path else self._last_q)
+            if target_q is not None and self._real_robot_converged(target_q):
+                if self.teleop_mode:
+                    self.get_logger().info('Descent complete → TELEOP')
+                    self.phase = Phase.TELEOP
+                else:
+                    self.get_logger().info('Descent complete → SERVO')
+                    self.phase = Phase.SERVO
+                    self.waypoint_idx = 0
+            else:
+                self.get_logger().info(
+                    'DESCENDING  waiting for real robot…',
+                    throttle_duration_sec=1.0)
+            return
+
+        # ---- Sim-only mode ----
         if self._descent_idx >= len(self._descent_waypoints):
             if self.teleop_mode:
                 self.get_logger().info('Descent complete → TELEOP')
@@ -1080,6 +1180,7 @@ class PlanarServoController(Node):
         cmd.position = q_sol.tolist()
         self._pub_joint_cmd(cmd)
         self._last_q = q_sol.copy()
+        self._descent_idx += 1
 
         total = len(self._descent_waypoints)
         if self._descent_idx % 5 == 0 or self._descent_idx >= total - 1:
@@ -1088,9 +1189,6 @@ class PlanarServoController(Node):
             self.get_logger().info(
                 f'DESCEND  wp={self._descent_idx}/{total}  '
                 f'z_off={z_off:.4f}m  plane_xy=({ex:.3f},{ey:.3f})')
-
-        if self._real_robot_converged(q_sol):
-            self._descent_idx += 1
 
     # ------------------------------------------------------------------
     # Twist builder helpers
