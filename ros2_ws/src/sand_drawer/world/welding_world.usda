@@ -14,8 +14,8 @@
                 double radius = 500
             }
             dictionary Perspective = {
-                double3 position = (-1.854670778200249, 1.1843950513693389, 0.619322028851883)
-                double3 target = (1.726599074308347, -1.890598691430152, -2.456301121992156)
+                double3 position = (-0.4367319963465709, 2.6370473266878176, 1.0922301460623982)
+                double3 target = (0.2613165592778758, -2.809217761986343, -2.7344592482539953)
             }
             dictionary Right = {
                 double3 position = (0, -1688400, -3.7490011095542286e-10)
@@ -2212,7 +2212,7 @@ def Xform "Root" (
 
     def Xform "Robot_Mount_Point"
     {
-        quatd xformOp:orient = (0.38268343236508984, 0, 0, 0.9238795325112867)
+        quatd xformOp:orient = (0.9238795325112867, 0, 0, 0.3826834323650898)
         double3 xformOp:scale = (1, 1, 1)
         double3 xformOp:translate = (-0.015104557178157198, -0.04296525008096573, -0.6321252785647566)
         uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
@@ -2357,7 +2357,7 @@ def Xform "Root" (
             {
                 over "shoulder_pan_joint"
                 {
-                    float drive:angular:physics:targetPosition = -133.2
+                    float drive:angular:physics:targetPosition = -45
                     uniform token drive:angular:physics:type = "acceleration"
                     custom string isaac:nameOverride (
                         displayName = "Name Override"
@@ -2371,7 +2371,7 @@ def Xform "Root" (
 
                 over "shoulder_lift_joint"
                 {
-                    float drive:angular:physics:targetPosition = -29.9
+                    float drive:angular:physics:targetPosition = -25
                     uniform token drive:angular:physics:type = "acceleration"
                     custom string isaac:nameOverride (
                         displayName = "Name Override"
@@ -2385,7 +2385,7 @@ def Xform "Root" (
 
                 over "elbow_joint"
                 {
-                    float drive:angular:physics:targetPosition = -141.6
+                    float drive:angular:physics:targetPosition = -145
                     uniform token drive:angular:physics:type = "acceleration"
                     custom string isaac:nameOverride (
                         displayName = "Name Override"

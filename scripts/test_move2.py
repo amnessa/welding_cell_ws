@@ -93,7 +93,7 @@ class UR5eTestMoveNode(Node):
 
         # Copy current positions, add 10 degrees to the Base joint (index 0)
         target_positions = list(self.current_positions)
-        move_deg = 10.0
+        move_deg = -20.0
         target_positions[0] += math.radians(move_deg)
 
         point.positions = target_positions
