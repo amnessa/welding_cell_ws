@@ -238,6 +238,7 @@ class CartesianDrawController(Node):
         self.declare_parameter('real_robot_trajectory_topic',
                                '/scaled_joint_trajectory_controller/joint_trajectory')
         self.declare_parameter('real_robot_trajectory_duration', 0.2)
+        self.declare_parameter('max_joint_speed_deg', 45.0)
 
         self._load_params()
         self._load_plane_json()
@@ -271,6 +272,15 @@ class CartesianDrawController(Node):
             self.get_logger().info(
                 f'REAL ROBOT mode: subscribing {real_js_topic}, '
                 f'publishing {real_traj_topic}')
+
+        # ---- joint speed limit ----
+        self._max_joint_speed_deg = float(self.get_parameter('max_joint_speed_deg').value)
+        self._max_joint_speed_rad = math.radians(self._max_joint_speed_deg)
+        self._dt = 1.0 / self.execution_hz
+        self._prev_cmd_q: Optional[np.ndarray] = None
+        self.get_logger().info(
+            f'Max joint speed: {self._max_joint_speed_deg:.1f} deg/s '
+            f'({self._max_joint_speed_rad:.4f} rad/s)')
 
         # ---- home configuration (same as planar_servo_controller) ----
         self._joint_names = [
@@ -426,6 +436,21 @@ class CartesianDrawController(Node):
     # Publish joint command helper
     # ------------------------------------------------------------------
     def _pub_joints(self, q: np.ndarray):
+        # ---- joint velocity clamping ----
+        if self._prev_cmd_q is None:
+            # Initialise from current feedback so the first command is zero-delta
+            cur = self._get_ordered_joints()
+            if cur is not None:
+                self._prev_cmd_q = cur.copy()
+        if self._prev_cmd_q is not None:
+            delta = q - self._prev_cmd_q
+            max_delta = float(np.max(np.abs(delta)))
+            max_allowed = self._max_joint_speed_rad * self._dt
+            if max_delta > max_allowed and max_delta > 1e-9:
+                scale = max_allowed / max_delta
+                q = self._prev_cmd_q + delta * scale
+        self._prev_cmd_q = q.copy()
+
         msg = JointState()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.name = self._joint_names
@@ -439,9 +464,16 @@ class CartesianDrawController(Node):
             traj.joint_names = list(self._joint_names)
             pt = JointTrajectoryPoint()
             pt.positions = q.tolist()
-            dur_sec = int(self._real_traj_duration)
-            dur_nsec = int(
-                (self._real_traj_duration - dur_sec) * 1e9)
+            # Compute duration from actual robot state so the real arm
+            # never exceeds the joint speed limit
+            dur = self._real_traj_duration  # fallback
+            cur = self._get_ordered_joints()
+            if cur is not None:
+                real_delta = float(np.max(np.abs(q - cur)))
+                needed = real_delta / self._max_joint_speed_rad
+                dur = max(needed, self._dt)
+            dur_sec = int(dur)
+            dur_nsec = int((dur - dur_sec) * 1e9)
             pt.time_from_start = Duration(
                 sec=dur_sec, nanosec=dur_nsec)
             traj.points = [pt]

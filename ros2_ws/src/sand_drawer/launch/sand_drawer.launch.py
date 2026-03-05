@@ -66,6 +66,8 @@ def launch_setup(context, *args, **kwargs):
     kd_angular_str   = LaunchConfiguration("kd_angular").perform(context)
     real_robot_str   = LaunchConfiguration("real_robot").perform(context)
     real_robot        = real_robot_str == "true"
+    max_joint_speed_deg = float(
+        LaunchConfiguration("max_joint_speed_deg").perform(context))
 
     # When real_robot is active, force use_sim_time=false (wall clock)
     use_sim_time = False if real_robot else (use_sim_time_str == "true")
@@ -161,6 +163,7 @@ def launch_setup(context, *args, **kwargs):
                 "line_v_end":   float(line_v_end_str),
                 # Real robot
                 "real_robot": real_robot,
+                "max_joint_speed_deg": max_joint_speed_deg,
             }],
         ))
         return nodes
@@ -208,7 +211,7 @@ def launch_setup(context, *args, **kwargs):
             "boundary_margin": 0.01,
             "teleop_mode": is_teleop,
             "teleop_speed": 0.10,
-            "execution_hz": 60.0,
+            "execution_hz": 100.0,
             "descent_step": 0.002,
             # Elbow-up configuration constraints
             "shoulder_lift_max": 0.0,
@@ -225,6 +228,7 @@ def launch_setup(context, *args, **kwargs):
             "line_v_end":   float(line_v_end_str),
             # Real robot
             "real_robot": real_robot,
+            "max_joint_speed_deg": max_joint_speed_deg,
         }],
     ))
 
@@ -290,5 +294,7 @@ def generate_launch_description():
         DeclareLaunchArgument("kd_angular",     default_value="0.0"),
         DeclareLaunchArgument("real_robot",      default_value="false",
                               description="Enable bridging to real UR robot via JointTrajectory"),
+        DeclareLaunchArgument("max_joint_speed_deg", default_value="45.0",
+                              description="Maximum joint speed in deg/s (all joints)"),
         OpaqueFunction(function=launch_setup),
     ])

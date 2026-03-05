@@ -157,6 +157,7 @@ class PlanarServoController(Node):
         self.declare_parameter('real_robot_trajectory_topic',
                                '/scaled_joint_trajectory_controller/joint_trajectory')
         self.declare_parameter('real_robot_trajectory_duration', 0.2)
+        self.declare_parameter('max_joint_speed_deg', 45.0)
 
         self._load_params()
         self._load_plane_json()
@@ -187,6 +188,15 @@ class PlanarServoController(Node):
             self.get_logger().info(
                 f'REAL ROBOT mode: subscribing {real_js_topic}, '
                 f'publishing {real_traj_topic}')
+
+        # ---- joint speed limit ----
+        self._max_joint_speed_deg = float(self.get_parameter('max_joint_speed_deg').value)
+        self._max_joint_speed_rad = math.radians(self._max_joint_speed_deg)
+        self._dt = 1.0 / self.execution_hz
+        self._prev_cmd_q: Optional[np.ndarray] = None
+        self.get_logger().info(
+            f'Max joint speed: {self._max_joint_speed_deg:.1f} deg/s '
+            f'({self._max_joint_speed_rad:.4f} rad/s)')
 
         # ---- joint state subscriber (for RRT planning) ----
         self._last_joint_state = None
@@ -251,19 +261,56 @@ class PlanarServoController(Node):
     # ------------------------------------------------------------------
     # Publish joint command helper (sim + optional real robot)
     # ------------------------------------------------------------------
+    def _get_ordered_joints(self) -> Optional[np.ndarray]:
+        """Return ordered joint positions from the last feedback message."""
+        if self._last_joint_state is None:
+            return None
+        name_map = {n: p for n, p in
+                    zip(self._last_joint_state.name,
+                        self._last_joint_state.position)}
+        try:
+            return np.array([name_map[n] for n in self._home_joint_names])
+        except KeyError:
+            return None
+
     def _pub_joint_cmd(self, cmd: JointState):
-        """Publish a JointState command.  Also send a JointTrajectory
-        to the real robot if enabled."""
+        """Publish a JointState command with joint-velocity clamping.
+        Also send a JointTrajectory to the real robot if enabled."""
+        q = np.array(cmd.position, dtype=float)
+
+        # ---- joint velocity clamping ----
+        if self._prev_cmd_q is None:
+            cur = self._get_ordered_joints()
+            if cur is not None:
+                self._prev_cmd_q = cur.copy()
+        if self._prev_cmd_q is not None:
+            delta = q - self._prev_cmd_q
+            max_delta = float(np.max(np.abs(delta)))
+            max_allowed = self._max_joint_speed_rad * self._dt
+            if max_delta > max_allowed and max_delta > 1e-9:
+                scale = max_allowed / max_delta
+                q = self._prev_cmd_q + delta * scale
+                cmd.position = q.tolist()
+        self._prev_cmd_q = q.copy()
+
         self.joint_cmd_pub.publish(cmd)
+
         if self._real_traj_pub is not None:
             traj = JointTrajectory()
             traj.header.stamp = cmd.header.stamp
             traj.joint_names = list(cmd.name)
             pt = JointTrajectoryPoint()
-            pt.positions = list(cmd.position)
-            dur_sec = int(self._real_traj_duration)
-            dur_nsec = int(
-                (self._real_traj_duration - dur_sec) * 1e9)
+            pt.positions = q.tolist()
+            # Compute duration from actual robot state so the real arm
+            # never exceeds the joint speed limit
+            dur = self._real_traj_duration  # fallback
+            cur = self._get_ordered_joints()
+            if cur is not None:
+                real_delta = float(np.max(np.abs(q - cur)))
+                needed = real_delta / self._max_joint_speed_rad
+                dur = max(needed, self._dt)
+            dur_sec = int(dur)
+            dur_nsec = int((dur - dur_sec) * 1e9)
             pt.time_from_start = Duration(
                 sec=dur_sec, nanosec=dur_nsec)
             traj.points = [pt]
@@ -770,17 +817,6 @@ class PlanarServoController(Node):
             f'elbow={path[-1][2]:.3f}')
 
         self.phase = Phase.EXECUTING
-
-    def _get_ordered_joints(self):
-        """Extract joint positions in UR order from the last JointState message."""
-        if self._last_joint_state is None:
-            return None
-        msg = self._last_joint_state
-        name_map = {n: p for n, p in zip(msg.name, msg.position)}
-        try:
-            return np.array([name_map[n] for n in self._home_joint_names])
-        except KeyError:
-            return None
 
     # ------------------------------------------------------------------
     # EXECUTING phase (follow planned joint-space path)
