@@ -13,7 +13,7 @@ Modes (via mode:= launch argument):
 Usage:
   ros2 launch sand_drawer sand_drawer.launch.py
   ros2 launch sand_drawer sand_drawer.launch.py mode:=teleop
-  ros2 launch sand_drawer sand_drawer.launch.py mode:=cartesian
+  ros2 launch sand_drawer sand_drawer.launch.py mode:=cartesian real_robot:=true
   ros2 launch sand_drawer sand_drawer.launch.py mode:=cartesian loop:=true
   ros2 launch sand_drawer sand_drawer.launch.py loop:=true
   ros2 launch sand_drawer sand_drawer.launch.py mode:=capture
@@ -67,6 +67,9 @@ def launch_setup(context, *args, **kwargs):
     real_robot_str   = LaunchConfiguration("real_robot").perform(context)
     real_robot        = real_robot_str == "true"
 
+    # When real_robot is active, force use_sim_time=false (wall clock)
+    use_sim_time = False if real_robot else (use_sim_time_str == "true")
+
     from subprocess import check_output
     robot_description_str = check_output(
         ["xacro", urdf_file]).decode("utf-8")
@@ -76,19 +79,18 @@ def launch_setup(context, *args, **kwargs):
 
     nodes = []
 
-    # ---- Robot State Publisher (skip when real robot — UR driver provides its own) ----
-    if not real_robot:
-        nodes.append(Node(
-            package="robot_state_publisher",
-            executable="robot_state_publisher",
-            name="robot_state_publisher",
-            output="screen",
-            parameters=[{
-                "robot_description": robot_description_str,
-                "use_sim_time": use_sim_time_str == "true",
-            }],
-            remappings=[("joint_states", "/isaac_joint_states")],
-        ))
+    # ---- Robot State Publisher (always — needed so sim mirrors real robot) ----
+    nodes.append(Node(
+        package="robot_state_publisher",
+        executable="robot_state_publisher",
+        name="robot_state_publisher",
+        output="screen",
+        parameters=[{
+            "robot_description": robot_description_str,
+            "use_sim_time": use_sim_time,
+        }],
+        remappings=[("joint_states", "/isaac_joint_states")],
+    ))
 
     if mode_str == "capture":
         # ---- Plane capture mode (simulation — uses red ball TF) ----
@@ -98,7 +100,7 @@ def launch_setup(context, *args, **kwargs):
             name="plane_solver_node",
             output="screen",
             parameters=[{
-                "use_sim_time": use_sim_time_str == "true",
+                "use_sim_time": use_sim_time,
                 "input_point_topic": "/red_ball/ground_truth",
                 "source_frame": "world",
                 "target_frame": "base_link",
@@ -135,7 +137,7 @@ def launch_setup(context, *args, **kwargs):
             name="cartesian_draw_controller",
             output="screen",
             parameters=[{
-                "use_sim_time": use_sim_time_str == "true",
+                "use_sim_time": use_sim_time,
                 "plane_json_file": plane_json_str or default_plane_json,
                 "approach_height": 0.08,
                 "max_linear_vel": 0.05,
@@ -170,7 +172,7 @@ def launch_setup(context, *args, **kwargs):
         name="plane_frame_broadcaster",
         output="screen",
         parameters=[{
-            "use_sim_time": use_sim_time_str == "true",
+            "use_sim_time": use_sim_time,
             "plane_json_file": plane_json_str or default_plane_json,
             "parent_frame": "base_link",
             "child_frame": "drawing_plane",
@@ -186,7 +188,7 @@ def launch_setup(context, *args, **kwargs):
         name="planar_servo_controller",
         output="screen",
         parameters=[{
-            "use_sim_time": use_sim_time_str == "true",
+            "use_sim_time": use_sim_time,
             "plane_json_file": plane_json_str or default_plane_json,
             "ee_link": "tool0",
             "base_frame": "base_link",
@@ -233,7 +235,7 @@ def launch_setup(context, *args, **kwargs):
         name="jacobian_calculator_node",
         output="screen",
         parameters=[{
-            "use_sim_time": use_sim_time_str == "true",
+            "use_sim_time": use_sim_time,
             "robot_description": robot_description_str,
             "robot_description_semantic": srdf_str,
             "planning_group": "ur_manipulator",
