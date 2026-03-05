@@ -50,6 +50,7 @@ install(PROGRAMS
   scripts/ur5e_rrt_planner.py
   scripts/cartesian_square_controller.py
   scripts/pd_auto_tuner.py
+  scripts/freedrive_plane_capture.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

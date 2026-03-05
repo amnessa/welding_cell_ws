@@ -4,10 +4,11 @@ Sand Drawer — Planar Servo Launch File
 Launches the full pipeline for constrained plane servoing on a UR5e in Isaac Sim.
 
 Modes (via mode:= launch argument):
-  trajectory (default) — follow waypoints from the plane JSON (velocity servo)
-  teleop               — move EE to plane center, then accept keyboard commands
-  cartesian            — position-controlled square drawing via Cartesian IK
-  capture              — run plane_solver_node to capture 4 points
+  trajectory (default)  — follow waypoints from the plane JSON (velocity servo)
+  teleop                — move EE to plane center, then accept keyboard commands
+  cartesian             — position-controlled square drawing via Cartesian IK
+  capture               — run plane_solver_node to capture 4 points (sim, red ball)
+  freedrive_capture     — capture 4 TCP poses on real robot via freedrive mode
 
 Usage:
   ros2 launch sand_drawer sand_drawer.launch.py
@@ -16,6 +17,7 @@ Usage:
   ros2 launch sand_drawer sand_drawer.launch.py mode:=cartesian loop:=true
   ros2 launch sand_drawer sand_drawer.launch.py loop:=true
   ros2 launch sand_drawer sand_drawer.launch.py mode:=capture
+  ros2 launch sand_drawer sand_drawer.launch.py mode:=freedrive_capture
 """
 
 import os
@@ -86,7 +88,7 @@ def launch_setup(context, *args, **kwargs):
     ))
 
     if mode_str == "capture":
-        # ---- Plane capture mode ----
+        # ---- Plane capture mode (simulation — uses red ball TF) ----
         nodes.append(Node(
             package="sand_drawer",
             executable="plane_solver_node.py",
@@ -98,6 +100,24 @@ def launch_setup(context, *args, **kwargs):
                 "source_frame": "world",
                 "target_frame": "base_link",
                 "output_file": plane_json_str or default_plane_json,
+            }],
+        ))
+        return nodes
+
+    if mode_str == "freedrive_capture":
+        # ---- Plane capture on real robot (freedrive + TCP pose) ----
+        nodes.append(Node(
+            package="sand_drawer",
+            executable="freedrive_plane_capture.py",
+            name="freedrive_plane_capture",
+            output="screen",
+            prefix="xterm -e" if False else "",  # set True for separate terminal
+            parameters=[{
+                "output_file": plane_json_str or default_plane_json,
+                "square_scale": 0.8,
+                "tcp_pose_topic": "/tcp_pose_broadcaster/pose",
+                "freedrive_controller": "freedrive_mode_controller",
+                "trajectory_controller": "scaled_joint_trajectory_controller",
             }],
         ))
         return nodes
@@ -248,7 +268,7 @@ def generate_launch_description():
         DeclareLaunchArgument("loop",           default_value="false"),
         DeclareLaunchArgument("trajectory_key", default_value="projected_vector_trajectory"),
         DeclareLaunchArgument("mode",           default_value="trajectory",
-                              description="trajectory | teleop | cartesian | capture"),
+                              description="trajectory | teleop | cartesian | capture | freedrive_capture"),
         # Line UV coordinates (shared by cartesian & velocity modes)
         DeclareLaunchArgument("line_u_start",   default_value="0.5"),
         DeclareLaunchArgument("line_v_start",   default_value="0.3"),
