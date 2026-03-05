@@ -3,15 +3,25 @@
 Freedrive Plane Capture — Capture 4 end-effector poses on the real UR5e
 to define a drawing plane, then solve and save the plane JSON.
 
-Usage (with UR driver running):
-  ros2 run sand_drawer freedrive_plane_capture.py
+This node uses ROS 2 **services** for interaction (no stdin needed),
+so it works correctly when launched via ``ros2 launch``.
 
-Workflow:
-  1. Activates freedrive_mode_controller (deactivates scaled_joint_trajectory_controller)
-  2. Enables freedrive so you can move the robot by hand
-  3. Prompts you to move the TCP to 4 corner positions and press ENTER to capture
-  4. Solves the plane + rectangle + trajectory and saves the same JSON as plane_solver_node
-  5. Deactivates freedrive and restores the trajectory controller
+Usage (with UR driver running):
+  # Terminal 1 — start the capture node (enables freedrive automatically):
+  ros2 launch sand_drawer sand_drawer.launch.py mode:=freedrive_capture
+
+  # Terminal 2 — capture each point by calling the service:
+  ros2 service call /freedrive_plane_capture/capture_point std_srvs/srv/Trigger
+  ros2 service call /freedrive_plane_capture/capture_point std_srvs/srv/Trigger
+  ros2 service call /freedrive_plane_capture/capture_point std_srvs/srv/Trigger
+  ros2 service call /freedrive_plane_capture/capture_point std_srvs/srv/Trigger
+  # (auto-solves and saves after the 4th capture)
+
+  # Other useful services:
+  ros2 service call /freedrive_plane_capture/undo_last   std_srvs/srv/Trigger
+  ros2 service call /freedrive_plane_capture/reset        std_srvs/srv/Trigger
+  ros2 service call /freedrive_plane_capture/solve_and_save std_srvs/srv/Trigger
+  ros2 service call /freedrive_plane_capture/finish       std_srvs/srv/Trigger
 
 The 4 capture points define the rectangle corners in order:
   Point 1 — Right-Upper
@@ -24,15 +34,17 @@ import json
 import math
 import os
 import sys
-import threading
 import time
 from typing import List, Optional, Tuple
 
 import numpy as np
 import rclpy
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped
 from std_msgs.msg import Bool
+from std_srvs.srv import Trigger
 from controller_manager_msgs.srv import SwitchController
 
 
@@ -52,17 +64,8 @@ def _default_output_file() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Rotation matrix ↔ quaternion helpers
+# Rotation matrix → quaternion
 # ---------------------------------------------------------------------------
-def quat_to_rotmat(q_xyzw) -> np.ndarray:
-    x, y, z, w = q_xyzw
-    return np.array([
-        [1 - 2*(y*y + z*z), 2*(x*y - z*w),     2*(x*z + y*w)],
-        [2*(x*y + z*w),     1 - 2*(x*x + z*z), 2*(y*z - x*w)],
-        [2*(x*z - y*w),     2*(y*z + x*w),      1 - 2*(x*x + y*y)],
-    ])
-
-
 def rotmat_to_quat(R: np.ndarray) -> List[float]:
     m00, m01, m02 = R[0, 0], R[0, 1], R[0, 2]
     m10, m11, m12 = R[1, 0], R[1, 1], R[1, 2]
@@ -86,11 +89,14 @@ def rotmat_to_quat(R: np.ndarray) -> List[float]:
 
 
 # ---------------------------------------------------------------------------
-# Node
+# Point labels
 # ---------------------------------------------------------------------------
 POINT_LABELS = ["Right-Upper", "Right-Down", "Left-Upper", "Left-Down"]
 
 
+# ---------------------------------------------------------------------------
+# Node
+# ---------------------------------------------------------------------------
 class FreedrivePlaneCapture(Node):
     def __init__(self):
         super().__init__('freedrive_plane_capture')
@@ -103,6 +109,7 @@ class FreedrivePlaneCapture(Node):
         self.declare_parameter('tcp_pose_topic', '/tcp_pose_broadcaster/pose')
         self.declare_parameter('freedrive_controller', 'freedrive_mode_controller')
         self.declare_parameter('trajectory_controller', 'scaled_joint_trajectory_controller')
+        self.declare_parameter('auto_enable_freedrive', True)
 
         self.output_file = self.get_parameter('output_file').value
         self.square_scale = float(self.get_parameter('square_scale').value)
@@ -110,6 +117,10 @@ class FreedrivePlaneCapture(Node):
         self.tcp_pose_topic = self.get_parameter('tcp_pose_topic').value
         self.freedrive_controller = self.get_parameter('freedrive_controller').value
         self.trajectory_controller = self.get_parameter('trajectory_controller').value
+        self.auto_enable = self.get_parameter('auto_enable_freedrive').value
+
+        # Callback group for anything that calls service clients
+        self._cb_group = ReentrantCallbackGroup()
 
         # TCP pose subscriber
         self._latest_pose: Optional[PoseStamped] = None
@@ -117,25 +128,60 @@ class FreedrivePlaneCapture(Node):
             PoseStamped, self.tcp_pose_topic,
             self._pose_cb, 10)
 
-        # Freedrive enable publisher
+        # Freedrive enable publisher (keepalive)
         self._freedrive_pub = self.create_publisher(
             Bool, f'/{self.freedrive_controller}/enable_freedrive_mode', 10)
 
-        # Controller manager switch service client
+        # Controller manager client (reentrant so it can be called from callbacks)
         self._switch_client = self.create_client(
-            SwitchController, '/controller_manager/switch_controller')
+            SwitchController, '/controller_manager/switch_controller',
+            callback_group=self._cb_group)
 
-        # Freedrive keepalive timer (publishes True at 10 Hz while active)
+        # Freedrive keepalive timer (10 Hz)
         self._freedrive_active = False
         self._keepalive_timer = self.create_timer(0.1, self._keepalive_cb)
 
         # Captured data
         self.captured_points: List[np.ndarray] = []
         self.captured_orientations: List[List[float]] = []
+        self._solved = False
 
-        self.get_logger().info("Freedrive Plane Capture node ready.")
-        self.get_logger().info(f"Listening for TCP pose on: {self.tcp_pose_topic}")
-        self.get_logger().info(f"Output will be saved to: {self.output_file}")
+        # ---- Services (user calls these from another terminal) ----
+        self.create_service(Trigger, '~/capture_point', self._srv_capture)
+        self.create_service(Trigger, '~/solve_and_save', self._srv_solve)
+        self.create_service(Trigger, '~/undo_last', self._srv_undo)
+        self.create_service(Trigger, '~/reset', self._srv_reset)
+        self.create_service(Trigger, '~/finish', self._srv_finish,
+                           callback_group=self._cb_group)
+        self.create_service(Trigger, '~/enable_freedrive',
+                           self._srv_enable_freedrive,
+                           callback_group=self._cb_group)
+        self.create_service(Trigger, '~/disable_freedrive',
+                           self._srv_disable_freedrive,
+                           callback_group=self._cb_group)
+
+        # Status logger (prints TCP position every 2 seconds)
+        self._status_timer = self.create_timer(2.0, self._status_log)
+
+        self.get_logger().info("=" * 60)
+        self.get_logger().info("  FREEDRIVE PLANE CAPTURE")
+        self.get_logger().info("=" * 60)
+        self.get_logger().info(f"TCP pose topic: {self.tcp_pose_topic}")
+        self.get_logger().info(f"Output file:    {self.output_file}")
+        self.get_logger().info("")
+        self.get_logger().info("SERVICES (call from another terminal):")
+        self.get_logger().info("  Capture:  ros2 service call /freedrive_plane_capture/capture_point std_srvs/srv/Trigger")
+        self.get_logger().info("  Undo:     ros2 service call /freedrive_plane_capture/undo_last std_srvs/srv/Trigger")
+        self.get_logger().info("  Solve:    ros2 service call /freedrive_plane_capture/solve_and_save std_srvs/srv/Trigger")
+        self.get_logger().info("  Reset:    ros2 service call /freedrive_plane_capture/reset std_srvs/srv/Trigger")
+        self.get_logger().info("  Finish:   ros2 service call /freedrive_plane_capture/finish std_srvs/srv/Trigger")
+        self.get_logger().info("=" * 60)
+
+        # Auto-enable freedrive on startup (one-shot timer)
+        if self.auto_enable:
+            self._startup_timer = self.create_timer(
+                1.0, self._startup_enable_freedrive,
+                callback_group=self._cb_group)
 
     # ------------------------------------------------------------------
     # Callbacks
@@ -149,72 +195,39 @@ class FreedrivePlaneCapture(Node):
             msg.data = True
             self._freedrive_pub.publish(msg)
 
-    # ------------------------------------------------------------------
-    # Controller switching
-    # ------------------------------------------------------------------
-    def _switch_controllers(self, activate: List[str], deactivate: List[str]) -> bool:
-        if not self._switch_client.wait_for_service(timeout_sec=5.0):
-            self.get_logger().error("controller_manager/switch_controller service not available!")
-            return False
-
-        req = SwitchController.Request()
-        req.activate_controllers = activate
-        req.deactivate_controllers = deactivate
-        req.strictness = SwitchController.Request.BEST_EFFORT
-        req.activate_asap = True
-
-        future = self._switch_client.call_async(req)
-        rclpy.spin_until_future_complete(self, future, timeout_sec=10.0)
-
-        if future.result() is None:
-            self.get_logger().error("Switch controller service call failed.")
-            return False
-
-        if not future.result().ok:
-            self.get_logger().error(
-                f"Controller switch rejected: activate={activate}, deactivate={deactivate}")
-            return False
-
-        self.get_logger().info(
-            f"Controllers switched: activated={activate}, deactivated={deactivate}")
-        return True
-
-    def enable_freedrive(self) -> bool:
-        """Activate freedrive controller (deactivate trajectory controller first)."""
-        self.get_logger().info("Activating freedrive mode...")
-        ok = self._switch_controllers(
-            activate=[self.freedrive_controller],
-            deactivate=[self.trajectory_controller])
-        if ok:
-            self._freedrive_active = True
-            time.sleep(0.3)  # let the controller settle
-            self.get_logger().info("Freedrive mode ACTIVE — you can move the robot by hand.")
-        return ok
-
-    def disable_freedrive(self) -> bool:
-        """Deactivate freedrive and restore trajectory controller."""
-        self.get_logger().info("Deactivating freedrive mode...")
-        # Stop sending enable keepalive
-        self._freedrive_active = False
-        # Explicitly send disable
-        msg = Bool()
-        msg.data = False
-        self._freedrive_pub.publish(msg)
-        time.sleep(0.2)
-
-        ok = self._switch_controllers(
-            activate=[self.trajectory_controller],
-            deactivate=[self.freedrive_controller])
-        if ok:
+    def _status_log(self):
+        tcp = self._get_current_tcp()
+        if tcp is None:
             self.get_logger().info(
-                "Freedrive DISABLED — trajectory controller restored.")
-        return ok
+                "Waiting for TCP pose...", throttle_duration_sec=5.0)
+            return
+        pos, _ = tcp
+        fd_str = "FREEDRIVE ON " if self._freedrive_active else "FREEDRIVE OFF"
+        n = len(self.captured_points)
+        next_label = POINT_LABELS[n] if n < 4 else "DONE"
+        self.get_logger().info(
+            f"[{fd_str}]  TCP: [{pos[0]:+.4f}, {pos[1]:+.4f}, {pos[2]:+.4f}]  "
+            f"Captured: {n}/4  Next: {next_label}")
+
+    def _startup_enable_freedrive(self):
+        """One-shot timer to enable freedrive after node is fully started."""
+        # Cancel this timer so it only fires once
+        self._startup_timer.cancel()
+        if not self._freedrive_active:
+            ok = self._enable_freedrive()
+            if ok:
+                self.get_logger().info(
+                    "Freedrive ACTIVE — move the robot by hand, "
+                    "then call capture_point service.")
+            else:
+                self.get_logger().error(
+                    "Failed to enable freedrive. "
+                    "Is the External Control program running on the pendant?")
 
     # ------------------------------------------------------------------
-    # Get current TCP position
+    # Get current TCP pose
     # ------------------------------------------------------------------
-    def get_current_tcp(self) -> Optional[Tuple[np.ndarray, List[float]]]:
-        """Return (position_xyz, orientation_xyzw) from the latest TCP pose."""
+    def _get_current_tcp(self) -> Optional[Tuple[np.ndarray, List[float]]]:
         if self._latest_pose is None:
             return None
         p = self._latest_pose.pose.position
@@ -224,9 +237,207 @@ class FreedrivePlaneCapture(Node):
         return pos, quat
 
     # ------------------------------------------------------------------
+    # Controller switching
+    # ------------------------------------------------------------------
+    def _switch_controllers(self, activate: List[str],
+                            deactivate: List[str]) -> bool:
+        if not self._switch_client.wait_for_service(timeout_sec=5.0):
+            self.get_logger().error(
+                "controller_manager/switch_controller not available!")
+            return False
+        req = SwitchController.Request()
+        req.activate_controllers = activate
+        req.deactivate_controllers = deactivate
+        req.strictness = SwitchController.Request.BEST_EFFORT
+        req.activate_asap = True
+
+        future = self._switch_client.call_async(req)
+        # Poll until done (no nested spin — MultiThreadedExecutor
+        # processes the response on another thread)
+        deadline = time.time() + 10.0
+        while not future.done():
+            if time.time() > deadline:
+                self.get_logger().error(
+                    "Switch controller service call timed out.")
+                return False
+            time.sleep(0.05)
+        if future.result() is None:
+            self.get_logger().error("Switch controller service call failed.")
+            return False
+        if not future.result().ok:
+            self.get_logger().error(
+                f"Controller switch rejected: "
+                f"activate={activate}, deactivate={deactivate}")
+            return False
+        self.get_logger().info(
+            f"Controllers switched: +{activate}, -{deactivate}")
+        return True
+
+    def _enable_freedrive(self) -> bool:
+        self.get_logger().info("Activating freedrive mode...")
+        ok = self._switch_controllers(
+            activate=[self.freedrive_controller],
+            deactivate=[self.trajectory_controller])
+        if ok:
+            self._freedrive_active = True
+            self.get_logger().info("Freedrive mode ACTIVE.")
+        return ok
+
+    def _disable_freedrive(self) -> bool:
+        self.get_logger().info("Deactivating freedrive mode...")
+        self._freedrive_active = False
+        msg = Bool()
+        msg.data = False
+        self._freedrive_pub.publish(msg)
+        time.sleep(0.2)
+        ok = self._switch_controllers(
+            activate=[self.trajectory_controller],
+            deactivate=[self.freedrive_controller])
+        if ok:
+            self.get_logger().info(
+                "Freedrive DISABLED — trajectory controller restored.")
+        return ok
+
+    # ------------------------------------------------------------------
+    # Service handlers
+    # ------------------------------------------------------------------
+    def _srv_capture(self, request, response):
+        """Capture the current TCP position as the next corner point."""
+        tcp = self._get_current_tcp()
+        if tcp is None:
+            response.success = False
+            response.message = \
+                "No TCP pose available. Is the UR driver running?"
+            return response
+
+        if len(self.captured_points) >= 4:
+            response.success = False
+            response.message = (
+                "Already have 4 points. "
+                "Call /solve_and_save, /reset, or /undo_last.")
+            return response
+
+        pos, quat = tcp
+        idx = len(self.captured_points)
+        label = POINT_LABELS[idx]
+
+        # Reject if too close to the previous point
+        if self.captured_points:
+            dist = float(np.linalg.norm(pos - self.captured_points[-1]))
+            if dist < 0.01:
+                response.success = False
+                response.message = (
+                    f"Too close to previous point ({dist:.4f} m). "
+                    f"Move the robot further before capturing.")
+                return response
+
+        self.captured_points.append(pos.copy())
+        self.captured_orientations.append(quat)
+        self._solved = False
+
+        n = len(self.captured_points)
+        msg = (f"Captured {n}/4 ({label}): "
+               f"[{pos[0]:+.4f}, {pos[1]:+.4f}, {pos[2]:+.4f}]")
+        self.get_logger().info(msg)
+
+        # Auto-solve after the 4th point
+        if n == 4:
+            ok, solve_msg = self._do_solve_and_save()
+            msg += f"  |  Auto-solve: {solve_msg}"
+            response.success = ok
+        else:
+            next_label = POINT_LABELS[n] if n < 4 else "DONE"
+            msg += f"  |  Next: {next_label}"
+            response.success = True
+
+        response.message = msg
+        return response
+
+    def _srv_solve(self, request, response):
+        """Solve the plane from captured points and save the JSON."""
+        if len(self.captured_points) < 4:
+            response.success = False
+            response.message = \
+                f"Need 4 points, have {len(self.captured_points)}."
+            return response
+        ok, msg = self._do_solve_and_save()
+        response.success = ok
+        response.message = msg
+        return response
+
+    def _srv_undo(self, request, response):
+        """Remove the last captured point."""
+        if not self.captured_points:
+            response.success = False
+            response.message = "No points to undo."
+            return response
+        removed = self.captured_points.pop()
+        self.captured_orientations.pop()
+        self._solved = False
+        n = len(self.captured_points)
+        next_label = POINT_LABELS[n] if n < 4 else "DONE"
+        response.success = True
+        response.message = (
+            f"Removed [{removed[0]:+.4f}, {removed[1]:+.4f}, "
+            f"{removed[2]:+.4f}]. Now {n}/4. Next: {next_label}")
+        self.get_logger().info(response.message)
+        return response
+
+    def _srv_reset(self, request, response):
+        """Clear all captured points."""
+        self.captured_points.clear()
+        self.captured_orientations.clear()
+        self._solved = False
+        response.success = True
+        response.message = \
+            "All points cleared. Ready for Point 1 (Right-Upper)."
+        self.get_logger().info(response.message)
+        return response
+
+    def _srv_finish(self, request, response):
+        """Disable freedrive and signal node to shut down."""
+        self._disable_freedrive()
+        response.success = True
+        response.message = \
+            "Freedrive disabled. You can now Ctrl+C the capture node."
+        self.get_logger().info(response.message)
+        return response
+
+    def _srv_enable_freedrive(self, request, response):
+        ok = self._enable_freedrive()
+        response.success = ok
+        response.message = \
+            "Freedrive enabled." if ok else "Failed to enable freedrive."
+        return response
+
+    def _srv_disable_freedrive(self, request, response):
+        ok = self._disable_freedrive()
+        response.success = ok
+        response.message = \
+            "Freedrive disabled." if ok else "Failed to disable freedrive."
+        return response
+
+    # ------------------------------------------------------------------
     # Plane solving (same algorithm as plane_solver_node)
     # ------------------------------------------------------------------
-    def solve_plane(self, p1, p2, p3, p4):
+    def _do_solve_and_save(self) -> Tuple[bool, str]:
+        try:
+            result = self._solve_plane(
+                self.captured_points[0], self.captured_points[1],
+                self.captured_points[2], self.captured_points[3])
+        except ValueError as e:
+            return False, f"Solve failed: {e}"
+        self._solved = True
+        normal = result['normal']
+        rect = result['rectangle']
+        width = float(np.linalg.norm(rect[1] - rect[0]))
+        height = float(np.linalg.norm(rect[3] - rect[0]))
+        self.get_logger().info(
+            f"Plane solved! Normal=[{normal[0]:.4f}, {normal[1]:.4f}, "
+            f"{normal[2]:.4f}]  Rectangle: {width:.4f} x {height:.4f} m")
+        return self._save_result(result)
+
+    def _solve_plane(self, p1, p2, p3, p4):
         eps = 1e-8
         x_axis = p2 - p1
         x_norm = np.linalg.norm(x_axis)
@@ -260,7 +471,8 @@ class FreedrivePlaneCapture(Node):
 
         width = abs(u4)
         height = abs(v4)
-        side = min(width, height) * float(np.clip(self.square_scale, 0.05, 1.0))
+        side = min(width, height) * float(
+            np.clip(self.square_scale, 0.05, 1.0))
         sx = 1.0 if u4 >= 0.0 else -1.0
         sy = 1.0 if v4 >= 0.0 else -1.0
         center = p1 + 0.5 * u4 * x_axis + 0.5 * v4 * y_axis
@@ -279,7 +491,7 @@ class FreedrivePlaneCapture(Node):
             'orientation_xyzw': quat,
         }
 
-    def project_vector_path(self, result, rectangle):
+    def _project_vector_path(self, rectangle):
         p1 = rectangle[0]
         width_vec = rectangle[1] - rectangle[0]
         height_vec = rectangle[3] - rectangle[0]
@@ -293,22 +505,25 @@ class FreedrivePlaneCapture(Node):
     # ------------------------------------------------------------------
     # Save JSON (same format as plane_solver_node)
     # ------------------------------------------------------------------
-    def save_result(self, result) -> Tuple[bool, str]:
-        projected_vector = self.project_vector_path(result, result['rectangle'])
+    def _save_result(self, result) -> Tuple[bool, str]:
+        projected_vector = self._project_vector_path(result['rectangle'])
         quat = result['orientation_xyzw']
 
         payload = {
-            "target_frame": self._latest_pose.header.frame_id if self._latest_pose else "base",
+            "target_frame": (self._latest_pose.header.frame_id
+                             if self._latest_pose else "base"),
             "source_topic": self.tcp_pose_topic,
             "points_source": "freedrive_capture",
-            "captured_points_base": [p.tolist() for p in self.captured_points],
+            "captured_points_base": [
+                p.tolist() for p in self.captured_points],
             "plane": {
                 "origin": self.captured_points[0].tolist(),
                 "x_axis": result['x_axis'].tolist(),
                 "y_axis": result['y_axis'].tolist(),
                 "normal": result['normal'].tolist(),
             },
-            "rectangle_corners": [p.tolist() for p in result['rectangle']],
+            "rectangle_corners": [
+                p.tolist() for p in result['rectangle']],
             "square_trajectory": [
                 {"position": p.tolist(), "orientation_xyzw": quat}
                 for p in result['square']
@@ -332,166 +547,31 @@ class FreedrivePlaneCapture(Node):
         except Exception as exc:
             return False, f"Failed to save: {exc}"
 
-    # ------------------------------------------------------------------
-    # Interactive capture loop (runs in a separate thread)
-    # ------------------------------------------------------------------
-    def run_capture_session(self):
-        """Interactive terminal session: enable freedrive, capture 4 points,
-        solve plane, save, disable freedrive."""
-
-        print("\n" + "=" * 60)
-        print("  FREEDRIVE PLANE CAPTURE")
-        print("=" * 60)
-
-        # Wait for first TCP pose
-        print("\nWaiting for TCP pose data...")
-        for _ in range(50):  # 5 seconds
-            rclpy.spin_once(self, timeout_sec=0.1)
-            if self._latest_pose is not None:
-                break
-
-        if self._latest_pose is None:
-            print("\n[ERROR] No TCP pose received. Is the UR driver running?")
-            print("  Check: ros2 topic echo /tcp_pose_broadcaster/pose --once")
-            return False
-
-        tcp = self.get_current_tcp()
-        print(f"\nCurrent TCP position: [{tcp[0][0]:.4f}, {tcp[0][1]:.4f}, {tcp[0][2]:.4f}]")
-        print(f"Frame: {self._latest_pose.header.frame_id}")
-
-        # Enable freedrive
-        print("\n--- Enabling freedrive mode ---")
-        # Spin so the keepalive timer and service calls work
-        if not self.enable_freedrive():
-            print("[ERROR] Failed to enable freedrive. Check controller_manager.")
-            print("  You may need the External Control program running on the pendant.")
-            return False
-
-        print("\n" + "-" * 60)
-        print("  FREEDRIVE IS ACTIVE — Move the robot by hand")
-        print("-" * 60)
-        print("\nYou will capture 4 corner points of the working plane.")
-        print("Move the TCP to each corner and press ENTER to capture.")
-        print("Press 'q' + ENTER to abort at any time.\n")
-
-        self.captured_points.clear()
-        self.captured_orientations.clear()
-
-        for i in range(4):
-            label = POINT_LABELS[i]
-            while True:
-                # Spin to get fresh poses
-                rclpy.spin_once(self, timeout_sec=0.05)
-
-                tcp = self.get_current_tcp()
-                if tcp is None:
-                    print(f"  [WARN] No TCP data — move robot or check driver")
-                    time.sleep(0.5)
-                    continue
-
-                pos, quat = tcp
-                print(f"\rPoint {i+1}/4 ({label})  TCP: "
-                      f"[{pos[0]:+.4f}, {pos[1]:+.4f}, {pos[2]:+.4f}]  "
-                      f"Press ENTER to capture, 'q' to abort", end="", flush=True)
-
-                # Non-blocking input check
-                import select
-                readable, _, _ = select.select([sys.stdin], [], [], 0.1)
-                if readable:
-                    line = sys.stdin.readline().strip()
-                    if line.lower() == 'q':
-                        print("\n\nAborted by user.")
-                        self.disable_freedrive()
-                        return False
-
-                    # Capture the point
-                    # Get a fresh pose right at capture time
-                    rclpy.spin_once(self, timeout_sec=0.05)
-                    tcp = self.get_current_tcp()
-                    if tcp is None:
-                        print("\n  [WARN] Lost TCP data, try again.")
-                        continue
-
-                    pos, quat = tcp
-                    self.captured_points.append(pos.copy())
-                    self.captured_orientations.append(quat)
-
-                    print(f"\n  ✓ Captured {label}: "
-                          f"[{pos[0]:+.4f}, {pos[1]:+.4f}, {pos[2]:+.4f}]")
-
-                    # Validate min distance from previous points
-                    if len(self.captured_points) > 1:
-                        prev = self.captured_points[-2]
-                        dist = float(np.linalg.norm(pos - prev))
-                        print(f"    Distance from previous: {dist:.4f} m")
-                        if dist < 0.01:
-                            print("    [WARN] Very close to previous point — "
-                                  "consider recapturing.")
-                    print()
-                    break
-
-        # Disable freedrive
-        print("--- Disabling freedrive mode ---")
-        self.disable_freedrive()
-
-        # Solve
-        print("\n" + "=" * 60)
-        print("  SOLVING PLANE")
-        print("=" * 60)
-
-        print("\nCaptured points:")
-        for i, (pt, label) in enumerate(zip(self.captured_points, POINT_LABELS)):
-            print(f"  {i+1}. {label}: [{pt[0]:+.4f}, {pt[1]:+.4f}, {pt[2]:+.4f}]")
-
-        try:
-            result = self.solve_plane(
-                self.captured_points[0], self.captured_points[1],
-                self.captured_points[2], self.captured_points[3])
-        except ValueError as e:
-            print(f"\n[ERROR] Plane solving failed: {e}")
-            return False
-
-        print(f"\nPlane normal: [{result['normal'][0]:.4f}, "
-              f"{result['normal'][1]:.4f}, {result['normal'][2]:.4f}]")
-        print(f"X axis: [{result['x_axis'][0]:.4f}, "
-              f"{result['x_axis'][1]:.4f}, {result['x_axis'][2]:.4f}]")
-        print(f"Y axis: [{result['y_axis'][0]:.4f}, "
-              f"{result['y_axis'][1]:.4f}, {result['y_axis'][2]:.4f}]")
-
-        rect = result['rectangle']
-        width = float(np.linalg.norm(rect[1] - rect[0]))
-        height = float(np.linalg.norm(rect[3] - rect[0]))
-        print(f"Rectangle: {width:.4f} x {height:.4f} m")
-
-        # Save
-        ok, msg = self.save_result(result)
-        if ok:
-            print(f"\n  ✓ {msg}")
-        else:
-            print(f"\n  ✗ {msg}")
-
-        print("\n" + "=" * 60)
-        print("  DONE")
-        print("=" * 60)
-        return ok
-
 
 def main(args=None):
     rclpy.init(args=args)
     node = FreedrivePlaneCapture()
-
-    # Run the interactive capture in the main thread
-    # (we spin manually inside run_capture_session)
+    executor = MultiThreadedExecutor(num_threads=4)
+    executor.add_node(node)
     try:
-        success = node.run_capture_session()
+        executor.spin()
     except KeyboardInterrupt:
-        print("\n\nInterrupted — disabling freedrive...")
-        node.disable_freedrive()
+        pass
     finally:
-        node.destroy_node()
-        rclpy.shutdown()
-
-    sys.exit(0 if success else 1)
+        # Best-effort freedrive disable (context may already be torn down)
+        try:
+            node._freedrive_active = False
+            node._disable_freedrive()
+        except Exception:
+            pass
+        try:
+            node.destroy_node()
+        except Exception:
+            pass
+        try:
+            rclpy.shutdown()
+        except Exception:
+            pass
 
 
 if __name__ == '__main__':
