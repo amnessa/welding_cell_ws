@@ -27,13 +27,13 @@ def main():
     target_q = actual_q[:]
 
     # Add 10 degrees (in radians) to the Base joint (index 0)
-    target_q[0] += math.radians(10.0)
+    target_q[0] += math.radians(20.0)
 
     # Set very safe, slow kinematic limits
-    velocity = 0.1      # rad/s
-    acceleration = 0.1  # rad/s^2
+    velocity = 0.2      # rad/s
+    acceleration = 0.2  # rad/s^2
 
-    print("\nMoving the base joint by +10 degrees...")
+    print("\nMoving the base joint by +20 degrees...")
     print("READY ON THE E-STOP!")
     time.sleep(2) # Give yourself 2 seconds to grab the pendant
 
