@@ -118,7 +118,7 @@ def launch_setup(context, *args, **kwargs):
                 "max_linear_vel": 0.05,
                 "max_linear_accel": 0.05,
                 "ik_damping": 0.05,
-                "execution_hz": 60.0,
+                "execution_hz": 100.0,
                 "waypoints_per_tick": 1,
                 "loop_trajectory": loop_str == "true",
                 "trajectory_key": cart_traj_key,

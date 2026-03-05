@@ -4,10 +4,12 @@ Cartesian Drawing Controller — Position-controlled drawing on the plane.
 
 Pipeline
 --------
-1. HOME       – Send robot to home joint configuration, hold 2 s
-2. PLANNING   – RRT-Connect from home to approach pose (above first point)
-3. EXECUTING  – Follow the planned RRT joint-space path
-4. DESCENDING – Linearly descend from approach height to the plane surface
+1. RETRACT_UP   – Lift end-effector straight up to safe clearance (Cartesian IK)
+2. RETRACT_HOME – Interpolate in joint-space from retracted pose to home
+3. HOME_HOLD    – Hold at home for 2 s (verify stability)
+4. PLANNING     – RRT-Connect from home to approach pose (above first point)
+5. EXECUTING    – Follow the planned RRT joint-space path
+6. DESCENDING   – Linearly descend from approach height to the plane surface
 5. DRAWING    – Follow dense Cartesian waypoints along the path
 6. ASCENDING  – Lift off the plane
 7. DONE       – Hold position (zero velocity)
@@ -15,7 +17,7 @@ Pipeline
 Trajectory sources (via trajectory_key parameter):
   'line'                         — a straight line on the plane (UV coordinates)
   'square_trajectory'            — from plane JSON square_trajectory key
-  'projected_vector_trajectory'  — from plane JSON projected_vector_trajectory key
+  'projected_vector_trajectory'  — from plane JSON projected_vector_trajectory key (may not be used)
 
 During DRAWING the end-effector orientation is kept perpendicular to the
 drawing surface (aligned with the plane normal).  The Cartesian path is
@@ -26,7 +28,7 @@ but implemented locally so we stay independent of a running MoveGroup.
 Publishes
 ---------
   /isaac_joint_commands  (sensor_msgs/JointState)
-    Position-controlled joint targets at 10 Hz.
+    Position-controlled joint targets at 100Hz.
 
 Subscribes
 ----------
@@ -185,13 +187,15 @@ def _interpolate_cartesian_smooth(
 # ---------------------------------------------------------------------------
 
 class Phase(Enum):
-    HOME       = auto()
-    PLANNING   = auto()
-    EXECUTING  = auto()
-    DESCENDING = auto()
-    DRAWING    = auto()
-    ASCENDING  = auto()
-    DONE       = auto()
+    RETRACT_UP   = auto()   # Cartesian lift to safe height
+    RETRACT_HOME = auto()   # Joint-space interpolation to home
+    HOME_HOLD    = auto()   # Hold at home position
+    PLANNING     = auto()
+    EXECUTING    = auto()
+    DESCENDING   = auto()
+    DRAWING      = auto()
+    ASCENDING    = auto()
+    DONE         = auto()
 
 
 # ---------------------------------------------------------------------------
@@ -251,6 +255,14 @@ class CartesianDrawController(Node):
         self._home_reached_time = None
         self._home_hold_sec = 2.0
 
+        # ---- safe retract parameters ----
+        self._retract_height = 0.15   # metres above current EE to lift before homing
+        self._retract_waypoints: List[Tuple[np.ndarray, list]] = []
+        self._retract_idx = 0
+        self._retract_home_path: List[np.ndarray] = []  # joint-space interp to home
+        self._retract_home_idx = 0
+        self._retract_initialized = False
+
         # ---- RRT execution state ----
         self._rrt_path: List[np.ndarray] = []
         self._rrt_idx = 0
@@ -265,7 +277,7 @@ class CartesianDrawController(Node):
         self._ascent_target: Optional[np.ndarray] = None
 
         # ---- phase ----
-        self.phase = Phase.HOME
+        self.phase = Phase.RETRACT_UP
 
         # ---- control timer ----
         dt = 1.0 / self.execution_hz
@@ -403,22 +415,140 @@ class CartesianDrawController(Node):
         return T
 
     # ------------------------------------------------------------------
-    # HOME
+    # RETRACT_UP — lift EE straight up before any homing
     # ------------------------------------------------------------------
-    def _home(self):
+    def _retract_up(self):
+        """Lift the end-effector vertically (world Z+) to a safe clearance
+        height using Cartesian IK interpolation.  This prevents the EE from
+        dipping into the workpiece when transitioning to home."""
+        # One-time initialisation: compute the lift trajectory
+        if not self._retract_initialized:
+            q_current = self._get_ordered_joints()
+            if q_current is None:
+                self.get_logger().warn('RETRACT_UP — waiting for joint states…',
+                                       throttle_duration_sec=2.0)
+                return
+
+            from ur5e_rrt_planner import ur5e_fk
+            T_now = ur5e_fk(q_current)
+            current_pos = T_now[:3, 3]
+            current_quat = rotmat_to_quat(T_now[:3, :3])
+
+            # Lift target: straight up in world Z
+            lift_pos = current_pos.copy()
+            lift_pos[2] += self._retract_height
+
+            self.get_logger().info(
+                f'RETRACT_UP — current EE z={current_pos[2]:.3f}, '
+                f'lifting to z={lift_pos[2]:.3f} '
+                f'(+{self._retract_height:.3f} m)')
+
+            self._retract_waypoints = _interpolate_cartesian_smooth(
+                positions=[current_pos, lift_pos],
+                orientation_xyzw=current_quat,
+                v_max=self.v_max,
+                a_max=self.a_max,
+                dt=(1.0 / self.execution_hz),
+            )
+            self._retract_idx = 0
+            self._last_q = q_current.copy()
+            self._retract_initialized = True
+
+        # Play through the lift waypoints
+        if self._retract_idx >= len(self._retract_waypoints):
+            self.get_logger().info('RETRACT_UP complete → RETRACT_HOME')
+            self.phase = Phase.RETRACT_HOME
+            return
+
+        pos, quat = self._retract_waypoints[self._retract_idx]
+        T = self._pose44(pos, quat)
+        q_sol = self._ik(T, self._last_q)
+
+        if q_sol is None:
+            self.get_logger().warn(
+                f'RETRACT_UP IK failed at step {self._retract_idx}'
+                f'/{len(self._retract_waypoints)} — skipping')
+            self._retract_idx += 1
+            return
+
+        self._pub_joints(q_sol)
+        self._last_q = q_sol.copy()
+        self._retract_idx += 1
+
+        total = len(self._retract_waypoints)
+        if self._retract_idx % 10 == 0 or self._retract_idx >= total:
+            fk_pos = self._fk_position(q_sol)
+            self.get_logger().info(
+                f'RETRACT_UP  step {self._retract_idx}/{total}  '
+                f'z={fk_pos[2]:.3f}',
+                throttle_duration_sec=0.5)
+
+    # ------------------------------------------------------------------
+    # RETRACT_HOME — joint-space interpolation to home
+    # ------------------------------------------------------------------
+    def _retract_home(self):
+        """Smoothly interpolate in joint-space from the current (retracted)
+        position to the home configuration.  Uses a simple linear interpolation
+        with many small steps so the robot moves slowly and predictably."""
+        if not self._retract_home_path:
+            q_current = self._last_q if self._last_q is not None else self._get_ordered_joints()
+            if q_current is None:
+                self.get_logger().warn('RETRACT_HOME — waiting for joint states…',
+                                       throttle_duration_sec=2.0)
+                return
+
+            q_home = np.array(self._home_positions, dtype=float)
+            # Number of interpolation steps — ~2 seconds at execution_hz
+            n_steps = max(int(2.0 * self.execution_hz), 20)
+            path = []
+            for i in range(n_steps + 1):
+                alpha = i / n_steps
+                # Smooth ease-in / ease-out (cosine interpolation)
+                alpha_smooth = 0.5 * (1.0 - math.cos(math.pi * alpha))
+                q_interp = (1.0 - alpha_smooth) * q_current + alpha_smooth * q_home
+                path.append(q_interp)
+
+            self._retract_home_path = path
+            self._retract_home_idx = 0
+            self.get_logger().info(
+                f'RETRACT_HOME — interpolating to home in {n_steps} steps '
+                f'(~{n_steps / self.execution_hz:.1f} s)')
+
+        if self._retract_home_idx >= len(self._retract_home_path):
+            self.get_logger().info('RETRACT_HOME complete → HOME_HOLD')
+            self.phase = Phase.HOME_HOLD
+            return
+
+        q_cmd = self._retract_home_path[self._retract_home_idx]
+        self._pub_joints(q_cmd)
+        self._last_q = q_cmd.copy()
+        self._retract_home_idx += 1
+
+        total = len(self._retract_home_path)
+        if self._retract_home_idx % 20 == 0 or self._retract_home_idx >= total:
+            pct = 100.0 * self._retract_home_idx / max(total - 1, 1)
+            self.get_logger().info(
+                f'RETRACT_HOME  {self._retract_home_idx}/{total} ({pct:.0f}%)',
+                throttle_duration_sec=0.5)
+
+    # ------------------------------------------------------------------
+    # HOME_HOLD — hold at home, then proceed
+    # ------------------------------------------------------------------
+    def _home_hold(self):
+        """Hold at the home position for _home_hold_sec before planning."""
         self._pub_joints(np.array(self._home_positions))
 
         if self._home_reached_time is None:
             self._home_reached_time = self.get_clock().now()
-            self.get_logger().info('HOME — sending to home position…')
+            self.get_logger().info('HOME_HOLD — holding at home position…')
 
         elapsed = (self.get_clock().now() - self._home_reached_time).nanoseconds * 1e-9
         self.get_logger().info(
-            f'HOME — holding ({elapsed:.1f}/{self._home_hold_sec:.1f} s)',
+            f'HOME_HOLD — ({elapsed:.1f}/{self._home_hold_sec:.1f} s)',
             throttle_duration_sec=1.0)
 
         if elapsed >= self._home_hold_sec:
-            self.get_logger().info('Home hold complete → PLANNING')
+            self.get_logger().info('HOME_HOLD complete → PLANNING')
             self.phase = Phase.PLANNING
 
     # ------------------------------------------------------------------
@@ -844,8 +974,12 @@ class CartesianDrawController(Node):
     # Main control loop
     # ------------------------------------------------------------------
     def _control_loop(self):
-        if self.phase == Phase.HOME:
-            self._home()
+        if self.phase == Phase.RETRACT_UP:
+            self._retract_up()
+        elif self.phase == Phase.RETRACT_HOME:
+            self._retract_home()
+        elif self.phase == Phase.HOME_HOLD:
+            self._home_hold()
         elif self.phase == Phase.PLANNING:
             self._plan()
         elif self.phase == Phase.EXECUTING:

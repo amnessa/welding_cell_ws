@@ -11,12 +11,14 @@ jacobian_calculator_node converts to joint commands via damped-pseudoinverse IK.
 
 Phases
 ------
-1. HOME      – Send robot to home joint configuration, hold 2s
-2. PLANNING  – Compute RRT-Connect path in C-space to plane target
-3. EXECUTING – Follow the planned joint-space path
-4. SERVO     – Follow the waypoint trajectory on the plane
-5. TELEOP    – Accept manual velocity commands from /teleop_plane_vel
-6. DONE      – Hold (zero velocity)
+1. RETRACT_UP   – Lift EE straight up to safe clearance (Cartesian IK)
+2. RETRACT_HOME – Interpolate in joint-space from retracted pose to home
+3. HOME_HOLD    – Hold at home for 2 s (verify stability)
+4. PLANNING     – Compute RRT-Connect path in C-space to plane target
+5. EXECUTING    – Follow the planned joint-space path
+6. SERVO        – Follow the waypoint trajectory on the plane
+7. TELEOP       – Accept manual velocity commands from /teleop_plane_vel
+8. DONE         – Hold (zero velocity)
 """
 
 
@@ -97,13 +99,15 @@ def clamp_vec(v, max_mag):
 # ---------------------------------------------------------------------------
 
 class Phase(Enum):
-    HOME       = auto()
-    PLANNING   = auto()
-    EXECUTING  = auto()
-    DESCENDING = auto()   # velocity-controlled lowering onto the surface
-    SERVO      = auto()
-    TELEOP     = auto()
-    DONE       = auto()
+    RETRACT_UP   = auto()   # Cartesian lift to safe height
+    RETRACT_HOME = auto()   # Joint-space interpolation to home
+    HOME_HOLD    = auto()   # Hold at home position
+    PLANNING     = auto()
+    EXECUTING    = auto()
+    DESCENDING   = auto()   # velocity-controlled lowering onto the surface
+    SERVO        = auto()
+    TELEOP       = auto()
+    DONE         = auto()
 
 
 class PlanarServoController(Node):
@@ -174,6 +178,14 @@ class PlanarServoController(Node):
         self._home_reached_time = None  # timestamp when home was reached
         self._home_hold_duration = 2.0  # seconds to hold at home before transitioning
 
+        # ---- safe retract state ----
+        self._retract_height = 0.15   # metres above current EE to lift before homing
+        self._retract_waypoints = []  # list of (pos, quat) for Cartesian lift
+        self._retract_idx = 0
+        self._retract_home_path = []  # joint-space interpolation to home
+        self._retract_home_idx = 0
+        self._retract_initialized = False
+
         # ---- RRT path execution state ----
         self._rrt_path = []       # dense joint-space path
         self._rrt_path_idx = 0    # current index in path
@@ -193,7 +205,7 @@ class PlanarServoController(Node):
                 self._teleop_callback, 10)
 
         # ---- state ----
-        self.phase        = Phase.HOME
+        self.phase        = Phase.RETRACT_UP
         self.waypoint_idx = 0
 
         # ---- control timer ----
@@ -393,29 +405,167 @@ class PlanarServoController(Node):
         self._teleop_stamp = self.get_clock().now()
 
     # ------------------------------------------------------------------
-    # HOME phase
+    # RETRACT_UP — lift EE straight up before any homing
     # ------------------------------------------------------------------
-    def _home(self):
-        """Publish home joint positions directly, wait 2s, then transition."""
+    def _retract_up(self):
+        """Lift the end-effector vertically (world Z+) to a safe clearance
+        height using Cartesian IK interpolation."""
+        if not self._retract_initialized:
+            q_current = self._get_ordered_joints()
+            if q_current is None:
+                self.get_logger().warn('RETRACT_UP — waiting for joint states…',
+                                       throttle_duration_sec=2.0)
+                return
+
+            from ur5e_rrt_planner import ur5e_fk
+            T_now = ur5e_fk(q_current)
+            current_pos = T_now[:3, 3]
+            # Extract current orientation as quaternion
+            R = T_now[:3, :3]
+            trace = R[0,0] + R[1,1] + R[2,2]
+            if trace > 0:
+                s = 0.5 / math.sqrt(trace + 1.0)
+                w = 0.25 / s; x = (R[2,1]-R[1,2])*s; y = (R[0,2]-R[2,0])*s; z = (R[1,0]-R[0,1])*s
+            elif R[0,0] > R[1,1] and R[0,0] > R[2,2]:
+                s = 2.0*math.sqrt(1.0+R[0,0]-R[1,1]-R[2,2])
+                w=(R[2,1]-R[1,2])/s; x=0.25*s; y=(R[0,1]+R[1,0])/s; z=(R[0,2]+R[2,0])/s
+            elif R[1,1] > R[2,2]:
+                s = 2.0*math.sqrt(1.0+R[1,1]-R[0,0]-R[2,2])
+                w=(R[0,2]-R[2,0])/s; x=(R[0,1]+R[1,0])/s; y=0.25*s; z=(R[1,2]+R[2,1])/s
+            else:
+                s = 2.0*math.sqrt(1.0+R[2,2]-R[0,0]-R[1,1])
+                w=(R[1,0]-R[0,1])/s; x=(R[0,2]+R[2,0])/s; y=(R[1,2]+R[2,1])/s; z=0.25*s
+            current_quat = [x, y, z, w]
+            nrm = math.sqrt(sum(v*v for v in current_quat))
+            current_quat = [v/nrm for v in current_quat]
+
+            # Lift target: straight up in world Z
+            lift_pos = current_pos.copy()
+            lift_pos[2] += self._retract_height
+
+            self.get_logger().info(
+                f'RETRACT_UP — current EE z={current_pos[2]:.3f}, '
+                f'lifting to z={lift_pos[2]:.3f} '
+                f'(+{self._retract_height:.3f} m)')
+
+            # Build dense waypoints for the lift
+            dist = self._retract_height
+            n_steps = max(int(2.0 * self.execution_hz), 20)  # ~2 sec
+            self._retract_waypoints = []
+            for i in range(n_steps + 1):
+                alpha = i / n_steps
+                alpha_smooth = 0.5 * (1.0 - math.cos(math.pi * alpha))
+                p = current_pos + alpha_smooth * (lift_pos - current_pos)
+                self._retract_waypoints.append((p.copy(), current_quat))
+
+            self._retract_idx = 0
+            self._last_q = q_current.copy()
+            self._retract_initialized = True
+
+        if self._retract_idx >= len(self._retract_waypoints):
+            self.get_logger().info('RETRACT_UP complete → RETRACT_HOME')
+            self.phase = Phase.RETRACT_HOME
+            return
+
+        pos, quat = self._retract_waypoints[self._retract_idx]
+        T = self._pose44(pos, quat)
+        q_sol = self._safe_ik(T, self._last_q)
+
+        if q_sol is None:
+            self.get_logger().warn(
+                f'RETRACT_UP IK failed at step {self._retract_idx}'
+                f'/{len(self._retract_waypoints)} — skipping')
+            self._retract_idx += 1
+            return
+
+        cmd = JointState()
+        cmd.header.stamp = self.get_clock().now().to_msg()
+        cmd.name = self._home_joint_names
+        cmd.position = q_sol.tolist()
+        self.joint_cmd_pub.publish(cmd)
+        self._last_q = q_sol.copy()
+        self._retract_idx += 1
+
+        total = len(self._retract_waypoints)
+        if self._retract_idx % 10 == 0 or self._retract_idx >= total:
+            from ur5e_rrt_planner import ur5e_fk
+            fk_pos = ur5e_fk(q_sol)[:3, 3]
+            self.get_logger().info(
+                f'RETRACT_UP  step {self._retract_idx}/{total}  '
+                f'z={fk_pos[2]:.3f}',
+                throttle_duration_sec=0.5)
+
+    # ------------------------------------------------------------------
+    # RETRACT_HOME — joint-space interpolation to home
+    # ------------------------------------------------------------------
+    def _retract_home(self):
+        """Smoothly interpolate in joint-space from the current (retracted)
+        position to the home configuration."""
+        if not self._retract_home_path:
+            q_current = self._last_q if self._last_q is not None else self._get_ordered_joints()
+            if q_current is None:
+                self.get_logger().warn('RETRACT_HOME — waiting for joint states…',
+                                       throttle_duration_sec=2.0)
+                return
+
+            q_home = np.array(self._home_joint_positions, dtype=float)
+            n_steps = max(int(2.0 * self.execution_hz), 20)
+            path = []
+            for i in range(n_steps + 1):
+                alpha = i / n_steps
+                alpha_smooth = 0.5 * (1.0 - math.cos(math.pi * alpha))
+                q_interp = (1.0 - alpha_smooth) * q_current + alpha_smooth * q_home
+                path.append(q_interp)
+
+            self._retract_home_path = path
+            self._retract_home_idx = 0
+            self.get_logger().info(
+                f'RETRACT_HOME — interpolating to home in {n_steps} steps '
+                f'(~{n_steps / self.execution_hz:.1f} s)')
+
+        if self._retract_home_idx >= len(self._retract_home_path):
+            self.get_logger().info('RETRACT_HOME complete → HOME_HOLD')
+            self.phase = Phase.HOME_HOLD
+            return
+
+        q_cmd = self._retract_home_path[self._retract_home_idx]
+        cmd = JointState()
+        cmd.header.stamp = self.get_clock().now().to_msg()
+        cmd.name = self._home_joint_names
+        cmd.position = q_cmd.tolist()
+        self.joint_cmd_pub.publish(cmd)
+        self._last_q = q_cmd.copy()
+        self._retract_home_idx += 1
+
+        total = len(self._retract_home_path)
+        if self._retract_home_idx % 20 == 0 or self._retract_home_idx >= total:
+            pct = 100.0 * self._retract_home_idx / max(total - 1, 1)
+            self.get_logger().info(
+                f'RETRACT_HOME  {self._retract_home_idx}/{total} ({pct:.0f}%)',
+                throttle_duration_sec=0.5)
+
+    # ------------------------------------------------------------------
+    # HOME_HOLD — hold at home, then proceed to PLANNING
+    # ------------------------------------------------------------------
+    def _home_hold(self):
+        """Hold at the home position for _home_hold_duration before planning."""
         cmd = JointState()
         cmd.header.stamp = self.get_clock().now().to_msg()
         cmd.name = self._home_joint_names
         cmd.position = self._home_joint_positions
         self.joint_cmd_pub.publish(cmd)
 
-        # Check if joints have arrived (via last joint state from TF/subscriber)
-        # For simplicity, just start the hold timer on first call
         if self._home_reached_time is None:
             self._home_reached_time = self.get_clock().now()
-            self.get_logger().info('HOME  Sending robot to home position…')
+            self.get_logger().info('HOME_HOLD — holding at home position…')
 
         elapsed = (self.get_clock().now() - self._home_reached_time).nanoseconds * 1e-9
         self.get_logger().info(
-            f'HOME  holding ({elapsed:.1f}/{self._home_hold_duration:.1f}s)',
+            f'HOME_HOLD  ({elapsed:.1f}/{self._home_hold_duration:.1f}s)',
             throttle_duration_sec=1.0)
 
         if elapsed >= self._home_hold_duration:
-            self.get_logger().info('Home hold complete → PLANNING')
+            self.get_logger().info('HOME_HOLD complete → PLANNING')
             self.phase = Phase.PLANNING
 
     # ------------------------------------------------------------------
@@ -818,8 +968,14 @@ class PlanarServoController(Node):
     # ------------------------------------------------------------------
     def _control_loop(self):
         # HOME, PLANNING, EXECUTING, DESCENDING send joint commands directly
-        if self.phase == Phase.HOME:
-            self._home()
+        if self.phase == Phase.RETRACT_UP:
+            self._retract_up()
+            return
+        if self.phase == Phase.RETRACT_HOME:
+            self._retract_home()
+            return
+        if self.phase == Phase.HOME_HOLD:
+            self._home_hold()
             return
         if self.phase == Phase.PLANNING:
             self._plan()
