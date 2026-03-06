@@ -312,7 +312,7 @@ class PlanarServoController(Node):
 
         # ---- safe retract / home hold ----
         self._retract_height = 0.15
-        self._home_hold_sec = 2.0
+        self._home_hold_sec = 0.5
 
         # ---- master trajectory (filled by _pre_compute) ----
         self._master_path: List[np.ndarray] = []
@@ -551,25 +551,88 @@ class PlanarServoController(Node):
         self.joint_cmd_pub.publish(msg)
 
     # ------------------------------------------------------------------
-    # Trapezoidal timing for joint-space paths
+    # Per-phase trapezoidal timing
     # ------------------------------------------------------------------
-    def _compute_joint_path_timing(self, path) -> list:
+    def _compute_phase_timing(self, path: List[np.ndarray]) -> List[float]:
+        """Trapezoidal velocity profile over one phase (segment group).
+
+        Builds cumulative joint-space arc length, then maps a single
+        accel → cruise → decel onto it.  Call once per logical phase
+        (retract, homing, RRT, descent) so the robot smoothly ramps
+        within each phase and naturally stops between them.
+        """
         if len(path) <= 1:
             return [0.0] * len(path)
         v_max = self._max_joint_speed_rad
         a_max = self._max_joint_accel_rad
+
+        # Cumulative arc length (bottleneck joint per step)
+        cum = [0.0]
+        for i in range(1, len(path)):
+            d = float(np.max(np.abs(path[i] - path[i - 1])))
+            cum.append(cum[-1] + d)
+        total_dist = cum[-1]
+
+        if total_dist < 1e-9:
+            # Stationary (e.g. home hold) — uniform small steps
+            return [i * 0.01 for i in range(len(path))]
+
+        # Trapezoidal profile parameters
+        d_accel = v_max * v_max / (2.0 * a_max)
+        if 2.0 * d_accel >= total_dist:
+            # Triangle profile — never reaches v_max
+            d_accel = total_dist / 2.0
+            v_peak = math.sqrt(2.0 * a_max * d_accel)
+            t_accel = v_peak / a_max
+            t_cruise = 0.0
+        else:
+            v_peak = v_max
+            t_accel = v_max / a_max
+            t_cruise = (total_dist - 2.0 * d_accel) / v_max
+        d_decel_start = total_dist - d_accel
+
+        # Map cumulative distance → time
         times = [0.0]
         for i in range(1, len(path)):
-            delta = float(np.max(np.abs(path[i] - path[i - 1])))
-            if delta < 1e-9:
-                times.append(times[-1] + 0.01)
-                continue
-            if delta <= v_max * v_max / a_max:
-                dt_seg = 2.0 * math.sqrt(delta / a_max)
+            s = cum[i]
+            if s <= d_accel:
+                t = math.sqrt(2.0 * s / a_max) if s > 0 else 0.0
+            elif s <= d_decel_start:
+                t = t_accel + (s - d_accel) / v_peak
             else:
-                dt_seg = delta / v_max + v_max / a_max
-            times.append(times[-1] + max(dt_seg, 0.01))
+                s_d = s - d_decel_start
+                disc = max(v_peak * v_peak - 2.0 * a_max * s_d, 0.0)
+                t = t_accel + t_cruise + (v_peak - math.sqrt(disc)) / a_max
+            times.append(max(t, times[-1] + 1e-4))
         return times
+
+    def _concat_phase_times(self, phases: list) -> Tuple[List[np.ndarray], List[float]]:
+        """Concatenate multiple phases, each timed independently.
+
+        Args:
+            phases: list of (label, path_list) tuples
+        Returns:
+            (master_path, master_times)
+        """
+        master_path: List[np.ndarray] = []
+        master_times: List[float] = []
+        t_offset = 0.0
+        for label, plist in phases:
+            if not plist:
+                continue
+            phase_times = self._compute_phase_timing(plist)
+            for j, (q, t) in enumerate(zip(plist, phase_times)):
+                if j == 0 and master_path:
+                    continue  # skip duplicate boundary point
+                master_path.append(np.asarray(q, dtype=float))
+                master_times.append(t_offset + t)
+            if phase_times:
+                t_offset = master_times[-1]
+            dur = phase_times[-1] if phase_times else 0.0
+            self.get_logger().info(
+                f'  Phase timing: {label:15s}  {len(plist):4d} pts  '
+                f'{dur:.2f}s')
+        return master_path, master_times
 
     def _send_full_trajectory(self, path, times) -> None:
         if self._real_traj_pub is None:
@@ -825,20 +888,22 @@ class PlanarServoController(Node):
         # ── SEGMENT 2: RETRACT HOME ──────────────────────────────────
         q_retracted = full_path[-1]
         q_home = self._home_positions.copy()
-        n_home = max(int(2.0 * self.execution_hz), 20)
+        n_home = max(int(1.0 * self.execution_hz), 20)
 
+        retract_home_path = [q_retracted.copy()]
         for i in range(1, n_home + 1):
             alpha = 0.5 * (1.0 - math.cos(math.pi * i / n_home))
-            full_path.append(
+            retract_home_path.append(
                 (1.0 - alpha) * q_retracted + alpha * q_home)
+        full_path.extend(retract_home_path[1:])
 
         self.get_logger().info(
             f'  [2/5] Retract home: {n_home} joint-interp steps')
 
         # ── SEGMENT 3: HOME HOLD ─────────────────────────────────────
         n_hold = max(int(self._home_hold_sec * self.execution_hz), 1)
-        for _ in range(n_hold):
-            full_path.append(q_home.copy())
+        home_hold_path = [q_home.copy() for _ in range(n_hold + 1)]
+        full_path.extend(home_hold_path[1:])
 
         self.get_logger().info(
             f'  [3/5] Home hold: {self._home_hold_sec:.1f}s')
@@ -889,16 +954,25 @@ class PlanarServoController(Node):
         else:
             self.get_logger().warn(
                 '  Descent IK failed — SERVO will start from approach')
+            descent_path = []
 
-        # ── GLOBAL TIMING ─────────────────────────────────────────────
-        self._master_path = [np.asarray(q, dtype=float) for q in full_path]
-        self._master_times = self._compute_joint_path_timing(self._master_path)
+        # ── PER-PHASE TRAPEZOIDAL TIMING ──────────────────────────────
+        phases = [
+            ('retract_up',   retract_path),
+            ('retract_home', retract_home_path),
+            ('home_hold',    home_hold_path),
+            ('rrt',          list(rrt_dense)),
+            ('descent',      descent_path if descent_path else []),
+        ]
+
+        self._master_path, self._master_times = \
+            self._concat_phase_times(phases)
 
         total_dur = self._master_times[-1] if self._master_times else 0.0
         self.get_logger().info(
             '═══════════════════════════════════════════════\n'
             f'  PRE-COMPUTATION COMPLETE\n'
-            f'  Total waypoints : {len(full_path)}\n'
+            f'  Total waypoints : {len(self._master_path)}\n'
             f'  Total duration  : {total_dur:.1f}s\n'
             '═══════════════════════════════════════════════')
 
@@ -1113,7 +1187,10 @@ def main(args=None):
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        try:
+            rclpy.shutdown()
+        except Exception:
+            pass
 
 
 if __name__ == '__main__':
