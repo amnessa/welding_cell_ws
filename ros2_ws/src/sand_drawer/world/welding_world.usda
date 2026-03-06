@@ -14,8 +14,8 @@
                 double radius = 500
             }
             dictionary Perspective = {
-                double3 position = (0.1891107236650444, 1.970755362374725, 0.5296880499184854)
-                double3 target = (-0.08435356097538005, -3.311446166866332, -2.28606517611757)
+                double3 position = (0.14355878340190734, 2.786035659644081, 1.0482979481107517)
+                double3 target = (-0.032242839698699455, -3.61821609853378, -3.108291659402182)
             }
             dictionary Right = {
                 double3 position = (0, -1688400, -3.7490011095542286e-10)
@@ -2244,8 +2244,8 @@ def Xform "Root" (
                 vector3f physics:angularVelocity = (0, 0, 0)
                 rel physics:simulationOwner
                 vector3f physics:velocity = (0, 0, 0)
-                quatd xformOp:orient = (-0.27230760270809395, 0.28929594051489227, -0.6452191327661422, 0.6525708383167932)
-                double3 xformOp:translate = (0.11049326808914828, -0.07706408791612772, 0.4323280505860503)
+                quatd xformOp:orient = (0.6984974231543466, 0.6603618941222514, -0.25282845211119187, -0.11000587457526567)
+                double3 xformOp:translate = (-0.5498506080128129, 0.1624107789336217, 0.6847982011759932)
             }
 
             over "wrist_2_link"
@@ -2257,8 +2257,8 @@ def Xform "Root" (
                 vector3f physics:angularVelocity = (0, 0, 0)
                 rel physics:simulationOwner
                 vector3f physics:velocity = (0, 0, 0)
-                quatd xformOp:orient = (-0.39711367181617063, 0.012012583248776106, 0.005198402257737553, 0.9176760899763798)
-                double3 xformOp:translate = (0.11227975709369167, -0.07516165293133086, 0.5319938488329108)
+                quatd xformOp:orient = (0.07995646724510193, 0.9345448341545302, 0.3401464937989161, 0.06732962985988411)
+                double3 xformOp:translate = (-0.5318807612873491, 0.1520776879130376, 0.5872769184435065)
             }
 
             over "wrist_3_link"
@@ -2270,8 +2270,8 @@ def Xform "Root" (
                 vector3f physics:angularVelocity = (0, 0, 0)
                 rel physics:simulationOwner
                 vector3f physics:velocity = (0, 0, 0)
-                quatd xformOp:orient = (-0.2723076246318875, 0.28929596416846937, -0.6452190584531038, 0.6525708921581357)
-                double3 xformOp:translate = (0.18488498452178695, -0.14334255708384347, 0.5319938562834914)
+                quatd xformOp:orient = (0.7173607507453663, 0.6042852534877098, 0.19291064568225755, 0.2881290830336179)
+                double3 xformOp:translate = (-0.4696310113884386, 0.07679856383190282, 0.6067237701291497)
 
                 def "rsd455" (
                     active = false
@@ -2307,8 +2307,8 @@ def Xform "Root" (
                 vector3f physics:angularVelocity = (0, 0, 0)
                 rel physics:simulationOwner
                 vector3f physics:velocity = (0, 0, 0)
-                quatd xformOp:orient = (0.9177546995426108, -3.008300631795069e-9, -1.3026024338536459e-7, 0.397147719957493)
-                double3 xformOp:translate = (1.4589167790513002e-9, -1.1628177865041778e-9, 0.16249992475158526)
+                quatd xformOp:orient = (0.9661513951599681, 1.954117047602776e-9, -1.371293590870359e-7, -0.25797573845311195)
+                double3 xformOp:translate = (1.1406961798743342e-9, -1.8538462848161075e-9, 0.16249995455390764)
             }
 
             over "upper_arm_link"
@@ -2320,8 +2320,8 @@ def Xform "Root" (
                 vector3f physics:angularVelocity = (0, 0, 0)
                 rel physics:simulationOwner
                 vector3f physics:velocity = (0, 0, 0)
-                quatd xformOp:orient = (0.6994308009238331, 0.5545382495141199, 0.4387336946612297, 0.10390683189168938)
-                double3 xformOp:translate = (4.751639318123502e-9, 2.1299047595069176e-9, 0.16249989494926287)
+                quatd xformOp:orient = (0.6325386689734914, 0.705898515196991, -0.0413198764331488, -0.3160613647813928)
+                double3 xformOp:translate = (4.865986478336248e-9, -1.8538462848161075e-9, 0.16249998435623003)
             }
 
             over "forearm_link"
@@ -2333,8 +2333,8 @@ def Xform "Root" (
                 vector3f physics:angularVelocity = (0, 0, 0)
                 rel physics:simulationOwner
                 vector3f physics:velocity = (0, 0, 0)
-                quatd xformOp:orient = (0.32814658945714126, -0.23196059502218375, 0.6679777022094665, -0.626354442417041)
-                double3 xformOp:translate = (-0.2522086280773775, -0.26857481042163506, 0.3743569158042128)
+                quatd xformOp:orient = (0.47907799025271425, 0.6745650703921768, 0.2120424041783287, -0.5200810166623006)
+                double3 xformOp:translate = (-0.338638300798076, 0.19472537749395497, 0.32992516979820086)
             }
 
             over "base_link" (
@@ -2349,8 +2349,8 @@ def Xform "Root" (
                 bool physics:rigidBodyEnabled = 1
                 rel physics:simulationOwner
                 vector3f physics:velocity = (0, 0, 0)
-                quatd xformOp:orient = (0.9999999999999982, 0, 0, 5.9604644775390605e-8)
-                double3 xformOp:translate = (1.4589167790513002e-9, -1.1628177865041778e-9, 2.0119016896913422e-8)
+                quatd xformOp:orient = (1, 0, 0, 0)
+                double3 xformOp:translate = (1.1406961798743342e-9, -1.8538462848161075e-9, 2.0119016896913422e-8)
             }
 
             over "joints"
@@ -2363,9 +2363,11 @@ def Xform "Root" (
                         displayName = "Name Override"
                         doc = "Name override for prim lookup in base name search"
                     )
+                    point3f physics:localPos0 = (0, 0, 0.1625)
+                    quatf physics:localRot0 = (-4.371139e-8, 0, 0, 1)
                     float physics:lowerLimit = -360
                     float physics:upperLimit = 360
-                    float state:angular:physics:position = -133.20001
+                    float state:angular:physics:position = -209.90001
                     float state:angular:physics:velocity = 0
                 }
 
@@ -2379,7 +2381,7 @@ def Xform "Root" (
                     )
                     float physics:lowerLimit = -360
                     float physics:upperLimit = 360
-                    float state:angular:physics:position = -29.9
+                    float state:angular:physics:position = -23.200005
                     float state:angular:physics:velocity = 0
                 }
 
@@ -2393,7 +2395,7 @@ def Xform "Root" (
                     )
                     float physics:lowerLimit = -180
                     float physics:upperLimit = 180
-                    float state:angular:physics:position = -141.59999
+                    float state:angular:physics:position = -41.600002
                     float state:angular:physics:velocity = 0
                 }
 
@@ -2407,7 +2409,7 @@ def Xform "Root" (
                     )
                     float physics:lowerLimit = -360
                     float physics:upperLimit = 360
-                    float state:angular:physics:position = -9.999999
+                    float state:angular:physics:position = 76.80001
                     float state:angular:physics:velocity = 0
                 }
 
@@ -2421,7 +2423,7 @@ def Xform "Root" (
                     )
                     float physics:lowerLimit = -360
                     float physics:upperLimit = 360
-                    float state:angular:physics:position = 8.558383e-9
+                    float state:angular:physics:position = -69.89999
                     float state:angular:physics:velocity = 0
                 }
 
@@ -2435,7 +2437,7 @@ def Xform "Root" (
                     )
                     float physics:lowerLimit = -360
                     float physics:upperLimit = 360
-                    float state:angular:physics:position = -4.7820253e-10
+                    float state:angular:physics:position = -0.0000018192305
                     float state:angular:physics:velocity = 0
                 }
 
@@ -2455,6 +2457,7 @@ def Xform "Root" (
             rel physics:body1 = </Root/Robot_Mount_Point>
             float physics:breakForce = 3.4028235e38
             float physics:breakTorque = 3.4028235e38
+            uniform bool physics:excludeFromArticulation = 0
             point3f physics:localPos0 = (0, 0, 0)
             point3f physics:localPos1 = (0, 0, 0)
             quatf physics:localRot0 = (1, 0, 0, 0)

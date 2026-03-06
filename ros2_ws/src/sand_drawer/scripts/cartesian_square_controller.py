@@ -381,6 +381,43 @@ class CartesianDrawController(Node):
         with open(json_path, 'r') as f:
             data = json.load(f)
 
+        # ------------------------------------------------------------------
+        # Frame correction: UR "base" → URDF "base_link"
+        # ------------------------------------------------------------------
+        # The UR URDF defines:
+        #   base_link  --[Rz(π)]-->  base            (ur_macro.xacro)
+        #   base_link  --[Rz(π)]-->  base_link_inertia
+        # The UR driver's tcp_pose_broadcaster reports TCP poses in the
+        # "base" frame (= UR controller's Base), but our FK/IK chain
+        # (ur5e_fk / ur5e_ik) operates in the URDF "base_link" frame.
+        # Applying Rz(π) negates X and Y for positions and directions.
+        target_frame = data.get('target_frame', 'base_link')
+        if target_frame == 'base':
+            self.get_logger().info(
+                'Plane data captured in UR "base" frame '
+                '→ applying Rz(π) correction to URDF "base_link"')
+
+            def _rz(v):
+                """Rz(π) on a 3-vector: [x,y,z] → [-x,-y,z]"""
+                return [-v[0], -v[1], v[2]]
+
+            def _qrz(q):
+                """Pre-multiply quaternion [x,y,z,w] by Rz(π)=[0,0,1,0]"""
+                x, y, z, w = q
+                return [-y, x, w, -z]
+
+            p = data['plane']
+            p['origin'] = _rz(p['origin'])
+            p['x_axis'] = _rz(p['x_axis'])
+            p['y_axis'] = _rz(p['y_axis'])
+            p['normal'] = _rz(p['normal'])
+            data['rectangle_corners'] = [
+                _rz(c) for c in data['rectangle_corners']]
+            for key in ('square_trajectory', 'projected_vector_trajectory'):
+                for wp in data.get(key, []):
+                    wp['position'] = _rz(wp['position'])
+                    wp['orientation_xyzw'] = _qrz(wp['orientation_xyzw'])
+
         # ---- plane geometry ----
         plane = data['plane']
         self.plane_origin = np.array(plane['origin'], dtype=float)
