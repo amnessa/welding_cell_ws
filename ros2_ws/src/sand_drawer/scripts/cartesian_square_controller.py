@@ -1,43 +1,33 @@
 #!/usr/bin/env python3
 """
-Cartesian Drawing Controller — Position-controlled drawing on the plane.
+Cartesian Drawing Controller — Monolithic pre-compute architecture.
 
-Pipeline
---------
-1. RETRACT_UP   – Lift end-effector straight up to safe clearance (Cartesian IK)
-2. RETRACT_HOME – Interpolate in joint-space from retracted pose to home
-3. HOME_HOLD    – Hold at home for 2 s (verify stability)
-4. PLANNING     – RRT-Connect from home to approach pose (above first point)
-5. EXECUTING    – Follow the planned RRT joint-space path
-6. DESCENDING   – Linearly descend from approach height to the plane surface
-5. DRAWING    – Follow dense Cartesian waypoints along the path
-6. ASCENDING  – Lift off the plane
-7. DONE       – Hold position (zero velocity)
+All motion phases (retract up, homing, RRT approach, descent, drawing, ascent)
+are pre-computed into one dense joint-space trajectory BEFORE the robot moves.
+This eliminates real-time IK from the control loop, guarantees seamlessly
+stitched boundaries between phases, and applies a single global trapezoidal
+velocity profile across the entire operation.
 
-Trajectory sources (via trajectory_key parameter):
-  'line'                         — a straight line on the plane (UV coordinates)
-  'square_trajectory'            — from plane JSON square_trajectory key
-  'projected_vector_trajectory'  — from plane JSON projected_vector_trajectory key (may not be used)
+Architecture
+------------
+  PRE_COMPUTE  — Build entire joint path offline (retract up → home hold →
+                 RRT → descent → drawing → ascent).  All IK solved here.
+  EXECUTING    — Lightweight playback:
+                   Sim:  time-based interpolation at execution_hz
+                   Real: one JointTrajectory message → convergence monitoring
+  DONE         — Hold position
 
-During DRAWING the end-effector orientation is kept perpendicular to the
-drawing surface (aligned with the plane normal).  The Cartesian path is
-densely interpolated in task space and converted to joint space via damped-
-least-squares IK step by step—analogous to MoveIt 2 computeCartesianPath()
-but implemented locally so we stay independent of a running MoveGroup.
+References:
+  Modern Robotics (Lynch & Park), Chapter 9 — Time Scaling of Trajectories
+  Springer Handbook of Robotics (Siciliano & Khatib), Chapter 7
 
 Publishes
 ---------
   /isaac_joint_commands  (sensor_msgs/JointState)
-    Position-controlled joint targets at 100Hz.
 
 Subscribes
 ----------
   /isaac_joint_states    (sensor_msgs/JointState)
-    Current joint feedback for IK seeding.
-
-Reads
------
-  The plane JSON produced by plane_solver_node (square_trajectory key).
 """
 
 import json
@@ -107,79 +97,59 @@ def rotmat_to_quat(R: np.ndarray) -> list:
 
 
 # ---------------------------------------------------------------------------
-# Cartesian interpolation helpers
+# Cartesian interpolation with trapezoidal velocity profile
 # ---------------------------------------------------------------------------
 
 def _interpolate_cartesian_smooth(
     positions: List[np.ndarray],
     orientation_xyzw: list,
-    v_max: float = 0.05,   # Maximum cruising speed (m/s)
-    a_max: float = 0.05,   # Maximum acceleration (m/s^2)
-    dt: float = 1.0/60.0   # Timer tick duration (1.0 / execution_hz)
+    v_max: float = 0.05,
+    a_max: float = 0.05,
+    dt: float = 1.0 / 100.0,
 ) -> List[Tuple[np.ndarray, list]]:
-    """
-    Generates a dense Cartesian path using a Trapezoidal Velocity Profile.
-    This guarantees smooth acceleration and deceleration between all points.
-    """
+    """Dense Cartesian path with trapezoidal velocity profile per segment."""
     if not positions or len(positions) < 2:
         return [(positions[0].copy(), orientation_xyzw)] if positions else []
 
-    waypoints = []
+    waypoints: List[Tuple[np.ndarray, list]] = []
 
-    # Loop through each line segment
     for i in range(len(positions) - 1):
         p_start = positions[i]
         p_end = positions[i + 1]
-
         dist = float(np.linalg.norm(p_end - p_start))
         if dist < 1e-5:
             continue
-
         line_dir = (p_end - p_start) / dist
 
-        # 1. Calculate the time needed to accelerate and decelerate
         t_accel = v_max / a_max
         d_accel = 0.5 * a_max * (t_accel ** 2)
 
-        # 2. Check if the line is too short to reach max velocity
         if 2 * d_accel > dist:
-            # Triangle profile: We must start braking before reaching v_max
             d_accel = dist / 2.0
             t_accel = math.sqrt(2 * d_accel / a_max)
             actual_v_max = a_max * t_accel
             t_cruise = 0.0
             d_cruise = 0.0
         else:
-            # Trapezoid profile: Accelerate, Cruise, Decelerate
             actual_v_max = v_max
-            d_cruise = dist - (2 * d_accel)
+            d_cruise = dist - 2 * d_accel
             t_cruise = d_cruise / actual_v_max
 
-        total_time = (2 * t_accel) + t_cruise
+        total_time = 2 * t_accel + t_cruise
         n_steps = max(int(total_time / dt), 1)
 
-        # 3. Generate the precise point for every time step
         for step in range(n_steps):
             t = step * dt
-
             if t < t_accel:
-                # Acceleration phase
                 s = 0.5 * a_max * (t ** 2)
             elif t < t_accel + t_cruise:
-                # Cruising phase
                 s = d_accel + actual_v_max * (t - t_accel)
             else:
-                # Deceleration phase
                 t_dec = t - t_accel - t_cruise
-                s = d_accel + d_cruise + (actual_v_max * t_dec) - (0.5 * a_max * (t_dec ** 2))
-
-            # Clamp to ensure no floating point overshoot
+                s = d_accel + d_cruise + actual_v_max * t_dec - 0.5 * a_max * (t_dec ** 2)
             s = min(s, dist)
+            waypoints.append((p_start + line_dir * s, orientation_xyzw))
 
-            p = p_start + (line_dir * s)
-            waypoints.append((p.copy(), orientation_xyzw))
-
-    # Always append the exact final point of the entire sequence
     waypoints.append((positions[-1].copy(), orientation_xyzw))
     return waypoints
 
@@ -189,15 +159,9 @@ def _interpolate_cartesian_smooth(
 # ---------------------------------------------------------------------------
 
 class Phase(Enum):
-    RETRACT_UP   = auto()   # Cartesian lift to safe height
-    RETRACT_HOME = auto()   # Joint-space interpolation to home
-    HOME_HOLD    = auto()   # Hold at home position
-    PLANNING     = auto()
-    EXECUTING    = auto()
-    DESCENDING   = auto()
-    DRAWING      = auto()
-    ASCENDING    = auto()
-    DONE         = auto()
+    PRE_COMPUTE = auto()
+    EXECUTING   = auto()
+    DONE        = auto()
 
 
 # ---------------------------------------------------------------------------
@@ -211,28 +175,25 @@ class CartesianDrawController(Node):
         # ---- parameters ----
         self.declare_parameter('plane_json_file', '')
         self.declare_parameter('approach_height', 0.08)
-        self.declare_parameter('max_linear_vel', 0.05)        # m/s cruising speed
-        self.declare_parameter('max_linear_accel', 0.05)      # m/s^2 max acceleration
+        self.declare_parameter('max_linear_vel', 0.05)
+        self.declare_parameter('max_linear_accel', 0.05)
+        self.declare_parameter('approach_linear_vel', 0.20)
+        self.declare_parameter('approach_linear_accel', 0.20)
         self.declare_parameter('ik_damping', 0.05)
-        self.declare_parameter('execution_hz', 60.0)          # joint command rate
-        self.declare_parameter('waypoints_per_tick', 1)       # Cartesian wp to advance per tick
+        self.declare_parameter('execution_hz', 100.0)
+        self.declare_parameter('waypoints_per_tick', 1)
         self.declare_parameter('loop_trajectory', False)
-        self.declare_parameter('trajectory_key', 'line')      # 'line' | 'square_trajectory' | ...
-        self.declare_parameter('max_joint_step', 0.15)        # rad — reject IK jumps larger than this
-        # Elbow-up configuration constraints — prevents table collisions
+        self.declare_parameter('trajectory_key', 'line')
+        self.declare_parameter('max_joint_step', 0.15)
         self.declare_parameter('shoulder_lift_max', 0.0)
         self.declare_parameter('shoulder_lift_min', -2.5)
         self.declare_parameter('elbow_max', -0.3)
         self.declare_parameter('elbow_min', -3.14)
         self.declare_parameter('ik_num_seeds', 30)
-        # Line definition in UV coordinates (0-1) on the plane rectangle
-        # Perpendicular to previous horizontal line: keep center (0.5, 0.5)
-        # and swap variation from U to V.
         self.declare_parameter('line_u_start', 0.5)
         self.declare_parameter('line_v_start', 0.3)
         self.declare_parameter('line_u_end', 0.5)
         self.declare_parameter('line_v_end', 0.7)
-        # Real-robot bridging
         self.declare_parameter('real_robot', False)
         self.declare_parameter('real_robot_joint_state_topic', '/joint_states')
         self.declare_parameter('real_robot_trajectory_topic',
@@ -244,7 +205,16 @@ class CartesianDrawController(Node):
         self._load_params()
         self._load_plane_json()
 
-        # ---- joint state subscribers ----
+        # ---- joint names & home configuration ----
+        self._joint_names = [
+            'shoulder_pan_joint', 'shoulder_lift_joint', 'elbow_joint',
+            'wrist_1_joint', 'wrist_2_joint', 'wrist_3_joint',
+        ]
+        self._home_positions = np.array([
+            -0.7854, -0.4363, -2.5307, -0.1745, 0.0, 0.0,
+        ], dtype=float)
+
+        # ---- subscribers ----
         self._last_joint_state: Optional[JointState] = None
         self._last_sim_joint_state: Optional[JointState] = None
         self._last_real_joint_state: Optional[JointState] = None
@@ -252,21 +222,19 @@ class CartesianDrawController(Node):
             JointState, '/isaac_joint_states',
             self._sim_joint_state_cb, 10)
 
-        # ---- joint command publisher ----
+        # ---- publisher ----
         self.joint_cmd_pub = self.create_publisher(
             JointState, '/isaac_joint_commands', 10)
 
         # ---- real-robot bridging ----
         self._real_robot = self.get_parameter('real_robot').value
         self._real_traj_pub = None
-        self._real_converge_tol = math.radians(2.0)  # 2° tolerance for convergence
+        self._real_converge_tol = math.radians(2.0)
         if self._real_robot:
             real_js_topic = self.get_parameter(
                 'real_robot_joint_state_topic').value
             real_traj_topic = self.get_parameter(
                 'real_robot_trajectory_topic').value
-            self._real_traj_duration = float(self.get_parameter(
-                'real_robot_trajectory_duration').value)
             self._real_traj_pub = self.create_publisher(
                 JointTrajectory, real_traj_topic, 10)
             self._real_joint_sub = self.create_subscription(
@@ -274,87 +242,67 @@ class CartesianDrawController(Node):
                 self._real_joint_state_cb, 10)
             self.get_logger().info(
                 f'REAL ROBOT mode: subscribing {real_js_topic}, '
-                f'publishing {real_traj_topic} '
-                f'(sim syncs to real robot)')
+                f'publishing {real_traj_topic}')
 
-        # ---- joint speed / acceleration limits ----
-        self._max_joint_speed_deg = float(self.get_parameter('max_joint_speed_deg').value)
+        # ---- speed / accel limits ----
+        self._max_joint_speed_deg = float(
+            self.get_parameter('max_joint_speed_deg').value)
         self._max_joint_speed_rad = math.radians(self._max_joint_speed_deg)
-        self._max_joint_accel_deg = float(self.get_parameter('max_joint_accel_deg').value)
+        self._max_joint_accel_deg = float(
+            self.get_parameter('max_joint_accel_deg').value)
         self._max_joint_accel_rad = math.radians(self._max_joint_accel_deg)
         self._dt = 1.0 / self.execution_hz
         self._prev_cmd_q: Optional[np.ndarray] = None
         self.get_logger().info(
-            f'Max joint speed: {self._max_joint_speed_deg:.1f} deg/s '
-            f'({self._max_joint_speed_rad:.4f} rad/s), '
-            f'accel: {self._max_joint_accel_deg:.1f} deg/s² '
-            f'({self._max_joint_accel_rad:.4f} rad/s²)')
+            f'Max joint speed: {self._max_joint_speed_deg:.1f} deg/s, '
+            f'accel: {self._max_joint_accel_deg:.1f} deg/s²')
 
-        # ---- home configuration (same as planar_servo_controller) ----
-        self._joint_names = [
-            'shoulder_pan_joint', 'shoulder_lift_joint', 'elbow_joint',
-            'wrist_1_joint', 'wrist_2_joint', 'wrist_3_joint',
-        ]
-        self._home_positions = [
-            -0.7854, -0.4363, -2.5307, -0.1745, 0.0, 0.0,
-        ]
-        self._home_reached_time = None
-        self._home_hold_sec = 2.0
+        # ---- safe retract / home hold settings ----
+        self._retract_height = 0.15
+        self._home_hold_sec = 0.5
 
-        # ---- safe retract parameters ----
-        self._retract_height = 0.15   # metres above current EE to lift before homing
-        self._retract_waypoints: List[Tuple[np.ndarray, list]] = []
-        self._retract_idx = 0
-        self._retract_home_path: List[np.ndarray] = []  # joint-space interp to home
-        self._retract_home_idx = 0
-        self._retract_initialized = False
-        self._retract_up_traj_sent = False  # real-robot: full trajectory flag
+        # ---- master trajectory (filled by _pre_compute) ----
+        self._master_path: List[np.ndarray] = []
+        self._master_times: List[float] = []
+        self._draw_start_idx = 0
+        self._draw_end_idx = 0
+        self._traj_sent = False
+        self._exec_start_time = None
+        self._last_q: Optional[np.ndarray] = None
 
-        # ---- RRT execution state ----
-        self._rrt_path: List[np.ndarray] = []
-        self._rrt_idx = 0
-        self._rrt_traj_sent = False  # real-robot: full trajectory already sent?
-
-        # ---- RETRACT_HOME full-trajectory flag ----
-        self._retract_home_traj_sent = False
-
-        # ---- Cartesian drawing state ----
-        self._cart_waypoints: List[Tuple[np.ndarray, list]] = []
-        self._cart_idx = 0
-        self._last_q: Optional[np.ndarray] = None   # seed for IK
-
-        # ---- descent / ascent state ----
-        self._descent_target: Optional[np.ndarray] = None
-        self._ascent_target: Optional[np.ndarray] = None
-        self._descent_traj_sent = False   # real-robot flags
-        self._drawing_traj_sent = False
-        self._ascent_traj_sent = False
+        # ---- IK diagnostics ----
+        self._ik_fail_count = 0
+        self._ik_jump_count = 0
+        self._ik_cfg_count = 0
+        self._ik_total_count = 0
 
         # ---- phase ----
-        self.phase = Phase.RETRACT_UP
+        self.phase = Phase.PRE_COMPUTE
 
         # ---- control timer ----
-        dt = 1.0 / self.execution_hz
-        self.timer = self.create_timer(dt, self._control_loop)
+        self.timer = self.create_timer(self._dt, self._control_loop)
 
         self.get_logger().info(
             f'Cartesian draw controller started — '
             f'{len(self.draw_positions)} waypoints ({self.traj_key}), '
-            f'approach_height={self.approach_height:.3f} m')
+            f'approach_height={self.approach_height:.3f} m, '
+            f'execution_hz={self.execution_hz:.0f}')
 
     # ------------------------------------------------------------------
     # Parameter loading
     # ------------------------------------------------------------------
     def _load_params(self):
         g = self.get_parameter
-        self.approach_height  = g('approach_height').value
-        self.v_max            = g('max_linear_vel').value
-        self.a_max            = g('max_linear_accel').value
-        self.ik_damping       = g('ik_damping').value
-        self.execution_hz     = g('execution_hz').value
-        self.wp_per_tick      = g('waypoints_per_tick').value
-        self.do_loop          = g('loop_trajectory').value
-        self.traj_key         = g('trajectory_key').value
+        self.approach_height     = g('approach_height').value
+        self.v_max               = g('max_linear_vel').value
+        self.a_max               = g('max_linear_accel').value
+        self.approach_v_max      = g('approach_linear_vel').value
+        self.approach_a_max      = g('approach_linear_accel').value
+        self.ik_damping          = g('ik_damping').value
+        self.execution_hz        = g('execution_hz').value
+        self.wp_per_tick         = g('waypoints_per_tick').value
+        self.do_loop             = g('loop_trajectory').value
+        self.traj_key            = g('trajectory_key').value
         self.max_joint_step      = g('max_joint_step').value
         self.shoulder_lift_max   = g('shoulder_lift_max').value
         self.shoulder_lift_min   = g('shoulder_lift_min').value
@@ -366,12 +314,9 @@ class CartesianDrawController(Node):
         self.line_u_end          = g('line_u_end').value
         self.line_v_end          = g('line_v_end').value
 
-        # Diagnostic counters
-        self._ik_fail_count  = 0
-        self._ik_jump_count  = 0
-        self._ik_cfg_count   = 0   # rejected for configuration constraint
-        self._ik_total_count = 0
-
+    # ------------------------------------------------------------------
+    # Plane JSON loading (with Rz(π) frame correction)
+    # ------------------------------------------------------------------
     def _load_plane_json(self):
         json_path = self.get_parameter('plane_json_file').value
         if not json_path or not os.path.exists(json_path):
@@ -381,28 +326,16 @@ class CartesianDrawController(Node):
         with open(json_path, 'r') as f:
             data = json.load(f)
 
-        # ------------------------------------------------------------------
-        # Frame correction: UR "base" → URDF "base_link"
-        # ------------------------------------------------------------------
-        # The UR URDF defines:
-        #   base_link  --[Rz(π)]-->  base            (ur_macro.xacro)
-        #   base_link  --[Rz(π)]-->  base_link_inertia
-        # The UR driver's tcp_pose_broadcaster reports TCP poses in the
-        # "base" frame (= UR controller's Base), but our FK/IK chain
-        # (ur5e_fk / ur5e_ik) operates in the URDF "base_link" frame.
-        # Applying Rz(π) negates X and Y for positions and directions.
+        # Frame correction: UR "base" → URDF "base_link" via Rz(π)
         target_frame = data.get('target_frame', 'base_link')
         if target_frame == 'base':
             self.get_logger().info(
-                'Plane data captured in UR "base" frame '
-                '→ applying Rz(π) correction to URDF "base_link"')
+                'Plane data in UR "base" frame → applying Rz(π) correction')
 
             def _rz(v):
-                """Rz(π) on a 3-vector: [x,y,z] → [-x,-y,z]"""
                 return [-v[0], -v[1], v[2]]
 
             def _qrz(q):
-                """Pre-multiply quaternion [x,y,z,w] by Rz(π)=[0,0,1,0]"""
                 x, y, z, w = q
                 return [-y, x, w, -z]
 
@@ -425,16 +358,14 @@ class CartesianDrawController(Node):
         self.plane_y = np.array(plane['y_axis'], dtype=float)
         self.plane_n = np.array(plane['normal'], dtype=float)
 
-        # ---- plane rectangle bounds (for UV → world conversion) ----
+        # ---- rectangle bounds (for UV → world) ----
         corners = [np.array(c, dtype=float) for c in data['rectangle_corners']]
-        # width_vec = corner[1] - corner[0], height_vec = corner[3] - corner[0]
         self.rect_origin = corners[0]
         self.rect_width_vec = corners[1] - corners[0]
         self.rect_height_vec = corners[3] - corners[0]
 
         # ---- build trajectory ----
         if self.traj_key == 'line':
-            # Generate line from UV parameters
             p_start = (self.rect_origin
                        + self.line_u_start * self.rect_width_vec
                        + self.line_v_start * self.rect_height_vec)
@@ -442,34 +373,32 @@ class CartesianDrawController(Node):
                      + self.line_u_end * self.rect_width_vec
                      + self.line_v_end * self.rect_height_vec)
             self.draw_positions = [p_start, p_end]
-            # Use orientation from square_trajectory (first entry)
             traj = data.get('square_trajectory', [])
             if traj:
                 self.target_quat = list(traj[0]['orientation_xyzw'])
             else:
                 raise RuntimeError('Need square_trajectory for orientation')
-            line_len = float(np.linalg.norm(p_end - p_start))
             self.get_logger().info(
-                f'Line trajectory: UV ({self.line_u_start},{self.line_v_start})→'
-                f'({self.line_u_end},{self.line_v_end})  '
-                f'length={line_len:.3f}m  '
-                f'start=[{p_start[0]:.3f},{p_start[1]:.3f},{p_start[2]:.3f}]  '
-                f'end=[{p_end[0]:.3f},{p_end[1]:.3f},{p_end[2]:.3f}]')
+                f'Line trajectory: UV ({self.line_u_start},{self.line_v_start})'
+                f'→({self.line_u_end},{self.line_v_end})  '
+                f'length={float(np.linalg.norm(p_end - p_start)):.3f}m')
         else:
-            # Load from JSON key
             traj = data.get(self.traj_key) or data.get('square_trajectory', [])
             if not traj:
-                raise RuntimeError(f'No trajectory found under key "{self.traj_key}"')
+                raise RuntimeError(
+                    f'No trajectory found under key "{self.traj_key}"')
             self.draw_positions: List[np.ndarray] = []
             for wp in traj:
-                self.draw_positions.append(np.array(wp['position'], dtype=float))
+                self.draw_positions.append(
+                    np.array(wp['position'], dtype=float))
             self.target_quat = list(traj[0]['orientation_xyzw'])
 
         self.get_logger().info(
-            f'Loaded {len(self.draw_positions)} waypoints from "{self.traj_key}"')
+            f'Loaded {len(self.draw_positions)} draw waypoints '
+            f'from "{self.traj_key}"')
 
     # ------------------------------------------------------------------
-    # Joint state callback
+    # Joint state callbacks
     # ------------------------------------------------------------------
     def _sim_joint_state_cb(self, msg: JointState):
         self._last_sim_joint_state = msg
@@ -481,9 +410,10 @@ class CartesianDrawController(Node):
         if self._real_robot:
             self._last_joint_state = msg
 
+    # ------------------------------------------------------------------
+    # Joint helpers
+    # ------------------------------------------------------------------
     def _get_ordered_joints(self) -> Optional[np.ndarray]:
-        """Return ordered joint positions from the primary feedback source.
-        When real_robot=true, this returns the REAL robot's joint state."""
         if self._last_joint_state is None:
             return None
         name_map = {n: p for n, p in
@@ -495,7 +425,6 @@ class CartesianDrawController(Node):
             return None
 
     def _get_real_ordered_joints(self) -> Optional[np.ndarray]:
-        """Return ordered joint positions from the REAL robot only."""
         if self._last_real_joint_state is None:
             return None
         name_map = {n: p for n, p in
@@ -507,8 +436,6 @@ class CartesianDrawController(Node):
             return None
 
     def _real_robot_converged(self, target_q: np.ndarray) -> bool:
-        """Check if real robot has reached target_q within tolerance.
-        Always returns True when real_robot is disabled."""
         if not self._real_robot:
             return True
         real_q = self._get_real_ordered_joints()
@@ -517,8 +444,6 @@ class CartesianDrawController(Node):
         return float(np.max(np.abs(target_q - real_q))) < self._real_converge_tol
 
     def _mirror_real_to_sim(self):
-        """Publish the real robot's actual joint state to sim so it stays
-        in sync with the physical arm."""
         if not self._real_robot:
             return
         real_q = self._get_real_ordered_joints()
@@ -533,31 +458,91 @@ class CartesianDrawController(Node):
     # ------------------------------------------------------------------
     # Trapezoidal timing for joint-space paths
     # ------------------------------------------------------------------
-    def _compute_joint_path_timing(self, path: List[np.ndarray]) -> List[float]:
-        """Compute timestamp for each waypoint using trapezoidal velocity profile.
-        Returns a list of cumulative time_from_start values (seconds)."""
+    def _compute_phase_timing(self, path: List[np.ndarray]) -> List[float]:
+        """Trapezoidal velocity profile over one phase (segment group).
+
+        Builds cumulative joint-space arc length, then maps a single
+        accel → cruise → decel onto it.  Call once per logical phase
+        (retract, homing, RRT, descent, drawing, ascent) so the robot
+        smoothly ramps within each phase and naturally stops between them.
+        """
         if len(path) <= 1:
             return [0.0] * len(path)
         v_max = self._max_joint_speed_rad
         a_max = self._max_joint_accel_rad
+
+        # Cumulative arc length (bottleneck joint per step)
+        cum = [0.0]
+        for i in range(1, len(path)):
+            d = float(np.max(np.abs(path[i] - path[i - 1])))
+            cum.append(cum[-1] + d)
+        total_dist = cum[-1]
+
+        if total_dist < 1e-9:
+            # Stationary (e.g. home hold) — uniform small steps
+            return [i * 0.01 for i in range(len(path))]
+
+        # Trapezoidal profile parameters
+        d_accel = v_max * v_max / (2.0 * a_max)
+        if 2.0 * d_accel >= total_dist:
+            # Triangle profile — never reaches v_max
+            d_accel = total_dist / 2.0
+            v_peak = math.sqrt(2.0 * a_max * d_accel)
+            t_accel = v_peak / a_max
+            t_cruise = 0.0
+        else:
+            v_peak = v_max
+            t_accel = v_max / a_max
+            t_cruise = (total_dist - 2.0 * d_accel) / v_max
+        d_decel_start = total_dist - d_accel
+
+        # Map cumulative distance → time
         times = [0.0]
         for i in range(1, len(path)):
-            delta = float(np.max(np.abs(path[i] - path[i - 1])))
-            if delta < 1e-9:
-                times.append(times[-1] + 0.01)  # small gap for zero-delta
-                continue
-            # Trapezoidal: if distance too short to reach v_max → triangle
-            if delta <= v_max * v_max / a_max:
-                dt_seg = 2.0 * math.sqrt(delta / a_max)
+            s = cum[i]
+            if s <= d_accel:
+                t = math.sqrt(2.0 * s / a_max) if s > 0 else 0.0
+            elif s <= d_decel_start:
+                t = t_accel + (s - d_accel) / v_peak
             else:
-                dt_seg = delta / v_max + v_max / a_max
-            times.append(times[-1] + max(dt_seg, 0.01))
+                s_d = s - d_decel_start
+                disc = max(v_peak * v_peak - 2.0 * a_max * s_d, 0.0)
+                t = t_accel + t_cruise + (v_peak - math.sqrt(disc)) / a_max
+            times.append(max(t, times[-1] + 1e-4))
         return times
+
+    def _concat_phase_times(self, phases: list) -> Tuple[List[np.ndarray], List[float]]:
+        """Concatenate multiple phases, each timed independently.
+
+        Args:
+            phases: list of (label, path_list) tuples
+        Returns:
+            (master_path, master_times)
+        """
+        master_path: List[np.ndarray] = []
+        master_times: List[float] = []
+        t_offset = 0.0
+        for label, plist in phases:
+            if not plist:
+                continue
+            phase_times = self._compute_phase_timing(plist)
+            for j, (q, t) in enumerate(zip(plist, phase_times)):
+                if j == 0 and master_path:
+                    continue  # skip duplicate boundary point
+                master_path.append(np.asarray(q, dtype=float))
+                master_times.append(t_offset + t)
+            if phase_times:
+                t_offset = master_times[-1]
+            dur = phase_times[-1] if phase_times else 0.0
+            self.get_logger().info(
+                f'  Phase timing: {label:15s}  {len(plist):4d} pts  '
+                f'{dur:.2f}s')
+        return master_path, master_times
 
     def _send_full_trajectory(self, path: List[np.ndarray],
                               times: List[float]) -> None:
         """Send an entire joint-space path as one multi-point JointTrajectory
-        to the real robot.  This lets the UR controller interpolate smoothly."""
+        to the real robot."""
         if self._real_traj_pub is None:
             return
         traj = JointTrajectory()
@@ -572,22 +557,11 @@ class CartesianDrawController(Node):
             traj.points.append(pt)
         self._real_traj_pub.publish(traj)
         self.get_logger().info(
-            f'Sent full trajectory ({len(path)} points, '
-            f'{times[-1]:.1f} s) to real robot')
-
-    def _accel_aware_duration(self, delta_rad: float) -> float:
-        """Compute minimum duration for a joint move of *delta_rad*
-        respecting both velocity and acceleration limits."""
-        if delta_rad < 1e-9:
-            return self._dt
-        v = self._max_joint_speed_rad
-        a = self._max_joint_accel_rad
-        if delta_rad <= v * v / a:
-            return max(2.0 * math.sqrt(delta_rad / a), self._dt)
-        return max(delta_rad / v + v / a, self._dt)
+            f'Sent full trajectory ({len(path)} pts, '
+            f'{times[-1]:.1f}s) to real robot')
 
     # ------------------------------------------------------------------
-    # Batch IK solve for Cartesian waypoints
+    # Batch IK solver for a Cartesian waypoint sequence
     # ------------------------------------------------------------------
     def _ik_solve_cartesian_path(
         self,
@@ -595,8 +569,7 @@ class CartesianDrawController(Node):
         q_seed: np.ndarray,
         label: str = 'path',
     ) -> List[np.ndarray]:
-        """Solve IK for every Cartesian (pos, quat) waypoint.  Returns the
-        joint-space path (skipping failed waypoints).  Logs a summary."""
+        """Solve IK for every (pos, quat) waypoint. Skips failed waypoints."""
         path: List[np.ndarray] = []
         seed = q_seed.copy()
         fails = 0
@@ -609,31 +582,14 @@ class CartesianDrawController(Node):
             else:
                 fails += 1
         self.get_logger().info(
-            f'{label}: IK batch-solved {len(path)}/{len(cart_wps)} '
-            f'waypoints ({fails} fails)')
-        return path
-
-    def _send_cartesian_as_trajectory(
-        self,
-        cart_wps: List[Tuple[np.ndarray, list]],
-        q_seed: np.ndarray,
-        label: str = 'path',
-    ) -> Optional[List[np.ndarray]]:
-        """Batch-solve IK → compute trapezoidal timing → send full trajectory.
-        Returns the joint path (or None if too few IK solutions)."""
-        path = self._ik_solve_cartesian_path(cart_wps, q_seed, label)
-        if len(path) < 2:
-            self.get_logger().warn(f'{label}: too few IK solutions to send')
-            return None
-        times = self._compute_joint_path_timing(path)
-        self._send_full_trajectory(path, times)
+            f'  {label}: IK solved {len(path)}/{len(cart_wps)} '
+            f'({fails} fails)')
         return path
 
     # ------------------------------------------------------------------
-    # Publish joint command helper
+    # Publish joint command (with velocity clamping for sim safety)
     # ------------------------------------------------------------------
     def _pub_joints(self, q: np.ndarray):
-        # ---- velocity clamping (sim-only mode) ----
         if not self._real_robot:
             if self._prev_cmd_q is None:
                 cur = self._get_ordered_joints()
@@ -655,28 +611,11 @@ class CartesianDrawController(Node):
             self.joint_cmd_pub.publish(msg)
             return
 
-        # ---- real-robot mode: mirror real→sim, send trajectory to real ----
+        # real-robot mode: just mirror (trajectory already sent)
         self._mirror_real_to_sim()
 
-        traj = JointTrajectory()
-        traj.header.stamp = self.get_clock().now().to_msg()
-        traj.joint_names = list(self._joint_names)
-        pt = JointTrajectoryPoint()
-        pt.positions = q.tolist()
-        # Compute duration from real robot's actual position (accel-aware)
-        dur = self._real_traj_duration  # fallback
-        real_q = self._get_real_ordered_joints()
-        if real_q is not None:
-            real_delta = float(np.max(np.abs(q - real_q)))
-            dur = self._accel_aware_duration(real_delta)
-        dur_sec = int(dur)
-        dur_nsec = int((dur - dur_sec) * 1e9)
-        pt.time_from_start = Duration(sec=dur_sec, nanosec=dur_nsec)
-        traj.points = [pt]
-        self._real_traj_pub.publish(traj)
-
     # ------------------------------------------------------------------
-    # Build a 4×4 target pose from position + quaternion
+    # Static helper: 4×4 pose from position + quaternion
     # ------------------------------------------------------------------
     @staticmethod
     def _pose44(pos: np.ndarray, quat_xyzw: list) -> np.ndarray:
@@ -686,476 +625,55 @@ class CartesianDrawController(Node):
         return T
 
     # ------------------------------------------------------------------
-    # RETRACT_UP — lift EE straight up before any homing
+    # IK with joint-jump rejection + elbow-up constraint
     # ------------------------------------------------------------------
-    def _retract_up(self):
-        """Lift the end-effector vertically (world Z+) to a safe clearance
-        height using Cartesian IK interpolation.  In real-robot mode the
-        entire IK path is sent as one trajectory."""
-        # One-time initialisation: compute the lift trajectory
-        if not self._retract_initialized:
-            q_current = self._get_ordered_joints()
-            if q_current is None:
-                self.get_logger().warn('RETRACT_UP — waiting for joint states…',
-                                       throttle_duration_sec=2.0)
-                return
-
-            from ur5e_rrt_planner import ur5e_fk
-            T_now = ur5e_fk(q_current)
-            current_pos = T_now[:3, 3]
-            current_quat = rotmat_to_quat(T_now[:3, :3])
-
-            # Lift target: straight up in world Z
-            lift_pos = current_pos.copy()
-            lift_pos[2] += self._retract_height
-
-            self.get_logger().info(
-                f'RETRACT_UP — current EE z={current_pos[2]:.3f}, '
-                f'lifting to z={lift_pos[2]:.3f} '
-                f'(+{self._retract_height:.3f} m)')
-
-            self._retract_waypoints = _interpolate_cartesian_smooth(
-                positions=[current_pos, lift_pos],
-                orientation_xyzw=current_quat,
-                v_max=self.v_max,
-                a_max=self.a_max,
-                dt=(1.0 / self.execution_hz),
-            )
-            self._retract_idx = 0
-            self._last_q = q_current.copy()
-            self._retract_initialized = True
-
-            # Real robot: batch-solve IK and send full trajectory
-            if self._real_robot:
-                self._retract_up_path = self._ik_solve_cartesian_path(
-                    self._retract_waypoints, q_current, 'RETRACT_UP')
-                if self._retract_up_path:
-                    times = self._compute_joint_path_timing(
-                        self._retract_up_path)
-                    self._send_full_trajectory(self._retract_up_path, times)
-                    self._retract_up_traj_sent = True
-                    self._last_q = self._retract_up_path[-1].copy()
-
-        # ---- Real-robot mode: just monitor convergence ----
-        if self._real_robot:
-            self._mirror_real_to_sim()
-            if self._retract_up_traj_sent and hasattr(self, '_retract_up_path') \
-                    and self._retract_up_path:
-                final_q = self._retract_up_path[-1]
-                if self._real_robot_converged(final_q):
-                    self._last_q = final_q.copy()
-                    self.get_logger().info('RETRACT_UP complete → RETRACT_HOME')
-                    self.phase = Phase.RETRACT_HOME
-                else:
-                    self.get_logger().info(
-                        'RETRACT_UP  waiting for real robot…',
-                        throttle_duration_sec=1.0)
-            else:
-                # IK failed entirely — skip RETRACT_UP
-                self.get_logger().warn('RETRACT_UP  no IK path → RETRACT_HOME')
-                self.phase = Phase.RETRACT_HOME
-            return
-
-        # ---- Sim-only mode: step through IK waypoints ----
-        if self._retract_idx >= len(self._retract_waypoints):
-            self.get_logger().info('RETRACT_UP complete → RETRACT_HOME')
-            self.phase = Phase.RETRACT_HOME
-            return
-
-        pos, quat = self._retract_waypoints[self._retract_idx]
-        T = self._pose44(pos, quat)
-        q_sol = self._ik(T, self._last_q)
-
-        if q_sol is None:
-            self.get_logger().warn(
-                f'RETRACT_UP IK failed at step {self._retract_idx}'
-                f'/{len(self._retract_waypoints)} — skipping')
-            self._retract_idx += 1
-            return
-
-        self._pub_joints(q_sol)
-        self._last_q = q_sol.copy()
-        self._retract_idx += 1
-
-        total = len(self._retract_waypoints)
-        if self._retract_idx % 10 == 0 or self._retract_idx >= total:
-            fk_pos = self._fk_position(q_sol)
-            self.get_logger().info(
-                f'RETRACT_UP  step {self._retract_idx}/{total}  '
-                f'z={fk_pos[2]:.3f}',
-                throttle_duration_sec=0.5)
-
-    # ------------------------------------------------------------------
-    # RETRACT_HOME — joint-space interpolation to home
-    # ------------------------------------------------------------------
-    def _retract_home(self):
-        """Smoothly interpolate in joint-space from the current (retracted)
-        position to the home configuration.  In real-robot mode the entire
-        path is sent as one multi-point trajectory with trapezoidal timing."""
-        if not self._retract_home_path:
-            q_current = self._last_q if self._last_q is not None else self._get_ordered_joints()
-            if q_current is None:
-                self.get_logger().warn('RETRACT_HOME — waiting for joint states…',
-                                       throttle_duration_sec=2.0)
-                return
-
-            q_home = np.array(self._home_positions, dtype=float)
-            # Number of interpolation steps — ~2 seconds at execution_hz
-            n_steps = max(int(2.0 * self.execution_hz), 20)
-            path = []
-            for i in range(n_steps + 1):
-                alpha = i / n_steps
-                # Smooth ease-in / ease-out (cosine interpolation)
-                alpha_smooth = 0.5 * (1.0 - math.cos(math.pi * alpha))
-                q_interp = (1.0 - alpha_smooth) * q_current + alpha_smooth * q_home
-                path.append(q_interp)
-
-            self._retract_home_path = path
-            self._retract_home_idx = 0
-            self._retract_home_traj_sent = False
-            self._retract_home_times = self._compute_joint_path_timing(path)
-            self.get_logger().info(
-                f'RETRACT_HOME — interpolating to home in {n_steps} steps '
-                f'(~{self._retract_home_times[-1]:.1f} s)')
-
-        # -- Real-robot mode: send full trajectory once, then monitor --
-        if self._real_robot:
-            if not self._retract_home_traj_sent:
-                self._send_full_trajectory(
-                    self._retract_home_path, self._retract_home_times)
-                self._retract_home_traj_sent = True
-
-            self._mirror_real_to_sim()
-
-            q_home = np.array(self._home_positions, dtype=float)
-            if self._real_robot_converged(q_home):
-                self.get_logger().info('RETRACT_HOME complete → HOME_HOLD')
-                self.phase = Phase.HOME_HOLD
-            else:
-                self.get_logger().info(
-                    'RETRACT_HOME  waiting for real robot…',
-                    throttle_duration_sec=1.0)
-            return
-
-        # -- Sim-only mode: step through one-by-one --
-        if self._retract_home_idx >= len(self._retract_home_path):
-            self.get_logger().info('RETRACT_HOME complete → HOME_HOLD')
-            self.phase = Phase.HOME_HOLD
-            return
-
-        q_cmd = self._retract_home_path[self._retract_home_idx]
-        self._pub_joints(q_cmd)
-        self._last_q = q_cmd.copy()
-        self._retract_home_idx += 1
-
-        total = len(self._retract_home_path)
-        if self._retract_home_idx % 20 == 0 or self._retract_home_idx >= total:
-            pct = 100.0 * self._retract_home_idx / max(total - 1, 1)
-            self.get_logger().info(
-                f'RETRACT_HOME  {self._retract_home_idx}/{total} ({pct:.0f}%)',
-                throttle_duration_sec=0.5)
-
-    # ------------------------------------------------------------------
-    # HOME_HOLD — hold at home, then proceed
-    # ------------------------------------------------------------------
-    def _home_hold(self):
-        """Hold at the home position for _home_hold_sec before planning."""
-        self._pub_joints(np.array(self._home_positions))
-
-        if self._home_reached_time is None:
-            self._home_reached_time = self.get_clock().now()
-            self.get_logger().info('HOME_HOLD — holding at home position…')
-
-        elapsed = (self.get_clock().now() - self._home_reached_time).nanoseconds * 1e-9
-        self.get_logger().info(
-            f'HOME_HOLD — ({elapsed:.1f}/{self._home_hold_sec:.1f} s)',
-            throttle_duration_sec=1.0)
-
-        if elapsed >= self._home_hold_sec and self._real_robot_converged(
-                np.array(self._home_positions)):
-            self.get_logger().info('HOME_HOLD complete → PLANNING')
-            self.phase = Phase.PLANNING
-
-    # ------------------------------------------------------------------
-    # PLANNING  (RRT to approach pose above first corner)
-    # ------------------------------------------------------------------
-    def _plan(self):
-        if self._last_joint_state is None:
-            self._pub_joints(np.array(self._home_positions))
-            self.get_logger().warn('Waiting for joint states…',
-                                   throttle_duration_sec=2.0)
-            return
-
-        q_current = self._get_ordered_joints()
-        if q_current is None:
-            return
-
-        from ur5e_rrt_planner import (ur5e_fk, rrt_connect,
-                                        smooth_path, bezier_smooth_path)
-
-        # Approach pose: above the first vertex, offset along plane normal
-        approach_pos = self.draw_positions[0] - self.approach_height * self.plane_n
-        T_approach = self._pose44(approach_pos, self.target_quat)
-
-        self.get_logger().info(
-            f'PLANNING → approach pos = '
-            f'[{approach_pos[0]:.3f}, {approach_pos[1]:.3f}, {approach_pos[2]:.3f}]')
-
-        # Step 1: Constrained IK — find elbow-up goal configuration
-        q_goal = self._constrained_ik_for_pose(T_approach)
-        if q_goal is None:
-            self.get_logger().error(
-                'PLANNING FAILED — no elbow-up IK solution.  '
-                'Try widening shoulder_lift_max / elbow_max or changing '
-                'the plane/approach_height.')
-            return
-
-        # Step 2: RRT-Connect in joint space
-        raw_path = rrt_connect(q_current, q_goal,
-                               step_size=0.2, max_iter=10000)
-        if raw_path is None:
-            self.get_logger().error('RRT planning FAILED — retrying next tick…')
-            return
-
-        # Step 3: Smooth + Bezier spline interpolation
-        smoothed = smooth_path(raw_path, max_attempts=200)
-        path = bezier_smooth_path(smoothed, max_step=0.02)
-
-        self._rrt_path = path
-        self._rrt_idx = 0
-        self._rrt_traj_sent = False
-        # Pre-compute trapezoidal timing for the full path
-        self._rrt_times = self._compute_joint_path_timing(path)
-
-        # Verify goal FK and report
-        T_goal = ur5e_fk(path[-1])
-        goal_pos = T_goal[:3, 3]
-        goal_z = T_goal[:3, 2]  # z-axis of tool
-        self.get_logger().info(
-            f'PLANNING complete — {len(path)} joint waypoints → EXECUTING')
-        self.get_logger().info(
-            f'  Goal FK pos=[{goal_pos[0]:.4f}, {goal_pos[1]:.4f}, '
-            f'{goal_pos[2]:.4f}]  tool_z=[{goal_z[0]:.3f}, '
-            f'{goal_z[1]:.3f}, {goal_z[2]:.3f}]')
-        self.get_logger().info(
-            f'  Goal joints={np.round(path[-1], 3).tolist()}  '
-            f'shoulder_lift={path[-1][1]:.3f}  elbow={path[-1][2]:.3f}')
-        self.phase = Phase.EXECUTING
-
-    # ------------------------------------------------------------------
-    # EXECUTING  (play back RRT joint-space path)
-    # ------------------------------------------------------------------
-    def _execute(self):
-        # -- Real-robot mode: send the FULL trajectory once, then monitor --
-        if self._real_robot:
-            if not self._rrt_traj_sent:
-                self._send_full_trajectory(self._rrt_path, self._rrt_times)
-                self._rrt_traj_sent = True
-
-            self._mirror_real_to_sim()
-
-            # Progress logging based on real robot position
-            real_q = self._get_real_ordered_joints()
-            if real_q is not None:
-                dists = [float(np.max(np.abs(real_q - q))) for q in self._rrt_path]
-                closest = int(np.argmin(dists))
-                total = len(self._rrt_path) - 1
-                pct = 100.0 * closest / max(total, 1)
-                self.get_logger().info(
-                    f'EXECUTING  ~step {closest}/{total}  ({pct:.0f}%)',
-                    throttle_duration_sec=1.0)
-
-            # Check convergence to final waypoint
-            final_q = self._rrt_path[-1]
-            if self._real_robot_converged(final_q):
-                self.get_logger().info('RRT path complete → DESCENDING')
-                self._last_q = final_q.copy()
-                approach_pos = self.draw_positions[0] - self.approach_height * self.plane_n
-                on_plane_pos = self.draw_positions[0].copy()
-                self._descent_waypoints = _interpolate_cartesian_smooth(
-                    positions=[approach_pos, on_plane_pos],
-                    orientation_xyzw=self.target_quat,
-                    v_max=self.v_max,
-                    a_max=self.a_max,
-                    dt=(1.0 / self.execution_hz),
-                )
-                self._descent_idx = 0
-                self.phase = Phase.DESCENDING
-            return
-
-        # -- Sim-only mode: step through waypoints one-by-one (instant) --
-        if self._rrt_idx >= len(self._rrt_path):
-            self.get_logger().info('RRT path complete → DESCENDING')
-            self._last_q = self._rrt_path[-1].copy()
-
-            # Prepare descent: from approach height to on-plane
-            approach_pos = self.draw_positions[0] - self.approach_height * self.plane_n
-            on_plane_pos = self.draw_positions[0].copy()
-            self._descent_waypoints = _interpolate_cartesian_smooth(
-                positions=[approach_pos, on_plane_pos],
-                orientation_xyzw=self.target_quat,
-                v_max=self.v_max,
-                a_max=self.a_max,
-                dt=(1.0 / self.execution_hz),
-            )
-            self._descent_idx = 0
-            self.phase = Phase.DESCENDING
-            return
-
-        q_cmd = self._rrt_path[self._rrt_idx]
-        self._pub_joints(q_cmd)
-
-        if self._rrt_idx % 10 == 0 or self._rrt_idx == len(self._rrt_path) - 1:
-            pct = 100.0 * self._rrt_idx / max(len(self._rrt_path) - 1, 1)
-            fk_pos = self._fk_position(q_cmd)
-            self.get_logger().info(
-                f'EXECUTING  step {self._rrt_idx}/{len(self._rrt_path)-1}  '
-                f'({pct:.0f}%)  fk_pos=[{fk_pos[0]:.3f}, '
-                f'{fk_pos[1]:.3f}, {fk_pos[2]:.3f}]')
-        self._rrt_idx += 1
-
-    # ------------------------------------------------------------------
-    # Plane-frame helpers (mirrors planar_servo_controller)
-    # ------------------------------------------------------------------
-    def _to_plane(self, pos_base: np.ndarray) -> Tuple[float, float, float]:
-        """Project a base-frame position onto the plane → (px, py, pz_off)."""
-        rel = pos_base - self.plane_origin
-        return (float(np.dot(rel, self.plane_x)),
-                float(np.dot(rel, self.plane_y)),
-                float(np.dot(rel, self.plane_n)))
-
-    # ------------------------------------------------------------------
-    # FK + diagnostics helper
-    # ------------------------------------------------------------------
-    def _fk_diagnostics(self, q: np.ndarray, target_pos: np.ndarray,
-                        phase_tag: str, wp_idx: int = 0,
-                        total_wp: int = 0) -> None:
-        """Log rich diagnostics: FK pos, pos error, plane coords, orientation
-        error, manipulability, joint values — similar to servo controller."""
-        from ur5e_rrt_planner import ur5e_fk, ur5e_jacobian
-
-        T_fk = ur5e_fk(q)
-        fk_pos = T_fk[:3, 3]
-        fk_R = T_fk[:3, :3]
-
-        # Position error
-        pos_err = target_pos - fk_pos
-        pos_err_mag = float(np.linalg.norm(pos_err))
-
-        # Plane-frame coordinates of FK position
-        px, py, pz_off = self._to_plane(fk_pos)
-
-        # Orientation error (angle between FK z-axis and desired z-axis)
-        R_target = quat_to_rotmat(self.target_quat)
-        z_fk = fk_R[:, 2]
-        z_target = R_target[:, 2]
-        cos_ang = float(np.clip(np.dot(z_fk, z_target), -1.0, 1.0))
-        orient_err_deg = math.degrees(math.acos(cos_ang))
-
-        # Manipulability: sqrt(det(J·Jᵀ))
-        J = ur5e_jacobian(q)
-        manip = float(math.sqrt(max(np.linalg.det(J @ J.T), 0.0)))
-
-        # Condition number (high = near singularity)
-        sv = np.linalg.svd(J, compute_uv=False)
-        cond = float(sv[0] / max(sv[-1], 1e-10))
-
-        self.get_logger().info(
-            f'{phase_tag}  wp={wp_idx}/{total_wp}  '
-            f'pos_err={pos_err_mag:.4f}m  z_off={pz_off:.4f}m  '
-            f'plane_xy=({px:.3f},{py:.3f})  '
-            f'orient_err={orient_err_deg:.1f}°  '
-            f'manip={manip:.4f}  cond={cond:.1f}',
-            throttle_duration_sec=0.5)
-
-    def _fk_position(self, q: np.ndarray) -> np.ndarray:
-        """Return FK tool0 position for given joint angles."""
-        from ur5e_rrt_planner import ur5e_fk
-        return ur5e_fk(q)[:3, 3]
-
-    # ------------------------------------------------------------------
-    # Configuration constraint check
-    # ------------------------------------------------------------------
-    def _config_ok(self, q: np.ndarray) -> bool:
-        """Check if the joint configuration satisfies elbow-up constraints.
-        Returns True if OK, False if the configuration would collide."""
-        shoulder_lift = q[1]
-        elbow = q[2]
-        if shoulder_lift > self.shoulder_lift_max or shoulder_lift < self.shoulder_lift_min:
-            return False
-        if elbow > self.elbow_max or elbow < self.elbow_min:
-            return False
-        return True
-
-    # ------------------------------------------------------------------
-    # IK helper with joint-jump rejection + configuration constraints
-    # ------------------------------------------------------------------
-    def _ik(self, T_target: np.ndarray, q_seed: np.ndarray) -> Optional[np.ndarray]:
+    def _ik(self, T_target: np.ndarray,
+            q_seed: np.ndarray) -> Optional[np.ndarray]:
         from ur5e_rrt_planner import ik_solve
 
         self._ik_total_count += 1
         q_sol = ik_solve(T_target, q_seed, max_iter=300,
                          pos_tol=5e-4, orient_tol=1e-3,
                          damping=self.ik_damping)
-
         if q_sol is None:
             self._ik_fail_count += 1
             return None
-
-        # Configuration constraint: enforce elbow-up
         if not self._config_ok(q_sol):
             self._ik_cfg_count += 1
-            self.get_logger().warn(
-                f'IK CONFIG REJECTED  shoulder_lift={q_sol[1]:.3f} '
-                f'(limit=[{self.shoulder_lift_min:.2f},{self.shoulder_lift_max:.2f}])  '
-                f'elbow={q_sol[2]:.3f} '
-                f'(limit=[{self.elbow_min:.2f},{self.elbow_max:.2f}])  '
-                f'[cfg_reject={self._ik_cfg_count}/{self._ik_total_count}]',
-                throttle_duration_sec=1.0)
             return None
-
-        # Joint-jump rejection: if any joint moves more than max_joint_step
-        # from the seed, the IK likely flipped configuration → collision risk
         joint_delta = np.abs(q_sol - q_seed)
-        max_delta = float(np.max(joint_delta))
-        worst_joint = int(np.argmax(joint_delta))
-
-        if max_delta > self.max_joint_step:
+        if float(np.max(joint_delta)) > self.max_joint_step:
             self._ik_jump_count += 1
-            self.get_logger().warn(
-                f'IK JUMP REJECTED  Δ={max_delta:.3f} rad on joint '
-                f'{self._joint_names[worst_joint]} '
-                f'(limit={self.max_joint_step:.3f})  '
-                f'[fails={self._ik_fail_count}, jumps={self._ik_jump_count} '
-                f'/ {self._ik_total_count} total]')
             return None
-
         return q_sol
 
+    def _config_ok(self, q: np.ndarray) -> bool:
+        """Elbow-up configuration check."""
+        if q[1] > self.shoulder_lift_max or q[1] < self.shoulder_lift_min:
+            return False
+        if q[2] > self.elbow_max or q[2] < self.elbow_min:
+            return False
+        return True
+
     # ------------------------------------------------------------------
-    # Constrained multi-seed IK for planning (finds elbow-up solutions)
+    # Constrained multi-seed IK (for RRT goal)
     # ------------------------------------------------------------------
-    def _constrained_ik_for_pose(self, T_target: np.ndarray) -> Optional[np.ndarray]:
-        """Solve IK with many seeds, returning best elbow-up solution.
-        Unlike _ik(), this does NOT apply the max_joint_step check
-        (since there is no incremental seed to compare against)."""
+    def _constrained_ik_for_pose(
+            self, T_target: np.ndarray) -> Optional[np.ndarray]:
         from ur5e_rrt_planner import ik_solve
         import random
 
-        home = np.array(self._home_positions, dtype=float)
+        home = self._home_positions.copy()
         candidates = []
-
-        # Build a pool of seeds biased toward elbow-up configurations
         seeds = [home.copy()]
-        # Perturbations of home (keep shoulder_lift negative, elbow negative)
         for _ in range(self.ik_num_seeds):
             s = home.copy()
-            s[0] += random.uniform(-1.5, 1.5)    # shoulder_pan: wide range
-            s[1] += random.uniform(-1.0, 0.3)    # shoulder_lift: bias negative
-            s[2] += random.uniform(-0.5, 0.5)    # elbow: perturbation
-            s[3] += random.uniform(-1.0, 1.0)    # wrist_1
-            s[4] += random.uniform(-1.0, 1.0)    # wrist_2
-            s[5] += random.uniform(-1.0, 1.0)    # wrist_3
+            s[0] += random.uniform(-1.5, 1.5)
+            s[1] += random.uniform(-1.0, 0.3)
+            s[2] += random.uniform(-0.5, 0.5)
+            s[3] += random.uniform(-1.0, 1.0)
+            s[4] += random.uniform(-1.0, 1.0)
+            s[5] += random.uniform(-1.0, 1.0)
             seeds.append(s)
 
         for seed in seeds:
@@ -1163,302 +681,354 @@ class CartesianDrawController(Node):
                              pos_tol=5e-4, orient_tol=1e-3,
                              damping=self.ik_damping)
             if q_sol is not None and self._config_ok(q_sol):
-                # Score: prefer solutions closest to home
                 dist_to_home = float(np.linalg.norm(q_sol - home))
                 candidates.append((dist_to_home, q_sol))
 
         if not candidates:
             self.get_logger().error(
-                f'Constrained IK failed: {len(seeds)} seeds tried, none '
-                f'satisfy elbow-up constraints '
-                f'[shoulder_lift≤{self.shoulder_lift_max:.2f}, '
-                f'elbow≤{self.elbow_max:.2f}]')
+                f'Constrained IK failed: {len(seeds)} seeds, none satisfy '
+                f'elbow-up constraints')
             return None
 
-        # Pick the solution closest to home (safest configuration)
         candidates.sort(key=lambda x: x[0])
         best_q = candidates[0][1]
         self.get_logger().info(
-            f'Constrained IK: {len(candidates)}/{len(seeds)} valid  '
-            f'best shoulder_lift={best_q[1]:.3f} elbow={best_q[2]:.3f}  '
-            f'joints={np.round(best_q, 3).tolist()}')
+            f'  Constrained IK: {len(candidates)}/{len(seeds)} valid  '
+            f'best shoulder_lift={best_q[1]:.3f} elbow={best_q[2]:.3f}')
         return best_q
 
     # ------------------------------------------------------------------
-    # DESCENDING — Cartesian straight-line from approach to on-plane
+    # FK helper
     # ------------------------------------------------------------------
-    def _descend(self):
-        # ---- Real-robot: send full trajectory once, monitor ----
-        if self._real_robot:
-            if not self._descent_traj_sent:
-                seed = self._last_q if self._last_q is not None \
-                    else self._get_ordered_joints()
-                if seed is None:
-                    return
-                path = self._send_cartesian_as_trajectory(
-                    self._descent_waypoints, seed, 'DESCENDING')
-                self._descent_ik_path = path or []
-                self._descent_traj_sent = True
-                if path:
-                    self._last_q = path[-1].copy()
+    def _fk_position(self, q: np.ndarray) -> np.ndarray:
+        from ur5e_rrt_planner import ur5e_fk
+        return ur5e_fk(q)[:3, 3]
 
-            self._mirror_real_to_sim()
+    # ------------------------------------------------------------------
+    # PRE_COMPUTE — build the entire trajectory offline
+    # ------------------------------------------------------------------
+    def _pre_compute(self):
+        """Build a single dense joint-space trajectory covering all phases:
+        retract up → retract home → home hold → RRT approach → descent →
+        drawing → ascent.  All IK is solved here, before any motion."""
+        from ur5e_rrt_planner import (ur5e_fk, rrt_connect,
+                                      smooth_path, bezier_smooth_path)
 
-            # Transition: check convergence to final waypoint
-            target_q = (self._descent_ik_path[-1]
-                        if self._descent_ik_path else self._last_q)
-            if target_q is not None and self._real_robot_converged(target_q):
-                self.get_logger().info('Descent complete → DRAWING')
-                self._cart_waypoints = _interpolate_cartesian_smooth(
-                    positions=self.draw_positions,
-                    orientation_xyzw=self.target_quat,
-                    v_max=self.v_max,
-                    a_max=self.a_max,
-                    dt=(1.0 / self.execution_hz),
-                )
-                self._cart_idx = 0
-                self._drawing_traj_sent = False
-                self.phase = Phase.DRAWING
-            else:
-                self.get_logger().info(
-                    'DESCENDING  waiting for real robot…',
-                    throttle_duration_sec=1.0)
-            return
-
-        # ---- Sim-only mode ----
-        if self._descent_idx >= len(self._descent_waypoints):
-            self.get_logger().info('Descent complete → DRAWING')
-            self._cart_waypoints = _interpolate_cartesian_smooth(
-                positions=self.draw_positions,
-                orientation_xyzw=self.target_quat,
-                v_max=self.v_max,
-                a_max=self.a_max,
-                dt=(1.0 / self.execution_hz),
-            )
-            self._cart_idx = 0
-            self.phase = Phase.DRAWING
-            return
-
-        pos, quat = self._descent_waypoints[self._descent_idx]
-        T = self._pose44(pos, quat)
-        q_sol = self._ik(T, self._last_q)
-
-        if q_sol is None:
+        q_current = self._get_ordered_joints()
+        if q_current is None:
             self.get_logger().warn(
-                f'DESCENDING IK failed at step {self._descent_idx}'
-                f'/{len(self._descent_waypoints)} — skipping  '
-                f'target=[{pos[0]:.4f}, {pos[1]:.4f}, {pos[2]:.4f}]')
-            self._descent_idx += 1
+                'PRE_COMPUTE — waiting for joint states…',
+                throttle_duration_sec=2.0)
             return
 
-        self._pub_joints(q_sol)
-        self._last_q = q_sol.copy()
-        self._descent_idx += 1
+        self.get_logger().info(
+            '═══════════════════════════════════════════════\n'
+            '  PRE-COMPUTING ENTIRE TRAJECTORY OFFLINE\n'
+            '═══════════════════════════════════════════════')
 
-        total = len(self._descent_waypoints)
-        if self._descent_idx % 5 == 0 or self._descent_idx >= total:
-            self._fk_diagnostics(q_sol, pos, 'DESCEND',
-                                 self._descent_idx, total)
+        full_path: List[np.ndarray] = []
+        cart_dt = 1.0 / self.execution_hz
 
-    # ------------------------------------------------------------------
-    # DRAWING — follow dense Cartesian waypoints on the plane
-    # ------------------------------------------------------------------
-    def _draw(self):
-        # ---- Real-robot: send full drawing trajectory once, monitor ----
-        if self._real_robot:
-            if not self._drawing_traj_sent:
-                seed = self._last_q if self._last_q is not None \
-                    else self._get_ordered_joints()
-                if seed is None:
-                    return
-                path = self._send_cartesian_as_trajectory(
-                    self._cart_waypoints, seed, 'DRAWING')
-                self._drawing_ik_path = path or []
-                self._drawing_traj_sent = True
-                if path:
-                    self._last_q = path[-1].copy()
+        # ── SEGMENT 1: RETRACT UP (Cartesian vertical lift → IK) ─────
+        T_now = ur5e_fk(q_current)
+        current_pos = T_now[:3, 3].copy()
+        current_quat = rotmat_to_quat(T_now[:3, :3])
 
-            self._mirror_real_to_sim()
+        lift_pos = current_pos.copy()
+        lift_pos[2] += self._retract_height
 
-            # Progress logging
-            real_q = self._get_real_ordered_joints()
-            if real_q is not None and self._drawing_ik_path:
-                dists = [float(np.max(np.abs(real_q - q)))
-                         for q in self._drawing_ik_path]
-                closest = int(np.argmin(dists))
-                total = len(self._drawing_ik_path)
-                pct = 100.0 * closest / max(total - 1, 1)
-                self.get_logger().info(
-                    f'DRAWING  ~step {closest}/{total}  ({pct:.0f}%)',
-                    throttle_duration_sec=1.0)
+        self.get_logger().info(
+            f'  [1/6] Retract up: z={current_pos[2]:.3f} → '
+            f'z={lift_pos[2]:.3f} (+{self._retract_height:.3f}m)')
 
-            # Check convergence to final waypoint
-            target_q = (self._drawing_ik_path[-1]
-                        if self._drawing_ik_path else self._last_q)
-            if target_q is not None and self._real_robot_converged(target_q):
-                if self.do_loop:
-                    self._drawing_traj_sent = False
-                    self.get_logger().info('Looping trajectory…')
-                    return
-                self.get_logger().info('Drawing complete → ASCENDING')
-                last_pos = self._cart_waypoints[-1][0]
-                ascent_pos = last_pos - self.approach_height * self.plane_n
-                self._ascent_waypoints = _interpolate_cartesian_smooth(
-                    positions=[last_pos, ascent_pos],
-                    orientation_xyzw=self.target_quat,
-                    v_max=self.v_max,
-                    a_max=self.a_max,
-                    dt=(1.0 / self.execution_hz),
-                )
-                self._ascent_idx = 0
-                self._ascent_traj_sent = False
-                self.phase = Phase.ASCENDING
+        retract_wps = _interpolate_cartesian_smooth(
+            [current_pos, lift_pos], current_quat,
+            self.approach_v_max, self.approach_a_max, cart_dt)
+        retract_path = self._ik_solve_cartesian_path(
+            retract_wps, q_current, 'Retract up')
+        if not retract_path:
+            self.get_logger().error(
+                'PRE_COMPUTE FAILED at retract up — retrying…')
+            return
+        full_path.extend(retract_path)
+
+        # ── SEGMENT 2: RETRACT HOME (cosine joint-space interpolation) ──
+        q_retracted = full_path[-1]
+        q_home = self._home_positions.copy()
+        n_home = max(int(1.0 * self.execution_hz), 20)
+
+        retract_home_path = []
+        for i in range(1, n_home + 1):
+            alpha = 0.5 * (1.0 - math.cos(math.pi * i / n_home))
+            q_interp = (1.0 - alpha) * q_retracted + alpha * q_home
+            retract_home_path.append(q_interp)
+            full_path.append(q_interp)
+        # Include the starting point for phase timing
+        retract_home_path.insert(0, q_retracted.copy())
+
+        self.get_logger().info(
+            f'  [2/6] Retract home: {n_home} joint-interp steps')
+
+        # ── SEGMENT 3: HOME HOLD (hold at home for stability) ────────
+        n_hold = max(int(self._home_hold_sec * self.execution_hz), 1)
+        home_hold_path = [q_home.copy() for _ in range(n_hold + 1)]
+        for _ in range(n_hold):
+            full_path.append(q_home.copy())
+
+        self.get_logger().info(
+            f'  [3/6] Home hold: {self._home_hold_sec:.1f}s '
+            f'({n_hold} waypoints)')
+
+        # ── SEGMENT 4: RRT (home → approach pose above first point) ──
+        approach_pos = (self.draw_positions[0]
+                        - self.approach_height * self.plane_n)
+        T_approach = self._pose44(approach_pos, self.target_quat)
+
+        self.get_logger().info(
+            f'  [4/6] RRT: home → approach '
+            f'[{approach_pos[0]:.3f}, {approach_pos[1]:.3f}, '
+            f'{approach_pos[2]:.3f}]')
+
+        q_goal = self._constrained_ik_for_pose(T_approach)
+        if q_goal is None:
+            self.get_logger().error(
+                'PRE_COMPUTE FAILED — no elbow-up IK for approach. '
+                'Try widening constraints.')
             return
 
-        # ---- Sim-only mode ----
-        if self._cart_idx >= len(self._cart_waypoints):
-            if self.do_loop:
-                self._cart_idx = 0
-                self.get_logger().info('Looping trajectory…')
-                return
-            else:
-                self.get_logger().info(
-                    f'Drawing complete → ASCENDING  '
-                    f'[IK stats: {self._ik_fail_count} fails, '
-                    f'{self._ik_jump_count} jumps / '
-                    f'{self._ik_total_count} total]')
-                last_pos = self._cart_waypoints[-1][0]
-                ascent_pos = last_pos - self.approach_height * self.plane_n
-                self._ascent_waypoints = _interpolate_cartesian_smooth(
-                    positions=[last_pos, ascent_pos],
-                    orientation_xyzw=self.target_quat,
-                    v_max=self.v_max,
-                    a_max=self.a_max,
-                    dt=(1.0 / self.execution_hz),
-                )
-                self._ascent_idx = 0
-                self.phase = Phase.ASCENDING
-                return
+        raw_rrt = rrt_connect(full_path[-1], q_goal,
+                              step_size=0.2, max_iter=10000)
+        if raw_rrt is None:
+            self.get_logger().error(
+                'PRE_COMPUTE FAILED — RRT planning failed, retrying…')
+            return
 
-        for _ in range(self.wp_per_tick):
-            if self._cart_idx >= len(self._cart_waypoints):
+        smoothed = smooth_path(raw_rrt, max_attempts=200)
+        rrt_dense = bezier_smooth_path(smoothed, max_step=0.02)
+        full_path.extend(rrt_dense[1:])  # skip first (duplicate)
+
+        self.get_logger().info(
+            f'        RRT: {len(raw_rrt)} raw → {len(smoothed)} smoothed '
+            f'→ {len(rrt_dense)} dense')
+
+        # Verify approach FK
+        T_goal_fk = ur5e_fk(full_path[-1])
+        goal_pos = T_goal_fk[:3, 3]
+        self.get_logger().info(
+            f'        Approach FK = [{goal_pos[0]:.4f}, '
+            f'{goal_pos[1]:.4f}, {goal_pos[2]:.4f}]')
+
+        # ── SEGMENT 5: DESCENT (approach height → surface) ───────────
+        descent_wps = _interpolate_cartesian_smooth(
+            [approach_pos, self.draw_positions[0].copy()],
+            self.target_quat,
+            self.approach_v_max, self.approach_a_max, cart_dt)
+        descent_path = self._ik_solve_cartesian_path(
+            descent_wps, full_path[-1], 'Descent')
+        if descent_path:
+            full_path.extend(descent_path[1:])
+        else:
+            self.get_logger().warn(
+                '  Descent IK failed entirely — '
+                'drawing will start from approach height')
+
+        # ── SEGMENT 6: DRAWING (dense Cartesian waypoints on surface) ─
+        self._draw_start_idx = len(full_path)
+
+        draw_wps = _interpolate_cartesian_smooth(
+            self.draw_positions, self.target_quat,
+            self.v_max, self.a_max, cart_dt)
+        draw_path = self._ik_solve_cartesian_path(
+            draw_wps, full_path[-1], 'Drawing')
+        if not draw_path or len(draw_path) < 2:
+            self.get_logger().error(
+                'PRE_COMPUTE FAILED — drawing IK returned too few solutions')
+            return
+        full_path.extend(draw_path[1:])
+        self._draw_end_idx = len(full_path) - 1
+
+        # ── SEGMENT 7: ASCENT (surface → approach height) — skip if looping
+        ascent_path = []
+        if not self.do_loop:
+            last_draw_pos = self.draw_positions[-1].copy()
+            ascent_pos = last_draw_pos - self.approach_height * self.plane_n
+            ascent_wps = _interpolate_cartesian_smooth(
+                [last_draw_pos, ascent_pos], self.target_quat,
+                self.approach_v_max, self.approach_a_max, cart_dt)
+            ascent_path = self._ik_solve_cartesian_path(
+                ascent_wps, full_path[-1], 'Ascent')
+            if ascent_path:
+                full_path.extend(ascent_path[1:])
+
+        # ── PER-PHASE TRAPEZOIDAL TIMING ───────────────────────────────
+        # Each phase gets its own accel→cruise→decel so the robot
+        # naturally stops between phases but moves smoothly within each.
+        phases = [
+            ('retract_up',   retract_path),
+            ('retract_home', retract_home_path),
+            ('home_hold',    home_hold_path),
+            ('rrt',          list(rrt_dense)),
+            ('descent',      descent_path if descent_path else []),
+            ('drawing',      draw_path),
+        ]
+        if ascent_path:
+            phases.append(('ascent', ascent_path))
+
+        self._master_path, self._master_times = \
+            self._concat_phase_times(phases)
+
+        # Recompute draw indices in the new master path
+        # (descent end = draw start, draw end = draw start + len(draw_path) - 1)
+        pre_draw_count = 0
+        for label, plist in phases:
+            if label == 'drawing':
                 break
+            pre_draw_count += max(len(plist) - 1, 0)  # -1 for boundary dedup
+        self._draw_start_idx = pre_draw_count
+        self._draw_end_idx = pre_draw_count + len(draw_path) - 1
+        self._draw_end_idx = min(self._draw_end_idx,
+                                 len(self._master_path) - 1)
 
-            pos, quat = self._cart_waypoints[self._cart_idx]
-            T = self._pose44(pos, quat)
-            q_sol = self._ik(T, self._last_q)
+        total_dur = self._master_times[-1] if self._master_times else 0.0
+        draw_dur = (self._master_times[self._draw_end_idx]
+                    - self._master_times[self._draw_start_idx]
+                    if self._draw_end_idx > self._draw_start_idx else 0.0)
 
-            if q_sol is None:
-                if self._last_q is not None:
-                    fk_pos = self._fk_position(self._last_q)
-                    px, py, pz = self._to_plane(fk_pos)
-                    self.get_logger().warn(
-                        f'DRAWING IK FAIL  wp={self._cart_idx}/{len(self._cart_waypoints)}  '
-                        f'target=[{pos[0]:.4f},{pos[1]:.4f},{pos[2]:.4f}]  '
-                        f'last_fk=[{fk_pos[0]:.4f},{fk_pos[1]:.4f},{fk_pos[2]:.4f}]  '
-                        f'plane_xy=({px:.3f},{py:.3f})  z_off={pz:.4f}m  '
-                        f'[fails={self._ik_fail_count}/{self._ik_total_count}]')
-                else:
-                    self.get_logger().warn(
-                        f'DRAWING IK FAIL  wp={self._cart_idx}/{len(self._cart_waypoints)}')
-                self._cart_idx += 1
-                continue
+        self.get_logger().info(
+            '═══════════════════════════════════════════════\n'
+            f'  PRE-COMPUTATION COMPLETE\n'
+            f'  Total waypoints : {len(full_path)}\n'
+            f'  Total duration  : {total_dur:.1f}s\n'
+            f'  Drawing segment : idx {self._draw_start_idx}'
+            f'–{self._draw_end_idx} ({draw_dur:.1f}s)\n'
+            f'  IK stats: {self._ik_fail_count} fails, '
+            f'{self._ik_jump_count} jumps, '
+            f'{self._ik_cfg_count} cfg-rejects '
+            f'/ {self._ik_total_count} total\n'
+            '═══════════════════════════════════════════════')
 
-            self._pub_joints(q_sol)
-            self._last_q = q_sol.copy()
-            self._cart_idx += 1
-
-        total = len(self._cart_waypoints)
-        if self._cart_idx > 0 and (self._cart_idx % 10 == 0 or self._cart_idx >= total):
-            pos_now, _ = self._cart_waypoints[min(self._cart_idx - 1, total - 1)]
-            if self._last_q is not None:
-                self._fk_diagnostics(self._last_q, pos_now, 'DRAWING',
-                                     self._cart_idx, total)
+        self._traj_sent = False
+        self._exec_start_time = None
+        self.phase = Phase.EXECUTING
 
     # ------------------------------------------------------------------
-    # ASCENDING — lift off the plane
+    # EXECUTING — lightweight playback of the pre-computed trajectory
     # ------------------------------------------------------------------
-    def _ascend(self):
-        # ---- Real-robot: send full trajectory once, monitor ----
+    def _execute(self):
         if self._real_robot:
-            if not self._ascent_traj_sent:
-                seed = self._last_q if self._last_q is not None \
-                    else self._get_ordered_joints()
-                if seed is None:
-                    return
-                path = self._send_cartesian_as_trajectory(
-                    self._ascent_waypoints, seed, 'ASCENDING')
-                self._ascent_ik_path = path or []
-                self._ascent_traj_sent = True
-                if path:
-                    self._last_q = path[-1].copy()
+            self._execute_real()
+        else:
+            self._execute_sim()
 
-            self._mirror_real_to_sim()
-
-            target_q = (self._ascent_ik_path[-1]
-                        if self._ascent_ik_path else self._last_q)
-            if target_q is not None and self._real_robot_converged(target_q):
-                self.get_logger().info('Ascent complete → DONE')
-                self.phase = Phase.DONE
+    def _execute_real(self):
+        """Real robot: send trajectory once, then monitor convergence."""
+        if not self._traj_sent:
+            if self.do_loop:
+                # Send up to end of drawing (no ascent)
+                path = self._master_path[:self._draw_end_idx + 1]
+                times = self._master_times[:self._draw_end_idx + 1]
             else:
-                self.get_logger().info(
-                    'ASCENDING  waiting for real robot…',
-                    throttle_duration_sec=1.0)
-            return
+                path = self._master_path
+                times = self._master_times
+            self._send_full_trajectory(path, times)
+            self._traj_sent = True
 
-        # ---- Sim-only mode ----
-        if self._ascent_idx >= len(self._ascent_waypoints):
+        self._mirror_real_to_sim()
+
+        # Progress logging
+        real_q = self._get_real_ordered_joints()
+        if real_q is not None:
+            dists = [float(np.max(np.abs(real_q - q)))
+                     for q in self._master_path]
+            closest = int(np.argmin(dists))
+            total = len(self._master_path) - 1
+            pct = 100.0 * closest / max(total, 1)
             self.get_logger().info(
-                f'Ascent complete → DONE  '
-                f'[IK stats: {self._ik_fail_count} fails, '
-                f'{self._ik_jump_count} jumps / '
-                f'{self._ik_total_count} total]')
+                f'EXECUTING  ~step {closest}/{total}  ({pct:.0f}%)',
+                throttle_duration_sec=1.0)
+
+        # Convergence check
+        if self.do_loop:
+            target_q = self._master_path[self._draw_end_idx]
+            if self._real_robot_converged(target_q):
+                self.get_logger().info('Looping drawing segment…')
+                draw_seg = self._master_path[
+                    self._draw_start_idx:self._draw_end_idx + 1]
+                draw_times = self._compute_phase_timing(draw_seg)
+                self._send_full_trajectory(draw_seg, draw_times)
+        else:
+            target_q = self._master_path[-1]
+            if self._real_robot_converged(target_q):
+                self._last_q = target_q.copy()
+                self.get_logger().info('Trajectory complete → DONE')
+                self.phase = Phase.DONE
+
+    def _execute_sim(self):
+        """Sim: time-based interpolation along the master timeline."""
+        if self._exec_start_time is None:
+            self._exec_start_time = self.get_clock().now()
+
+        elapsed = (self.get_clock().now()
+                   - self._exec_start_time).nanoseconds * 1e-9
+
+        total_time = self._master_times[-1]
+        draw_start_t = self._master_times[self._draw_start_idx]
+        draw_end_t = self._master_times[self._draw_end_idx]
+
+        # Handle looping
+        if self.do_loop and elapsed > draw_end_t:
+            loop_dur = draw_end_t - draw_start_t
+            if loop_dur > 1e-6:
+                elapsed = draw_start_t + (
+                    (elapsed - draw_start_t) % loop_dur)
+        elif not self.do_loop and elapsed >= total_time:
+            q_final = self._master_path[-1]
+            self._pub_joints(q_final)
+            self._last_q = q_final.copy()
+            self.get_logger().info('Trajectory complete → DONE')
             self.phase = Phase.DONE
             return
 
-        pos, quat = self._ascent_waypoints[self._ascent_idx]
-        T = self._pose44(pos, quat)
-        q_sol = self._ik(T, self._last_q)
+        # Binary search for current segment
+        times_arr = self._master_times
+        idx = int(np.searchsorted(times_arr, elapsed, side='right')) - 1
+        idx = max(0, min(idx, len(self._master_path) - 2))
 
-        if q_sol is None:
-            self.get_logger().warn(
-                f'ASCENDING IK failed at step {self._ascent_idx}'
-                f'/{len(self._ascent_waypoints)}  '
-                f'target=[{pos[0]:.4f}, {pos[1]:.4f}, {pos[2]:.4f}]')
-            self._ascent_idx += 1
-            return
+        # Linear interpolation between adjacent waypoints
+        t0 = times_arr[idx]
+        t1 = times_arr[idx + 1]
+        alpha = (elapsed - t0) / max(t1 - t0, 1e-9)
+        alpha = max(0.0, min(1.0, alpha))
 
-        self._pub_joints(q_sol)
-        self._last_q = q_sol.copy()
-        self._ascent_idx += 1
+        q_interp = ((1.0 - alpha) * self._master_path[idx]
+                     + alpha * self._master_path[idx + 1])
+        self._pub_joints(q_interp)
+        self._last_q = q_interp.copy()
 
-        total = len(self._ascent_waypoints)
-        if self._ascent_idx % 5 == 0 or self._ascent_idx >= total:
-            self._fk_diagnostics(q_sol, pos, 'ASCEND',
-                                 self._ascent_idx, total)
+        # Progress logging
+        pct = 100.0 * elapsed / max(total_time, 0.01)
+        # Determine current segment name
+        if idx < self._draw_start_idx:
+            segment = 'pre-draw'
+        elif idx <= self._draw_end_idx:
+            segment = 'DRAWING'
+        else:
+            segment = 'post-draw'
+
+        self.get_logger().info(
+            f'EXECUTING  t={elapsed:.1f}/{total_time:.1f}s  ({pct:.0f}%)  '
+            f'idx={idx}/{len(self._master_path)}  [{segment}]',
+            throttle_duration_sec=1.0)
 
     # ------------------------------------------------------------------
     # Main control loop
     # ------------------------------------------------------------------
     def _control_loop(self):
-        if self.phase == Phase.RETRACT_UP:
-            self._retract_up()
-        elif self.phase == Phase.RETRACT_HOME:
-            self._retract_home()
-        elif self.phase == Phase.HOME_HOLD:
-            self._home_hold()
-        elif self.phase == Phase.PLANNING:
-            self._plan()
+        if self.phase == Phase.PRE_COMPUTE:
+            self._pre_compute()
         elif self.phase == Phase.EXECUTING:
             self._execute()
-        elif self.phase == Phase.DESCENDING:
-            self._descend()
-        elif self.phase == Phase.DRAWING:
-            self._draw()
-        elif self.phase == Phase.ASCENDING:
-            self._ascend()
         elif self.phase == Phase.DONE:
-            # Hold position — in real-robot mode just mirror
             if self._real_robot:
                 self._mirror_real_to_sim()
             elif self._last_q is not None:
