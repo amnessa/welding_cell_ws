@@ -74,6 +74,10 @@ class DrawingDispatcher(Node):
         self._goal_handle = None
         self._done = False
         self._drawing_count = 0
+        self._send_pending = False      # guard against concurrent sends
+        self._retry_timer = None        # one-shot retry timer
+        self._retry_delay = 2.0         # seconds between retries
+        self._max_retry_delay = 16.0    # exponential back-off cap
 
         self.get_logger().info(
             f'Drawing dispatcher ready — '
@@ -207,17 +211,25 @@ class DrawingDispatcher(Node):
     # Send a single drawing goal
     # ------------------------------------------------------------------
     def send_next_drawing(self):
-        """Generate and send the next drawing goal."""
+        """Generate and send the next drawing goal (guarded)."""
+        if self._send_pending:
+            self.get_logger().debug('Send already pending — skipping')
+            return
+        self._send_pending = True
+
+        # Cancel any outstanding retry timer
+        self._cancel_retry_timer()
+
         result = self._generate_drawing()
         if result is None:
             self.get_logger().error('Failed to generate drawing — stopping')
+            self._send_pending = False
             self._done = True
             return
 
         waypoints, orientation = result
 
-        self.get_logger().info(
-            f'Waiting for action server...')
+        self.get_logger().info('Waiting for action server...')
         self._client.wait_for_server()
 
         goal = ExecuteDrawing.Goal()
@@ -241,21 +253,44 @@ class DrawingDispatcher(Node):
         goal_handle = future.result()
         if not goal_handle.accepted:
             self.get_logger().warn('Goal rejected by server')
+            self._send_pending = False          # allow next attempt
             if self._continuous:
-                # Retry after a short delay
-                self.create_timer(2.0, self._retry_timer_cb)
+                self._schedule_retry()
             else:
                 self._done = True
             return
 
         self.get_logger().info('Goal accepted — executing')
+        self._send_pending = False              # clear guard (goal is in-flight)
+        self._retry_delay = 2.0                 # reset back-off on success
         self._goal_handle = goal_handle
         result_future = goal_handle.get_result_async()
         result_future.add_done_callback(self._result_cb)
 
+    # ------------------------------------------------------------------
+    # One-shot retry helpers
+    # ------------------------------------------------------------------
+    def _schedule_retry(self):
+        """Schedule a single retry with exponential back-off."""
+        self._cancel_retry_timer()
+        delay = self._retry_delay
+        self.get_logger().info(f'Retrying in {delay:.1f}s …')
+        self._retry_timer = self.create_timer(
+            delay, self._retry_timer_cb)
+        # Increase delay for next rejection (capped)
+        self._retry_delay = min(self._retry_delay * 2.0,
+                                self._max_retry_delay)
+
     def _retry_timer_cb(self):
-        """Retry sending after rejection (one-shot)."""
+        """Fire once then destroy the timer."""
+        self._cancel_retry_timer()
         self.send_next_drawing()
+
+    def _cancel_retry_timer(self):
+        if self._retry_timer is not None:
+            self._retry_timer.cancel()
+            self.destroy_timer(self._retry_timer)
+            self._retry_timer = None
 
     def _feedback_cb(self, feedback_msg):
         """Log feedback from the server."""
@@ -276,6 +311,8 @@ class DrawingDispatcher(Node):
                 f'Drawing #{self._drawing_count} failed: {result.message}')
 
         self._goal_handle = None
+        self._send_pending = False          # ensure guard is cleared
+        self._cancel_retry_timer()          # cancel any stale retry
 
         if self._continuous:
             self.get_logger().info('Dispatching next drawing...')

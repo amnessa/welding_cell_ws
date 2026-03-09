@@ -1028,6 +1028,10 @@ class DrawingActionServer(Node):
         t0 = self.get_clock().now()
         last_feedback_time = 0.0
 
+        # Monitor at 10 Hz — the full trajectory is already on the robot
+        # controller; we only need to watch convergence, not drive the motion.
+        monitor_dt = 0.1
+
         # Allow extra time for real robot to finish (2× trajectory duration)
         timeout = total_time * 2.0 + 10.0
 
@@ -1036,7 +1040,10 @@ class DrawingActionServer(Node):
                 self.get_logger().info('Execution canceled (real)')
                 return False
 
-            self._mirror_real_to_sim()
+            try:
+                self._mirror_real_to_sim()
+            except Exception:
+                pass  # best-effort sim mirror
 
             elapsed = (self.get_clock().now() - t0).nanoseconds * 1e-9
 
@@ -1053,7 +1060,7 @@ class DrawingActionServer(Node):
 
             # Estimate progress from nearest master_path point
             real_q = self._get_real_ordered_joints()
-            if real_q is not None and elapsed - last_feedback_time >= 0.5:
+            if real_q is not None and elapsed - last_feedback_time >= 1.0:
                 last_feedback_time = elapsed
                 dists = [float(np.max(np.abs(real_q - q)))
                          for q in master_path]
@@ -1068,7 +1075,7 @@ class DrawingActionServer(Node):
                     f'  ~step {closest}/{len(master_path)-1}  '
                     f'({pct:.0f}%)  [{phase_label}]')
 
-            _time.sleep(self._dt)
+            _time.sleep(monitor_dt)
 
     # ------------------------------------------------------------------
     # Phase lookup helpers
@@ -1104,54 +1111,63 @@ class DrawingActionServer(Node):
         """Best-effort retract → home on shutdown."""
         self.get_logger().info('Shutdown sequence: retract + home …')
 
-        q_current = self._get_ordered_joints()
+        try:
+            q_current = self._get_ordered_joints()
+        except Exception:
+            q_current = None
         if q_current is None:
             self.get_logger().warn(
                 'No joint state available — skipping shutdown sequence')
             return
 
-        from ur5e_rrt_planner import ur5e_fk
+        try:
+            from ur5e_rrt_planner import ur5e_fk
 
-        # Build retract + homing path
-        T_now = ur5e_fk(q_current)
-        current_pos = T_now[:3, 3].copy()
-        current_quat = rotmat_to_quat(T_now[:3, :3])
-        cart_dt = 1.0 / self.execution_hz
+            # Build retract + homing path
+            T_now = ur5e_fk(q_current)
+            current_pos = T_now[:3, 3].copy()
+            current_quat = rotmat_to_quat(T_now[:3, :3])
+            cart_dt = 1.0 / self.execution_hz
 
-        lift_pos = current_pos.copy()
-        lift_pos[2] += self._retract_height
+            lift_pos = current_pos.copy()
+            lift_pos[2] += self._retract_height
 
-        retract_wps = _interpolate_cartesian_smooth(
-            [current_pos, lift_pos], current_quat,
-            self.approach_v_max, self.approach_a_max, cart_dt)
-        retract_path = self._ik_solve_cartesian_path(
-            retract_wps, q_current, 'Shutdown retract')
+            retract_wps = _interpolate_cartesian_smooth(
+                [current_pos, lift_pos], current_quat,
+                self.approach_v_max, self.approach_a_max, cart_dt)
+            retract_path = self._ik_solve_cartesian_path(
+                retract_wps, q_current, 'Shutdown retract')
 
-        # Homing (cosine joint interpolation)
-        q_retracted = retract_path[-1] if retract_path else q_current
-        q_home = self._home_positions.copy()
-        n_home = max(int(1.0 * self.execution_hz), 20)
-        home_path = [q_retracted.copy()]
-        for i in range(1, n_home + 1):
-            alpha = 0.5 * (1.0 - math.cos(math.pi * i / n_home))
-            home_path.append((1.0 - alpha) * q_retracted + alpha * q_home)
+            # Homing (cosine joint interpolation)
+            q_retracted = retract_path[-1] if retract_path else q_current
+            q_home = self._home_positions.copy()
+            n_home = max(int(1.0 * self.execution_hz), 20)
+            home_path = [q_retracted.copy()]
+            for i in range(1, n_home + 1):
+                alpha = 0.5 * (1.0 - math.cos(math.pi * i / n_home))
+                home_path.append(
+                    (1.0 - alpha) * q_retracted + alpha * q_home)
 
-        full_path = (retract_path if retract_path else [q_current]) + \
-            home_path[1:]
+            full_path = (retract_path if retract_path else [q_current]) + \
+                home_path[1:]
 
-        if self._real_robot:
-            # Send trajectory to real robot (fire-and-forget)
-            times = self._compute_phase_timing(full_path)
-            self._send_full_trajectory(full_path, times)
-            self.get_logger().info(
-                'Shutdown trajectory sent to real robot')
-        else:
-            # Sim: play back quickly (best effort)
-            for q in full_path:
-                self._pub_joints(q)
-                _time.sleep(self._dt)
-            self.get_logger().info(
-                'Shutdown sequence published to sim')
+            if self._real_robot:
+                # Send trajectory to real robot (fire-and-forget)
+                times = self._compute_phase_timing(full_path)
+                self._send_full_trajectory(full_path, times)
+                self.get_logger().info(
+                    'Shutdown trajectory sent to real robot')
+            else:
+                # Sim: play back quickly (best effort)
+                for q in full_path:
+                    self._pub_joints(q)
+                    _time.sleep(self._dt)
+                self.get_logger().info(
+                    'Shutdown sequence published to sim')
+        except Exception as exc:
+            # Context may already be invalid after Ctrl-C — swallow errors
+            self.get_logger().warn(
+                f'Shutdown sequence could not complete: {exc}')
 
 
 # ═══════════════════════════════════════════════════════════════════════════
