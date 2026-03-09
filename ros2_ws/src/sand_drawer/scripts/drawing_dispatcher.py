@@ -315,8 +315,11 @@ class DrawingDispatcher(Node):
         self._cancel_retry_timer()          # cancel any stale retry
 
         if self._continuous:
-            self.get_logger().info('Dispatching next drawing...')
-            self.send_next_drawing()
+            self.get_logger().info('Dispatching next drawing (after 0.5s)...')
+            # Brief pause to let the server's executor fully complete
+            self._cancel_retry_timer()
+            self._retry_timer = self.create_timer(
+                0.5, self._retry_timer_cb)
         else:
             self.get_logger().info('Single drawing done — exiting')
             self._done = True

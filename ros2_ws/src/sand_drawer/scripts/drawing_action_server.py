@@ -602,10 +602,15 @@ class DrawingActionServer(Node):
     # Concatenate phases → master timeline with phase boundaries
     # ------------------------------------------------------------------
     def _concat_phase_times(
-        self, phases: List[Tuple[str, List[np.ndarray]]]
+        self, phases: List[Tuple[str, List[np.ndarray], Optional[float]]]
     ) -> Tuple[List[np.ndarray], List[float],
                List[Tuple[str, int, int]]]:
         """Concatenate independently-timed phases.
+
+        Each phase is (label, path, cartesian_duration_or_none).
+        Cartesian phases use their velocity-derived duration so that
+        max_linear_vel / approach_linear_vel actually control speed.
+        Joint-space phases use trapezoidal joint timing.
 
         Returns
         -------
@@ -618,10 +623,16 @@ class DrawingActionServer(Node):
         phase_info: List[Tuple[str, int, int]] = []
         t_offset = 0.0
 
-        for label, plist in phases:
+        for label, plist, cart_dur in phases:
             if not plist:
                 continue
-            phase_times = self._compute_phase_timing(plist)
+            if cart_dur is not None and cart_dur > 0 and len(plist) > 1:
+                # Cartesian phase: spread points evenly over the
+                # Cartesian-velocity-derived duration.
+                phase_times = [i * cart_dur / (len(plist) - 1)
+                               for i in range(len(plist))]
+            else:
+                phase_times = self._compute_phase_timing(plist)
             start_idx = len(master_path)
             for j, (q, t) in enumerate(zip(plist, phase_times)):
                 if j == 0 and master_path:
@@ -696,9 +707,20 @@ class DrawingActionServer(Node):
         self._ik_total_count = 0
 
         try:
-            return self._execute_goal_inner(goal_handle)
+            result = self._execute_goal_inner(goal_handle)
+        except Exception as exc:
+            self.get_logger().error(f'Goal execution error: {exc}')
+            try:
+                goal_handle.abort()
+            except Exception:
+                pass
+            result = ExecuteDrawing.Result(
+                success=False, message=f'Internal error: {exc}')
         finally:
+            # Clear _executing AFTER setting the goal terminal state
+            # but the result object is already constructed.
             self._executing = False
+        return result
 
     def _execute_goal_inner(self, goal_handle):
         feedback = ExecuteDrawing.Feedback()
@@ -788,12 +810,19 @@ class DrawingActionServer(Node):
                 success=False, message='Drawing canceled')
         if success:
             self._last_q = master_path[-1].copy()
-            goal_handle.succeed()
+            try:
+                goal_handle.succeed()
+            except Exception as exc:
+                self.get_logger().error(
+                    f'goal_handle.succeed() failed: {exc}')
             self.get_logger().info('Drawing complete ✓')
             return ExecuteDrawing.Result(
                 success=True, message='Drawing complete')
         else:
-            goal_handle.abort()
+            try:
+                goal_handle.abort()
+            except Exception:
+                pass
             return ExecuteDrawing.Result(
                 success=False, message='Execution failed')
 
@@ -805,9 +834,9 @@ class DrawingActionServer(Node):
         self,
         draw_positions: List[np.ndarray],
         orientation_xyzw: list,
-    ) -> Optional[List[Tuple[str, List[np.ndarray]]]]:
+    ) -> Optional[List[Tuple[str, List[np.ndarray], Optional[float]]]]:
         """Build all phases for one drawing. Returns list of
-        (label, joint_path) tuples or None on failure."""
+        (label, joint_path, cartesian_duration_or_none) tuples."""
         from ur5e_rrt_planner import (ur5e_fk, rrt_connect,
                                       smooth_path, bezier_smooth_path)
 
@@ -815,7 +844,7 @@ class DrawingActionServer(Node):
         if q_current is None:
             return None
         cart_dt = 1.0 / self.execution_hz
-        phases: List[Tuple[str, List[np.ndarray]]] = []
+        phases: List[Tuple[str, List[np.ndarray], Optional[float]]] = []
 
         self.get_logger().info(
             '═══════════════════════════════════════════════\n'
@@ -842,7 +871,8 @@ class DrawingActionServer(Node):
         if not retract_path:
             self.get_logger().error('RETRACT_UP IK failed')
             return None
-        phases.append(('retract_up', retract_path))
+        retract_dur = (len(retract_wps) - 1) * cart_dt
+        phases.append(('retract_up', retract_path, retract_dur))
 
         # ── 2. HOMING (first goal only) ──────────────────────────────
         if self._first_goal:
@@ -855,11 +885,11 @@ class DrawingActionServer(Node):
                 alpha = 0.5 * (1.0 - math.cos(math.pi * i / n_home))
                 q_interp = (1.0 - alpha) * q_retracted + alpha * q_home
                 retract_home_path.append(q_interp)
-            phases.append(('retract_home', retract_home_path))
+            phases.append(('retract_home', retract_home_path, None))
 
             n_hold = max(int(self._home_hold_sec * self.execution_hz), 1)
             home_hold_path = [q_home.copy() for _ in range(n_hold + 1)]
-            phases.append(('home_hold', home_hold_path))
+            phases.append(('home_hold', home_hold_path, None))
 
             self.get_logger().info(
                 f'  [HOMING] {n_home} interp steps + '
@@ -889,7 +919,7 @@ class DrawingActionServer(Node):
 
         smoothed = smooth_path(raw_rrt, max_attempts=200)
         rrt_dense = bezier_smooth_path(smoothed, max_step=0.02)
-        phases.append(('rrt', list(rrt_dense)))
+        phases.append(('rrt', list(rrt_dense), None))
 
         self.get_logger().info(
             f'        {len(raw_rrt)} raw → {len(smoothed)} smoothed '
@@ -910,7 +940,8 @@ class DrawingActionServer(Node):
         descent_path = self._ik_solve_cartesian_path(
             descent_wps, rrt_dense[-1], 'Descent')
         if descent_path:
-            phases.append(('descent', descent_path))
+            descent_dur = (len(descent_wps) - 1) * cart_dt
+            phases.append(('descent', descent_path, descent_dur))
         else:
             self.get_logger().warn(
                 '  Descent IK failed — drawing starts from approach height')
@@ -925,7 +956,8 @@ class DrawingActionServer(Node):
         if not draw_path or len(draw_path) < 2:
             self.get_logger().error('Drawing IK returned too few solutions')
             return None
-        phases.append(('drawing', draw_path))
+        draw_dur = (len(draw_wps) - 1) * cart_dt
+        phases.append(('drawing', draw_path, draw_dur))
 
         # ── 6. ASCENT (surface → approach height) ─────────────────────
         last_draw_pos = draw_positions[-1].copy()
@@ -936,7 +968,8 @@ class DrawingActionServer(Node):
         ascent_path = self._ik_solve_cartesian_path(
             ascent_wps, draw_path[-1], 'Ascent')
         if ascent_path:
-            phases.append(('ascent', ascent_path))
+            ascent_dur = (len(ascent_wps) - 1) * cart_dt
+            phases.append(('ascent', ascent_path, ascent_dur))
         else:
             self.get_logger().warn('Ascent IK failed — holding last draw pos')
 
@@ -1008,6 +1041,52 @@ class DrawingActionServer(Node):
 
         return True
 
+    # ------------------------------------------------------------------
+    # Downsample trajectory for real robot controller
+    # ------------------------------------------------------------------
+    def _downsample_for_real_robot(
+        self,
+        path: List[np.ndarray],
+        times: List[float],
+        target_dt: float = 0.05,
+    ) -> Tuple[List[np.ndarray], List[float]]:
+        """Resample trajectory at *target_dt* intervals via linear interp.
+
+        The UR scaled_joint_trajectory_controller works best with moderate
+        point density (10–50 Hz).  Dense trajectories (>1000 pts with
+        sub-millisecond timing gaps) can cause the controller to stall
+        or abort partway through the motion.
+        """
+        if len(times) < 2 or times[-1] <= 0:
+            return path, times
+
+        total_time = times[-1]
+        n_out = max(int(total_time / target_dt) + 1, 2)
+        new_times: List[float] = []
+        new_path: List[np.ndarray] = []
+        times_arr = np.array(times)
+
+        for i in range(n_out):
+            t = min(i * target_dt, total_time)
+            idx = int(np.searchsorted(times_arr, t, side='right')) - 1
+            idx = max(0, min(idx, len(path) - 2))
+            t0, t1 = times[idx], times[idx + 1]
+            alpha = (t - t0) / max(t1 - t0, 1e-9)
+            alpha = max(0.0, min(1.0, alpha))
+            q = (1.0 - alpha) * path[idx] + alpha * path[idx + 1]
+            new_times.append(t)
+            new_path.append(q)
+
+        # Always include the exact final point
+        if abs(new_times[-1] - total_time) > 1e-6:
+            new_times.append(total_time)
+            new_path.append(path[-1].copy())
+
+        self.get_logger().info(
+            f'Downsampled trajectory: {len(path)} → {len(new_path)} pts '
+            f'(target_dt={target_dt:.3f}s)')
+        return new_path, new_times
+
     # ══════════════════════════════════════════════════════════════════
     # Execution: Real robot (send trajectory + convergence monitoring)
     # ══════════════════════════════════════════════════════════════════
@@ -1022,7 +1101,13 @@ class DrawingActionServer(Node):
     ) -> bool:
         """Send trajectory to real robot and monitor convergence."""
 
-        self._send_full_trajectory(master_path, master_times)
+        # Downsample to ~20 Hz for the UR Joint Trajectory Controller.
+        # Dense trajectories (2000+ pts with sub-ms time spacing) can
+        # cause the controller to stall or abort partway through.
+        ds_path, ds_times = self._downsample_for_real_robot(
+            master_path, master_times, target_dt=0.05)
+        self._send_full_trajectory(ds_path, ds_times)
+
         target_q = master_path[-1]
         total_time = master_times[-1]
         t0 = self.get_clock().now()
@@ -1032,8 +1117,12 @@ class DrawingActionServer(Node):
         # controller; we only need to watch convergence, not drive the motion.
         monitor_dt = 0.1
 
-        # Allow extra time for real robot to finish (2× trajectory duration)
-        timeout = total_time * 2.0 + 10.0
+        # Minimum time before convergence checks — prevents false positives
+        # when the robot happens to be near the target from a prior run.
+        min_monitor_time = min(total_time * 0.5, 5.0)
+
+        # Allow extra time for real robot to finish
+        timeout = total_time * 1.5 + 15.0
 
         while True:
             if goal_handle.is_cancel_requested:
@@ -1047,10 +1136,13 @@ class DrawingActionServer(Node):
 
             elapsed = (self.get_clock().now() - t0).nanoseconds * 1e-9
 
-            # Convergence check
-            if self._real_robot_converged(target_q):
+            # Convergence check (only after minimum monitoring time)
+            if elapsed > min_monitor_time and \
+                    self._real_robot_converged(target_q):
                 self._last_q = target_q.copy()
-                self.get_logger().info('Real robot converged to target')
+                self.get_logger().info(
+                    f'Real robot converged to target '
+                    f'(after {elapsed:.1f}s)')
                 return True
 
             if elapsed > timeout:
