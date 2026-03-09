@@ -1,0 +1,23 @@
+# ExecuteDrawing.action — sand_drawer action interface
+#
+# Sends a drawing (Cartesian waypoints + orientation) to the drawing server.
+# The server pre-computes and executes the full motion sequence:
+#   RETRACT_UP → [HOMING] → RRT → DESCENT → DRAWING → ASCENT
+#
+# After ASCENT the server returns SUCCESS and waits for the next goal.
+
+# ---- Goal ----
+# Cartesian waypoints defining the drawing path on the surface (base_link frame)
+geometry_msgs/Point[] waypoints
+# Fixed end-effector orientation during drawing (quaternion x,y,z,w)
+geometry_msgs/Quaternion orientation
+---
+# ---- Result ----
+bool success
+string message
+---
+# ---- Feedback ----
+# Current phase of the state machine
+string current_phase
+# Drawing progress (0.0 → 1.0), only meaningful during DRAWING phase
+float32 drawing_progress

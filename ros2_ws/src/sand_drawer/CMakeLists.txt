@@ -16,6 +16,15 @@ find_package(geometry_msgs REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(moveit_ros_planning REQUIRED)
 find_package(moveit_core REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
+
+# ============================================
+# Action / message generation
+# ============================================
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "action/ExecuteDrawing.action"
+  DEPENDENCIES geometry_msgs
+)
 
 # ============================================
 # C++ Executables
@@ -51,6 +60,8 @@ install(PROGRAMS
   scripts/cartesian_square_controller.py
   scripts/pd_auto_tuner.py
   scripts/freedrive_plane_capture.py
+  scripts/drawing_action_server.py
+  scripts/drawing_dispatcher.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -67,4 +78,5 @@ install(DIRECTORY
   DESTINATION share/${PROJECT_NAME}
 )
 
+ament_export_dependencies(rosidl_default_runtime)
 ament_package()

@@ -7,6 +7,7 @@ Modes (via mode:= launch argument):
   trajectory (default)  — follow waypoints from the plane JSON (velocity servo)
   teleop                — move EE to plane center, then accept keyboard commands
   cartesian             — position-controlled square drawing via Cartesian IK
+  action                — action-based sequential drawing (server + dispatcher)
   capture               — run plane_solver_node to capture 4 points (sim, red ball)
   freedrive_capture     — capture 4 TCP poses on real robot via freedrive mode
 
@@ -15,6 +16,8 @@ Usage:
   ros2 launch sand_drawer sand_drawer.launch.py mode:=teleop
   ros2 launch sand_drawer sand_drawer.launch.py mode:=cartesian real_robot:=true
   ros2 launch sand_drawer sand_drawer.launch.py mode:=cartesian loop:=true
+  ros2 launch sand_drawer sand_drawer.launch.py mode:=action real_robot:=true
+  ros2 launch sand_drawer sand_drawer.launch.py mode:=action continuous:=true
   ros2 launch sand_drawer sand_drawer.launch.py loop:=true
   ros2 launch sand_drawer sand_drawer.launch.py mode:=capture
   ros2 launch sand_drawer sand_drawer.launch.py mode:=freedrive_capture
@@ -66,6 +69,7 @@ def launch_setup(context, *args, **kwargs):
     kd_angular_str   = LaunchConfiguration("kd_angular").perform(context)
     real_robot_str   = LaunchConfiguration("real_robot").perform(context)
     real_robot        = real_robot_str == "true"
+    continuous_str    = LaunchConfiguration("continuous").perform(context)
     max_joint_speed_deg = float(
         LaunchConfiguration("max_joint_speed_deg").perform(context))
     max_joint_accel_deg = float(
@@ -130,6 +134,53 @@ def launch_setup(context, *args, **kwargs):
                 "tcp_pose_topic": "/tcp_pose_broadcaster/pose",
                 "freedrive_controller": "freedrive_mode_controller",
                 "trajectory_controller": "scaled_joint_trajectory_controller",
+            }],
+        ))
+        return nodes
+
+    if mode_str == "action":
+        # ---- Action-based sequential drawing (server + dispatcher) ----
+        action_traj_key = traj_key_str if traj_key_str != "projected_vector_trajectory" else "line"
+        nodes.append(Node(
+            package="sand_drawer",
+            executable="drawing_action_server.py",
+            name="drawing_action_server",
+            output="screen",
+            parameters=[{
+                "use_sim_time": use_sim_time,
+                "plane_json_file": plane_json_str or default_plane_json,
+                "approach_height": 0.08,
+                "max_linear_vel": 20.0,
+                "max_linear_accel": 20.0,
+                "approach_linear_vel": 10.0,
+                "approach_linear_accel": 10.0,
+                "ik_damping": 0.05,
+                "execution_hz": 100.0,
+                "max_joint_step": 0.15,
+                "shoulder_lift_max": 0.0,
+                "shoulder_lift_min": -2.5,
+                "elbow_max": -0.3,
+                "elbow_min": -3.14,
+                "ik_num_seeds": 30,
+                "real_robot": real_robot,
+                "max_joint_speed_deg": max_joint_speed_deg,
+                "max_joint_accel_deg": max_joint_accel_deg,
+            }],
+        ))
+        nodes.append(Node(
+            package="sand_drawer",
+            executable="drawing_dispatcher.py",
+            name="drawing_dispatcher",
+            output="screen",
+            parameters=[{
+                "use_sim_time": use_sim_time,
+                "plane_json_file": plane_json_str or default_plane_json,
+                "trajectory_key": action_traj_key,
+                "line_u_start": float(line_u_start_str),
+                "line_v_start": float(line_v_start_str),
+                "line_u_end":   float(line_u_end_str),
+                "line_v_end":   float(line_v_end_str),
+                "continuous": continuous_str == "true",
             }],
         ))
         return nodes
@@ -290,7 +341,9 @@ def generate_launch_description():
         DeclareLaunchArgument("loop",           default_value="false"),
         DeclareLaunchArgument("trajectory_key", default_value="projected_vector_trajectory"),
         DeclareLaunchArgument("mode",           default_value="trajectory",
-                              description="trajectory | teleop | cartesian | capture | freedrive_capture"),
+                              description="trajectory | teleop | cartesian | action | capture | freedrive_capture"),
+        DeclareLaunchArgument("continuous",      default_value="false",
+                              description="Continuous drawing dispatch (action mode)"),
         # Line UV coordinates (shared by cartesian & velocity modes)
         DeclareLaunchArgument("line_u_start",   default_value="0.5"),
         DeclareLaunchArgument("line_v_start",   default_value="0.3"),
