@@ -150,10 +150,10 @@ def launch_setup(context, *args, **kwargs):
                 "use_sim_time": use_sim_time,
                 "plane_json_file": plane_json_str or default_plane_json,
                 "approach_height": 0.08,
-                "max_linear_vel": 0.05,
-                "max_linear_accel": 0.02,
-                "approach_linear_vel": 0.05,
-                "approach_linear_accel": 0.02,
+                "max_linear_vel": 0.07,
+                "max_linear_accel": 0.03,
+                "approach_linear_vel": 0.04,
+                "approach_linear_accel": 0.03,
                 "ik_damping": 0.05,
                 "execution_hz": 100.0,
                 "max_joint_step": 0.15,
@@ -165,7 +165,17 @@ def launch_setup(context, *args, **kwargs):
                 "real_robot": real_robot,
                 "max_joint_speed_deg": max_joint_speed_deg,
                 "max_joint_accel_deg": max_joint_accel_deg,
+                "totg_path_tolerance": 0.1,
+                "totg_resample_dt": 0.01,
             }],
+        ))
+        # TOTG service node (MoveIt 2 Time-Optimal Trajectory Generation)
+        nodes.append(Node(
+            package="sand_drawer",
+            executable="totg_service_node",
+            name="totg_service_node",
+            output="screen",
+            parameters=[{"use_sim_time": use_sim_time}],
         ))
         nodes.append(Node(
             package="sand_drawer",

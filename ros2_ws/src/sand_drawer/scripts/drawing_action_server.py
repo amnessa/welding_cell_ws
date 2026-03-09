@@ -66,6 +66,7 @@ from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 from sand_drawer.action import ExecuteDrawing
+from sand_drawer.srv import ComputeTOTG
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -204,6 +205,8 @@ class DrawingActionServer(Node):
                                '/scaled_joint_trajectory_controller/joint_trajectory')
         self.declare_parameter('max_joint_speed_deg', 45.0)
         self.declare_parameter('max_joint_accel_deg', 40.0)
+        self.declare_parameter('totg_path_tolerance', 0.1)
+        self.declare_parameter('totg_resample_dt', 0.01)
 
         self._load_params()
         self._load_plane_json()
@@ -268,6 +271,12 @@ class DrawingActionServer(Node):
         self._executing = False
         self._last_q: Optional[np.ndarray] = None
 
+        # ---- TOTG service client ----
+        self._totg_client = self.create_client(
+            ComputeTOTG, 'compute_totg',
+            callback_group=ReentrantCallbackGroup())
+        self._totg_available = False
+
         # ---- action server ----
         self._action_server = ActionServer(
             self,
@@ -305,6 +314,8 @@ class DrawingActionServer(Node):
         self.ik_num_seeds        = g('ik_num_seeds').value
         self._max_joint_speed_deg = float(g('max_joint_speed_deg').value)
         self._max_joint_accel_deg = float(g('max_joint_accel_deg').value)
+        self._totg_path_tolerance = float(g('totg_path_tolerance').value)
+        self._totg_resample_dt   = float(g('totg_resample_dt').value)
 
     # ------------------------------------------------------------------
     # Plane JSON loading — only plane geometry (normal, etc.)
@@ -548,54 +559,109 @@ class DrawingActionServer(Node):
         return path
 
     # ------------------------------------------------------------------
-    # Trapezoidal timing for joint-space paths (per phase)
+    # Time-Optimal Trajectory Generation via MoveIt 2 TOTG service
     # ------------------------------------------------------------------
-    def _compute_phase_timing(self, path: List[np.ndarray]) -> List[float]:
-        """Trapezoidal velocity profile over one phase (segment group).
+    def _compute_totg(
+        self, path: List[np.ndarray]
+    ) -> Optional[Tuple[List[np.ndarray], List[float]]]:
+        """Call the C++ TOTG service to time-parameterize a joint path.
 
-        Builds cumulative joint-space arc length, then maps a single
-        accel → cruise → decel onto it.
+        Returns (resampled_path, timestamps) or None on failure.
+        The TOTG algorithm (Kunz & Stilman 2012) produces the
+        time-optimal trajectory that respects per-joint velocity
+        and acceleration limits with smooth corner blending.
         """
         if len(path) <= 1:
+            return path[:], [0.0] * len(path)
+
+        n_joints = len(path[0])
+
+        # Build service request
+        req = ComputeTOTG.Request()
+        req.num_joints = n_joints
+        req.waypoints_flat = []
+        for q in path:
+            req.waypoints_flat.extend(q.tolist())
+        req.max_velocity = [self._max_joint_speed_rad] * n_joints
+        req.max_acceleration = [self._max_joint_accel_rad] * n_joints
+        req.path_tolerance = self._totg_path_tolerance
+        req.resample_dt = self._totg_resample_dt
+
+        # Wait for service (with timeout)
+        if not self._totg_available:
+            if not self._totg_client.wait_for_service(timeout_sec=10.0):
+                self.get_logger().error(
+                    'TOTG service not available — cannot time-parameterize')
+                return None
+            self._totg_available = True
+
+        # Call service — spin-free wait (compatible with MultiThreadedExecutor)
+        future = self._totg_client.call_async(req)
+        deadline = _time.monotonic() + 30.0
+        while not future.done():
+            if _time.monotonic() > deadline:
+                self.get_logger().error('TOTG service call timed out')
+                return None
+            _time.sleep(0.005)
+
+        if future.result() is None:
+            self.get_logger().error('TOTG service call returned None')
+            return None
+
+        resp = future.result()
+        if not resp.success:
+            self.get_logger().error(f'TOTG failed: {resp.message}')
+            return None
+
+        # Unpack flat response
+        n_out = resp.num_output_points
+        timestamps = list(resp.timestamps)
+        resampled_path = []
+        for i in range(n_out):
+            q = np.array(
+                resp.timed_positions_flat[i * n_joints:(i + 1) * n_joints],
+                dtype=float)
+            resampled_path.append(q)
+
+        self.get_logger().info(
+            f'    TOTG: {len(path)} in → {n_out} out, '
+            f'{timestamps[-1]:.2f}s')
+        return resampled_path, timestamps
+
+    def _compute_phase_timing_fallback(
+        self, path: List[np.ndarray]
+    ) -> List[float]:
+        """Fallback IPTP timing if TOTG service is unavailable."""
+        if len(path) <= 1:
             return [0.0] * len(path)
+
         v_max = self._max_joint_speed_rad
         a_max = self._max_joint_accel_rad
+        n_seg = len(path) - 1
 
-        # Cumulative arc length (bottleneck joint per step)
-        cum = [0.0]
-        for i in range(1, len(path)):
-            d = float(np.max(np.abs(path[i] - path[i - 1])))
-            cum.append(cum[-1] + d)
-        total_dist = cum[-1]
+        dt = np.empty(n_seg)
+        for i in range(n_seg):
+            max_dist = float(np.max(np.abs(path[i + 1] - path[i])))
+            dt[i] = max(max_dist / v_max, 1e-4)
 
-        if total_dist < 1e-9:
-            return [i * 0.01 for i in range(len(path))]
+        for i in range(n_seg - 1):
+            for j in range(len(path[0])):
+                v_cur = (path[i + 1][j] - path[i][j]) / dt[i]
+                v_nxt = (path[i + 2][j] - path[i + 1][j]) / dt[i + 1]
+                if abs(v_nxt - v_cur) / dt[i + 1] > a_max:
+                    dt[i + 1] = max(dt[i + 1],
+                                    abs(v_nxt - v_cur) / a_max)
 
-        # Trapezoidal profile parameters
-        d_accel = v_max * v_max / (2.0 * a_max)
-        if 2.0 * d_accel >= total_dist:
-            d_accel = total_dist / 2.0
-            v_peak = math.sqrt(2.0 * a_max * d_accel)
-            t_accel = v_peak / a_max
-            t_cruise = 0.0
-        else:
-            v_peak = v_max
-            t_accel = v_max / a_max
-            t_cruise = (total_dist - 2.0 * d_accel) / v_max
-        d_decel_start = total_dist - d_accel
+        for i in range(n_seg - 2, -1, -1):
+            for j in range(len(path[0])):
+                v_cur = (path[i + 1][j] - path[i][j]) / dt[i]
+                v_nxt = (path[i + 2][j] - path[i + 1][j]) / dt[i + 1]
+                if abs(v_cur - v_nxt) / dt[i] > a_max:
+                    dt[i] = max(dt[i], abs(v_cur - v_nxt) / a_max)
 
         times = [0.0]
-        for i in range(1, len(path)):
-            s = cum[i]
-            if s <= d_accel:
-                t = math.sqrt(2.0 * s / a_max) if s > 0 else 0.0
-            elif s <= d_decel_start:
-                t = t_accel + (s - d_accel) / v_peak
-            else:
-                s_d = s - d_decel_start
-                disc = max(v_peak * v_peak - 2.0 * a_max * s_d, 0.0)
-                t = t_accel + t_cruise + (v_peak - math.sqrt(disc)) / a_max
-            times.append(max(t, times[-1] + 1e-4))
+        for t in dt:
+            times.append(times[-1] + t)
         return times
 
     # ------------------------------------------------------------------
@@ -610,7 +676,7 @@ class DrawingActionServer(Node):
         Each phase is (label, path, cartesian_duration_or_none).
         Cartesian phases use their velocity-derived duration so that
         max_linear_vel / approach_linear_vel actually control speed.
-        Joint-space phases use trapezoidal joint timing.
+        Joint-space phases use MoveIt TOTG (with IPTP fallback).
 
         Returns
         -------
@@ -629,12 +695,24 @@ class DrawingActionServer(Node):
             if cart_dur is not None and cart_dur > 0 and len(plist) > 1:
                 # Cartesian phase: spread points evenly over the
                 # Cartesian-velocity-derived duration.
+                phase_path = plist
                 phase_times = [i * cart_dur / (len(plist) - 1)
                                for i in range(len(plist))]
+                timing_src = 'cartesian'
             else:
-                phase_times = self._compute_phase_timing(plist)
+                # Joint-space phase: use TOTG (with IPTP fallback)
+                totg_result = self._compute_totg(plist)
+                if totg_result is not None:
+                    phase_path, phase_times = totg_result
+                    timing_src = 'TOTG'
+                else:
+                    self.get_logger().warn(
+                        f'  TOTG failed for {label} — using IPTP fallback')
+                    phase_path = plist
+                    phase_times = self._compute_phase_timing_fallback(plist)
+                    timing_src = 'IPTP-fallback'
             start_idx = len(master_path)
-            for j, (q, t) in enumerate(zip(plist, phase_times)):
+            for j, (q, t) in enumerate(zip(phase_path, phase_times)):
                 if j == 0 and master_path:
                     continue  # skip duplicate boundary point
                 master_path.append(np.asarray(q, dtype=float))
@@ -645,7 +723,8 @@ class DrawingActionServer(Node):
             phase_info.append((label, start_idx, end_idx))
             dur = phase_times[-1] if phase_times else 0.0
             self.get_logger().info(
-                f'  Phase: {label:15s}  {len(plist):4d} pts  {dur:.2f}s')
+                f'  Phase: {label:15s}  {len(phase_path):4d} pts  '
+                f'{dur:.2f}s  [{timing_src}]')
 
         return master_path, master_times, phase_info
 
@@ -993,8 +1072,12 @@ class DrawingActionServer(Node):
         """Play back the pre-computed trajectory in simulation."""
 
         total_time = master_times[-1]
-        start_time = self.get_clock().now()
+        start_wall = _time.monotonic()          # wall-clock — sim-time-safe
         last_feedback_time = 0.0
+
+        self.get_logger().info(
+            f'Starting sim execution: {len(master_path)} pts, '
+            f'{total_time:.1f}s')
 
         while True:
             # -- cancel check --
@@ -1002,8 +1085,7 @@ class DrawingActionServer(Node):
                 self.get_logger().info('Execution canceled')
                 return False
 
-            elapsed = (self.get_clock().now()
-                       - start_time).nanoseconds * 1e-9
+            elapsed = _time.monotonic() - start_wall
 
             if elapsed >= total_time:
                 # Publish final position
@@ -1245,7 +1327,7 @@ class DrawingActionServer(Node):
 
             if self._real_robot:
                 # Send trajectory to real robot (fire-and-forget)
-                times = self._compute_phase_timing(full_path)
+                times = self._compute_phase_timing_fallback(full_path)
                 self._send_full_trajectory(full_path, times)
                 self.get_logger().info(
                     'Shutdown trajectory sent to real robot')

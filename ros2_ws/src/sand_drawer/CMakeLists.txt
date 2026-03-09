@@ -23,6 +23,7 @@ find_package(rosidl_default_generators REQUIRED)
 # ============================================
 rosidl_generate_interfaces(${PROJECT_NAME}
   "action/ExecuteDrawing.action"
+  "srv/ComputeTOTG.srv"
   DEPENDENCIES geometry_msgs
 )
 
@@ -42,9 +43,21 @@ ament_target_dependencies(sand_drawer_jacobian_node
 )
 target_link_libraries(sand_drawer_jacobian_node Eigen3::Eigen)
 
+# TOTG Service Node — Time-Optimal Trajectory Generation
+add_executable(totg_service_node src/totg_service_node.cpp)
+ament_target_dependencies(totg_service_node
+  rclcpp
+  moveit_core
+)
+target_link_libraries(totg_service_node Eigen3::Eigen)
+# Link generated service interfaces to the TOTG node
+rosidl_get_typesupport_target(totg_typesupport ${PROJECT_NAME} rosidl_typesupport_cpp)
+target_link_libraries(totg_service_node ${totg_typesupport})
+
 # Install C++ executables
 install(TARGETS
   sand_drawer_jacobian_node
+  totg_service_node
   DESTINATION lib/${PROJECT_NAME}
 )
 
