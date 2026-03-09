@@ -1,6 +1,6 @@
 # UR5e Digital Twin - Welding Cell Workspace
 
-A ROS2 Humble workspace for developing algorithms and implementing sensors for a UR5e robot using NVIDIA Isaac Sim as the simulation environment.
+A ROS2 Humble for isaac sim and Jazzy for ros2 development workspace for developing algorithms and implementing sensors for a UR5e robot using NVIDIA Isaac Sim as the simulation environment.
 
 ## Overview
 
