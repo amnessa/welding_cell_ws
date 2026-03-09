@@ -12,15 +12,17 @@ Draw shapes on a flat surface using a UR5e robot arm, with support for **Isaac S
 4. [The Plane JSON — Central Data Contract](#the-plane-json--central-data-contract)
 5. [Motion Pipeline — Phase by Phase](#motion-pipeline--phase-by-phase)
 6. [Kinematics Engine (ur5e_rrt_planner.py)](#kinematics-engine-ur5e_rrt_plannerpy)
-7. [Cartesian Controller (cartesian_square_controller.py)](#cartesian-controller-cartesian_square_controllerpy)
-8. [Velocity Controller (planar_servo_controller.py)](#velocity-controller-planar_servo_controllerpy)
-9. [Jacobian IK Node (jacobian_calculator_node.cpp)](#jacobian-ik-node-jacobian_calculator_nodecpp)
-10. [Plane Capture — Simulation vs Real Robot](#plane-capture--simulation-vs-real-robot)
-11. [Real Robot Bridging](#real-robot-bridging)
-12. [Safety Systems](#safety-systems)
-13. [Parameter Reference](#parameter-reference)
-14. [Launch Modes & Usage](#launch-modes--usage)
-15. [Tuning Guide](#tuning-guide)
+7. [Action Mode — Drawing Server + Dispatcher](#action-mode--drawing-server--dispatcher)
+8. [TOTG Service Node (totg_service_node.cpp)](#totg-service-node-totg_service_nodecpp)
+9. [Cartesian Controller (cartesian_square_controller.py)](#cartesian-controller-cartesian_square_controllerpy)
+10. [Velocity Controller (planar_servo_controller.py)](#velocity-controller-planar_servo_controllerpy)
+11. [Jacobian IK Node (jacobian_calculator_node.cpp)](#jacobian-ik-node-jacobian_calculator_nodecpp)
+12. [Plane Capture — Simulation vs Real Robot](#plane-capture--simulation-vs-real-robot)
+13. [Real Robot Bridging](#real-robot-bridging)
+14. [Safety Systems](#safety-systems)
+15. [Parameter Reference](#parameter-reference)
+16. [Launch Modes & Usage](#launch-modes--usage)
+17. [Tuning Guide](#tuning-guide)
 
 ---
 
@@ -32,6 +34,7 @@ Draw shapes on a flat surface using a UR5e robot arm, with support for **Isaac S
 │                   sand_drawer.launch.py                                  │
 │                                                                         │
 │   Picks ONE mode and spawns the right nodes:                            │
+│     mode=action      → ActionServer + TOTG + Dispatcher (recommended)   │
 │     mode=trajectory  → PlanarServoController + JacobianCalc + RSP       │
 │     mode=teleop      → PlanarServoController (teleop) + JacobianCalc    │
 │     mode=cartesian   → CartesianDrawController + RSP                    │
@@ -109,7 +112,44 @@ Draw shapes on a flat surface using a UR5e robot arm, with support for **Isaac S
 └─────────────┘
 ```
 
-**Key difference:** The cartesian controller does its own IK internally (via `ur5e_rrt_planner.py`). The velocity controller sends Twist commands and relies on the C++ Jacobian node to resolve them into joint space.
+### Data Flow (Action mode — `mode=action`, **recommended**)
+
+```
+                    ┌──────────────────────┐
+                    │  sand_drawer_plane    │
+                    │       .json           │
+                    └──────────┬────────────┘
+                               │ read by both
+                ┌──────────────┼──────────────────────┐
+                ▼                                      ▼
+┌──────────────────────┐             ┌───────────────────────────────┐
+│  DrawingDispatcher   │──(action)──►│   DrawingActionServer         │
+│  Reads JSON / params │  Goal:      │   (pre-computes & executes)   │
+│  Generates waypoints │  waypoints  │                               │
+│  Sends goals via     │  + orient.  │  FK/IK/RRT from               │
+│  ExecuteDrawing      │             │  ur5e_rrt_planner.py          │
+│  action client       │◄─feedback───│                               │
+└──────────────────────┘  progress   │  Joint-space timing via:      │
+                                     │  ┌─────────────────────────┐  │
+                                     │  │ TOTG Service (C++)      │  │
+                                     │  │ compute_totg            │  │
+                                     │  │ (Kunz & Stilman 2012)   │  │
+                                     │  └─────────────────────────┘  │
+                                     └──────────┬────────────────────┘
+                                                │
+                              ┌─────────────────┼──────────────────┐
+                              ▼                                    ▼
+                  ┌─────────────────────┐            ┌─────────────────────┐
+                  │ Isaac Sim           │            │ UR Driver           │
+                  │ /isaac_joint_cmds   │            │ /scaled_joint_      │
+                  │                     │            │  trajectory_ctrl    │
+                  └─────────────────────┘            └─────────────────────┘
+```
+
+**Key differences between modes:**
+- **Action mode** decouples path generation (dispatcher) from execution (action server). Supports sequential multi-shape drawing via continuous dispatch. Uses MoveIt 2 TOTG for time-optimal, jerk-free joint-space timing on RRT and homing phases.
+- **Cartesian mode** does its own IK internally (via `ur5e_rrt_planner.py`). Single monolithic run.
+- **Velocity mode** sends Twist commands and relies on the C++ Jacobian node to resolve them into joint space.
 
 ---
 
@@ -117,8 +157,16 @@ Draw shapes on a flat surface using a UR5e robot arm, with support for **Isaac S
 
 ```
 sand_drawer/
+├── action/
+│   └── ExecuteDrawing.action           # Action interface for sequential drawing
+│
+├── srv/
+│   └── ComputeTOTG.srv                 # Service interface for TOTG timing
+│
 ├── scripts/
-│   ├── ur5e_rrt_planner.py          # FK, IK, RRT, path smoothing (LIBRARY)
+│   ├── ur5e_rrt_planner.py             # FK, IK, RRT, path smoothing (LIBRARY)
+│   ├── drawing_action_server.py        # Action-based drawing controller (ROS NODE)
+│   ├── drawing_dispatcher.py           # Action client / drawing feeder (ROS NODE)
 │   ├── cartesian_square_controller.py  # Position-controlled drawing (ROS NODE)
 │   ├── planar_servo_controller.py      # Velocity-controlled drawing (ROS NODE)
 │   ├── plane_solver_node.py            # Plane capture — simulation (ROS NODE)
@@ -128,24 +176,26 @@ sand_drawer/
 │   └── pd_auto_tuner.py               # Auto-tune PD gains (standalone)
 │
 ├── src/
-│   └── jacobian_calculator_node.cpp    # MoveIt Jacobian IK engine (C++ NODE)
+│   ├── jacobian_calculator_node.cpp    # MoveIt Jacobian IK engine (C++ NODE)
+│   └── totg_service_node.cpp           # MoveIt TOTG trajectory timing (C++ NODE)
 │
 ├── launch/
-│   └── sand_drawer.launch.py          # Main launch file (all modes)
+│   └── sand_drawer.launch.py           # Main launch file (all modes)
 │
 ├── generated_planes/
-│   └── sand_drawer_plane.json         # Plane definition (output of capture)
+│   └── sand_drawer_plane.json          # Plane definition (output of capture)
 │
-├── config/                            # Robot SRDF, kinematics config
-├── meshes/ur5e/                       # Collision & visual meshes
-├── urdf/                              # UR5e URDF/xacro
-└── world/                             # Isaac Sim USD scenes
+├── config/                             # Robot SRDF, kinematics config
+├── meshes/ur5e/                        # Collision & visual meshes
+├── urdf/                               # UR5e URDF/xacro
+└── world/                              # Isaac Sim USD scenes
 ```
 
 ### Who imports what
 
 | File | Imports from `ur5e_rrt_planner.py` | Purpose |
 |------|-----------------------------------|---------|
+| `drawing_action_server.py` | `ur5e_fk`, `ik_solve`, `rrt_connect`, `smooth_path`, `bezier_smooth_path`, `ur5e_jacobian` | All phases: FK, IK, RRT, Cartesian + joint-space planning |
 | `cartesian_square_controller.py` | `ur5e_fk`, `ik_solve`, `rrt_connect`, `smooth_path`, `bezier_smooth_path`, `ur5e_jacobian` | All phases: FK for position checks, IK for Cartesian→joint, RRT for free-space planning |
 | `planar_servo_controller.py` | `ur5e_fk`, `ik_solve`, `rrt_connect`, `smooth_path`, `bezier_smooth_path` | RETRACT/RRT/DESCENT phases only (SERVO phase uses the C++ Jacobian node) |
 | Standalone test scripts | `ur5e_fk`, `ik_solve` | Quick verification |
@@ -437,6 +487,163 @@ Convenience function: IK (multi-seed) → RRT-Connect → smooth → Bezier → 
 
 ---
 
+## Action Mode — Drawing Server + Dispatcher
+
+**Launch mode:** `mode=action` (recommended for new development)
+
+The action mode decouples **what to draw** from **how to draw it**. A dispatcher node generates drawing paths and sends them as goals to an action server, which pre-computes the entire motion and executes it.
+
+### Architecture
+
+```
+┌─────────────────────────┐    ExecuteDrawing     ┌──────────────────────────┐
+│   DrawingDispatcher      │───────action──────────►│  DrawingActionServer     │
+│                          │                        │                          │
+│ • Reads plane JSON       │◄───feedback────────────│ • Pre-computes all       │
+│ • Generates UV waypoints │  (phase + progress)    │   phases in joint-space  │
+│ • Maps to 3D positions   │                        │ • TOTG for joint timing  │
+│ • Sends goals            │◄───result──────────────│ • Executes sequentially  │
+│ • (continuous mode:      │  (success/failure)     │ • Safe shutdown: retract │
+│    re-sends after each)  │                        │   + home on Ctrl-C       │
+└─────────────────────────┘                        └──────────────────────────┘
+                                                             │
+                                                    ┌────────┴────────┐
+                                                    ▼                 ▼
+                                            /isaac_joint_   /scaled_joint_
+                                            commands (sim)  trajectory_ctrl
+                                                            (real robot)
+```
+
+### Action Interface — `ExecuteDrawing.action`
+
+```
+# Goal
+geometry_msgs/Point[]      waypoints       # Cartesian drawing path (base_link frame)
+geometry_msgs/Quaternion   orientation     # Fixed EE orientation during drawing
+
+# Result
+bool     success
+string   message
+
+# Feedback
+string   current_phase        # RETRACT_UP, HOMING, RRT, DESCENT, DRAWING, ASCENT
+float32  drawing_progress     # 0.0 → 1.0 (meaningful during DRAWING phase)
+```
+
+### Drawing Action Server (`drawing_action_server.py`)
+
+**Node name:** `drawing_action_server`
+
+Receives goals via the `execute_drawing` action and pre-computes the full motion before any movement begins. Each goal executes through:
+
+```
+RETRACT_UP → [HOMING] → RRT → DESCENT → DRAWING → ASCENT
+```
+
+The first goal includes HOMING (retract home + hold); subsequent goals skip it since the robot is already hovering from the previous ascent.
+
+#### Pre-Computation Pipeline
+
+For each incoming goal:
+1. **Cartesian IK** — Solve IK for all drawing waypoints + descent/ascent segments
+2. **RRT planning** — Joint-space path from current hover to approach pose via `rrt_connect` + `smooth_path` + `bezier_smooth_path`
+3. **Phase timing** — Each phase gets time-stamped:
+   - **Joint-space phases** (retract_home, rrt, home_hold): sent to the TOTG service for time-optimal timing with continuous acceleration
+   - **Cartesian phases** (retract_up, descent, drawing, ascent): trapezoidal velocity profile in Cartesian space, then per-waypoint IK
+4. **Concatenation** — All phases joined into a single timed trajectory (positions + velocities + timestamps)
+
+#### Execution
+
+- **Sim:** Plays back pre-computed trajectory at wall-clock rate using `time.monotonic()` (avoids dependency on `/clock` topic)
+- **Real robot:** Sends phase trajectories as multi-point `JointTrajectory` messages to the UR controller's `scaled_joint_trajectory_controller`, then monitors convergence
+
+#### Key Design Decisions
+
+| Decision | Why |
+|----------|-----|
+| Pre-compute everything before moving | Eliminates mid-execution IK failures |
+| TOTG for joint-space timing | Guarantees continuous acceleration — no speed jumps |
+| Spin-free service calls (`future.done()` polling) | Avoids nested executor deadlocks in MultiThreadedExecutor |
+| Wall-clock execution timing | Works regardless of sim time / `/clock` availability |
+| TOTG fallback to IPTP | If the TOTG service is unavailable, uses a Python fallback |
+
+### Drawing Dispatcher (`drawing_dispatcher.py`)
+
+**Node name:** `drawing_dispatcher`
+
+Reads the plane JSON, generates drawing waypoints based on the `trajectory_key` parameter, and sends them to the action server.
+
+**Modes:**
+- **Single** (default): Sends one drawing goal, waits for result, exits.
+- **Continuous** (`continuous:=true`): After each drawing completes, sends the next goal. Currently replays the same path; extensible to random patterns, GUI input, etc.
+
+**Resilience:**
+- Waits for the action server with exponential backoff
+- Retries on transient failure with a 0.5s dispatch delay
+- Graceful shutdown on Ctrl-C
+
+---
+
+## TOTG Service Node (totg_service_node.cpp)
+
+**Node name:** `totg_service_node`
+**Service:** `compute_totg` (`sand_drawer/srv/ComputeTOTG`)
+
+A lightweight C++ node that wraps MoveIt 2's **Time-Optimal Trajectory Generation** algorithm (Kunz & Stilman, 2012, Georgia Tech). It takes raw joint-space waypoints and returns a fully time-parameterized trajectory with positions, velocities, and timestamps.
+
+### Why TOTG?
+
+The RRT planner produces geometrically smooth paths (via Catmull-Rom splines), but has **no timing information**. Naïve constant-speed playback or simple trapezoidal timing causes:
+- Speed jumps at waypoint transitions
+- Unnecessary slowdowns on straight segments
+- Jerky acceleration profiles
+
+TOTG solves a constrained optimization problem that finds the **mathematically fastest** traversal of the geometric path while respecting per-joint velocity and acceleration limits. The output has **continuous acceleration** — no speed jumps by construction.
+
+### Algorithm
+
+Uses the low-level `trajectory_processing::Path` + `trajectory_processing::Trajectory` API:
+
+```
+1. Parse flattened waypoints into Eigen vectors
+2. Filter near-duplicate consecutive waypoints (norm < 1e-6)
+3. Path::create(waypoints, path_tolerance)     // corner blending
+4. Trajectory::create(path, max_vel, max_acc)  // time-optimal parameterisation
+5. Guard against NaN/invalid duration
+6. Resample at resample_dt intervals           // uniform output timestep
+7. Return positions + velocities + timestamps
+```
+
+**No robot model required** — the algorithm operates purely on joint-space geometry with user-supplied velocity/acceleration limits.
+
+### Service Interface — `ComputeTOTG.srv`
+
+```
+# Request
+float64[]  waypoints_flat      # [q0_j0, q0_j1, ..., q0_j5, q1_j0, ...]
+uint32     num_joints           # 6 for UR5e
+float64[]  max_velocity         # per-joint rad/s limits
+float64[]  max_acceleration     # per-joint rad/s² limits
+float64    path_tolerance       # corner blending radius (rad), default 0.1
+float64    resample_dt          # output timestep (s), default 0.01
+
+# Response
+float64[]  timed_positions_flat  # resampled positions (same layout)
+float64[]  timed_velocities_flat # resampled velocities
+float64[]  timestamps            # seconds from trajectory start
+uint32     num_output_points
+bool       success
+string     message
+```
+
+### Robustness Features
+
+- **Near-duplicate filtering:** Removes consecutive waypoints closer than 1e-6 rad (prevents `Path::create` from failing on degenerate segments)
+- **NaN/invalid duration guard:** If TOTG produces NaN or non-positive duration (can happen with degenerate geometry), returns an error instead of crashing
+- **Degenerate path handling:** Single-waypoint or all-identical paths return a single-point result
+
+---
+
 ## Cartesian Controller (cartesian_square_controller.py)
 
 **Node name:** `cartesian_draw_controller`
@@ -691,9 +898,10 @@ If IK fails for a waypoint, the controller logs a warning and skips to the next 
 
 | Argument | Default | Description |
 |----------|---------|-------------|
-| `mode` | `trajectory` | `trajectory` / `teleop` / `cartesian` / `capture` / `freedrive_capture` |
+| `mode` | `trajectory` | `action` / `trajectory` / `teleop` / `cartesian` / `capture` / `freedrive_capture` |
 | `real_robot` | `false` | Enable dual sim+real bridging |
-| `loop` | `false` | Loop the drawing trajectory |
+| `loop` | `false` | Loop the drawing trajectory (cartesian/trajectory modes) |
+| `continuous` | `false` | Continuous drawing dispatch (action mode) |
 | `trajectory_key` | `projected_vector_trajectory` | Which JSON key to follow (`line` / `square_trajectory` / `projected_vector_trajectory`) |
 | `plane_json` | `<auto>` | Path to plane JSON file |
 | `use_sim_time` | `true` | Use `/clock` topic (auto-disabled when `real_robot=true`) |
@@ -723,6 +931,21 @@ If IK fails for a waypoint, the controller logs a warning and skips to the next 
 | `elbow_max` | -0.3 rad | launch file | Upper bound for elbow (elbow-up) |
 | `elbow_min` | -3.14 rad | launch file | Lower bound for elbow |
 | `ik_num_seeds` | 30 | launch file | Number of random IK seeds in constrained solver |
+
+### Action Server Parameters (set in launch file)
+
+Inherits all Cartesian Controller parameters above, plus:
+
+| Parameter | Default | Where to change | Effect |
+|-----------|---------|-----------------|--------|
+| `max_linear_vel` | 0.07 m/s | launch file | Drawing Cartesian speed (slightly faster than cartesian mode) |
+| `max_linear_accel` | 0.03 m/s² | launch file | Drawing Cartesian acceleration |
+| `approach_linear_vel` | 0.04 m/s | launch file | Approach/retract Cartesian speed |
+| `approach_linear_accel` | 0.03 m/s² | launch file | Approach/retract Cartesian acceleration |
+| `max_joint_speed_deg` | 90.0 °/s | launch file | Per-joint speed limit for TOTG and trapezoidal timing |
+| `max_joint_accel_deg` | 40.0 °/s² | launch file | Per-joint acceleration limit for TOTG |
+| `totg_path_tolerance` | 0.1 rad | launch file | TOTG corner blending radius (~5.7° deviation allowed) |
+| `totg_resample_dt` | 0.01 s | launch file | TOTG output timestep (100 Hz matches execution_hz) |
 
 ### Velocity Controller Additional Parameters
 
@@ -764,7 +987,29 @@ colcon build --packages-select sand_drawer --symlink-install
 source install/setup.bash
 ```
 
-### Mode 1: Cartesian Drawing (recommended for real robot)
+### Mode 1: Action-Based Drawing (recommended)
+
+```bash
+# Simulation — single drawing
+ros2 launch sand_drawer sand_drawer.launch.py mode:=action
+
+# Simulation — continuous drawing loop
+ros2 launch sand_drawer sand_drawer.launch.py mode:=action continuous:=true
+
+# Real robot — single drawing
+ros2 launch sand_drawer sand_drawer.launch.py mode:=action real_robot:=true
+
+# Draw a specific line
+ros2 launch sand_drawer sand_drawer.launch.py mode:=action \
+    trajectory_key:=line line_u_start:=0.2 line_v_start:=0.5 line_u_end:=0.8 line_v_end:=0.5
+```
+
+**What launches:** 3 nodes
+1. `drawing_action_server` — pre-computes and executes trajectories
+2. `totg_service_node` — C++ TOTG timing service (via MoveIt 2)
+3. `drawing_dispatcher` — generates goals and sends them via the action interface
+
+### Mode 2: Cartesian Drawing
 
 ```bash
 # Simulation
@@ -781,14 +1026,14 @@ ros2 launch sand_drawer sand_drawer.launch.py mode:=cartesian trajectory_key:=li
 ros2 launch sand_drawer sand_drawer.launch.py mode:=cartesian loop:=true
 ```
 
-### Mode 2: Velocity Trajectory Following
+### Mode 3: Velocity Trajectory Following
 
 ```bash
 ros2 launch sand_drawer sand_drawer.launch.py mode:=trajectory
 ros2 launch sand_drawer sand_drawer.launch.py mode:=trajectory loop:=true
 ```
 
-### Mode 3: Teleop (keyboard control)
+### Mode 4: Teleop (keyboard control)
 
 ```bash
 # Terminal 1
@@ -798,7 +1043,7 @@ ros2 launch sand_drawer sand_drawer.launch.py mode:=teleop
 ros2 run sand_drawer plane_teleop_keyboard.py
 ```
 
-### Mode 4: Plane Capture — Simulation
+### Mode 5: Plane Capture — Simulation
 
 ```bash
 ros2 launch sand_drawer sand_drawer.launch.py mode:=capture
@@ -806,7 +1051,7 @@ ros2 launch sand_drawer sand_drawer.launch.py mode:=capture
 ros2 service call /plane_solver_node/capture_point std_srvs/srv/Trigger
 ```
 
-### Mode 5: Plane Capture — Real Robot (Freedrive)
+### Mode 6: Plane Capture — Real Robot (Freedrive)
 
 ```bash
 # Prerequisite: UR driver must be running
@@ -823,6 +1068,22 @@ ros2 service call /freedrive_plane_capture/capture_point std_srvs/srv/Trigger
 ---
 
 ## Tuning Guide
+
+### TOTG timing produces speed jumps or jerky RRT motion (action mode)
+
+This should not happen — TOTG guarantees continuous acceleration by construction. If you see jerkiness:
+- Check that the TOTG service node is actually running (`ros2 service list | grep totg`)
+- If the log shows `[IPTP-fallback]` instead of `[TOTG]`, the TOTG service failed to respond. Check the C++ node logs.
+- Reduce `totg_path_tolerance` (try 0.05) for tighter path following at the cost of sharper corners
+- Reduce `max_joint_speed_deg` / `max_joint_accel_deg` for more conservative motion
+
+### TOTG corner blending is too aggressive
+
+`totg_path_tolerance=0.1` rad ≈ 5.7° of corner deviation. This allows smooth blending through waypoints but the path may deviate from the original. Lower values (0.01–0.05) give tighter corners but may produce higher accelerations at transitions.
+
+### Sim shows small vibrations that real robot doesn't
+
+This is expected. Isaac Sim's physics timestep introduces jitter that the real UR controller's internal interpolator smooths out. The real robot has hardware-level trajectory smoothing. No tuning needed.
 
 ### Drawing is wobbly or drifting off the plane (velocity mode)
 
