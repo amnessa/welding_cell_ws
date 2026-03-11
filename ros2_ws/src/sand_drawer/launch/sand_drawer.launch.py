@@ -140,7 +140,10 @@ def launch_setup(context, *args, **kwargs):
 
     if mode_str == "action":
         # ---- Action-based sequential drawing (server + dispatcher) ----
-        action_traj_key = traj_key_str if traj_key_str != "projected_vector_trajectory" else "line"
+        # trajectory_key for action mode: 'random', 'line', 'triangle',
+        # 'square', 'circle', or 'fixed_line' (legacy UV endpoints).
+        # If user didn't explicitly set it, default to 'random'.
+        action_traj_key = traj_key_str if traj_key_str != "projected_vector_trajectory" else "random"
         nodes.append(Node(
             package="sand_drawer",
             executable="drawing_action_server.py",

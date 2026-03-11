@@ -1,98 +1,318 @@
-The architectural shifts you are considering—stitching trajectories, unifying functions, and decoupling the geometry from the timing—are the exact transitions that turn a research script into an industrial-grade robot controller.
+The issue you are running into is a fundamental limitation of robotic kinematics. Because your defined drawing plane sits close to the robot's base, parts of that plane naturally intersect with the boundaries of the robot's physical reach.
 
-Here is what the standard literature dictates regarding your concerns, and how to rewrite your `CartesianDrawController` to match those standards.
+Here is what the literature says about this problem and the architectural solution to fix it.
 
-### What the Textbooks Say
+### The Textbook Perspective: Workspace and Rejection Sampling
 
-Both of the textbooks you uploaded address these exact problems, primarily emphasizing the strict separation of **Path** (pure geometry) and **Trajectory** (geometry + time).
+* **Modern Robotics** defines the "reachable workspace" as the volume of space the end-effector can reach with at least one orientation. However, because your drawing task requires the pen to be strictly perpendicular to the table, you are constrained to a much smaller subset of that volume, severely limiting where the robot can physically reach. When a shape is randomly placed outside this specific subset, the Inverse Kinematics (IK) solver mathematically cannot find a solution, and the trajectory fails.
+* **Springer Handbook of Robotics** explains that mapping the exact geometric boundaries of a constrained task-space is often analytically impossible. Instead, it suggests using stochastic evaluation—specifically Monte Carlo rejection sampling. You generate a random point, run it through the Inverse Kinematics solver, and if the solver fails or returns a configuration that violates joint limits, you simply reject the point and generate a new one.
 
-**1. On Unstitched Trajectories (The "Jumps")**
+### The Solution: An "IK-Aware" Dispatcher
 
-* **Modern Robotics (Lynch & Park, Chapter 9):** The text explicitly warns against creating disjointed paths. If you have a path consisting of multiple segments (e.g., an RRT approach connected to a Cartesian descent), stopping at the via-points creates infinite jerk. The book suggests *Trajectory Blending* or applying a global *Time Scaling* algorithm across the entire concatenated path. By calculating the whole sequence of joint angles first and then applying one global trapezoidal profile, the boundary between the RRT phase and the Cartesian phase is completely smoothed over.
-* **Springer Handbook (Siciliano & Khatib, Chapter 7):** It emphasizes that transitions between free-space motion (RRT) and constrained task-space motion (drawing) should be handled by mapping the task-space constraints into the configuration space (joint space) *before* execution.
+Right now, your `DrawingDispatcher` is blindly generating points and sending them to the Action Server. The Action Server then discovers the points are unreachable, fails the goal, and stops.
 
-**2. On Performance and Computational Load**
+To fix this, the `DrawingDispatcher` must become "IK-Aware." Because your `ur5e_rrt_planner.py` is a standalone library, the dispatcher can import the IK solver. Before it sends *any* trajectory to the Action Server, it will generate the random shape, quickly run IK on the corner points of that shape to guarantee it is reachable, and if it fails, it will instantly roll the dice and try a new random location until it finds a valid one.
 
-* Both texts agree that calculating Inverse Kinematics inside a real-time control loop (like your 100Hz timer) is computationally dangerous. If the IK solver takes 12 milliseconds to converge on a tricky waypoint, your 10 millisecond (100Hz) timer skips a beat, causing the physical robot to stutter.
-* The optimal solution is **Offline Batch Processing**: The entire path (approach, descent, draw, ascent) must be solved into a massive array of joint angles in memory *before* the robot's brakes are even released.
-
-**3. On Maximum Limits**
-
-* **Modern Robotics:** Chapter 9.4 covers "Time Scaling of Straight-Line Paths". It proves that if you calculate a path geometrically first, you can then stretch or compress the timestamps of those points to guarantee that no motor ever exceeds its maximum velocity or acceleration limits. Your `_compute_joint_path_timing` function is already doing this, but it needs to be applied globally, not per-phase.
-
-### How to Re-Architect Your Controller
-
-To solve all of your concerns, your state machine must be collapsed. Instead of `RETRACT`, `PLANNING`, `DESCENDING`, and `DRAWING` being separate execution states, they should just be mathematical steps inside a single `PRE_COMPUTE` phase.
-
-Here is the blueprint for how to structure your unified script:
-
-#### Step 1: The Monolithic Planning Phase
-
-Create a single function that builds the entire drawing operation as one massive array of joint angles (`q`).
+Here is the updated `DrawingDispatcher` script. It implements the generative shapes (line, square, triangle, circle), handles the `continuous` loop logic, and natively performs the IK rejection sampling.
 
 ```python
-def _pre_compute_entire_operation(self):
-    self.get_logger().info("Pre-computing full trajectory...")
+#!/usr/bin/env python3
+"""
+Drawing Dispatcher — Action client that feeds drawings to the action server.
 
-    full_joint_path = []
+Loads the plane JSON, generates drawing waypoints (random shapes and locations),
+verifies kinematic reachability using IK, and dispatches them to the Action Server.
+"""
 
-    # 1. RRT Approach (Home -> Hover)
-    q_start = self._get_ordered_joints()
-    approach_pos = self.draw_positions[0] - self.approach_height * self.plane_n
-    T_approach = self._pose44(approach_pos, self.target_quat)
-    q_approach = self._constrained_ik_for_pose(T_approach)
+import json
+import math
+import os
+import sys
+import random
+from typing import List, Optional, Tuple
 
-    rrt_path = rrt_connect(q_start, q_approach)
-    smoothed_rrt = smooth_path(rrt_path)
-    rrt_dense = bezier_smooth_path(smoothed_rrt, max_step=0.02)
+import numpy as np
+import rclpy
+from geometry_msgs.msg import Point, Quaternion
+from rclpy.action import ActionClient
+from rclpy.node import Node
 
-    full_joint_path.extend(rrt_dense)
+from sand_drawer.action import ExecuteDrawing
 
-    # --- STITCHING BOUNDARY ---
-    # The last point of the RRT must be the seed for the first IK calculation
-    current_q_seed = full_joint_path[-1]
+# Import the IK solver to check reachability before dispatching
+_scripts_dir = os.path.dirname(os.path.realpath(__file__))
+if _scripts_dir not in sys.path:
+    sys.path.insert(0, _scripts_dir)
+from ur5e_rrt_planner import ik_solve, quat_to_rotmat
 
-    # 2. Cartesian Descent
-    descent_wps = _interpolate_cartesian_smooth([approach_pos, self.draw_positions[0]], self.target_quat)
-    descent_q_path = self._ik_solve_cartesian_path(descent_wps, q_seed=current_q_seed)
 
-    full_joint_path.extend(descent_q_path[1:]) # Skip index 0 to avoid duplicate waypoint
-    current_q_seed = full_joint_path[-1]
+class DrawingDispatcher(Node):
+    def __init__(self):
+        super().__init__('drawing_dispatcher')
 
-    # 3. Cartesian Drawing
-    draw_wps = _interpolate_cartesian_smooth(self.draw_positions, self.target_quat)
-    draw_q_path = self._ik_solve_cartesian_path(draw_wps, q_seed=current_q_seed)
+        self.declare_parameter('plane_json_file', '')
+        self.declare_parameter('trajectory_key', 'random') # Can be 'line', 'square', 'triangle', 'circle', or 'random'
+        self.declare_parameter('continuous', False)
 
-    full_joint_path.extend(draw_q_path[1:])
-    current_q_seed = full_joint_path[-1]
+        self._traj_key = self.get_parameter('trajectory_key').value
+        self._continuous = self.get_parameter('continuous').value
 
-    # 4. Cartesian Ascent
-    ascent_pos = self.draw_positions[-1] - self.approach_height * self.plane_n
-    ascent_wps = _interpolate_cartesian_smooth([self.draw_positions[-1], ascent_pos], self.target_quat)
-    ascent_q_path = self._ik_solve_cartesian_path(ascent_wps, q_seed=current_q_seed)
+        # Generic seed for reachability checks (Home position)
+        self._ik_seed = np.array([-0.7854, -0.4363, -2.5307, -0.1745, 0.0, 0.0], dtype=float)
 
-    full_joint_path.extend(ascent_q_path[1:])
+        self._load_plane_json()
 
-    # 5. Global Time Scaling
-    # Apply trapezoidal timing to the ENTIRE stitched path at once
-    self.master_trajectory_times = self._compute_joint_path_timing(full_joint_path)
-    self.master_trajectory_joints = full_joint_path
+        self._client = ActionClient(self, ExecuteDrawing, 'execute_drawing')
 
-    self.get_logger().info(f"Pre-computation complete. Total waypoints: {len(full_joint_path)}")
-    self.phase = Phase.EXECUTING
+        self._goal_handle = None
+        self._done = False
+        self._drawing_count = 0
+        self._send_pending = False
+        self._retry_timer = None
+        self._retry_delay = 2.0
+        self._max_retry_delay = 16.0
+
+        self.get_logger().info(
+            f'Drawing dispatcher ready — '
+            f'trajectory_key={self._traj_key}, '
+            f'continuous={self._continuous}')
+
+    def _load_plane_json(self):
+        json_path = self.get_parameter('plane_json_file').value
+        if not json_path or not os.path.exists(json_path):
+            self.get_logger().fatal(f'Plane JSON not found: {json_path}')
+            raise RuntimeError(f'Plane JSON not found: {json_path}')
+
+        with open(json_path, 'r') as f:
+            data = json.load(f)
+
+        target_frame = data.get('target_frame', 'base_link')
+        if target_frame == 'base':
+            def _rz(v): return [-v[0], -v[1], v[2]]
+            def _qrz(q): return [-q[1], q[0], q[3], -q[2]]
+
+            p = data['plane']
+            p['origin'] = _rz(p['origin'])
+            p['x_axis'] = _rz(p['x_axis'])
+            p['y_axis'] = _rz(p['y_axis'])
+            p['normal'] = _rz(p['normal'])
+            data['rectangle_corners'] = [_rz(c) for c in data['rectangle_corners']]
+
+        self._plane_data = data
+        plane = data['plane']
+        self.plane_origin = np.array(plane['origin'], dtype=float)
+        self.plane_n = np.array(plane['normal'], dtype=float)
+
+        corners = [np.array(c, dtype=float) for c in data['rectangle_corners']]
+        self.rect_origin = corners[0]
+        self.rect_width_vec = corners[1] - corners[0]
+        self.rect_height_vec = corners[3] - corners[0]
+
+        # Use orientation from JSON or align with plane normal
+        traj = data.get('square_trajectory', [])
+        if traj:
+            self._default_orientation = list(traj[0]['orientation_xyzw'])
+        else:
+            self._default_orientation = [0.0, 0.0, 0.0, 1.0]
+
+    # ------------------------------------------------------------------
+    # IK Reachability Check
+    # ------------------------------------------------------------------
+    def _is_reachable(self, positions: List[np.ndarray], orientation_xyzw: list) -> bool:
+        """
+        Runs a fast IK check on the generated Cartesian points to ensure
+        the robot can actually draw this shape at this location.
+        """
+        R = quat_to_rotmat(orientation_xyzw)
+        T = np.eye(4)
+        T[:3, :3] = R
+
+        # To save time, we only check a sparse subset of points (e.g., corners)
+        check_indices = [0, len(positions)//2, -1]
+
+        current_seed = self._ik_seed.copy()
+        for idx in check_indices:
+            T[:3, 3] = positions[idx]
+            sol = ik_solve(T, current_seed, max_iter=100)
+            if sol is None:
+                return False
+            # Update seed to simulate continuous movement
+            current_seed = sol
+
+        return True
+
+    # ------------------------------------------------------------------
+    # Shape Generation with Rejection Sampling
+    # ------------------------------------------------------------------
+    def _generate_random_shape_uv(self, shape_type: str) -> List[Tuple[float, float]]:
+        """Generates UV coordinates [0.0 - 1.0] for standard shapes."""
+        size = random.uniform(0.15, 0.35)
+        cu = random.uniform(0.1 + size, 0.9 - size)
+        cv = random.uniform(0.1 + size, 0.9 - size)
+        uvs = []
+
+        if shape_type == 'line':
+            angle = random.uniform(0, 2 * math.pi)
+            dx = (size / 2.0) * math.cos(angle)
+            dy = (size / 2.0) * math.sin(angle)
+            uvs = [(cu - dx, cv - dy), (cu + dx, cv + dy)]
+
+        elif shape_type == 'triangle':
+            angle = random.uniform(0, 2 * math.pi)
+            for i in range(4): # 4 to close the loop
+                theta = angle + (i * 2 * math.pi / 3)
+                uvs.append((cu + size * math.cos(theta), cv + size * math.sin(theta)))
+
+        elif shape_type == 'square':
+            angle = random.uniform(0, math.pi / 2)
+            for i in range(5): # 5 to close the loop
+                theta = angle + (i * 2 * math.pi / 4) + (math.pi / 4)
+                uvs.append((cu + size * math.cos(theta), cv + size * math.sin(theta)))
+
+        elif shape_type == 'circle':
+            num_pts = 30
+            for i in range(num_pts + 1):
+                theta = i * 2 * math.pi / num_pts
+                uvs.append((cu + size * math.cos(theta), cv + size * math.sin(theta)))
+
+        return uvs
+
+    def _generate_drawing(self) -> Optional[tuple]:
+        """
+        Rejection Sampling Loop: Continuously generates random shapes and locations
+        until it finds one that fits on the table AND is kinematically reachable.
+        """
+        shapes_pool = ['line', 'triangle', 'square', 'circle']
+
+        for attempt in range(1, 101):
+            # 1. Pick the shape
+            if self._traj_key == 'random':
+                current_shape = random.choice(shapes_pool)
+            else:
+                current_shape = self._traj_key if self._traj_key in shapes_pool else 'square'
+
+            # 2. Generate UVs
+            uv_coords = self._generate_random_shape_uv(current_shape)
+
+            # 3. Map to 3D Cartesian space
+            positions = []
+            for u, v in uv_coords:
+                pos = (self.rect_origin + u * self.rect_width_vec + v * self.rect_height_vec)
+                positions.append(pos)
+
+            # 4. REACHABILITY CHECK (The Monte Carlo rejection)
+            if self._is_reachable(positions, self._default_orientation):
+                self.get_logger().info(f'Valid {current_shape} generated at attempt {attempt}')
+
+                # Convert to ROS messages
+                waypoints = [Point(x=float(p[0]), y=float(p[1]), z=float(p[2])) for p in positions]
+                quat = Quaternion(x=self._default_orientation[0], y=self._default_orientation[1],
+                                  z=self._default_orientation[2], w=self._default_orientation[3])
+                return waypoints, quat
+
+        self.get_logger().error('Failed to find a reachable shape location after 100 attempts.')
+        return None
+
+    # ------------------------------------------------------------------
+    # Goal Dispatching and Callbacks
+    # ------------------------------------------------------------------
+    def send_next_drawing(self):
+        if self._send_pending:
+            return
+        self._send_pending = True
+        self._cancel_retry_timer()
+
+        result = self._generate_drawing()
+        if result is None:
+            self.get_logger().error('Stopping dispatcher due to generation failure.')
+            self._send_pending = False
+            self._done = True
+            return
+
+        waypoints, orientation = result
+        self._client.wait_for_server()
+
+        goal = ExecuteDrawing.Goal()
+        goal.waypoints = waypoints
+        goal.orientation = orientation
+
+        self._drawing_count += 1
+        self.get_logger().info(f'Sending drawing #{self._drawing_count} ({len(waypoints)} waypoints)')
+
+        send_future = self._client.send_goal_async(goal, feedback_callback=self._feedback_cb)
+        send_future.add_done_callback(self._goal_response_cb)
+
+    def _goal_response_cb(self, future):
+        goal_handle = future.result()
+        if not goal_handle.accepted:
+            self.get_logger().warn('Goal rejected by server')
+            self._send_pending = False
+            if self._continuous:
+                self._schedule_retry()
+            else:
+                self._done = True
+            return
+
+        self._send_pending = False
+        self._retry_delay = 2.0
+        self._goal_handle = goal_handle
+        result_future = goal_handle.get_result_async()
+        result_future.add_done_callback(self._result_cb)
+
+    def _schedule_retry(self):
+        self._cancel_retry_timer()
+        self.get_logger().info(f'Retrying in {self._retry_delay:.1f}s …')
+        self._retry_timer = self.create_timer(self._retry_delay, self._retry_timer_cb)
+        self._retry_delay = min(self._retry_delay * 2.0, self._max_retry_delay)
+
+    def _retry_timer_cb(self):
+        self._cancel_retry_timer()
+        self.send_next_drawing()
+
+    def _cancel_retry_timer(self):
+        if self._retry_timer is not None:
+            self._retry_timer.cancel()
+            self.destroy_timer(self._retry_timer)
+            self._retry_timer = None
+
+    def _feedback_cb(self, feedback_msg):
+        fb = feedback_msg.feedback
+        self.get_logger().info(f'  [{fb.current_phase}] drawing={fb.drawing_progress*100:.0f}%', throttle_duration_sec=2.0)
+
+    def _result_cb(self, future):
+        result = future.result().result
+        if result.success:
+            self.get_logger().info(f'Drawing #{self._drawing_count} complete.')
+        else:
+            self.get_logger().warn(f'Drawing #{self._drawing_count} failed.')
+
+        self._goal_handle = None
+        self._send_pending = False
+        self._cancel_retry_timer()
+
+        if self._continuous:
+            self.get_logger().info('Dispatching next drawing...')
+            self._retry_timer = self.create_timer(0.5, self._retry_timer_cb)
+        else:
+            self._done = True
+
+    def run(self):
+        self.send_next_drawing()
+        while rclpy.ok() and not self._done:
+            rclpy.spin_once(self, timeout_sec=0.1)
+
+def main(args=None):
+    rclpy.init(args=args)
+    dispatcher = DrawingDispatcher()
+    try:
+        dispatcher.run()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        dispatcher.destroy_node()
+        rclpy.try_shutdown()
+
+if __name__ == '__main__':
+    main()
 
 ```
-
-#### Step 2: The Unified Execution Phase
-
-Because all the heavy lifting (IK, RRT, smoothing, timing) is done in the pre-compute phase, your execution loop becomes incredibly lightweight, fast, and completely immune to IK-induced stutters.
-
-If `real_robot = True`, you simply pass `self.master_trajectory_joints` and `self.master_trajectory_times` into a single `JointTrajectory` message and send it to the UR driver. The UR5e's internal hardware controller will execute the entire approach, descent, drawing, and ascent seamlessly without stopping.
-
-If you are running in Isaac Sim (where you send points at 60/100Hz), your timer callback simply looks at the simulation clock, interpolates where the robot *should* be along the `master_trajectory_times` array, and publishes that exact `q` value.
-
-### Why this solves your problems:
-
-1. **No Jumps:** By forcing `current_q_seed = full_joint_path[-1]` between phases, the IK solver guarantees that the first point of the drawing path is mathematically identical to the last point of the descent path.
-2. **Universal Limits:** Because `_compute_joint_path_timing` analyzes the entire array at once, it calculates the worst-case joint delta across the *entire* operation. The robot will naturally ramp up to `max_joint_speed` during the RRT phase in the air, dynamically slow down as it rounds the corner into the Cartesian descent, and hold a steady speed during the drawing phase, never violating the `max_joint_accel` limit.
-3. **Consistency:** You no longer have multiple interpolation functions scattered throughout your node. You have one global geometry builder, and one global time-scaler.
