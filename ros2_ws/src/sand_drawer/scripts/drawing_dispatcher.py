@@ -2,9 +2,17 @@
 """
 Drawing Dispatcher — IK-aware action client that feeds drawings to the server.
 
-Loads the plane JSON, generates drawing waypoints (random shapes and locations
-on the rectangular plane), verifies kinematic reachability via IK rejection
-sampling, and dispatches them to the DrawingActionServer.
+Loads the plane JSON, generates drawing waypoints in STRICT METRIC SPACE using
+orthogonal basis vectors from the plane definition.  This eliminates the
+"baklava" skew that occurs when UV coordinates are mapped onto physically
+non-square rectangles.
+
+Shapes are randomly placed and sized between 10% and 50% of the shortest
+table dimension.  Kinematic reachability is verified via a Fast-Fail Center
+Check: IK is tested on the shape centre first; only if it succeeds is the
+centre's joint solution used as seed for boundary points.  This is both
+faster (centre is a single IK call vs. 3) and prevents configuration flips
+(all points share the same elbow-up solution branch).
 
 Usage (via launch):
   ros2 launch sand_drawer sand_drawer.launch.py mode:=action
@@ -16,17 +24,8 @@ Trajectory keys
   line      — random line on the plane
   triangle  — random equilateral triangle
   square    — random square
-  circle    — random circle (30-point polyline)
-  random    — pick a random shape each time (default in continuous mode)
-  fixed_line — legacy: explicit UV endpoints from line_u/v params
-
-Rejection sampling
-------------------
-  The rectangular drawing plane often extends into regions the UR5e cannot
-  reach with the required pen-down orientation.  Before any goal is sent,
-  the dispatcher runs fast IK on a sparse subset of the generated waypoints
-  (first, middle, last).  If any check fails the shape is discarded and a
-  new random location is tried — up to 100 attempts per drawing.
+  circle    — random circle (resolution scales with size)
+  random    — pick a random shape each time (default)
 
 Subscribes to:  (none)
 Publishes to:   (none — communicates via action client)
@@ -41,7 +40,8 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 import rclpy
-from geometry_msgs.msg import Point, Quaternion
+from geometry_msgs.msg import Point, PoseStamped, Quaternion
+from nav_msgs.msg import Path
 from rclpy.action import ActionClient
 from rclpy.node import Node
 
@@ -51,7 +51,7 @@ from sand_drawer.action import ExecuteDrawing
 _scripts_dir = os.path.dirname(os.path.realpath(__file__))
 if _scripts_dir not in sys.path:
     sys.path.insert(0, _scripts_dir)
-from ur5e_rrt_planner import ik_solve, ur5e_fk  # noqa: E402
+from ur5e_rrt_planner import ik_solve  # noqa: E402
 
 
 # ── Quaternion → rotation matrix (self-contained helper) ─────────────────
@@ -71,7 +71,7 @@ _SHAPE_POOL = ('line', 'triangle', 'square', 'circle')
 
 
 class DrawingDispatcher(Node):
-    """Generates IK-validated drawing paths and dispatches them."""
+    """Generates IK-validated, geometrically perfect drawing paths."""
 
     # ------------------------------------------------------------------
     # Initialisation
@@ -82,26 +82,19 @@ class DrawingDispatcher(Node):
         # ---- parameters ----
         self.declare_parameter('plane_json_file', '')
         self.declare_parameter('trajectory_key', 'random')
-        self.declare_parameter('line_u_start', 0.5)
-        self.declare_parameter('line_v_start', 0.3)
-        self.declare_parameter('line_u_end', 0.5)
-        self.declare_parameter('line_v_end', 0.7)
         self.declare_parameter('continuous', False)
-        self.declare_parameter('shape_size_min', 0.15)
-        self.declare_parameter('shape_size_max', 0.35)
+        self.declare_parameter('shape_size_min_pct', 0.10)
+        self.declare_parameter('shape_size_max_pct', 0.50)
         self.declare_parameter('ik_max_attempts', 100)
 
         self._traj_key = self.get_parameter('trajectory_key').value
         self._continuous = self.get_parameter('continuous').value
-        self._line_u_start = self.get_parameter('line_u_start').value
-        self._line_v_start = self.get_parameter('line_v_start').value
-        self._line_u_end = self.get_parameter('line_u_end').value
-        self._line_v_end = self.get_parameter('line_v_end').value
-        self._shape_size_min = self.get_parameter('shape_size_min').value
-        self._shape_size_max = self.get_parameter('shape_size_max').value
-        self._ik_max_attempts = int(self.get_parameter('ik_max_attempts').value)
+        self._size_min_pct = self.get_parameter('shape_size_min_pct').value
+        self._size_max_pct = self.get_parameter('shape_size_max_pct').value
+        self._ik_max_attempts = int(
+            self.get_parameter('ik_max_attempts').value)
 
-        # Home configuration — used as IK seed for reachability checks
+        # Home configuration — absolute baseline IK seed
         self._ik_seed = np.array(
             [-0.7854, -0.4363, -2.5307, -0.1745, 0.0, 0.0], dtype=float)
 
@@ -111,6 +104,10 @@ class DrawingDispatcher(Node):
         # ---- action client ----
         self._client = ActionClient(
             self, ExecuteDrawing, 'execute_drawing')
+
+        # ---- Path publisher for the PyQt visualizer GUI ----
+        self._path_pub = self.create_publisher(
+            Path, '/visualizer/drawing_path', 10)
 
         # ---- state ----
         self._goal_handle = None
@@ -124,7 +121,9 @@ class DrawingDispatcher(Node):
         self.get_logger().info(
             f'Drawing dispatcher ready — '
             f'trajectory_key={self._traj_key}, '
-            f'continuous={self._continuous}')
+            f'continuous={self._continuous}, '
+            f'size={self._size_min_pct*100:.0f}–{self._size_max_pct*100:.0f}% '
+            f'of table')
 
     # ------------------------------------------------------------------
     # Plane JSON loading (with Rz(π) frame correction)
@@ -158,6 +157,7 @@ class DrawingDispatcher(Node):
             p['normal'] = _rz(p['normal'])
             data['rectangle_corners'] = [
                 _rz(c) for c in data['rectangle_corners']]
+            # Correct orientations in trajectory data (used for default quat)
             for key in ('square_trajectory', 'projected_vector_trajectory'):
                 for wp in data.get(key, []):
                     wp['position'] = _rz(wp['position'])
@@ -167,6 +167,10 @@ class DrawingDispatcher(Node):
         self._plane_data = data
         plane = data['plane']
         self.plane_origin = np.array(plane['origin'], dtype=float)
+
+        # Orthogonal unit vectors — using these prevents baklava skew
+        self.plane_x = np.array(plane['x_axis'], dtype=float)
+        self.plane_y = np.array(plane['y_axis'], dtype=float)
         self.plane_n = np.array(plane['normal'], dtype=float)
 
         corners = [np.array(c, dtype=float)
@@ -174,6 +178,10 @@ class DrawingDispatcher(Node):
         self.rect_origin = corners[0]
         self.rect_width_vec = corners[1] - corners[0]
         self.rect_height_vec = corners[3] - corners[0]
+
+        # Absolute table dimensions in metres
+        self.table_width_m = float(np.linalg.norm(self.rect_width_vec))
+        self.table_height_m = float(np.linalg.norm(self.rect_height_vec))
 
         # Default orientation from trajectory data
         traj = data.get('square_trajectory', [])
@@ -185,112 +193,150 @@ class DrawingDispatcher(Node):
                 'No square_trajectory in JSON — using identity orientation')
 
         self.get_logger().info(
-            f'Loaded plane — rect width={np.linalg.norm(self.rect_width_vec):.3f}m, '
-            f'height={np.linalg.norm(self.rect_height_vec):.3f}m')
+            f'Loaded plane — '
+            f'width={self.table_width_m:.3f}m, '
+            f'height={self.table_height_m:.3f}m')
 
     # ------------------------------------------------------------------
-    # IK Reachability Check (rejection sampling filter)
+    # Fast-Fail IK Reachability Check
     # ------------------------------------------------------------------
-    def _is_reachable(self, positions: List[np.ndarray],
+
+    # Elbow-up configuration constraints (must match action server)
+    _SHOULDER_LIFT_MAX = 0.0
+    _SHOULDER_LIFT_MIN = -2.5
+    _ELBOW_MAX = -0.3
+    _ELBOW_MIN = -3.14
+
+    @staticmethod
+    def _config_ok(q: np.ndarray) -> bool:
+        """Elbow-up constraint check — mirrors the action server."""
+        if q[1] > DrawingDispatcher._SHOULDER_LIFT_MAX or \
+           q[1] < DrawingDispatcher._SHOULDER_LIFT_MIN:
+            return False
+        if q[2] > DrawingDispatcher._ELBOW_MAX or \
+           q[2] < DrawingDispatcher._ELBOW_MIN:
+            return False
+        return True
+
+    def _is_reachable(self, center_3d: np.ndarray,
+                      positions: List[np.ndarray],
                       orientation_xyzw: list) -> bool:
-        """Fast IK check on sparse subset of waypoints.
+        """Two-stage reachability check with edge-midpoint coverage.
 
-        Checks first, middle, and last points.  Returns False if any
-        point is kinematically unreachable with the required orientation.
+        Stage 1 — Fast fail: IK for the shape centre using the home seed.
+                  Must also pass elbow-up config constraints.
+        Stage 2 — Full boundary + edge-midpoint validation: IK for ALL
+                  waypoints AND midpoints between consecutive waypoints,
+                  using the centre's joint solution as seed.
+                  This catches unreachable regions between corners that
+                  are individually reachable.
         """
         R = _quat_to_rotmat(orientation_xyzw)
         T = np.eye(4)
         T[:3, :3] = R
 
-        # Sparse check: first, middle, last
-        n = len(positions)
-        check_indices = list({0, n // 2, n - 1})
+        # Stage 1: centre fast-fail (with config check)
+        T[:3, 3] = center_3d
+        center_sol = ik_solve(T, self._ik_seed, max_iter=80)
+        if center_sol is None or not self._config_ok(center_sol):
+            return False
 
-        current_seed = self._ik_seed.copy()
-        for idx in check_indices:
-            T[:3, 3] = positions[idx]
-            sol = ik_solve(T, current_seed, max_iter=100)
-            if sol is None:
+        # Stage 2: ALL waypoints + edge midpoints
+        # For a 5-point square this is ~9 checks, still very fast.
+        check_points: List[np.ndarray] = []
+        for i, p in enumerate(positions):
+            check_points.append(p)
+            # Add midpoint to next waypoint (except after last)
+            if i < len(positions) - 1:
+                mid = 0.5 * (p + positions[i + 1])
+                check_points.append(mid)
+
+        current_seed = center_sol
+        for pt in check_points:
+            T[:3, 3] = pt
+            sol = ik_solve(T, current_seed, max_iter=80)
+            if sol is None or not self._config_ok(sol):
                 return False
-            current_seed = sol  # chain seeds for realistic continuity
+            current_seed = sol  # chain for same-config continuity
         return True
 
     # ------------------------------------------------------------------
-    # Shape generators (UV coordinates, 0–1 range)
+    # Metric-space shape generation (no UV — no baklava)
     # ------------------------------------------------------------------
-    def _random_uv_shape(self, shape: str) -> List[Tuple[float, float]]:
-        """Generate UV coordinates for a shape at a random location.
+    def _generate_random_shape_3d(self, shape_type: str
+                                  ) -> Tuple[np.ndarray, List[np.ndarray]]:
+        """Generate a shape in physical 3D space on the drawing plane.
 
-        The shape is centred at a random (cu, cv) with enough margin so
-        the bounding box stays within [0, 1]².
+        Uses the plane's orthonormal basis vectors (plane_x, plane_y)
+        so circles are circular and squares have 90° corners regardless
+        of how skewed the captured rectangle is.
+
+        Returns (center_3d, list_of_3d_positions).
         """
-        size = random.uniform(self._shape_size_min, self._shape_size_max)
-        margin = size + 0.05  # keep away from rectangle edges
-        cu = random.uniform(margin, 1.0 - margin)
-        cv = random.uniform(margin, 1.0 - margin)
+        # Random size: 10–50% of the smallest table dimension
+        min_dim = min(self.table_width_m, self.table_height_m)
+        radius = random.uniform(
+            self._size_min_pct * min_dim / 2.0,
+            self._size_max_pct * min_dim / 2.0)
 
-        if shape == 'line':
-            angle = random.uniform(0, 2 * math.pi)
-            half = size / 2.0
-            dx, dy = half * math.cos(angle), half * math.sin(angle)
-            return [(cu - dx, cv - dy), (cu + dx, cv + dy)]
+        # Safe centre location in local metric coords
+        margin = radius + 0.02  # 2 cm padding from rectangle edge
+        if self.table_width_m < 2 * margin:
+            margin = self.table_width_m / 3.0
+        if self.table_height_m < 2 * margin:
+            margin = self.table_height_m / 3.0
 
-        elif shape == 'triangle':
+        cx = random.uniform(margin, self.table_width_m - margin)
+        cy = random.uniform(margin, self.table_height_m - margin)
+
+        center_3d = (self.rect_origin
+                     + cx * self.plane_x
+                     + cy * self.plane_y)
+
+        pts: List[np.ndarray] = []
+
+        if shape_type == 'line':
+            angle = random.uniform(0, math.pi)
+            dx = radius * math.cos(angle) * self.plane_x
+            dy = radius * math.sin(angle) * self.plane_y
+            pts = [center_3d - dx - dy, center_3d + dx + dy]
+
+        elif shape_type == 'triangle':
             angle = random.uniform(0, 2 * math.pi)
-            pts = []
             for i in range(3):
                 theta = angle + i * 2 * math.pi / 3
-                pts.append((cu + size * math.cos(theta),
-                            cv + size * math.sin(theta)))
+                pts.append(center_3d
+                           + radius * math.cos(theta) * self.plane_x
+                           + radius * math.sin(theta) * self.plane_y)
             pts.append(pts[0])  # close the loop
-            return pts
 
-        elif shape == 'square':
+        elif shape_type == 'square':
             angle = random.uniform(0, math.pi / 2)
-            pts = []
+            # Inscribed square: vertex at radius, not edge
+            sq_r = radius  # half-diagonal
             for i in range(4):
-                theta = angle + i * 2 * math.pi / 4 + math.pi / 4
-                pts.append((cu + size * math.cos(theta),
-                            cv + size * math.sin(theta)))
+                theta = angle + i * math.pi / 2 + math.pi / 4
+                pts.append(center_3d
+                           + sq_r * math.cos(theta) * self.plane_x
+                           + sq_r * math.sin(theta) * self.plane_y)
             pts.append(pts[0])  # close the loop
-            return pts
 
-        elif shape == 'circle':
-            num_pts = 30
-            pts = []
+        elif shape_type == 'circle':
+            # Dynamic resolution: more points for larger circles
+            num_pts = max(int(radius * 400), 20)
             for i in range(num_pts + 1):
                 theta = i * 2 * math.pi / num_pts
-                pts.append((cu + size * math.cos(theta),
-                            cv + size * math.sin(theta)))
-            return pts
+                pts.append(center_3d
+                           + radius * math.cos(theta) * self.plane_x
+                           + radius * math.sin(theta) * self.plane_y)
 
-        else:
-            self.get_logger().error(f'Unknown shape: {shape}')
-            return [(cu, cv)]
-
-    def _uv_to_3d(self, uv_coords: List[Tuple[float, float]]
-                   ) -> List[np.ndarray]:
-        """Map UV coordinates to 3D Cartesian positions on the plane."""
-        return [
-            self.rect_origin
-            + u * self.rect_width_vec
-            + v * self.rect_height_vec
-            for u, v in uv_coords
-        ]
+        return center_3d, pts
 
     # ------------------------------------------------------------------
     # Drawing generation with rejection sampling
     # ------------------------------------------------------------------
     def _generate_drawing(self) -> Optional[Tuple[List[Point], Quaternion]]:
-        """Generate a reachable drawing goal.
-
-        Returns (waypoints, orientation) or None if exhausted.
-        """
-        # Legacy: explicit UV endpoints
-        if self._traj_key == 'fixed_line':
-            return self._generate_fixed_line()
-
-        # Pick shape(s)
+        """Generate a reachable, geometrically correct drawing goal."""
         if self._traj_key == 'random':
             pick_random = True
         elif self._traj_key in _SHAPE_POOL:
@@ -303,14 +349,17 @@ class DrawingDispatcher(Node):
         orientation = self._default_orientation
 
         for attempt in range(1, self._ik_max_attempts + 1):
-            shape = random.choice(_SHAPE_POOL) if pick_random else self._traj_key
-            uv = self._random_uv_shape(shape)
-            positions = self._uv_to_3d(uv)
+            shape = (random.choice(_SHAPE_POOL)
+                     if pick_random else self._traj_key)
 
-            if self._is_reachable(positions, orientation):
+            center_3d, positions = self._generate_random_shape_3d(shape)
+
+            if self._is_reachable(center_3d, positions, orientation):
                 self.get_logger().info(
                     f'Generated reachable {shape} '
-                    f'({len(positions)} pts) on attempt {attempt}')
+                    f'({len(positions)} pts, '
+                    f'r={np.linalg.norm(positions[0] - center_3d)*1000:.0f}mm) '
+                    f'on attempt {attempt}')
                 return self._to_ros_msgs(positions, orientation)
 
             if attempt % 20 == 0:
@@ -321,31 +370,6 @@ class DrawingDispatcher(Node):
             f'Failed to find a reachable shape after '
             f'{self._ik_max_attempts} attempts')
         return None
-
-    def _generate_fixed_line(self) -> Optional[
-            Tuple[List[Point], Quaternion]]:
-        """Legacy: generate a line from explicit UV parameters."""
-        p_start = (self.rect_origin
-                   + self._line_u_start * self.rect_width_vec
-                   + self._line_v_start * self.rect_height_vec)
-        p_end = (self.rect_origin
-                 + self._line_u_end * self.rect_width_vec
-                 + self._line_v_end * self.rect_height_vec)
-        positions = [p_start, p_end]
-        orientation = self._default_orientation
-
-        length = float(np.linalg.norm(p_end - p_start))
-        self.get_logger().info(
-            f'Fixed line: UV ({self._line_u_start},{self._line_v_start})'
-            f'→({self._line_u_end},{self._line_v_end})  '
-            f'length={length:.3f}m')
-
-        if not self._is_reachable(positions, orientation):
-            self.get_logger().error(
-                'Fixed line endpoints are NOT reachable — check UV params')
-            return None
-
-        return self._to_ros_msgs(positions, orientation)
 
     @staticmethod
     def _to_ros_msgs(positions: List[np.ndarray],
@@ -386,6 +410,16 @@ class DrawingDispatcher(Node):
         goal = ExecuteDrawing.Goal()
         goal.waypoints = waypoints
         goal.orientation = orientation
+
+        # Broadcast the path to the PyQt GUI visualizer
+        path_msg = Path()
+        path_msg.header.frame_id = 'base_link'
+        path_msg.header.stamp = self.get_clock().now().to_msg()
+        for wp in waypoints:
+            pose = PoseStamped()
+            pose.pose.position = wp
+            path_msg.poses.append(pose)
+        self._path_pub.publish(path_msg)
 
         self._drawing_count += 1
         self.get_logger().info(

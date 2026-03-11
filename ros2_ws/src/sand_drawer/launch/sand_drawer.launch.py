@@ -141,7 +141,7 @@ def launch_setup(context, *args, **kwargs):
     if mode_str == "action":
         # ---- Action-based sequential drawing (server + dispatcher) ----
         # trajectory_key for action mode: 'random', 'line', 'triangle',
-        # 'square', 'circle', or 'fixed_line' (legacy UV endpoints).
+        # 'square', 'circle'.
         # If user didn't explicitly set it, default to 'random'.
         action_traj_key = traj_key_str if traj_key_str != "projected_vector_trajectory" else "random"
         nodes.append(Node(
@@ -154,7 +154,7 @@ def launch_setup(context, *args, **kwargs):
                 "plane_json_file": plane_json_str or default_plane_json,
                 "approach_height": 0.08,
                 "max_linear_vel": 0.07,
-                "max_linear_accel": 0.03,
+                "max_linear_accel": 0.05,
                 "approach_linear_vel": 0.04,
                 "approach_linear_accel": 0.03,
                 "ik_damping": 0.05,
@@ -189,10 +189,6 @@ def launch_setup(context, *args, **kwargs):
                 "use_sim_time": use_sim_time,
                 "plane_json_file": plane_json_str or default_plane_json,
                 "trajectory_key": action_traj_key,
-                "line_u_start": float(line_u_start_str),
-                "line_v_start": float(line_v_start_str),
-                "line_u_end":   float(line_u_end_str),
-                "line_v_end":   float(line_v_end_str),
                 "continuous": continuous_str == "true",
             }],
         ))

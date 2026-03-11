@@ -919,7 +919,20 @@ class DrawingActionServer(Node):
         from ur5e_rrt_planner import (ur5e_fk, rrt_connect,
                                       smooth_path, bezier_smooth_path)
 
-        q_current = self._get_ordered_joints()
+        # In real-robot mode, prefer the actual robot joint state over
+        # the sim joint state, which may lag or be stale after a prior
+        # execution.  This prevents trajectory-start mismatches that
+        # cause the UR joint trajectory controller to stall.
+        if self._real_robot:
+            q_current = self._get_real_ordered_joints()
+            if q_current is not None:
+                # Sync sim so everything is consistent
+                self._last_q = q_current.copy()
+                self._mirror_real_to_sim()
+            else:
+                q_current = self._get_ordered_joints()
+        else:
+            q_current = self._get_ordered_joints()
         if q_current is None:
             return None
         cart_dt = 1.0 / self.execution_hz
@@ -1194,14 +1207,23 @@ class DrawingActionServer(Node):
         total_time = master_times[-1]
         t0 = self.get_clock().now()
         last_feedback_time = 0.0
+        last_closest_idx = 0  # track progress through trajectory
 
         # Monitor at 10 Hz — the full trajectory is already on the robot
         # controller; we only need to watch convergence, not drive the motion.
         monitor_dt = 0.1
 
         # Minimum time before convergence checks — prevents false positives
-        # when the robot happens to be near the target from a prior run.
-        min_monitor_time = min(total_time * 0.5, 5.0)
+        # from closed shapes (square/circle) where start ≈ end config.
+        # 80% of trajectory time ensures the robot has nearly finished.
+        min_monitor_time = total_time * 0.80
+
+        # Minimum progress fraction (0-1) before convergence is accepted.
+        # This prevents early convergence when the robot passes through a
+        # configuration similar to the target partway through the motion.
+        min_progress_fraction = 0.85
+
+        n_master = len(master_path)
 
         # Allow extra time for real robot to finish
         timeout = total_time * 1.5 + 15.0
@@ -1218,18 +1240,34 @@ class DrawingActionServer(Node):
 
             elapsed = (self.get_clock().now() - t0).nanoseconds * 1e-9
 
-            # Convergence check (only after minimum monitoring time)
-            if elapsed > min_monitor_time and \
-                    self._real_robot_converged(target_q):
-                self._last_q = target_q.copy()
+            # Convergence check — THREE gates must ALL pass:
+            #  1. Elapsed time > 80% of expected trajectory duration
+            #  2. Estimated trajectory progress > 85%
+            #  3. Joint error to final target < convergence tolerance
+            progress_frac = last_closest_idx / max(n_master - 1, 1)
+            if (elapsed > min_monitor_time
+                    and progress_frac >= min_progress_fraction
+                    and self._real_robot_converged(target_q)):
+                # Sync _last_q with ACTUAL real robot joints
+                real_q = self._get_real_ordered_joints()
+                self._last_q = real_q if real_q is not None \
+                    else target_q.copy()
+                self._mirror_real_to_sim()
                 self.get_logger().info(
                     f'Real robot converged to target '
-                    f'(after {elapsed:.1f}s)')
+                    f'(after {elapsed:.1f}s, '
+                    f'progress={progress_frac*100:.0f}%)')
                 return True
 
             if elapsed > timeout:
+                # Sync state even on timeout
+                real_q = self._get_real_ordered_joints()
+                if real_q is not None:
+                    self._last_q = real_q
+                    self._mirror_real_to_sim()
                 self.get_logger().error(
-                    f'Real robot timed out ({timeout:.0f}s)')
+                    f'Real robot timed out ({timeout:.0f}s), '
+                    f'progress={progress_frac*100:.0f}%')
                 return False
 
             # Estimate progress from nearest master_path point
@@ -1239,14 +1277,19 @@ class DrawingActionServer(Node):
                 dists = [float(np.max(np.abs(real_q - q)))
                          for q in master_path]
                 closest = int(np.argmin(dists))
-                phase_label = self._phase_for_idx(closest, phase_info)
-                draw_pct = self._drawing_progress(closest, phase_info)
+                # Monotonic progress: prevent going backwards due to
+                # noise or closed-shape ambiguity
+                last_closest_idx = max(last_closest_idx, closest)
+                phase_label = self._phase_for_idx(
+                    last_closest_idx, phase_info)
+                draw_pct = self._drawing_progress(
+                    last_closest_idx, phase_info)
                 feedback.current_phase = phase_label.upper()
                 feedback.drawing_progress = draw_pct
                 goal_handle.publish_feedback(feedback)
-                pct = 100.0 * closest / max(len(master_path) - 1, 1)
+                pct = 100.0 * last_closest_idx / max(n_master - 1, 1)
                 self.get_logger().info(
-                    f'  ~step {closest}/{len(master_path)-1}  '
+                    f'  ~step {last_closest_idx}/{n_master-1}  '
                     f'({pct:.0f}%)  [{phase_label}]')
 
             _time.sleep(monitor_dt)
