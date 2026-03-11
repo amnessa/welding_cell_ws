@@ -125,12 +125,21 @@ def _interpolate_cartesian_smooth(
     v_max: float = 0.05,
     a_max: float = 0.05,
     dt: float = 0.01,
-) -> List[Tuple[np.ndarray, list]]:
-    """Dense Cartesian path with per-segment trapezoidal velocity profile."""
+) -> Tuple[List[Tuple[np.ndarray, list]], List[float]]:
+    """Dense Cartesian path with per-segment trapezoidal velocity profile.
+
+    Returns (waypoints, exact_timestamps) so that the velocity profile
+    is fully preserved through the IK and timing pipeline.  Each segment
+    decelerates to v=0 at its endpoints, guaranteeing C0-safe cornering.
+    """
     if not positions or len(positions) < 2:
-        return [(positions[0].copy(), orientation_xyzw)] if positions else []
+        wp = [(positions[0].copy(), orientation_xyzw)] if positions else []
+        return wp, [0.0] if wp else []
 
     waypoints: List[Tuple[np.ndarray, list]] = []
+    timestamps: List[float] = []
+    current_t = 0.0  # cumulative time offset across segments
+
     for i in range(len(positions) - 1):
         p_start, p_end = positions[i], positions[i + 1]
         dist = float(np.linalg.norm(p_end - p_start))
@@ -164,11 +173,21 @@ def _interpolate_cartesian_smooth(
                 t_dec = t - t_accel - t_cruise
                 s = (d_accel + d_cruise
                      + actual_v_max * t_dec - 0.5 * a_max * t_dec**2)
+
+            # Skip duplicate overlap at segment boundaries
+            if i > 0 and step == 0:
+                continue
+
             waypoints.append((p_start + line_dir * min(s, dist),
                               orientation_xyzw))
+            timestamps.append(current_t + t)
 
+        current_t += total_time
+
+    # Always append exact final point
     waypoints.append((positions[-1].copy(), orientation_xyzw))
-    return waypoints
+    timestamps.append(current_t)
+    return waypoints, timestamps
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -538,25 +557,32 @@ class DrawingActionServer(Node):
     def _ik_solve_cartesian_path(
         self,
         cart_wps: List[Tuple[np.ndarray, list]],
+        cart_times: List[float],
         q_seed: np.ndarray,
         label: str = 'path',
-    ) -> List[np.ndarray]:
-        """Solve IK for every (pos, quat) waypoint. Skips failed points."""
+    ) -> Tuple[List[np.ndarray], List[float]]:
+        """Solve IK for every (pos, quat) waypoint.
+
+        Skips failed points AND their corresponding timestamp so that
+        the returned (path, times) arrays stay perfectly aligned.
+        """
         path: List[np.ndarray] = []
+        valid_times: List[float] = []
         seed = q_seed.copy()
         fails = 0
-        for pos, quat in cart_wps:
+        for (pos, quat), t in zip(cart_wps, cart_times):
             T = self._pose44(pos, quat)
             q_sol = self._ik(T, seed)
             if q_sol is not None:
                 path.append(q_sol)
+                valid_times.append(t)
                 seed = q_sol.copy()
             else:
                 fails += 1
         self.get_logger().info(
             f'  {label}: IK solved {len(path)}/{len(cart_wps)} '
             f'({fails} fails)')
-        return path
+        return path, valid_times
 
     # ------------------------------------------------------------------
     # Time-Optimal Trajectory Generation via MoveIt 2 TOTG service
@@ -668,15 +694,22 @@ class DrawingActionServer(Node):
     # Concatenate phases → master timeline with phase boundaries
     # ------------------------------------------------------------------
     def _concat_phase_times(
-        self, phases: List[Tuple[str, List[np.ndarray], Optional[float]]]
+        self, phases: List[Tuple[str, List[np.ndarray],
+                                 Optional[List[float]]]]
     ) -> Tuple[List[np.ndarray], List[float],
                List[Tuple[str, int, int]]]:
         """Concatenate independently-timed phases.
 
-        Each phase is (label, path, cartesian_duration_or_none).
-        Cartesian phases use their velocity-derived duration so that
-        max_linear_vel / approach_linear_vel actually control speed.
-        Joint-space phases use MoveIt TOTG (with IPTP fallback).
+        Each phase is ``(label, joint_path, exact_timestamps_or_none)``.
+
+        **Cartesian phases** now carry their EXACT trapezoidal
+        timestamps produced by ``_interpolate_cartesian_smooth``.
+        This preserves the v→0 deceleration at every sharp corner
+        ($C^0$ continuity) and prevents the UR5e velocity-jump
+        soft-error that occurred with the old flat-time mapping.
+
+        **Joint-space phases** (RRT, homing) have ``times=None``
+        and are time-parameterised via TOTG (with IPTP fallback).
 
         Returns
         -------
@@ -689,16 +722,16 @@ class DrawingActionServer(Node):
         phase_info: List[Tuple[str, int, int]] = []
         t_offset = 0.0
 
-        for label, plist, cart_dur in phases:
+        for label, plist, exact_times in phases:
             if not plist:
                 continue
-            if cart_dur is not None and cart_dur > 0 and len(plist) > 1:
-                # Cartesian phase: spread points evenly over the
-                # Cartesian-velocity-derived duration.
+            if exact_times is not None and len(exact_times) == len(plist):
+                # Cartesian phase: USE EXACT trapezoidal timestamps.
+                # This is the critical fix — we no longer flatten
+                # the carefully-bunched corner points into uniform dt.
                 phase_path = plist
-                phase_times = [i * cart_dur / (len(plist) - 1)
-                               for i in range(len(plist))]
-                timing_src = 'cartesian'
+                phase_times = exact_times
+                timing_src = 'cartesian-exact'
             else:
                 # Joint-space phase: use TOTG (with IPTP fallback)
                 totg_result = self._compute_totg(plist)
@@ -913,9 +946,9 @@ class DrawingActionServer(Node):
         self,
         draw_positions: List[np.ndarray],
         orientation_xyzw: list,
-    ) -> Optional[List[Tuple[str, List[np.ndarray], Optional[float]]]]:
+    ) -> Optional[List[Tuple[str, List[np.ndarray], Optional[List[float]]]]]:
         """Build all phases for one drawing. Returns list of
-        (label, joint_path, cartesian_duration_or_none) tuples."""
+        (label, joint_path, exact_timestamps_or_none) tuples."""
         from ur5e_rrt_planner import (ur5e_fk, rrt_connect,
                                       smooth_path, bezier_smooth_path)
 
@@ -936,7 +969,7 @@ class DrawingActionServer(Node):
         if q_current is None:
             return None
         cart_dt = 1.0 / self.execution_hz
-        phases: List[Tuple[str, List[np.ndarray], Optional[float]]] = []
+        phases: List[Tuple[str, List[np.ndarray], Optional[List[float]]]] = []
 
         self.get_logger().info(
             '═══════════════════════════════════════════════\n'
@@ -955,16 +988,15 @@ class DrawingActionServer(Node):
             f'  [RETRACT_UP] z={current_pos[2]:.3f} → '
             f'z={lift_pos[2]:.3f} (+{self._retract_height:.3f}m)')
 
-        retract_wps = _interpolate_cartesian_smooth(
+        retract_wps, retract_times = _interpolate_cartesian_smooth(
             [current_pos, lift_pos], current_quat,
             self.approach_v_max, self.approach_a_max, cart_dt)
-        retract_path = self._ik_solve_cartesian_path(
-            retract_wps, q_current, 'Retract up')
+        retract_path, retract_valid_times = self._ik_solve_cartesian_path(
+            retract_wps, retract_times, q_current, 'Retract up')
         if not retract_path:
             self.get_logger().error('RETRACT_UP IK failed')
             return None
-        retract_dur = (len(retract_wps) - 1) * cart_dt
-        phases.append(('retract_up', retract_path, retract_dur))
+        phases.append(('retract_up', retract_path, retract_valid_times))
 
         # ── 2. HOMING (first goal only) ──────────────────────────────
         if self._first_goal:
@@ -1025,43 +1057,40 @@ class DrawingActionServer(Node):
             f'{goal_pos[1]:.4f}, {goal_pos[2]:.4f}]')
 
         # ── 4. DESCENT (approach → surface) ───────────────────────────
-        descent_wps = _interpolate_cartesian_smooth(
+        descent_wps, descent_times = _interpolate_cartesian_smooth(
             [approach_pos, draw_positions[0].copy()],
             orientation_xyzw,
             self.approach_v_max, self.approach_a_max, cart_dt)
-        descent_path = self._ik_solve_cartesian_path(
-            descent_wps, rrt_dense[-1], 'Descent')
+        descent_path, descent_valid_times = self._ik_solve_cartesian_path(
+            descent_wps, descent_times, rrt_dense[-1], 'Descent')
         if descent_path:
-            descent_dur = (len(descent_wps) - 1) * cart_dt
-            phases.append(('descent', descent_path, descent_dur))
+            phases.append(('descent', descent_path, descent_valid_times))
         else:
             self.get_logger().warn(
                 '  Descent IK failed — drawing starts from approach height')
 
         # ── 5. DRAWING (surface waypoints) ────────────────────────────
-        draw_wps = _interpolate_cartesian_smooth(
+        draw_wps, draw_times = _interpolate_cartesian_smooth(
             draw_positions, orientation_xyzw,
             self.v_max, self.a_max, cart_dt)
         last_q_for_draw = phases[-1][1][-1]
-        draw_path = self._ik_solve_cartesian_path(
-            draw_wps, last_q_for_draw, 'Drawing')
+        draw_path, draw_valid_times = self._ik_solve_cartesian_path(
+            draw_wps, draw_times, last_q_for_draw, 'Drawing')
         if not draw_path or len(draw_path) < 2:
             self.get_logger().error('Drawing IK returned too few solutions')
             return None
-        draw_dur = (len(draw_wps) - 1) * cart_dt
-        phases.append(('drawing', draw_path, draw_dur))
+        phases.append(('drawing', draw_path, draw_valid_times))
 
         # ── 6. ASCENT (surface → approach height) ─────────────────────
         last_draw_pos = draw_positions[-1].copy()
         ascent_pos = last_draw_pos - self.approach_height * self.plane_n
-        ascent_wps = _interpolate_cartesian_smooth(
+        ascent_wps, ascent_times = _interpolate_cartesian_smooth(
             [last_draw_pos, ascent_pos], orientation_xyzw,
             self.approach_v_max, self.approach_a_max, cart_dt)
-        ascent_path = self._ik_solve_cartesian_path(
-            ascent_wps, draw_path[-1], 'Ascent')
+        ascent_path, ascent_valid_times = self._ik_solve_cartesian_path(
+            ascent_wps, ascent_times, draw_path[-1], 'Ascent')
         if ascent_path:
-            ascent_dur = (len(ascent_wps) - 1) * cart_dt
-            phases.append(('ascent', ascent_path, ascent_dur))
+            phases.append(('ascent', ascent_path, ascent_valid_times))
         else:
             self.get_logger().warn('Ascent IK failed — holding last draw pos')
 
@@ -1136,52 +1165,6 @@ class DrawingActionServer(Node):
 
         return True
 
-    # ------------------------------------------------------------------
-    # Downsample trajectory for real robot controller
-    # ------------------------------------------------------------------
-    def _downsample_for_real_robot(
-        self,
-        path: List[np.ndarray],
-        times: List[float],
-        target_dt: float = 0.05,
-    ) -> Tuple[List[np.ndarray], List[float]]:
-        """Resample trajectory at *target_dt* intervals via linear interp.
-
-        The UR scaled_joint_trajectory_controller works best with moderate
-        point density (10–50 Hz).  Dense trajectories (>1000 pts with
-        sub-millisecond timing gaps) can cause the controller to stall
-        or abort partway through the motion.
-        """
-        if len(times) < 2 or times[-1] <= 0:
-            return path, times
-
-        total_time = times[-1]
-        n_out = max(int(total_time / target_dt) + 1, 2)
-        new_times: List[float] = []
-        new_path: List[np.ndarray] = []
-        times_arr = np.array(times)
-
-        for i in range(n_out):
-            t = min(i * target_dt, total_time)
-            idx = int(np.searchsorted(times_arr, t, side='right')) - 1
-            idx = max(0, min(idx, len(path) - 2))
-            t0, t1 = times[idx], times[idx + 1]
-            alpha = (t - t0) / max(t1 - t0, 1e-9)
-            alpha = max(0.0, min(1.0, alpha))
-            q = (1.0 - alpha) * path[idx] + alpha * path[idx + 1]
-            new_times.append(t)
-            new_path.append(q)
-
-        # Always include the exact final point
-        if abs(new_times[-1] - total_time) > 1e-6:
-            new_times.append(total_time)
-            new_path.append(path[-1].copy())
-
-        self.get_logger().info(
-            f'Downsampled trajectory: {len(path)} → {len(new_path)} pts '
-            f'(target_dt={target_dt:.3f}s)')
-        return new_path, new_times
-
     # ══════════════════════════════════════════════════════════════════
     # Execution: Real robot (send trajectory + convergence monitoring)
     # ══════════════════════════════════════════════════════════════════
@@ -1196,12 +1179,11 @@ class DrawingActionServer(Node):
     ) -> bool:
         """Send trajectory to real robot and monitor convergence."""
 
-        # Downsample to ~20 Hz for the UR Joint Trajectory Controller.
-        # Dense trajectories (2000+ pts with sub-ms time spacing) can
-        # cause the controller to stall or abort partway through.
-        ds_path, ds_times = self._downsample_for_real_robot(
-            master_path, master_times, target_dt=0.05)
-        self._send_full_trajectory(ds_path, ds_times)
+        # Send the full trajectory directly — the exact trapezoidal
+        # timestamps from _interpolate_cartesian_smooth already enforce
+        # v→0 at corners.  Downsampling would destroy corner geometry
+        # and re-introduce velocity jumps.
+        self._send_full_trajectory(master_path, master_times)
 
         target_q = master_path[-1]
         total_time = master_times[-1]
@@ -1349,11 +1331,11 @@ class DrawingActionServer(Node):
             lift_pos = current_pos.copy()
             lift_pos[2] += self._retract_height
 
-            retract_wps = _interpolate_cartesian_smooth(
+            retract_wps, retract_times = _interpolate_cartesian_smooth(
                 [current_pos, lift_pos], current_quat,
                 self.approach_v_max, self.approach_a_max, cart_dt)
-            retract_path = self._ik_solve_cartesian_path(
-                retract_wps, q_current, 'Shutdown retract')
+            retract_path, _ = self._ik_solve_cartesian_path(
+                retract_wps, retract_times, q_current, 'Shutdown retract')
 
             # Homing (cosine joint interpolation)
             q_retracted = retract_path[-1] if retract_path else q_current
