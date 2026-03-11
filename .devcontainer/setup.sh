@@ -21,6 +21,8 @@ apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
     net-tools \
     iputils-ping \
     python3-pip \
+    python3-pyqt5 \
+    python3-matplotlib \
     build-essential \
     2>/dev/null || echo "Some packages may not be available, continuing..."
 

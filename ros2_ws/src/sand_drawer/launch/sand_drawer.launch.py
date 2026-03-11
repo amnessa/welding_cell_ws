@@ -70,6 +70,7 @@ def launch_setup(context, *args, **kwargs):
     real_robot_str   = LaunchConfiguration("real_robot").perform(context)
     real_robot        = real_robot_str == "true"
     continuous_str    = LaunchConfiguration("continuous").perform(context)
+    text_string_str   = LaunchConfiguration("text_string").perform(context)
     max_joint_speed_deg = float(
         LaunchConfiguration("max_joint_speed_deg").perform(context))
     max_joint_accel_deg = float(
@@ -140,8 +141,13 @@ def launch_setup(context, *args, **kwargs):
 
     if mode_str == "action":
         # ---- Action-based sequential drawing (server + dispatcher) ----
-        # trajectory_key for action mode: 'random', 'line', 'triangle',
-        # 'square', 'circle'.
+        # trajectory_key for action mode:
+        #   'random'   — random geometric shape each time (default)
+        #   'line'     — random line on the plane
+        #   'triangle' — random equilateral triangle
+        #   'square'   — random square
+        #   'circle'   — random circle
+        #   'text'     — render text_string as multi-stroke trajectory
         # If user didn't explicitly set it, default to 'random'.
         action_traj_key = traj_key_str if traj_key_str != "projected_vector_trajectory" else "random"
         nodes.append(Node(
@@ -190,6 +196,7 @@ def launch_setup(context, *args, **kwargs):
                 "plane_json_file": plane_json_str or default_plane_json,
                 "trajectory_key": action_traj_key,
                 "continuous": continuous_str == "true",
+                "text_string": text_string_str,
             }],
         ))
         return nodes
@@ -353,6 +360,8 @@ def generate_launch_description():
                               description="trajectory | teleop | cartesian | action | capture | freedrive_capture"),
         DeclareLaunchArgument("continuous",      default_value="false",
                               description="Continuous drawing dispatch (action mode)"),
+        DeclareLaunchArgument("text_string",     default_value="ROMER",
+                              description="Text string to draw (action mode, trajectory_key=text)"),
         # Line UV coordinates (shared by cartesian & velocity modes)
         DeclareLaunchArgument("line_u_start",   default_value="0.5"),
         DeclareLaunchArgument("line_v_start",   default_value="0.3"),

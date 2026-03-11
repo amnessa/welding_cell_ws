@@ -18,6 +18,7 @@ Usage (via launch):
   ros2 launch sand_drawer sand_drawer.launch.py mode:=action
   ros2 launch sand_drawer sand_drawer.launch.py mode:=action continuous:=true
   ros2 launch sand_drawer sand_drawer.launch.py mode:=action trajectory_key:=circle
+  ros2 launch sand_drawer sand_drawer.launch.py mode:=action trajectory_key:=text text_string:=HELLO
 
 Trajectory keys
 ---------------
@@ -25,10 +26,11 @@ Trajectory keys
   triangle  — random equilateral triangle
   square    — random square
   circle    — random circle (resolution scales with size)
-  random    — pick a random shape each time (default)
+  text      — render text_string as multi-stroke trajectory (pen up/down)
+  random    — pick a random geometric shape each time (default)
 
 Subscribes to:  (none)
-Publishes to:   (none — communicates via action client)
+Publishes to:   /visualizer/drawing_path (nav_msgs/Path)
 """
 
 import json
@@ -38,6 +40,7 @@ import random
 import sys
 from typing import List, Optional, Tuple
 
+from matplotlib.textpath import TextPath
 import numpy as np
 import rclpy
 from geometry_msgs.msg import Point, PoseStamped, Quaternion
@@ -67,6 +70,8 @@ def _quat_to_rotmat(q_xyzw) -> np.ndarray:
 
 
 # ── Valid shape names ────────────────────────────────────────────────────
+# Geometric primitives for the random pool.  'text' is handled separately
+# (only via trajectory_key=text) so random mode doesn't pick it.
 _SHAPE_POOL = ('line', 'triangle', 'square', 'circle')
 
 
@@ -86,8 +91,10 @@ class DrawingDispatcher(Node):
         self.declare_parameter('shape_size_min_pct', 0.10)
         self.declare_parameter('shape_size_max_pct', 0.50)
         self.declare_parameter('ik_max_attempts', 100)
+        self.declare_parameter('text_string', 'ROMER')
 
         self._traj_key = self.get_parameter('trajectory_key').value
+        self._text_string = self.get_parameter('text_string').value
         self._continuous = self.get_parameter('continuous').value
         self._size_min_pct = self.get_parameter('shape_size_min_pct').value
         self._size_max_pct = self.get_parameter('shape_size_max_pct').value
@@ -333,13 +340,122 @@ class DrawingDispatcher(Node):
         return center_3d, pts
 
     # ------------------------------------------------------------------
+    # Text-to-trajectory generation (multi-stroke with pen lifts)
+    # ------------------------------------------------------------------
+    def _generate_text_3d(
+        self,
+    ) -> Tuple[np.ndarray, List[np.ndarray], List[np.ndarray]]:
+        """Convert a text string into a 3D multi-stroke trajectory.
+
+        Uses matplotlib.textpath to discretise TrueType font outlines
+        into polygon arrays.  Pen-up/pen-down transitions are encoded
+        as Z-axis offsets along the plane normal, so the existing
+        action server handles them as ordinary 3D waypoints — slowing
+        down at the end of a stroke, lifting, gliding, lowering, and
+        resuming the next stroke.
+
+        Returns
+        -------
+        center_3d     : 3D centre of the text bounding box
+        pts_3d        : full trajectory (all strokes with pen lifts)
+        bbox_corners  : bounding rectangle corners for IK reachability
+                        check (much cheaper than testing all waypoints)
+        """
+        text = self._text_string
+
+        # 1. Discretise the font glyphs into 2D polygon arrays
+        tp = TextPath((0, 0), text, size=1.0)
+        polygons = tp.to_polygons()
+        if not polygons:
+            self.get_logger().warn(
+                f'TextPath returned no polygons for "{text}"')
+            return self.plane_origin, [], []
+
+        # 2. Bounding box → scale to fit the drawing table
+        all_points = np.vstack(polygons)
+        min_xy = np.min(all_points, axis=0)
+        max_xy = np.max(all_points, axis=0)
+        text_width = max_xy[0] - min_xy[0]
+        text_height = max_xy[1] - min_xy[1]
+        if text_width < 1e-6 or text_height < 1e-6:
+            return self.plane_origin, [], []
+
+        target_width = random.uniform(
+            min(self._size_min_pct * 1.4, 0.95) * self.table_width_m,
+            min(self._size_max_pct * 1.4, 0.95) * self.table_width_m)
+        scale = target_width / text_width
+        scaled_height = text_height * scale
+
+        # 3. Random safe centre (with margin so it doesn't fall off)
+        margin_x = (target_width / 2.0) + 0.02
+        margin_y = (scaled_height / 2.0) + 0.02
+
+        if self.table_width_m < 2 * margin_x:
+            margin_x = self.table_width_m / 3.0
+        if self.table_height_m < 2 * margin_y:
+            margin_y = self.table_height_m / 3.0
+
+        cx = random.uniform(margin_x, self.table_width_m - margin_x)
+        cy = random.uniform(margin_y, self.table_height_m - margin_y)
+        center_3d = (self.rect_origin
+                     + cx * self.plane_x
+                     + cy * self.plane_y)
+
+        # 4. Bounding box corners on the surface for IK reachability
+        half_w = target_width / 2.0
+        half_h = scaled_height / 2.0
+        bbox_corners = [
+            center_3d - half_w * self.plane_x - half_h * self.plane_y,
+            center_3d + half_w * self.plane_x - half_h * self.plane_y,
+            center_3d + half_w * self.plane_x + half_h * self.plane_y,
+            center_3d - half_w * self.plane_x + half_h * self.plane_y,
+            center_3d - half_w * self.plane_x - half_h * self.plane_y,
+        ]  # closed rectangle — _is_reachable also tests midpoints
+
+        # 5. Build 3D trajectory with Z-axis pen lifts between strokes
+        lift_height = 0.03  # 3 cm pen lift along plane normal
+        center_2d = np.array([
+            min_xy[0] + text_width / 2.0,
+            min_xy[1] + text_height / 2.0])
+
+        pts_3d: List[np.ndarray] = []
+        for poly in polygons:
+            # Scale around text centre
+            poly_scaled = (poly - center_2d) * scale
+
+            # Map 2D polygon → 3D points on the drawing plane
+            stroke_3d = [
+                center_3d + px * self.plane_x + py * self.plane_y
+                for (px, py) in poly_scaled
+            ]
+            if not stroke_3d:
+                continue
+
+            # Pen-up: hover above the start of this stroke
+            # plane_n points INTO the table (Z ≈ −1), so subtract to
+            # lift ABOVE the surface — same convention as the action
+            # server's approach/ascent phases.
+            pts_3d.append(stroke_3d[0] - self.plane_n * lift_height)
+            # Pen-down: draw the stroke on the surface
+            pts_3d.extend(stroke_3d)
+            # Pen-up: hover above the end of this stroke
+            pts_3d.append(stroke_3d[-1] - self.plane_n * lift_height)
+
+        self.get_logger().info(
+            f'Text "{text}": {len(polygons)} strokes, '
+            f'{len(pts_3d)} waypoints, '
+            f'width={target_width*100:.1f}cm')
+
+        return center_3d, pts_3d, bbox_corners
+
+    # ------------------------------------------------------------------
     # Drawing generation with rejection sampling
     # ------------------------------------------------------------------
     def _generate_drawing(self) -> Optional[Tuple[List[Point], Quaternion]]:
         """Generate a reachable, geometrically correct drawing goal."""
         if self._traj_key == 'random':
             pick_random = True
-        elif self._traj_key in _SHAPE_POOL:
+        elif self._traj_key in _SHAPE_POOL or self._traj_key == 'text':
             pick_random = False
         else:
             self.get_logger().error(
@@ -352,9 +468,23 @@ class DrawingDispatcher(Node):
             shape = (random.choice(_SHAPE_POOL)
                      if pick_random else self._traj_key)
 
-            center_3d, positions = self._generate_random_shape_3d(shape)
+            if shape == 'text':
+                center_3d, positions, bbox_check = self._generate_text_3d()
+                if not positions:
+                    continue
+                # Reachability via bounding-box corners only (9 IK checks)
+                # instead of all 151+ waypoints.  If the rectangle fits,
+                # every letter stroke inside it is reachable.
+                reachable = self._is_reachable(
+                    center_3d, bbox_check, orientation)
+            else:
+                center_3d, positions = self._generate_random_shape_3d(shape)
+                if not positions:
+                    continue
+                reachable = self._is_reachable(
+                    center_3d, positions, orientation)
 
-            if self._is_reachable(center_3d, positions, orientation):
+            if reachable:
                 self.get_logger().info(
                     f'Generated reachable {shape} '
                     f'({len(positions)} pts, '

@@ -75,6 +75,7 @@ install(PROGRAMS
   scripts/freedrive_plane_capture.py
   scripts/drawing_action_server.py
   scripts/drawing_dispatcher.py
+  scripts/drawing_gui.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
