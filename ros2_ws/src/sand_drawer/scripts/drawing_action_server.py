@@ -205,7 +205,7 @@ class DrawingActionServer(Node):
 
         # ---- parameters ----
         self.declare_parameter('plane_json_file', '')
-        self.declare_parameter('approach_height', 0.08)
+        self.declare_parameter('approach_height', 0.10)
         self.declare_parameter('max_linear_vel', 0.05)
         self.declare_parameter('max_linear_accel', 0.05)
         self.declare_parameter('approach_linear_vel', 0.20)

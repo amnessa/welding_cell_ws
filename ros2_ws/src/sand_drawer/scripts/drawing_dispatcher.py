@@ -413,7 +413,13 @@ class DrawingDispatcher(Node):
         ]  # closed rectangle — _is_reachable also tests midpoints
 
         # 5. Build 3D trajectory with Z-axis pen lifts between strokes
-        lift_height = 0.03  # 3 cm pen lift along plane normal
+        # The plane is defined 6 cm above the sand surface and the
+        # pencil is 10 cm long (TCP → tip).  At the drawing plane the
+        # tip is 4 cm into the sand.  The lift must raise the TCP
+        # enough for the pencil tip to clear the sand:
+        #   tip_clearance = lift_height − (pencil_length − plane_offset)
+        #                 = 0.10 − (0.10 − 0.06) = +6 cm above sand.
+        lift_height = 0.10  # 10 cm lift → tip 6 cm above sand
         center_2d = np.array([
             min_xy[0] + text_width / 2.0,
             min_xy[1] + text_height / 2.0])

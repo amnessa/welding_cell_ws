@@ -158,7 +158,7 @@ def launch_setup(context, *args, **kwargs):
             parameters=[{
                 "use_sim_time": use_sim_time,
                 "plane_json_file": plane_json_str or default_plane_json,
-                "approach_height": 0.08,
+                "approach_height": 0.10,
                 "max_linear_vel": 0.07,
                 "max_linear_accel": 0.05,
                 "approach_linear_vel": 0.04,
@@ -213,7 +213,7 @@ def launch_setup(context, *args, **kwargs):
             parameters=[{
                 "use_sim_time": use_sim_time,
                 "plane_json_file": plane_json_str or default_plane_json,
-                "approach_height": 0.08,
+                "approach_height": 0.10,
                 "max_linear_vel": 10.0,
                 "max_linear_accel": 10.0,
                 "approach_linear_vel": 10.0,
@@ -270,7 +270,7 @@ def launch_setup(context, *args, **kwargs):
             "plane_json_file": plane_json_str or default_plane_json,
             "ee_link": "tool0",
             "base_frame": "base_link",
-            "approach_height": 0.08,
+            "approach_height": 0.10,
             "waypoint_threshold": 0.03,
             "approach_threshold": 0.06,
             "orientation_threshold": 0.15,
