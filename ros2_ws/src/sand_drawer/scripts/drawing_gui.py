@@ -27,6 +27,7 @@ import numpy as np
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, DurabilityPolicy
 from nav_msgs.msg import Path
 
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout,
@@ -55,8 +56,11 @@ class ROS2ListenerThread(QThread):
     def run(self):
         rclpy.init()
         self.node = rclpy.create_node('drawing_gui_listener')
+        _qos = QoSProfile(
+            depth=10,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.node.create_subscription(
-            Path, '/visualizer/drawing_path', self._path_cb, 10)
+            Path, '/visualizer/drawing_path', self._path_cb, _qos)
         self.node.get_logger().info(
             'GUI visualizer listening on /visualizer/drawing_path …')
 

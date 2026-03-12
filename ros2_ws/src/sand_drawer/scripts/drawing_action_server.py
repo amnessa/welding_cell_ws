@@ -968,7 +968,12 @@ class DrawingActionServer(Node):
             q_current = self._get_ordered_joints()
         if q_current is None:
             return None
-        cart_dt = 1.0 / self.execution_hz
+        # Real robot: UR controller interpolates internally, so 10 Hz
+        # Cartesian density is plenty.  Sim: 100 Hz drives the sim loop.
+        if self._real_robot:
+            cart_dt = 0.10   # 10 Hz — keeps trajectories < 2 000 pts
+        else:
+            cart_dt = 1.0 / self.execution_hz  # 100 Hz for sim
         phases: List[Tuple[str, List[np.ndarray], Optional[List[float]]]] = []
 
         self.get_logger().info(
@@ -1256,8 +1261,9 @@ class DrawingActionServer(Node):
             real_q = self._get_real_ordered_joints()
             if real_q is not None and elapsed - last_feedback_time >= 1.0:
                 last_feedback_time = elapsed
-                dists = [float(np.max(np.abs(real_q - q)))
-                         for q in master_path]
+                # Vectorised distance — avoids 12 k-iteration Python loop
+                diff = np.array(master_path) - real_q
+                dists = np.max(np.abs(diff), axis=1)
                 closest = int(np.argmin(dists))
                 # Monotonic progress: prevent going backwards due to
                 # noise or closed-shape ambiguity
@@ -1326,7 +1332,10 @@ class DrawingActionServer(Node):
             T_now = ur5e_fk(q_current)
             current_pos = T_now[:3, 3].copy()
             current_quat = rotmat_to_quat(T_now[:3, :3])
-            cart_dt = 1.0 / self.execution_hz
+            if self._real_robot:
+                cart_dt = 0.10
+            else:
+                cart_dt = 1.0 / self.execution_hz
 
             lift_pos = current_pos.copy()
             lift_pos[2] += self._retract_height

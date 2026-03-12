@@ -47,6 +47,7 @@ from geometry_msgs.msg import Point, PoseStamped, Quaternion
 from nav_msgs.msg import Path
 from rclpy.action import ActionClient
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, DurabilityPolicy
 
 from sand_drawer.action import ExecuteDrawing
 
@@ -113,8 +114,12 @@ class DrawingDispatcher(Node):
             self, ExecuteDrawing, 'execute_drawing')
 
         # ---- Path publisher for the PyQt visualizer GUI ----
+        # TRANSIENT_LOCAL so a late-joining GUI still receives the last path.
+        _path_qos = QoSProfile(
+            depth=10,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self._path_pub = self.create_publisher(
-            Path, '/visualizer/drawing_path', 10)
+            Path, '/visualizer/drawing_path', _path_qos)
 
         # ---- state ----
         self._goal_handle = None
@@ -380,45 +385,58 @@ class DrawingDispatcher(Node):
         if text_width < 1e-6 or text_height < 1e-6:
             return self.plane_origin, [], []
 
+        # Auto-orient: lay the text along the LONGER table axis so
+        # wide strings like "ROMER" exploit the full table length.
+        if self.table_height_m > self.table_width_m:
+            text_u = self.plane_y          # text width  → long axis
+            text_v = -self.plane_x         # text height → short axis (flip for readability)
+            span_along = self.table_height_m
+            span_across = self.table_width_m
+        else:
+            text_u = self.plane_x          # text width  → long axis
+            text_v = self.plane_y          # text height → short axis
+            span_along = self.table_width_m
+            span_across = self.table_height_m
+
         target_width = random.uniform(
-            min(self._size_min_pct * 1.4, 0.95) * self.table_width_m,
-            min(self._size_max_pct * 1.4, 0.95) * self.table_width_m)
+            min(self._size_min_pct * 2.1, 0.95) * span_along,
+            min(self._size_max_pct * 2.1, 0.95) * span_along)
         scale = target_width / text_width
         scaled_height = text_height * scale
 
+        # Clamp if scaled height exceeds the cross-axis
+        if scaled_height > 0.90 * span_across:
+            scale = (0.90 * span_across) / text_height
+            target_width = text_width * scale
+            scaled_height = text_height * scale
+
         # 3. Random safe centre (with margin so it doesn't fall off)
-        margin_x = (target_width / 2.0) + 0.02
-        margin_y = (scaled_height / 2.0) + 0.02
+        margin_u = (target_width / 2.0) + 0.02
+        margin_v = (scaled_height / 2.0) + 0.02
 
-        if self.table_width_m < 2 * margin_x:
-            margin_x = self.table_width_m / 3.0
-        if self.table_height_m < 2 * margin_y:
-            margin_y = self.table_height_m / 3.0
+        if span_along < 2 * margin_u:
+            margin_u = span_along / 3.0
+        if span_across < 2 * margin_v:
+            margin_v = span_across / 3.0
 
-        cx = random.uniform(margin_x, self.table_width_m - margin_x)
-        cy = random.uniform(margin_y, self.table_height_m - margin_y)
+        cu = random.uniform(margin_u, span_along - margin_u)
+        cv = random.uniform(margin_v, span_across - margin_v)
         center_3d = (self.rect_origin
-                     + cx * self.plane_x
-                     + cy * self.plane_y)
+                     + cu * (text_u / np.linalg.norm(text_u))
+                     + cv * (text_v / np.linalg.norm(text_v)))
 
         # 4. Bounding box corners on the surface for IK reachability
         half_w = target_width / 2.0
         half_h = scaled_height / 2.0
         bbox_corners = [
-            center_3d - half_w * self.plane_x - half_h * self.plane_y,
-            center_3d + half_w * self.plane_x - half_h * self.plane_y,
-            center_3d + half_w * self.plane_x + half_h * self.plane_y,
-            center_3d - half_w * self.plane_x + half_h * self.plane_y,
-            center_3d - half_w * self.plane_x - half_h * self.plane_y,
+            center_3d - half_w * text_u - half_h * text_v,
+            center_3d + half_w * text_u - half_h * text_v,
+            center_3d + half_w * text_u + half_h * text_v,
+            center_3d - half_w * text_u + half_h * text_v,
+            center_3d - half_w * text_u - half_h * text_v,
         ]  # closed rectangle — _is_reachable also tests midpoints
 
         # 5. Build 3D trajectory with Z-axis pen lifts between strokes
-        # The plane is defined 6 cm above the sand surface and the
-        # pencil is 10 cm long (TCP → tip).  At the drawing plane the
-        # tip is 4 cm into the sand.  The lift must raise the TCP
-        # enough for the pencil tip to clear the sand:
-        #   tip_clearance = lift_height − (pencil_length − plane_offset)
-        #                 = 0.10 − (0.10 − 0.06) = +6 cm above sand.
         lift_height = 0.10  # 10 cm lift → tip 6 cm above sand
         center_2d = np.array([
             min_xy[0] + text_width / 2.0,
@@ -430,17 +448,15 @@ class DrawingDispatcher(Node):
             poly_scaled = (poly - center_2d) * scale
 
             # Map 2D polygon → 3D points on the drawing plane
+            # px runs along text_u (long axis), py along text_v
             stroke_3d = [
-                center_3d + px * self.plane_x + py * self.plane_y
+                center_3d + px * text_u + py * text_v
                 for (px, py) in poly_scaled
             ]
             if not stroke_3d:
                 continue
 
             # Pen-up: hover above the start of this stroke
-            # plane_n points INTO the table (Z ≈ −1), so subtract to
-            # lift ABOVE the surface — same convention as the action
-            # server's approach/ascent phases.
             pts_3d.append(stroke_3d[0] - self.plane_n * lift_height)
             # Pen-down: draw the stroke on the surface
             pts_3d.extend(stroke_3d)
@@ -450,7 +466,8 @@ class DrawingDispatcher(Node):
         self.get_logger().info(
             f'Text "{text}": {len(polygons)} strokes, '
             f'{len(pts_3d)} waypoints, '
-            f'width={target_width*100:.1f}cm')
+            f'width={target_width*100:.1f}cm '
+            f'(along {"height" if self.table_height_m > self.table_width_m else "width"})')
 
         return center_3d, pts_3d, bbox_corners
 
