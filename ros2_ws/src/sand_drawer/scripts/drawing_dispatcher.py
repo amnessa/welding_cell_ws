@@ -518,10 +518,10 @@ class DrawingDispatcher(Node):
             pts_3d: List[np.ndarray] = []
             for poly_scaled in centered_polys:
                 rotated_poly = poly_scaled @ R2.T
-                # Readability/mirroring fix: flip local v at glyph mapping
-                # time, not at placement-axis definition time.
+                # Top-side readable text: flip local u (left↔right) and keep
+                # local v inversion for the plane handedness.
                 stroke_3d = [
-                    center_3d + pu * u_hat - pv * v_hat
+                    center_3d - pu * u_hat - pv * v_hat
                     for (pu, pv) in rotated_poly
                 ]
                 stroke_3d = self._decimate_polyline(
