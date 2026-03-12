@@ -93,6 +93,12 @@ class DrawingDispatcher(Node):
         self.declare_parameter('shape_size_max_pct', 0.50)
         self.declare_parameter('ik_max_attempts', 100)
         self.declare_parameter('text_string', 'ROMER')
+        self.declare_parameter('text_height_min_m', 0.08)
+        self.declare_parameter('text_height_max_m', 0.15)
+        self.declare_parameter('text_table_margin_m', 0.02)
+        self.declare_parameter('text_min_point_spacing_m', 0.005)
+        self.declare_parameter('text_fit_attempts', 24)
+        self.declare_parameter('text_rotation_max_deg', 45.0)
 
         self._traj_key = self.get_parameter('trajectory_key').value
         self._text_string = self.get_parameter('text_string').value
@@ -101,10 +107,23 @@ class DrawingDispatcher(Node):
         self._size_max_pct = self.get_parameter('shape_size_max_pct').value
         self._ik_max_attempts = int(
             self.get_parameter('ik_max_attempts').value)
+        self._text_h_min_m = float(self.get_parameter('text_height_min_m').value)
+        self._text_h_max_m = float(self.get_parameter('text_height_max_m').value)
+        self._text_margin_m = float(self.get_parameter('text_table_margin_m').value)
+        self._text_min_pt_spacing_m = float(
+            self.get_parameter('text_min_point_spacing_m').value)
+        self._text_fit_attempts = int(self.get_parameter('text_fit_attempts').value)
+        self._text_rot_max_rad = math.radians(
+            float(self.get_parameter('text_rotation_max_deg').value))
 
         # Home configuration — absolute baseline IK seed
         self._ik_seed = np.array(
             [-0.7854, -0.4363, -2.5307, -0.1745, 0.0, 0.0], dtype=float)
+        self._ik_seeds = [
+            self._ik_seed.copy(),
+            np.array([-0.78, -1.00, -1.50, -0.17, 0.0, 0.0], dtype=float),
+            np.array([-0.78, -0.20, -2.80, -0.17, 0.0, 0.0], dtype=float),
+        ]
 
         # ---- load plane data (with frame correction) ----
         self._load_plane_json()
@@ -247,10 +266,15 @@ class DrawingDispatcher(Node):
         T = np.eye(4)
         T[:3, :3] = R
 
-        # Stage 1: centre fast-fail (with config check)
+        # Stage 1: centre fast-fail (with multi-seed config check)
         T[:3, 3] = center_3d
-        center_sol = ik_solve(T, self._ik_seed, max_iter=80)
-        if center_sol is None or not self._config_ok(center_sol):
+        center_sol = None
+        for seed in self._ik_seeds:
+            sol = ik_solve(T, seed, max_iter=80)
+            if sol is not None and self._config_ok(sol):
+                center_sol = sol
+                break
+        if center_sol is None:
             return False
 
         # Stage 2: ALL waypoints + edge midpoints
@@ -266,8 +290,15 @@ class DrawingDispatcher(Node):
         current_seed = center_sol
         for pt in check_points:
             T[:3, 3] = pt
-            sol = ik_solve(T, current_seed, max_iter=80)
-            if sol is None or not self._config_ok(sol):
+            # Try continuity seed first; fall back to global elbow-up seeds.
+            seed_list = [current_seed] + self._ik_seeds
+            sol = None
+            for seed in seed_list:
+                cand = ik_solve(T, seed, max_iter=80)
+                if cand is not None and self._config_ok(cand):
+                    sol = cand
+                    break
+            if sol is None:
                 return False
             current_seed = sol  # chain for same-config continuity
         return True
@@ -347,6 +378,19 @@ class DrawingDispatcher(Node):
     # ------------------------------------------------------------------
     # Text-to-trajectory generation (multi-stroke with pen lifts)
     # ------------------------------------------------------------------
+    @staticmethod
+    def _decimate_polyline(points: List[np.ndarray], min_dist: float
+                           ) -> List[np.ndarray]:
+        """Drop overly dense points while preserving endpoints."""
+        if len(points) <= 2 or min_dist <= 0.0:
+            return points
+        out = [points[0]]
+        for pt in points[1:-1]:
+            if float(np.linalg.norm(pt - out[-1])) >= min_dist:
+                out.append(pt)
+        out.append(points[-1])
+        return out
+
     def _generate_text_3d(
         self,
     ) -> Tuple[np.ndarray, List[np.ndarray], List[np.ndarray]]:
@@ -385,91 +429,119 @@ class DrawingDispatcher(Node):
         if text_width < 1e-6 or text_height < 1e-6:
             return self.plane_origin, [], []
 
-        # Auto-orient: lay the text along the LONGER table axis so
-        # wide strings like "ROMER" exploit the full table length.
+        # Auto-orient text along the LONGER table axis, but use basis
+        # vectors derived from the captured rectangle edges so placement
+        # always stays inside the table footprint.
+        width_hat = self.rect_width_vec / max(float(np.linalg.norm(self.rect_width_vec)), 1e-9)
+        height_hat = self.rect_height_vec / max(float(np.linalg.norm(self.rect_height_vec)), 1e-9)
         if self.table_height_m > self.table_width_m:
-            text_u = self.plane_y          # text width  → long axis
-            text_v = -self.plane_x         # text height → short axis (flip for readability)
+            u_hat = height_hat   # text width  → long axis
+            v_hat = width_hat    # text height → short axis
             span_along = self.table_height_m
             span_across = self.table_width_m
         else:
-            text_u = self.plane_x          # text width  → long axis
-            text_v = self.plane_y          # text height → short axis
+            u_hat = width_hat
+            v_hat = height_hat
             span_along = self.table_width_m
             span_across = self.table_height_m
 
-        target_width = random.uniform(
-            min(self._size_min_pct * 2.1, 0.95) * span_along,
-            min(self._size_max_pct * 2.1, 0.95) * span_along)
-        scale = target_width / text_width
-        scaled_height = text_height * scale
+        # Absolute text sizing (height in metres) + guaranteed fit.
+        # Width is derived from glyph aspect ratio and clamped to table.
+        safe_margin = max(self._text_margin_m, 0.0)
+        avail_along = span_along - 2.0 * safe_margin
+        avail_across = span_across - 2.0 * safe_margin
+        if avail_along <= 0.02 or avail_across <= 0.02:
+            self.get_logger().warn('Table too small after text margin clamp')
+            return self.plane_origin, [], []
 
-        # Clamp if scaled height exceeds the cross-axis
-        if scaled_height > 0.90 * span_across:
-            scale = (0.90 * span_across) / text_height
-            target_width = text_width * scale
-            scaled_height = text_height * scale
+        aspect_wh = text_width / text_height  # width per unit height
+        h_max_fit_by_width = avail_along / max(aspect_wh, 1e-9)
+        h_max = min(self._text_h_max_m, avail_across, h_max_fit_by_width)
+        h_min = min(self._text_h_min_m, h_max)
+        if h_max <= 1e-6:
+            self.get_logger().warn('No feasible text height for current plane')
+            return self.plane_origin, [], []
 
-        # 3. Random safe centre (with margin so it doesn't fall off)
-        margin_u = (target_width / 2.0) + 0.02
-        margin_v = (scaled_height / 2.0) + 0.02
+        # Start with a large random text height.
+        h_lo = max(h_min, 0.65 * h_max)
+        target_height = random.uniform(h_lo, h_max)
+        scale = target_height / text_height
 
-        if span_along < 2 * margin_u:
-            margin_u = span_along / 3.0
-        if span_across < 2 * margin_v:
-            margin_v = span_across / 3.0
-
-        cu = random.uniform(margin_u, span_along - margin_u)
-        cv = random.uniform(margin_v, span_across - margin_v)
-        center_3d = (self.rect_origin
-                     + cu * (text_u / np.linalg.norm(text_u))
-                     + cv * (text_v / np.linalg.norm(text_v)))
-
-        # 4. Bounding box corners on the surface for IK reachability
-        half_w = target_width / 2.0
-        half_h = scaled_height / 2.0
-        bbox_corners = [
-            center_3d - half_w * text_u - half_h * text_v,
-            center_3d + half_w * text_u - half_h * text_v,
-            center_3d + half_w * text_u + half_h * text_v,
-            center_3d - half_w * text_u + half_h * text_v,
-            center_3d - half_w * text_u - half_h * text_v,
-        ]  # closed rectangle — _is_reachable also tests midpoints
-
-        # 5. Build 3D trajectory with Z-axis pen lifts between strokes
-        lift_height = 0.10  # 10 cm lift → tip 6 cm above sand
         center_2d = np.array([
             min_xy[0] + text_width / 2.0,
-            min_xy[1] + text_height / 2.0])
+            min_xy[1] + text_height / 2.0], dtype=float)
+        centered_polys = [(poly - center_2d) * scale for poly in polygons]
+        centered_all = np.vstack(centered_polys)
 
-        pts_3d: List[np.ndarray] = []
-        for poly in polygons:
-            # Scale around text centre
-            poly_scaled = (poly - center_2d) * scale
+        lift_height = 0.10  # 10 cm lift → tip 6 cm above sand
+        fit_attempts = max(self._text_fit_attempts, 1)
 
-            # Map 2D polygon → 3D points on the drawing plane
-            # px runs along text_u (long axis), py along text_v
-            stroke_3d = [
-                center_3d + px * text_u + py * text_v
-                for (px, py) in poly_scaled
-            ]
-            if not stroke_3d:
+        for fit_idx in range(fit_attempts):
+            if fit_idx == 0:
+                angle = 0.0
+            elif fit_idx == 1:
+                angle = math.pi / 2.0
+            else:
+                angle = random.uniform(-self._text_rot_max_rad,
+                                       self._text_rot_max_rad)
+
+            c, s = math.cos(angle), math.sin(angle)
+            R2 = np.array([[c, -s], [s, c]], dtype=float)
+            rotated_all = centered_all @ R2.T
+
+            min_uv = np.min(rotated_all, axis=0)
+            max_uv = np.max(rotated_all, axis=0)
+            extent_u = float(max_uv[0] - min_uv[0])
+            extent_v = float(max_uv[1] - min_uv[1])
+            if extent_u > avail_along or extent_v > avail_across:
                 continue
 
-            # Pen-up: hover above the start of this stroke
-            pts_3d.append(stroke_3d[0] - self.plane_n * lift_height)
-            # Pen-down: draw the stroke on the surface
-            pts_3d.extend(stroke_3d)
-            # Pen-up: hover above the end of this stroke
-            pts_3d.append(stroke_3d[-1] - self.plane_n * lift_height)
+            margin_u = (extent_u / 2.0) + safe_margin
+            margin_v = (extent_v / 2.0) + safe_margin
+            if span_along <= 2.0 * margin_u or span_across <= 2.0 * margin_v:
+                continue
 
-        self.get_logger().info(
-            f'Text "{text}": {len(polygons)} strokes, '
-            f'{len(pts_3d)} waypoints, '
-            f'width={target_width*100:.1f}cm '
-            f'(along {"height" if self.table_height_m > self.table_width_m else "width"})')
+            cu = random.uniform(margin_u, span_along - margin_u)
+            cv = random.uniform(margin_v, span_across - margin_v)
+            center_3d = self.rect_origin + cu * u_hat + cv * v_hat
 
-        return center_3d, pts_3d, bbox_corners
+            half_w = extent_u / 2.0
+            half_h = extent_v / 2.0
+            bbox_corners = [
+                center_3d - half_w * u_hat - half_h * v_hat,
+                center_3d + half_w * u_hat - half_h * v_hat,
+                center_3d + half_w * u_hat + half_h * v_hat,
+                center_3d - half_w * u_hat + half_h * v_hat,
+                center_3d - half_w * u_hat - half_h * v_hat,
+            ]
+
+            pts_3d: List[np.ndarray] = []
+            for poly_scaled in centered_polys:
+                rotated_poly = poly_scaled @ R2.T
+                # Readability/mirroring fix: flip local v at glyph mapping
+                # time, not at placement-axis definition time.
+                stroke_3d = [
+                    center_3d + pu * u_hat - pv * v_hat
+                    for (pu, pv) in rotated_poly
+                ]
+                stroke_3d = self._decimate_polyline(
+                    stroke_3d, self._text_min_pt_spacing_m)
+                if not stroke_3d:
+                    continue
+                pts_3d.append(stroke_3d[0] - self.plane_n * lift_height)
+                pts_3d.extend(stroke_3d)
+                pts_3d.append(stroke_3d[-1] - self.plane_n * lift_height)
+
+            self.get_logger().info(
+                f'Text "{text}": {len(polygons)} strokes, '
+                f'{len(pts_3d)} waypoints, '
+                f'width={extent_u*100:.1f}cm, '
+                f'height={extent_v*100:.1f}cm, '
+                f'rot={math.degrees(angle):.0f}deg '
+                f'(along {"height" if self.table_height_m > self.table_width_m else "width"})')
+            return center_3d, pts_3d, bbox_corners
+
+        return self.plane_origin, [], []
 
     # ------------------------------------------------------------------
     # Drawing generation with rejection sampling
