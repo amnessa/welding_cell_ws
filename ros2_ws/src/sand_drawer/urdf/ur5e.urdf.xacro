@@ -28,7 +28,6 @@
     physical_parameters_file="$(find ur_description)/config/ur5e/physical_parameters.yaml"
     visual_parameters_file="$(find ur_description)/config/ur5e/visual_parameters.yaml"
     safety_limits="false"
-    generate_ros2_control_tag="false"
   >
     <origin xyz="0 0 0" rpy="0 0 0"/>
   </xacro:ur_robot>
