@@ -94,7 +94,7 @@ welding_cell_ws/
 ros2 launch ur_robot_driver ur_control.launch.py \
     ur_type:=ur5e \
     robot_ip:=192.168.8.4 \
-    launch_rviz:=true
+    launch_rviz:=false
 ```
 ```bash
 using realtime data exchange between the physical robot
