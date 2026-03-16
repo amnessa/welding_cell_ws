@@ -346,40 +346,40 @@ class DrawingActionServer(Node):
         Y = self.plane_y
 
         # Tool selection around wrist Z (parallel to plane).
-        # pointy = 0°, fork = +90°, spatula = -90°.
-        if tool_name == 'pointy':
-            length = 0.15
+        # fork = 0°, pointy = +90°, empty = -90°, spatula = 180°.
+        if tool_name == 'fork':
+            length = 0.13
             R = np.column_stack([N, X, Y])
-        elif tool_name == 'fork':
-            length = 0.13
+        elif tool_name == 'pointy':
+            length = 0.15
             R = np.column_stack([X, -N, Y])
-        elif tool_name == 'spatula':
-            length = 0.13
-            R = np.column_stack([-X, N, Y])
         elif tool_name == 'empty':
             length = 0.0
+            R = np.column_stack([-X, N, Y])
+        elif tool_name == 'spatula':
+            length = 0.13
             R = np.column_stack([-N, -X, Y])
         else:
             self.get_logger().error(
                 f"Unknown tool '{tool_name}'. Defaulting to pointy.")
             length = 0.15
-            R = np.column_stack([N, X, Y])
+            R = np.column_stack([X, -N, Y])
 
         return length, rotmat_to_quat(R)
 
     def _tool_length_and_yaw_offset(self, tool_name: str) -> Tuple[float, float]:
         """Return (tool_length_m, yaw_offset_rad) about local wrist Z."""
-        if tool_name == 'pointy':
-            return 0.15, 0.0
         if tool_name == 'fork':
-            return 0.13, math.pi / 2.0
-        if tool_name == 'spatula':
-            return 0.13, -math.pi / 2.0
+            return 0.13, 0.0
+        if tool_name == 'pointy':
+            return 0.15, math.pi / 2.0
         if tool_name == 'empty':
-            return 0.0, math.pi
+            return 0.0, -math.pi / 2.0
+        if tool_name == 'spatula':
+            return 0.13, math.pi
         self.get_logger().error(
             f"Unknown tool '{tool_name}'. Defaulting to pointy.")
-        return 0.15, 0.0
+        return 0.15, math.pi / 2.0
 
     def _dynamic_wrist_pose_from_tip(self, tip_pos: np.ndarray) -> np.ndarray:
         """Build wrist pose for a tip point using dynamic yaw and tool offset."""
