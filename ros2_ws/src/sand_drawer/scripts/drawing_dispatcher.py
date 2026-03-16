@@ -132,11 +132,13 @@ class DrawingDispatcher(Node):
         self.declare_parameter('text_min_point_spacing_m', 0.005)
         self.declare_parameter('text_fit_attempts', 24)
         self.declare_parameter('text_rotation_max_deg', 45.0)
+        self.declare_parameter('approach_height', 0.10)
         self.declare_parameter('active_tool', 'pointy')
         self.declare_parameter('sweep_margin_m', 0.05)
         self.declare_parameter('sweep_tool_width_m', 0.10)
         self.declare_parameter('sweep_overlap_m', 0.01)
         self.declare_parameter('sweep_depth_m', 0.005)
+        self.declare_parameter('base_keepout_radius_m', 0.22)
 
         self._traj_key = self.get_parameter('trajectory_key').value
         self._text_string = self.get_parameter('text_string').value
@@ -153,12 +155,16 @@ class DrawingDispatcher(Node):
         self._text_fit_attempts = int(self.get_parameter('text_fit_attempts').value)
         self._text_rot_max_rad = math.radians(
             float(self.get_parameter('text_rotation_max_deg').value))
+        self._approach_height = float(
+            self.get_parameter('approach_height').value)
         self._active_tool = self.get_parameter('active_tool').value
         self._sweep_margin = float(self.get_parameter('sweep_margin_m').value)
         self._sweep_tool_width = float(
             self.get_parameter('sweep_tool_width_m').value)
         self._sweep_overlap = float(self.get_parameter('sweep_overlap_m').value)
         self._sweep_depth = float(self.get_parameter('sweep_depth_m').value)
+        self._base_keepout = float(
+            self.get_parameter('base_keepout_radius_m').value)
 
         # Home configuration — absolute baseline IK seed
         self._ik_seed = np.array(
@@ -457,6 +463,27 @@ class DrawingDispatcher(Node):
             current_seed = sol
         return True
 
+    def _is_approach_reachable_for_tip(self, tip_pos: np.ndarray) -> bool:
+        """Check IK for the action-server approach pose above a tip point."""
+        approach_tip = tip_pos - self._approach_height * self.plane_n
+        T = self._dynamic_wrist_pose_from_tip(approach_tip)
+
+        candidate_seeds = [s.copy() for s in self._ik_seeds]
+        for dj0 in (-1.2, -0.6, 0.0, 0.6, 1.2):
+            for dj1 in (-0.7, -0.3, 0.1):
+                for dj2 in (-0.4, 0.0, 0.4):
+                    s = self._ik_seed.copy()
+                    s[0] += dj0
+                    s[1] += dj1
+                    s[2] += dj2
+                    candidate_seeds.append(s)
+
+        for seed in candidate_seeds:
+            sol = ik_solve(T, seed, max_iter=120)
+            if sol is not None and self._config_ok(sol):
+                return True
+        return False
+
     # ------------------------------------------------------------------
     # Metric-space shape generation (no UV — no baklava)
     # ------------------------------------------------------------------
@@ -704,7 +731,7 @@ class DrawingDispatcher(Node):
         axis_mode: str = 'auto',
         start_corner: str = 'll',
     ) -> Tuple[np.ndarray, List[np.ndarray], int, float]:
-        """Generate full-table boustrophedon sweep path with configurable geometry."""
+        """Generate sweep path and auto-lift through robot-base keepout region."""
         width_hat = self.rect_width_vec / max(float(np.linalg.norm(self.rect_width_vec)), 1e-9)
         height_hat = self.rect_height_vec / max(float(np.linalg.norm(self.rect_height_vec)), 1e-9)
 
@@ -773,19 +800,62 @@ class DrawingDispatcher(Node):
             z = -depth_m
             return self.rect_origin + (u * width_hat) + (w * height_hat) + (z * self.plane_n)
 
-        pts_3d: List[np.ndarray] = []
+        raw_path: List[np.ndarray] = []
         forward = True
         for i in range(num_passes):
             line_base = start_point + (i * actual_step * step_axis)
             line_start = _clamp_to_rect(line_base)
             line_end = _clamp_to_rect(line_base + (sweep_len * sweep_axis))
             if forward:
-                pts_3d.append(line_start)
-                pts_3d.append(line_end)
+                raw_path.append(line_start)
+                raw_path.append(line_end)
             else:
-                pts_3d.append(line_end)
-                pts_3d.append(line_start)
+                raw_path.append(line_end)
+                raw_path.append(line_start)
             forward = not forward
+
+        if len(raw_path) < 2:
+            center_3d = self.rect_origin + 0.5 * self.rect_width_vec + 0.5 * self.rect_height_vec
+            return center_3d, raw_path, num_passes, actual_step
+
+        dense_path: List[np.ndarray] = []
+        for i in range(len(raw_path) - 1):
+            p1 = raw_path[i]
+            p2 = raw_path[i + 1]
+            dist = float(np.linalg.norm(p2 - p1))
+            steps = max(int(dist / 0.01), 1)
+            for j in range(steps):
+                dense_path.append(p1 + (p2 - p1) * (j / steps))
+        dense_path.append(raw_path[-1])
+
+        safe_pts_3d: List[np.ndarray] = []
+        in_keepout = False
+        lift_height = 0.08
+
+        for pt in dense_path:
+            dist_to_base = math.hypot(float(pt[0]), float(pt[1]))
+            if dist_to_base < self._base_keepout:
+                if not in_keepout and len(safe_pts_3d) > 0:
+                    lift_pt = safe_pts_3d[-1].copy()
+                    lift_pt = lift_pt - (self.plane_n * lift_height)
+                    safe_pts_3d.append(lift_pt)
+                in_keepout = True
+                continue
+
+            if in_keepout:
+                hover_pt = pt - (self.plane_n * lift_height)
+                safe_pts_3d.append(hover_pt)
+                in_keepout = False
+
+            if not safe_pts_3d or float(np.linalg.norm(pt - safe_pts_3d[-1])) >= 0.01:
+                safe_pts_3d.append(pt)
+
+        if in_keepout and len(safe_pts_3d) > 0:
+            lift_pt = safe_pts_3d[-1].copy()
+            lift_pt = lift_pt - (self.plane_n * lift_height)
+            safe_pts_3d.append(lift_pt)
+
+        pts_3d = safe_pts_3d if len(safe_pts_3d) > 0 else raw_path
 
         center_3d = self.rect_origin + 0.5 * self.rect_width_vec + 0.5 * self.rect_height_vec
         return center_3d, pts_3d, num_passes, actual_step
@@ -843,6 +913,71 @@ class DrawingDispatcher(Node):
 
         return None
 
+    def _generate_best_effort_sweep(
+        self,
+    ) -> Optional[Tuple[np.ndarray, List[np.ndarray], int, float, float, str, str]]:
+        """Pick a sweep variant with reachable approach start, even if full path check fails."""
+        margin_levels = [
+            self._sweep_margin,
+            self._sweep_margin + 0.02,
+            self._sweep_margin + 0.04,
+        ]
+        depth_levels = [
+            max(self._sweep_depth, 0.0),
+            max(self._sweep_depth - 0.005, 0.0),
+            max(self._sweep_depth - 0.010, 0.0),
+            0.0,
+        ]
+
+        seen = set()
+        for axis_mode in ('auto', 'width', 'height'):
+            for start_corner in ('ll', 'ul', 'lr', 'ur'):
+                for margin in margin_levels:
+                    for depth in depth_levels:
+                        key = (
+                            axis_mode,
+                            start_corner,
+                            round(margin, 5),
+                            round(depth, 5),
+                        )
+                        if key in seen:
+                            continue
+                        seen.add(key)
+
+                        center_3d, positions, num_passes, actual_step = self._generate_sweep_3d(
+                            margin=margin,
+                            depth=depth,
+                            axis_mode=axis_mode,
+                            start_corner=start_corner,
+                        )
+                        if not positions:
+                            continue
+
+                        if self._is_approach_reachable_for_tip(positions[0]):
+                            return (
+                                center_3d,
+                                positions,
+                                num_passes,
+                                actual_step,
+                                depth,
+                                axis_mode,
+                                start_corner,
+                            )
+
+                        if self._is_approach_reachable_for_tip(positions[-1]):
+                            rev = list(reversed(positions))
+                            return (
+                                center_3d,
+                                rev,
+                                num_passes,
+                                actual_step,
+                                depth,
+                                axis_mode,
+                                f'{start_corner}-rev',
+                            )
+
+        return None
+
     # ------------------------------------------------------------------
     # Drawing generation with rejection sampling
     # ------------------------------------------------------------------
@@ -874,18 +1009,30 @@ class DrawingDispatcher(Node):
             elif shape == 'sweep':
                 sweep = self._generate_reachable_sweep()
                 if sweep is None:
-                    center_3d, positions, num_passes, actual_step = self._generate_sweep_3d()
+                    best_effort = self._generate_best_effort_sweep()
+                    if best_effort is not None:
+                        center_3d, positions, num_passes, actual_step, used_depth, axis_mode, start_corner = best_effort
+                        self.get_logger().warn(
+                            'No sweep variant passed full dispatcher IK precheck; '
+                            'using best-effort variant with reachable approach start.')
+                        self.get_logger().info(
+                            f'Generated best-effort sweep: passes={num_passes}, '
+                            f'step={actual_step*100:.1f}cm, depth={used_depth*100:.1f}cm, '
+                            f'axis={axis_mode}, corner={start_corner}')
+                    else:
+                        center_3d, positions, num_passes, actual_step = self._generate_sweep_3d()
                     if not positions:
                         self.get_logger().error(
                             'No sweep path could be generated with current geometry settings.')
                         return None
-                    self.get_logger().warn(
-                        'No sweep variant passed dispatcher IK precheck; '
-                        'sending baseline sweep to action server for authoritative planning. '
-                        'If execution fails, increase sweep_margin_m or reduce sweep_depth_m.')
-                    self.get_logger().info(
-                        f'Generated baseline sweep: passes={num_passes}, '
-                        f'step={actual_step*100:.1f}cm, depth={self._sweep_depth*100:.1f}cm')
+                    if best_effort is None:
+                        self.get_logger().warn(
+                            'No sweep variant passed dispatcher IK precheck; '
+                            'sending baseline sweep to action server for authoritative planning. '
+                            'If execution fails, increase sweep_margin_m or reduce sweep_depth_m.')
+                        self.get_logger().info(
+                            f'Generated baseline sweep: passes={num_passes}, '
+                            f'step={actual_step*100:.1f}cm, depth={self._sweep_depth*100:.1f}cm')
                 else:
                     center_3d, positions, num_passes, actual_step, used_depth, axis_mode, start_corner = sweep
                     self.get_logger().info(
