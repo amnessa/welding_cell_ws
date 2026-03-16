@@ -1,7 +1,16 @@
 """
 Sand Drawer — Planar Servo Launch File
 
-Launches the full pipeline for constrained plane servoing on a UR5e in Isaac Sim.
+Launches the full pipeline for constrained plane servoing on a UR5e
+in simulation and/or real-hardware bridge mode.
+
+Current action-mode behavior:
+    - Uses drawing_action_server + drawing_dispatcher + TOTG service.
+    - Supports dynamic TCP tool selection via active_tool.
+    - Tool faces are selected around wrist-3 as:
+            fork=0°, pointy=+90°, empty=-90°, spatula=180°.
+    - In action mode, dynamic per-waypoint wrist yaw is used to improve IK
+        robustness while keeping the selected tool tip on the drawing path.
 
 Modes (via mode:= launch argument):
   trajectory (default)  — follow waypoints from the plane JSON (velocity servo)
@@ -18,6 +27,10 @@ Usage:
   ros2 launch sand_drawer sand_drawer.launch.py mode:=cartesian loop:=true
   ros2 launch sand_drawer sand_drawer.launch.py mode:=action real_robot:=true
   ros2 launch sand_drawer sand_drawer.launch.py mode:=action continuous:=true
+    ros2 launch sand_drawer sand_drawer.launch.py mode:=action active_tool:=pointy
+    ros2 launch sand_drawer sand_drawer.launch.py mode:=action active_tool:=fork
+    ros2 launch sand_drawer sand_drawer.launch.py mode:=action active_tool:=spatula
+    ros2 launch sand_drawer sand_drawer.launch.py mode:=action active_tool:=empty
   ros2 launch sand_drawer sand_drawer.launch.py loop:=true
   ros2 launch sand_drawer sand_drawer.launch.py mode:=capture
   ros2 launch sand_drawer sand_drawer.launch.py mode:=freedrive_capture

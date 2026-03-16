@@ -2,6 +2,16 @@
 
 Draw shapes on a flat surface using a UR5e robot arm, with support for **Isaac Sim** (virtual) and **real UR5e** hardware. The system captures a drawing plane from 4 physical points, plans collision-free paths in joint space, and follows dense Cartesian trajectories on the surface.
 
+Current action-mode version supports dynamic TCP tools. Tool faces are selected
+around wrist-3 with `active_tool`:
+- `fork` = 0°
+- `pointy` = +90°
+- `empty` = -90°
+- `spatula` = 180°
+
+Action mode computes a dynamic wrist pose from each tip waypoint during IK,
+which improves robustness on larger drawings.
+
 ---
 
 ## Table of Contents
@@ -150,6 +160,18 @@ Draw shapes on a flat surface using a UR5e robot arm, with support for **Isaac S
 - **Action mode** decouples path generation (dispatcher) from execution (action server). Supports sequential multi-shape drawing via continuous dispatch. Uses MoveIt 2 TOTG for time-optimal, jerk-free joint-space timing on RRT and homing phases.
 - **Cartesian mode** does its own IK internally (via `ur5e_rrt_planner.py`). Single monolithic run.
 - **Velocity mode** sends Twist commands and relies on the C++ Jacobian node to resolve them into joint space.
+
+### Action mode tool behavior (`active_tool`)
+
+| Tool | Wrist angle | Tip length from wrist axis |
+|------|-------------|----------------------------|
+| `fork` | 0° | 0.13 m |
+| `pointy` | +90° | 0.15 m |
+| `empty` | -90° | 0.00 m |
+| `spatula` | 180° | 0.13 m |
+
+In action mode, the dispatcher sends tip paths and the action server computes
+per-waypoint dynamic wrist poses before IK.
 
 ---
 
@@ -545,12 +567,13 @@ The first goal includes HOMING (retract home + hold); subsequent goals skip it s
 #### Pre-Computation Pipeline
 
 For each incoming goal:
-1. **Cartesian IK** — Solve IK for all drawing waypoints + descent/ascent segments
-2. **RRT planning** — Joint-space path from current hover to approach pose via `rrt_connect` + `smooth_path` + `bezier_smooth_path`
-3. **Phase timing** — Each phase gets time-stamped:
+1. **Dynamic TCP pose generation** — Convert each tip waypoint to a tool-aware wrist pose (dynamic yaw + tool offset)
+2. **Cartesian IK** — Solve IK for all drawing waypoints + descent/ascent segments
+3. **RRT planning** — Joint-space path from current hover to approach pose via `rrt_connect` + `smooth_path` + `bezier_smooth_path`
+4. **Phase timing** — Each phase gets time-stamped:
    - **Joint-space phases** (retract_home, rrt, home_hold): sent to the TOTG service for time-optimal timing with continuous acceleration
    - **Cartesian phases** (retract_up, descent, drawing, ascent): trapezoidal velocity profile in Cartesian space, then per-waypoint IK
-4. **Concatenation** — All phases joined into a single timed trajectory (positions + velocities + timestamps)
+5. **Concatenation** — All phases joined into a single timed trajectory (positions + velocities + timestamps)
 
 #### Execution
 
@@ -902,6 +925,7 @@ If IK fails for a waypoint, the controller logs a warning and skips to the next 
 | `real_robot` | `false` | Enable dual sim+real bridging |
 | `loop` | `false` | Loop the drawing trajectory (cartesian/trajectory modes) |
 | `continuous` | `false` | Continuous drawing dispatch (action mode) |
+| `active_tool` | `pointy` | Action mode tool face (`fork` / `pointy` / `empty` / `spatula`) |
 | `trajectory_key` | `projected_vector_trajectory` | Which JSON key to follow (`line` / `square_trajectory` / `projected_vector_trajectory`) |
 | `plane_json` | `<auto>` | Path to plane JSON file |
 | `use_sim_time` | `true` | Use `/clock` topic (auto-disabled when `real_robot=true`) |
@@ -946,6 +970,7 @@ Inherits all Cartesian Controller parameters above, plus:
 | `max_joint_accel_deg` | 40.0 °/s² | launch file | Per-joint acceleration limit for TOTG |
 | `totg_path_tolerance` | 0.1 rad | launch file | TOTG corner blending radius (~5.7° deviation allowed) |
 | `totg_resample_dt` | 0.01 s | launch file | TOTG output timestep (100 Hz matches execution_hz) |
+| `active_tool` | `pointy` | launch arg | Tool face used in dynamic TCP IK (`fork`/`pointy`/`empty`/`spatula`) |
 
 ### Velocity Controller Additional Parameters
 
@@ -992,6 +1017,12 @@ source install/setup.bash
 ```bash
 # Simulation — single drawing
 ros2 launch sand_drawer sand_drawer.launch.py mode:=action
+
+# Simulation — select tool face
+ros2 launch sand_drawer sand_drawer.launch.py mode:=action active_tool:=pointy
+ros2 launch sand_drawer sand_drawer.launch.py mode:=action active_tool:=fork
+ros2 launch sand_drawer sand_drawer.launch.py mode:=action active_tool:=empty
+ros2 launch sand_drawer sand_drawer.launch.py mode:=action active_tool:=spatula
 
 # Simulation — continuous drawing loop
 ros2 launch sand_drawer sand_drawer.launch.py mode:=action continuous:=true

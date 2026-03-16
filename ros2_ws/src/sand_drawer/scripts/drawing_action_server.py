@@ -13,6 +13,18 @@ goal.  The first goal includes a HOMING phase; subsequent goals skip it
 
 On shutdown (Ctrl-C) the server commands RETRACT_UP → HOMING to park safely.
 
+Current TCP/tool behavior
+-------------------------
+The action server uses active tool selection and dynamic TCP handling.
+
+- Tool faces are selected around wrist-3 as:
+        fork=0°, pointy=+90°, empty=-90°, spatula=180°.
+- Tool lengths from wrist axis:
+        fork=0.13 m, pointy=0.15 m, spatula=0.13 m, empty=0.00 m.
+- For draw/approach/descent/ascent path solving, the server computes a
+    dynamic wrist pose from each tip waypoint (per-waypoint yaw adaptation)
+    before IK. This reduces over-constraint and improves reachability.
+
 Architecture
 ------------
   For each incoming goal the entire motion is pre-computed in joint space
@@ -29,9 +41,12 @@ Action interface
 ----------------
   sand_drawer/action/ExecuteDrawing
     Goal:     geometry_msgs/Point[] waypoints
-              geometry_msgs/Quaternion orientation
+                            geometry_msgs/Quaternion orientation
     Result:   bool success, string message
     Feedback: string current_phase, float32 drawing_progress
+
+    Note: in action mode, the position waypoints are authoritative. The server
+    derives tool-consistent wrist orientation internally for IK robustness.
 
 Publishes
 ---------
