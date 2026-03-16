@@ -162,6 +162,7 @@ def launch_setup(context, *args, **kwargs):
         #   'square'   — random square
         #   'circle'   — random circle
         #   'text'     — render text_string as multi-stroke trajectory
+        #   'sweep'    — full-table boustrophedon sweep path
         # If user didn't explicitly set it, default to 'random'.
         action_traj_key = traj_key_str if traj_key_str != "projected_vector_trajectory" else "random"
         nodes.append(Node(

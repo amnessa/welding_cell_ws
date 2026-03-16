@@ -27,6 +27,7 @@ Trajectory keys
   square    — random square
   circle    — random circle (resolution scales with size)
   text      — render text_string as multi-stroke trajectory (pen up/down)
+    sweep     — full-table boustrophedon sweep path (operator-triggered)
   random    — pick a random geometric shape each time (default)
 
 Subscribes to:  (none)
@@ -132,6 +133,10 @@ class DrawingDispatcher(Node):
         self.declare_parameter('text_fit_attempts', 24)
         self.declare_parameter('text_rotation_max_deg', 45.0)
         self.declare_parameter('active_tool', 'pointy')
+        self.declare_parameter('sweep_margin_m', 0.05)
+        self.declare_parameter('sweep_tool_width_m', 0.10)
+        self.declare_parameter('sweep_overlap_m', 0.01)
+        self.declare_parameter('sweep_depth_m', 0.005)
 
         self._traj_key = self.get_parameter('trajectory_key').value
         self._text_string = self.get_parameter('text_string').value
@@ -149,6 +154,11 @@ class DrawingDispatcher(Node):
         self._text_rot_max_rad = math.radians(
             float(self.get_parameter('text_rotation_max_deg').value))
         self._active_tool = self.get_parameter('active_tool').value
+        self._sweep_margin = float(self.get_parameter('sweep_margin_m').value)
+        self._sweep_tool_width = float(
+            self.get_parameter('sweep_tool_width_m').value)
+        self._sweep_overlap = float(self.get_parameter('sweep_overlap_m').value)
+        self._sweep_depth = float(self.get_parameter('sweep_depth_m').value)
 
         # Home configuration — absolute baseline IK seed
         self._ik_seed = np.array(
@@ -410,6 +420,43 @@ class DrawingDispatcher(Node):
             current_seed = sol  # chain for same-config continuity
         return True
 
+    def _is_path_reachable(self, positions: List[np.ndarray]) -> bool:
+        """Reachability check for long paths without center fast-fail gating."""
+        if not positions:
+            return False
+
+        check_points: List[np.ndarray] = []
+        for i, p in enumerate(positions):
+            check_points.append(p)
+            if i < len(positions) - 1:
+                mid = 0.5 * (p + positions[i + 1])
+                check_points.append(mid)
+
+        start_sol = None
+        T0 = self._dynamic_wrist_pose_from_tip(check_points[0])
+        for seed in self._ik_seeds:
+            cand = ik_solve(T0, seed, max_iter=80)
+            if cand is not None and self._config_ok(cand):
+                start_sol = cand
+                break
+        if start_sol is None:
+            return False
+
+        current_seed = start_sol
+        for pt in check_points[1:]:
+            T = self._dynamic_wrist_pose_from_tip(pt)
+            seed_list = [current_seed] + self._ik_seeds
+            sol = None
+            for seed in seed_list:
+                cand = ik_solve(T, seed, max_iter=80)
+                if cand is not None and self._config_ok(cand):
+                    sol = cand
+                    break
+            if sol is None:
+                return False
+            current_seed = sol
+        return True
+
     # ------------------------------------------------------------------
     # Metric-space shape generation (no UV — no baklava)
     # ------------------------------------------------------------------
@@ -650,6 +697,152 @@ class DrawingDispatcher(Node):
 
         return self.plane_origin, [], []
 
+    def _generate_sweep_3d(
+        self,
+        margin: Optional[float] = None,
+        depth: Optional[float] = None,
+        axis_mode: str = 'auto',
+        start_corner: str = 'll',
+    ) -> Tuple[np.ndarray, List[np.ndarray], int, float]:
+        """Generate full-table boustrophedon sweep path with configurable geometry."""
+        width_hat = self.rect_width_vec / max(float(np.linalg.norm(self.rect_width_vec)), 1e-9)
+        height_hat = self.rect_height_vec / max(float(np.linalg.norm(self.rect_height_vec)), 1e-9)
+
+        margin_m = self._sweep_margin if margin is None else max(float(margin), 0.0)
+        depth_m = self._sweep_depth if depth is None else max(float(depth), 0.0)
+
+        usable_width = self.table_width_m - (2.0 * margin_m)
+        usable_height = self.table_height_m - (2.0 * margin_m)
+        if usable_width <= 0.0 or usable_height <= 0.0:
+            self.get_logger().error(
+                'Table too small for sweep with current margin')
+            return self.plane_origin, [], 0, 0.0
+
+        if axis_mode == 'width':
+            sweep_axis = width_hat
+            step_axis = height_hat
+            sweep_len = usable_width
+            step_len = usable_height
+        elif axis_mode == 'height':
+            sweep_axis = height_hat
+            step_axis = width_hat
+            sweep_len = usable_height
+            step_len = usable_width
+        elif usable_width >= usable_height:
+            sweep_axis = width_hat
+            step_axis = height_hat
+            sweep_len = usable_width
+            step_len = usable_height
+        else:
+            sweep_axis = height_hat
+            step_axis = width_hat
+            sweep_len = usable_height
+            step_len = usable_width
+
+        effective_width = max(self._sweep_tool_width - self._sweep_overlap, 1e-4)
+        num_passes = max(1, int(math.ceil(step_len / effective_width)))
+        actual_step = (step_len / max(1, num_passes - 1)) if num_passes > 1 else 0.0
+
+        if start_corner == 'll':
+            corner_shift = (margin_m * width_hat) + (margin_m * height_hat)
+        elif start_corner == 'ul':
+            corner_shift = (margin_m * width_hat) + ((self.table_height_m - margin_m) * height_hat)
+            step_axis = -step_axis
+        elif start_corner == 'lr':
+            corner_shift = ((self.table_width_m - margin_m) * width_hat) + (margin_m * height_hat)
+            sweep_axis = -sweep_axis
+        elif start_corner == 'ur':
+            corner_shift = ((self.table_width_m - margin_m) * width_hat) + ((self.table_height_m - margin_m) * height_hat)
+            sweep_axis = -sweep_axis
+            step_axis = -step_axis
+        else:
+            corner_shift = (margin_m * width_hat) + (margin_m * height_hat)
+
+        start_point = (
+            self.rect_origin
+            + corner_shift
+            - (depth_m * self.plane_n)
+        )
+
+        def _clamp_to_rect(p: np.ndarray) -> np.ndarray:
+            v = p - self.rect_origin
+            u = float(np.dot(v, width_hat))
+            w = float(np.dot(v, height_hat))
+            u = min(max(u, margin_m), self.table_width_m - margin_m)
+            w = min(max(w, margin_m), self.table_height_m - margin_m)
+            z = -depth_m
+            return self.rect_origin + (u * width_hat) + (w * height_hat) + (z * self.plane_n)
+
+        pts_3d: List[np.ndarray] = []
+        forward = True
+        for i in range(num_passes):
+            line_base = start_point + (i * actual_step * step_axis)
+            line_start = _clamp_to_rect(line_base)
+            line_end = _clamp_to_rect(line_base + (sweep_len * sweep_axis))
+            if forward:
+                pts_3d.append(line_start)
+                pts_3d.append(line_end)
+            else:
+                pts_3d.append(line_end)
+                pts_3d.append(line_start)
+            forward = not forward
+
+        center_3d = self.rect_origin + 0.5 * self.rect_width_vec + 0.5 * self.rect_height_vec
+        return center_3d, pts_3d, num_passes, actual_step
+
+    def _generate_reachable_sweep(
+        self,
+    ) -> Optional[Tuple[np.ndarray, List[np.ndarray], int, float, float, str, str]]:
+        """Try deterministic sweep variants until a reachable candidate is found."""
+        margin_levels = [
+            self._sweep_margin,
+            self._sweep_margin + 0.02,
+            self._sweep_margin + 0.04,
+        ]
+        depth_levels = [
+            max(self._sweep_depth, 0.0),
+            max(self._sweep_depth - 0.005, 0.0),
+            max(self._sweep_depth - 0.010, 0.0),
+            0.0,
+        ]
+
+        seen = set()
+        for axis_mode in ('auto', 'width', 'height'):
+            for start_corner in ('ll', 'ul', 'lr', 'ur'):
+                for margin in margin_levels:
+                    for depth in depth_levels:
+                        key = (
+                            axis_mode,
+                            start_corner,
+                            round(margin, 5),
+                            round(depth, 5),
+                        )
+                        if key in seen:
+                            continue
+                        seen.add(key)
+
+                        center_3d, positions, num_passes, actual_step = self._generate_sweep_3d(
+                            margin=margin,
+                            depth=depth,
+                            axis_mode=axis_mode,
+                            start_corner=start_corner,
+                        )
+                        if not positions:
+                            continue
+
+                        if self._is_path_reachable(positions):
+                            return (
+                                center_3d,
+                                positions,
+                                num_passes,
+                                actual_step,
+                                depth,
+                                axis_mode,
+                                start_corner,
+                            )
+
+        return None
+
     # ------------------------------------------------------------------
     # Drawing generation with rejection sampling
     # ------------------------------------------------------------------
@@ -657,7 +850,7 @@ class DrawingDispatcher(Node):
         """Generate a reachable, geometrically correct drawing goal."""
         if self._traj_key == 'random':
             pick_random = True
-        elif self._traj_key in _SHAPE_POOL or self._traj_key == 'text':
+        elif self._traj_key in _SHAPE_POOL or self._traj_key in ('text', 'sweep'):
             pick_random = False
         else:
             self.get_logger().error(
@@ -678,6 +871,28 @@ class DrawingDispatcher(Node):
                 # instead of all 151+ waypoints.  If the rectangle fits,
                 # every letter stroke inside it is reachable.
                 reachable = self._is_reachable(center_3d, bbox_check)
+            elif shape == 'sweep':
+                sweep = self._generate_reachable_sweep()
+                if sweep is None:
+                    center_3d, positions, num_passes, actual_step = self._generate_sweep_3d()
+                    if not positions:
+                        self.get_logger().error(
+                            'No sweep path could be generated with current geometry settings.')
+                        return None
+                    self.get_logger().warn(
+                        'No sweep variant passed dispatcher IK precheck; '
+                        'sending baseline sweep to action server for authoritative planning. '
+                        'If execution fails, increase sweep_margin_m or reduce sweep_depth_m.')
+                    self.get_logger().info(
+                        f'Generated baseline sweep: passes={num_passes}, '
+                        f'step={actual_step*100:.1f}cm, depth={self._sweep_depth*100:.1f}cm')
+                else:
+                    center_3d, positions, num_passes, actual_step, used_depth, axis_mode, start_corner = sweep
+                    self.get_logger().info(
+                        f'Generated reachable sweep: passes={num_passes}, '
+                        f'step={actual_step*100:.1f}cm, depth={used_depth*100:.1f}cm, '
+                        f'axis={axis_mode}, corner={start_corner}')
+                reachable = True
             else:
                 center_3d, positions = self._generate_random_shape_3d(shape)
                 if not positions:
