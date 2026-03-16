@@ -14,8 +14,8 @@
                 double radius = 500
             }
             dictionary Perspective = {
-                double3 position = (-0.18663048453344974, 1.2984311251789407, 0.2956479527222694)
-                double3 target = (0.5405205800379245, -4.056901465379831, -2.876197471231294)
+                double3 position = (0.16113416275098963, 2.3936805102805367, 1.4961935788441074)
+                double3 target = (0.08352534281902167, -3.8130753704111475, -3.8454436159809564)
             }
             dictionary Right = {
                 double3 position = (0, -1688400, -3.7490011095542286e-10)
@@ -2214,7 +2214,7 @@ def Xform "Root" (
     {
         quatd xformOp:orient = (0.9238795325112867, 0, 0, 0.3826834323650898)
         double3 xformOp:scale = (1, 1, 1)
-        double3 xformOp:translate = (-0.015104557178157198, -0.04296525008096573, -0.6321252785647566)
+        double3 xformOp:translate = (0.16060748224393026, -0.04296525008096573, -0.6321252785647566)
         uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
 
         def Xform "ur5e" (
@@ -2282,6 +2282,20 @@ def Xform "Root" (
                         def Camera "Camera_OmniVision_OV9782_Color"
                         {
                         }
+                    }
+                }
+
+                over "flange"
+                {
+                    def "ZenTool_4Sided_Assembly_V4" (
+                        displayName = "ZenTool_4Sided_Assembly_V4"
+                        prepend payload = @../../../../world_parts/ZenTool_4Sided_Assembly_V4.usda@
+                    )
+                    {
+                        float3 xformOp:rotateZYX = (180, 0, 90)
+                        float3 xformOp:scale = (1, 1, 1)
+                        double3 xformOp:translate = (0.025, 0, 0)
+                        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateZYX", "xformOp:scale"]
                     }
                 }
             }
@@ -2485,6 +2499,67 @@ def Xform "Root" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
             }
         }
+
+        def "robot_tablev1" (
+            prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysxRigidBodyAPI"]
+            displayName = "robot_tablev1"
+            prepend payload = @../../../../world_parts/robot_tablev1.usd@
+        )
+        {
+            bool physics:kinematicEnabled = 0
+            bool physics:rigidBodyEnabled = 1
+            bool physxRigidBody:disableGravity = 0
+            double3 xformOp:rotateZYX = (-0, 0, 135)
+            double3 xformOp:scale = (0.0010000000474974513, 0.0010000000474974513, 0.0010000000474974513)
+            double3 xformOp:translate = (0.8372159431711007, 0.20556901021970372, -0.13737472143524332)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateZYX", "xformOp:scale"]
+
+            over "robot_tablev1"
+            {
+                over "Body001" (
+                    prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI", "PhysxConvexHullCollisionAPI", "PhysicsMeshCollisionAPI"]
+                )
+                {
+                    uniform token physics:approximation = "convexHull"
+                    bool physics:collisionEnabled = 0
+                    token visibility = "invisible"
+                    matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
+                }
+
+                over "Body004" (
+                    prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI", "PhysxConvexHullCollisionAPI", "PhysicsMeshCollisionAPI"]
+                )
+                {
+                    uniform token physics:approximation = "convexHull"
+                    bool physics:collisionEnabled = 1
+                }
+
+                over "Body003" (
+                    prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI", "PhysxConvexHullCollisionAPI", "PhysicsMeshCollisionAPI"]
+                )
+                {
+                    uniform token physics:approximation = "convexHull"
+                    bool physics:collisionEnabled = 0
+                    token visibility = "invisible"
+                }
+
+                over "Body002" (
+                    prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI", "PhysxConvexHullCollisionAPI", "PhysicsMeshCollisionAPI"]
+                )
+                {
+                    uniform token physics:approximation = "convexHull"
+                    bool physics:collisionEnabled = 1
+                }
+
+                over "Body" (
+                    prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI", "PhysxConvexHullCollisionAPI", "PhysicsMeshCollisionAPI"]
+                )
+                {
+                    uniform token physics:approximation = "convexHull"
+                    bool physics:collisionEnabled = 1
+                }
+            }
+        }
     }
 
     def OmniGraph "joint_control"
@@ -2643,65 +2718,6 @@ def Xform "Root" (
             custom string inputs:topicName
             token node:type = "isaacsim.ros2.bridge.ROS2PublishClock"
             int node:typeVersion = 1
-        }
-    }
-
-    def "robot_tablev1" (
-        prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysxRigidBodyAPI"]
-        displayName = "robot_tablev1"
-        prepend payload = @../../../../world_parts/robot_tablev1.usd@
-    )
-    {
-        bool physics:kinematicEnabled = 0
-        bool physics:rigidBodyEnabled = 1
-        bool physxRigidBody:disableGravity = 0
-        double3 xformOp:rotateZYX = (0, 0, 180)
-        double3 xformOp:scale = (0.001, 0.001, 0.001)
-        double3 xformOp:translate = (0.6072493118495474, 0.69439506178097, -0.7695)
-        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateZYX", "xformOp:scale"]
-
-        over "robot_tablev1"
-        {
-            over "Body001" (
-                prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI", "PhysxConvexHullCollisionAPI", "PhysicsMeshCollisionAPI"]
-            )
-            {
-                uniform token physics:approximation = "convexHull"
-                bool physics:collisionEnabled = 1
-                matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
-            }
-
-            over "Body004" (
-                prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI", "PhysxConvexHullCollisionAPI", "PhysicsMeshCollisionAPI"]
-            )
-            {
-                uniform token physics:approximation = "convexHull"
-                bool physics:collisionEnabled = 1
-            }
-
-            over "Body003" (
-                prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI", "PhysxConvexHullCollisionAPI", "PhysicsMeshCollisionAPI"]
-            )
-            {
-                uniform token physics:approximation = "convexHull"
-                bool physics:collisionEnabled = 1
-            }
-
-            over "Body002" (
-                prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI", "PhysxConvexHullCollisionAPI", "PhysicsMeshCollisionAPI"]
-            )
-            {
-                uniform token physics:approximation = "convexHull"
-                bool physics:collisionEnabled = 1
-            }
-
-            over "Body" (
-                prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI", "PhysxConvexHullCollisionAPI", "PhysicsMeshCollisionAPI"]
-            )
-            {
-                uniform token physics:approximation = "convexHull"
-                bool physics:collisionEnabled = 1
-            }
         }
     }
 
