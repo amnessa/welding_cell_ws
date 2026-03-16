@@ -250,33 +250,24 @@ class DrawingDispatcher(Node):
         return 0.15, math.pi / 2.0
 
     def _dynamic_wrist_pose_from_tip(self, tip_pos: np.ndarray) -> np.ndarray:
-        """Build wrist pose for a tip point using dynamic yaw and tool offset."""
+        """Build wrist pose using a constant table-aligned orientation."""
         tool_length, yaw_offset = self._tool_length_and_yaw_offset(
             self._active_tool)
 
-        N = self.plane_n
-        z_wrist = tip_pos - np.dot(tip_pos, N) * N
-        z_norm = float(np.linalg.norm(z_wrist))
-        if z_norm < 1e-6:
-            z_wrist = self.plane_x.copy()
-        else:
-            z_wrist = z_wrist / z_norm
-
-        x_base = N / max(float(np.linalg.norm(N)), 1e-9)
-        y_base = np.cross(z_wrist, x_base)
-        y_norm = float(np.linalg.norm(y_base))
-        if y_norm < 1e-6:
-            y_base = self.plane_y.copy()
-        else:
-            y_base = y_base / y_norm
-
-        x_base = np.cross(y_base, z_wrist)
-        x_base = x_base / max(float(np.linalg.norm(x_base)), 1e-9)
+        down = -self.plane_n
+        down = down / max(float(np.linalg.norm(down)), 1e-9)
+        forward = self.base_forward
+        forward = forward / max(float(np.linalg.norm(forward)), 1e-9)
+        right = np.cross(down, forward)
+        right = right / max(float(np.linalg.norm(right)), 1e-9)
 
         c = math.cos(yaw_offset)
         s = math.sin(yaw_offset)
-        x_wrist = c * x_base + s * y_base
-        y_wrist = -s * x_base + c * y_base
+        x_wrist = c * down + s * right
+        x_wrist = x_wrist / max(float(np.linalg.norm(x_wrist)), 1e-9)
+        y_wrist = -s * down + c * right
+        y_wrist = y_wrist / max(float(np.linalg.norm(y_wrist)), 1e-9)
+        z_wrist = forward
 
         wrist_pos = tip_pos - tool_length * x_wrist
 
@@ -344,6 +335,18 @@ class DrawingDispatcher(Node):
         # Absolute table dimensions in metres
         self.table_width_m = float(np.linalg.norm(self.rect_width_vec))
         self.table_height_m = float(np.linalg.norm(self.rect_height_vec))
+        self.table_center_3d = (
+            self.rect_origin
+            + 0.5 * self.rect_width_vec
+            + 0.5 * self.rect_height_vec)
+
+        vec_to_center = self.table_center_3d.copy()
+        vec_to_center = vec_to_center - np.dot(vec_to_center, self.plane_n) * self.plane_n
+        if abs(float(np.dot(self.plane_x, vec_to_center))) > abs(float(np.dot(self.plane_y, vec_to_center))):
+            self.base_forward = self.plane_x if float(np.dot(self.plane_x, vec_to_center)) > 0.0 else -self.plane_x
+        else:
+            self.base_forward = self.plane_y if float(np.dot(self.plane_y, vec_to_center)) > 0.0 else -self.plane_y
+        self.base_forward = self.base_forward / max(float(np.linalg.norm(self.base_forward)), 1e-9)
 
         # Tool-aware orientation and wrist-tip offset
         self.tool_length, self._default_orientation = \
@@ -1007,38 +1010,25 @@ class DrawingDispatcher(Node):
                 # every letter stroke inside it is reachable.
                 reachable = self._is_reachable(center_3d, bbox_check)
             elif shape == 'sweep':
-                sweep = self._generate_reachable_sweep()
-                if sweep is None:
-                    best_effort = self._generate_best_effort_sweep()
-                    if best_effort is not None:
-                        center_3d, positions, num_passes, actual_step, used_depth, axis_mode, start_corner = best_effort
-                        self.get_logger().warn(
-                            'No sweep variant passed full dispatcher IK precheck; '
-                            'using best-effort variant with reachable approach start.')
-                        self.get_logger().info(
-                            f'Generated best-effort sweep: passes={num_passes}, '
-                            f'step={actual_step*100:.1f}cm, depth={used_depth*100:.1f}cm, '
-                            f'axis={axis_mode}, corner={start_corner}')
-                    else:
-                        center_3d, positions, num_passes, actual_step = self._generate_sweep_3d()
-                    if not positions:
-                        self.get_logger().error(
-                            'No sweep path could be generated with current geometry settings.')
-                        return None
-                    if best_effort is None:
-                        self.get_logger().warn(
-                            'No sweep variant passed dispatcher IK precheck; '
-                            'sending baseline sweep to action server for authoritative planning. '
-                            'If execution fails, increase sweep_margin_m or reduce sweep_depth_m.')
-                        self.get_logger().info(
-                            f'Generated baseline sweep: passes={num_passes}, '
-                            f'step={actual_step*100:.1f}cm, depth={self._sweep_depth*100:.1f}cm')
-                else:
-                    center_3d, positions, num_passes, actual_step, used_depth, axis_mode, start_corner = sweep
-                    self.get_logger().info(
-                        f'Generated reachable sweep: passes={num_passes}, '
-                        f'step={actual_step*100:.1f}cm, depth={used_depth*100:.1f}cm, '
-                        f'axis={axis_mode}, corner={start_corner}')
+                center_3d, positions, num_passes, actual_step = self._generate_sweep_3d()
+                if not positions:
+                    self.get_logger().error(
+                        'No sweep path could be generated with current geometry settings.')
+                    return None
+
+                # Fast geometric start selection: begin from endpoint farther
+                # from robot base to improve first approach pose without
+                # expensive dispatcher-side IK screening.
+                if len(positions) >= 2:
+                    d0 = math.hypot(float(positions[0][0]), float(positions[0][1]))
+                    d1 = math.hypot(float(positions[-1][0]), float(positions[-1][1]))
+                    if d1 > d0:
+                        positions = list(reversed(positions))
+
+                self.get_logger().info(
+                    f'Generated sweep (fast mode): passes={num_passes}, '
+                    f'step={actual_step*100:.1f}cm, depth={self._sweep_depth*100:.1f}cm, '
+                    f'pts={len(positions)}')
                 reachable = True
             else:
                 center_3d, positions = self._generate_random_shape_3d(shape)

@@ -305,6 +305,7 @@ class DrawingActionServer(Node):
         self._first_goal = True
         self._executing = False
         self._last_q: Optional[np.ndarray] = None
+        self._last_precompute_fail_reason = ''
 
         # ---- TOTG service client ----
         self._totg_client = self.create_client(
@@ -397,33 +398,24 @@ class DrawingActionServer(Node):
         return 0.15, math.pi / 2.0
 
     def _dynamic_wrist_pose_from_tip(self, tip_pos: np.ndarray) -> np.ndarray:
-        """Build wrist pose for a tip point using dynamic yaw and tool offset."""
+        """Build wrist pose using a constant table-aligned orientation."""
         tool_length, yaw_offset = self._tool_length_and_yaw_offset(
             self._active_tool)
 
-        N = self.plane_n
-        z_wrist = tip_pos - np.dot(tip_pos, N) * N
-        z_norm = float(np.linalg.norm(z_wrist))
-        if z_norm < 1e-6:
-            z_wrist = self.plane_x.copy()
-        else:
-            z_wrist = z_wrist / z_norm
-
-        x_base = N / max(float(np.linalg.norm(N)), 1e-9)
-        y_base = np.cross(z_wrist, x_base)
-        y_norm = float(np.linalg.norm(y_base))
-        if y_norm < 1e-6:
-            y_base = self.plane_y.copy()
-        else:
-            y_base = y_base / y_norm
-
-        x_base = np.cross(y_base, z_wrist)
-        x_base = x_base / max(float(np.linalg.norm(x_base)), 1e-9)
+        down = -self.plane_n
+        down = down / max(float(np.linalg.norm(down)), 1e-9)
+        forward = self.base_forward
+        forward = forward / max(float(np.linalg.norm(forward)), 1e-9)
+        right = np.cross(down, forward)
+        right = right / max(float(np.linalg.norm(right)), 1e-9)
 
         c = math.cos(yaw_offset)
         s = math.sin(yaw_offset)
-        x_wrist = c * x_base + s * y_base
-        y_wrist = -s * x_base + c * y_base
+        x_wrist = c * down + s * right
+        x_wrist = x_wrist / max(float(np.linalg.norm(x_wrist)), 1e-9)
+        y_wrist = -s * down + c * right
+        y_wrist = y_wrist / max(float(np.linalg.norm(y_wrist)), 1e-9)
+        z_wrist = forward
 
         wrist_pos = tip_pos - tool_length * x_wrist
 
@@ -467,6 +459,33 @@ class DrawingActionServer(Node):
         self.plane_x = np.array(plane['x_axis'], dtype=float)
         self.plane_y = np.array(plane['y_axis'], dtype=float)
         self.plane_n = np.array(plane['normal'], dtype=float)
+
+        corners = [np.array(c, dtype=float) for c in data.get('rectangle_corners', [])]
+        if len(corners) >= 4:
+            self.rect_origin = corners[0]
+            self.rect_width_vec = corners[1] - corners[0]
+            self.rect_height_vec = corners[3] - corners[0]
+            self.table_width_m = float(np.linalg.norm(self.rect_width_vec))
+            self.table_height_m = float(np.linalg.norm(self.rect_height_vec))
+            self.table_center_3d = (
+                self.rect_origin
+                + 0.5 * self.rect_width_vec
+                + 0.5 * self.rect_height_vec)
+        else:
+            self.rect_origin = self.plane_origin.copy()
+            self.rect_width_vec = self.plane_x.copy()
+            self.rect_height_vec = self.plane_y.copy()
+            self.table_width_m = 1.0
+            self.table_height_m = 1.0
+            self.table_center_3d = self.plane_origin + 0.5 * self.plane_x + 0.5 * self.plane_y
+
+        vec_to_center = self.table_center_3d.copy()
+        vec_to_center = vec_to_center - np.dot(vec_to_center, self.plane_n) * self.plane_n
+        if abs(float(np.dot(self.plane_x, vec_to_center))) > abs(float(np.dot(self.plane_y, vec_to_center))):
+            self.base_forward = self.plane_x if float(np.dot(self.plane_x, vec_to_center)) > 0.0 else -self.plane_x
+        else:
+            self.base_forward = self.plane_y if float(np.dot(self.plane_y, vec_to_center)) > 0.0 else -self.plane_y
+        self.base_forward = self.base_forward / max(float(np.linalg.norm(self.base_forward)), 1e-9)
 
         self.get_logger().info(
             f'Loaded plane: origin={self.plane_origin.tolist()}, '
@@ -968,7 +987,7 @@ class DrawingActionServer(Node):
         feedback.current_phase = 'PRE_COMPUTING'
         goal_handle.publish_feedback(feedback)
 
-        max_retries = 3
+        max_retries = 1 if len(draw_positions) > 200 else 3
         phases = None
         for attempt in range(1, max_retries + 1):
             if goal_handle.is_cancel_requested:
@@ -980,6 +999,10 @@ class DrawingActionServer(Node):
                 break
             self.get_logger().warn(
                 f'Pre-computation attempt {attempt}/{max_retries} failed')
+            if self._last_precompute_fail_reason == 'rrt_goal_ik':
+                self.get_logger().warn(
+                    'Skipping remaining retries: deterministic RRT goal IK failure')
+                break
             _time.sleep(0.5)
 
         if phases is None:
@@ -1050,6 +1073,8 @@ class DrawingActionServer(Node):
         from ur5e_rrt_planner import (ur5e_fk, rrt_connect,
                                       smooth_path, bezier_smooth_path)
 
+        self._last_precompute_fail_reason = ''
+
         # In real-robot mode, prefer the actual robot joint state over
         # the sim joint state, which may lag or be stale after a prior
         # execution.  This prevents trajectory-start mismatches that
@@ -1065,6 +1090,7 @@ class DrawingActionServer(Node):
         else:
             q_current = self._get_ordered_joints()
         if q_current is None:
+            self._last_precompute_fail_reason = 'no_joint_state'
             return None
         # Real robot: UR controller interpolates internally, so 10 Hz
         # Cartesian density is plenty.  Sim: 100 Hz drives the sim loop.
@@ -1114,6 +1140,7 @@ class DrawingActionServer(Node):
         retract_path, retract_valid_times = self._ik_solve_cartesian_path(
             retract_wps, retract_times, q_current, 'Retract up')
         if not retract_path:
+            self._last_precompute_fail_reason = 'retract_ik'
             self.get_logger().error('RETRACT_UP IK failed')
             return None
         phases.append(('retract_up', retract_path, retract_valid_times))
@@ -1153,12 +1180,14 @@ class DrawingActionServer(Node):
 
         q_goal = self._constrained_ik_for_pose(T_approach)
         if q_goal is None:
+            self._last_precompute_fail_reason = 'rrt_goal_ik'
             self.get_logger().error('RRT goal IK failed')
             return None
 
         raw_rrt = rrt_connect(last_q, q_goal,
                               step_size=0.2, max_iter=10000)
         if raw_rrt is None:
+            self._last_precompute_fail_reason = 'rrt_plan'
             self.get_logger().error('RRT planning failed')
             return None
 
