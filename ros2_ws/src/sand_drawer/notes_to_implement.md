@@ -1,4 +1,3 @@
-So lets make an injection method that sends trajectory for DRAWING phase. system recalculates total trajectory and does the drawing using the convention already existing.
 
 lets make trajectory generation method that project a randomly generated trajectory that follows a certain rule of pattern (some kind of Zen shape generation)
 
