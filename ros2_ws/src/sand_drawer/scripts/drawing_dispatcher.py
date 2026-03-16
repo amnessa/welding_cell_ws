@@ -138,6 +138,7 @@ class DrawingDispatcher(Node):
         self.declare_parameter('sweep_tool_width_m', 0.10)
         self.declare_parameter('sweep_overlap_m', 0.01)
         self.declare_parameter('sweep_depth_m', 0.005)
+        self.declare_parameter('sweep_arc_spacing_m', 0.03)
         self.declare_parameter('base_keepout_radius_m', 0.22)
 
         self._traj_key = self.get_parameter('trajectory_key').value
@@ -163,6 +164,8 @@ class DrawingDispatcher(Node):
             self.get_parameter('sweep_tool_width_m').value)
         self._sweep_overlap = float(self.get_parameter('sweep_overlap_m').value)
         self._sweep_depth = float(self.get_parameter('sweep_depth_m').value)
+        self._sweep_arc_spacing = float(
+            self.get_parameter('sweep_arc_spacing_m').value)
         self._base_keepout = float(
             self.get_parameter('base_keepout_radius_m').value)
 
@@ -466,27 +469,6 @@ class DrawingDispatcher(Node):
             current_seed = sol
         return True
 
-    def _is_approach_reachable_for_tip(self, tip_pos: np.ndarray) -> bool:
-        """Check IK for the action-server approach pose above a tip point."""
-        approach_tip = tip_pos - self._approach_height * self.plane_n
-        T = self._dynamic_wrist_pose_from_tip(approach_tip)
-
-        candidate_seeds = [s.copy() for s in self._ik_seeds]
-        for dj0 in (-1.2, -0.6, 0.0, 0.6, 1.2):
-            for dj1 in (-0.7, -0.3, 0.1):
-                for dj2 in (-0.4, 0.0, 0.4):
-                    s = self._ik_seed.copy()
-                    s[0] += dj0
-                    s[1] += dj1
-                    s[2] += dj2
-                    candidate_seeds.append(s)
-
-        for seed in candidate_seeds:
-            sol = ik_solve(T, seed, max_iter=120)
-            if sol is not None and self._config_ok(sol):
-                return True
-        return False
-
     # ------------------------------------------------------------------
     # Metric-space shape generation (no UV — no baklava)
     # ------------------------------------------------------------------
@@ -727,259 +709,138 @@ class DrawingDispatcher(Node):
 
         return self.plane_origin, [], []
 
-    def _generate_sweep_3d(
-        self,
-        margin: Optional[float] = None,
-        depth: Optional[float] = None,
-        axis_mode: str = 'auto',
-        start_corner: str = 'll',
-    ) -> Tuple[np.ndarray, List[np.ndarray], int, float]:
-        """Generate sweep path and auto-lift through robot-base keepout region."""
-        width_hat = self.rect_width_vec / max(float(np.linalg.norm(self.rect_width_vec)), 1e-9)
-        height_hat = self.rect_height_vec / max(float(np.linalg.norm(self.rect_height_vec)), 1e-9)
+    def _generate_sweep_3d(self) -> Tuple[np.ndarray, List[np.ndarray], int, float]:
+        """Generate concentric radial-arc sweep around robot base (fast mode)."""
+        margin = max(self._sweep_margin, 0.0)
+        depth = max(self._sweep_depth, 0.0)
+        step_size = max(self._sweep_tool_width - self._sweep_overlap, 0.01)
+        arc_spacing = max(self._sweep_arc_spacing, 0.01)
 
-        margin_m = self._sweep_margin if margin is None else max(float(margin), 0.0)
-        depth_m = self._sweep_depth if depth is None else max(float(depth), 0.0)
+        w_hat = self.rect_width_vec / max(self.table_width_m, 1e-9)
+        h_hat = self.rect_height_vec / max(self.table_height_m, 1e-9)
 
-        usable_width = self.table_width_m - (2.0 * margin_m)
-        usable_height = self.table_height_m - (2.0 * margin_m)
-        if usable_width <= 0.0 or usable_height <= 0.0:
+        c0 = self.rect_origin + (margin * w_hat) + (margin * h_hat)
+        c1 = self.rect_origin + ((self.table_width_m - margin) * w_hat) + (margin * h_hat)
+        c2 = self.rect_origin + ((self.table_width_m - margin) * w_hat) + ((self.table_height_m - margin) * h_hat)
+        c3 = self.rect_origin + (margin * w_hat) + ((self.table_height_m - margin) * h_hat)
+
+        corners_3d = [c0, c1, c2, c3]
+        corners_2d = [np.array([float(c[0]), float(c[1])], dtype=float)
+                      for c in corners_3d]
+
+        def dist_to_segment(p: np.ndarray, v: np.ndarray, w: np.ndarray) -> float:
+            l2 = float(np.sum((w - v) ** 2))
+            if l2 <= 1e-12:
+                return float(np.linalg.norm(p - v))
+            t = max(0.0, min(1.0, float(np.dot(p - v, w - v) / l2)))
+            proj = v + t * (w - v)
+            return float(np.linalg.norm(p - proj))
+
+        origin_2d = np.array([0.0, 0.0], dtype=float)
+
+        edge_dists = [dist_to_segment(origin_2d, corners_2d[i], corners_2d[(i + 1) % 4])
+                      for i in range(4)]
+        min_r = max(min(edge_dists), self._base_keepout)
+        corner_dists = [float(np.linalg.norm(c)) for c in corners_2d]
+        max_r = max(corner_dists)
+
+        if min_r >= max_r:
             self.get_logger().error(
-                'Table too small for sweep with current margin')
+                'Sweep geometry invalid (safe table area inside keepout).')
             return self.plane_origin, [], 0, 0.0
 
-        if axis_mode == 'width':
-            sweep_axis = width_hat
-            step_axis = height_hat
-            sweep_len = usable_width
-            step_len = usable_height
-        elif axis_mode == 'height':
-            sweep_axis = height_hat
-            step_axis = width_hat
-            sweep_len = usable_height
-            step_len = usable_width
-        elif usable_width >= usable_height:
-            sweep_axis = width_hat
-            step_axis = height_hat
-            sweep_len = usable_width
-            step_len = usable_height
-        else:
-            sweep_axis = height_hat
-            step_axis = width_hat
-            sweep_len = usable_height
-            step_len = usable_width
+        radii = np.arange(min_r, max_r + step_size * 0.5, step_size)
+        num_passes = int(len(radii))
 
-        effective_width = max(self._sweep_tool_width - self._sweep_overlap, 1e-4)
-        num_passes = max(1, int(math.ceil(step_len / effective_width)))
-        actual_step = (step_len / max(1, num_passes - 1)) if num_passes > 1 else 0.0
+        ox, oy, oz = [float(v) for v in self.plane_origin]
+        nx, ny, nz = [float(v) for v in self.plane_n]
 
-        if start_corner == 'll':
-            corner_shift = (margin_m * width_hat) + (margin_m * height_hat)
-        elif start_corner == 'ul':
-            corner_shift = (margin_m * width_hat) + ((self.table_height_m - margin_m) * height_hat)
-            step_axis = -step_axis
-        elif start_corner == 'lr':
-            corner_shift = ((self.table_width_m - margin_m) * width_hat) + (margin_m * height_hat)
-            sweep_axis = -sweep_axis
-        elif start_corner == 'ur':
-            corner_shift = ((self.table_width_m - margin_m) * width_hat) + ((self.table_height_m - margin_m) * height_hat)
-            sweep_axis = -sweep_axis
-            step_axis = -step_axis
-        else:
-            corner_shift = (margin_m * width_hat) + (margin_m * height_hat)
+        def get_z_on_plane(x: float, y: float) -> float:
+            if abs(nz) < 1e-9:
+                return oz
+            return oz - (((x - ox) * nx) + ((y - oy) * ny)) / nz
 
-        start_point = (
-            self.rect_origin
-            + corner_shift
-            - (depth_m * self.plane_n)
-        )
+        u_min = margin
+        u_max = self.table_width_m - margin
+        v_min = margin
+        v_max = self.table_height_m - margin
 
-        def _clamp_to_rect(p: np.ndarray) -> np.ndarray:
-            v = p - self.rect_origin
-            u = float(np.dot(v, width_hat))
-            w = float(np.dot(v, height_hat))
-            u = min(max(u, margin_m), self.table_width_m - margin_m)
-            w = min(max(w, margin_m), self.table_height_m - margin_m)
-            z = -depth_m
-            return self.rect_origin + (u * width_hat) + (w * height_hat) + (z * self.plane_n)
+        def point_inside_rect_xy(x: float, y: float) -> bool:
+            z = get_z_on_plane(x, y)
+            p = np.array([x, y, z], dtype=float)
+            rel = p - self.rect_origin
+            u = float(np.dot(rel, w_hat))
+            v = float(np.dot(rel, h_hat))
+            return (u_min <= u <= u_max) and (v_min <= v <= v_max)
 
-        raw_path: List[np.ndarray] = []
+        pts_3d: List[np.ndarray] = []
         forward = True
-        for i in range(num_passes):
-            line_base = start_point + (i * actual_step * step_axis)
-            line_start = _clamp_to_rect(line_base)
-            line_end = _clamp_to_rect(line_base + (sweep_len * sweep_axis))
-            if forward:
-                raw_path.append(line_start)
-                raw_path.append(line_end)
-            else:
-                raw_path.append(line_end)
-                raw_path.append(line_start)
-            forward = not forward
-
-        if len(raw_path) < 2:
-            center_3d = self.rect_origin + 0.5 * self.rect_width_vec + 0.5 * self.rect_height_vec
-            return center_3d, raw_path, num_passes, actual_step
-
-        dense_path: List[np.ndarray] = []
-        for i in range(len(raw_path) - 1):
-            p1 = raw_path[i]
-            p2 = raw_path[i + 1]
-            dist = float(np.linalg.norm(p2 - p1))
-            steps = max(int(dist / 0.01), 1)
-            for j in range(steps):
-                dense_path.append(p1 + (p2 - p1) * (j / steps))
-        dense_path.append(raw_path[-1])
-
-        safe_pts_3d: List[np.ndarray] = []
-        in_keepout = False
         lift_height = 0.08
+        used_passes = 0
 
-        for pt in dense_path:
-            dist_to_base = math.hypot(float(pt[0]), float(pt[1]))
-            if dist_to_base < self._base_keepout:
-                if not in_keepout and len(safe_pts_3d) > 0:
-                    lift_pt = safe_pts_3d[-1].copy()
-                    lift_pt = lift_pt - (self.plane_n * lift_height)
-                    safe_pts_3d.append(lift_pt)
-                in_keepout = True
+        for r in radii:
+            n_theta = max(int(math.ceil((2.0 * math.pi * r) / arc_spacing)), 64)
+            angles = np.linspace(-math.pi, math.pi, n_theta, endpoint=False)
+            inside_mask = [
+                point_inside_rect_xy(
+                    float(r * math.cos(float(a))),
+                    float(r * math.sin(float(a))),
+                )
+                for a in angles
+            ]
+
+            if not any(inside_mask):
                 continue
 
-            if in_keepout:
-                hover_pt = pt - (self.plane_n * lift_height)
-                safe_pts_3d.append(hover_pt)
-                in_keepout = False
+            best_len = 0
+            best_start = 0
+            cur_len = 0
+            cur_start = 0
+            n = len(inside_mask)
+            for i in range(2 * n):
+                if inside_mask[i % n]:
+                    if cur_len == 0:
+                        cur_start = i
+                    cur_len += 1
+                    capped = min(cur_len, n)
+                    if capped > best_len:
+                        best_len = capped
+                        best_start = cur_start
+                else:
+                    cur_len = 0
 
-            if not safe_pts_3d or float(np.linalg.norm(pt - safe_pts_3d[-1])) >= 0.01:
-                safe_pts_3d.append(pt)
+            if best_len < 2:
+                continue
 
-        if in_keepout and len(safe_pts_3d) > 0:
-            lift_pt = safe_pts_3d[-1].copy()
-            lift_pt = lift_pt - (self.plane_n * lift_height)
-            safe_pts_3d.append(lift_pt)
+            idxs = [((best_start + k) % n) for k in range(best_len)]
+            if not forward:
+                idxs = idxs[::-1]
 
-        pts_3d = safe_pts_3d if len(safe_pts_3d) > 0 else raw_path
+            stroke: List[np.ndarray] = []
+            for idx in idxs:
+                ang = float(angles[idx])
+                x = float(r * math.cos(ang))
+                y = float(r * math.sin(ang))
+                z = get_z_on_plane(x, y) - depth
+                pt = np.array([x, y, z], dtype=float)
+                if not stroke or float(np.linalg.norm(pt - stroke[-1])) >= 0.01:
+                    stroke.append(pt)
+
+            if not stroke:
+                continue
+
+            if pts_3d:
+                pts_3d.append(pts_3d[-1] - self.plane_n * lift_height)
+                pts_3d.append(stroke[0] - self.plane_n * lift_height)
+            pts_3d.extend(stroke)
+            forward = not forward
+            used_passes += 1
 
         center_3d = self.rect_origin + 0.5 * self.rect_width_vec + 0.5 * self.rect_height_vec
-        return center_3d, pts_3d, num_passes, actual_step
-
-    def _generate_reachable_sweep(
-        self,
-    ) -> Optional[Tuple[np.ndarray, List[np.ndarray], int, float, float, str, str]]:
-        """Try deterministic sweep variants until a reachable candidate is found."""
-        margin_levels = [
-            self._sweep_margin,
-            self._sweep_margin + 0.02,
-            self._sweep_margin + 0.04,
-        ]
-        depth_levels = [
-            max(self._sweep_depth, 0.0),
-            max(self._sweep_depth - 0.005, 0.0),
-            max(self._sweep_depth - 0.010, 0.0),
-            0.0,
-        ]
-
-        seen = set()
-        for axis_mode in ('auto', 'width', 'height'):
-            for start_corner in ('ll', 'ul', 'lr', 'ur'):
-                for margin in margin_levels:
-                    for depth in depth_levels:
-                        key = (
-                            axis_mode,
-                            start_corner,
-                            round(margin, 5),
-                            round(depth, 5),
-                        )
-                        if key in seen:
-                            continue
-                        seen.add(key)
-
-                        center_3d, positions, num_passes, actual_step = self._generate_sweep_3d(
-                            margin=margin,
-                            depth=depth,
-                            axis_mode=axis_mode,
-                            start_corner=start_corner,
-                        )
-                        if not positions:
-                            continue
-
-                        if self._is_path_reachable(positions):
-                            return (
-                                center_3d,
-                                positions,
-                                num_passes,
-                                actual_step,
-                                depth,
-                                axis_mode,
-                                start_corner,
-                            )
-
-        return None
-
-    def _generate_best_effort_sweep(
-        self,
-    ) -> Optional[Tuple[np.ndarray, List[np.ndarray], int, float, float, str, str]]:
-        """Pick a sweep variant with reachable approach start, even if full path check fails."""
-        margin_levels = [
-            self._sweep_margin,
-            self._sweep_margin + 0.02,
-            self._sweep_margin + 0.04,
-        ]
-        depth_levels = [
-            max(self._sweep_depth, 0.0),
-            max(self._sweep_depth - 0.005, 0.0),
-            max(self._sweep_depth - 0.010, 0.0),
-            0.0,
-        ]
-
-        seen = set()
-        for axis_mode in ('auto', 'width', 'height'):
-            for start_corner in ('ll', 'ul', 'lr', 'ur'):
-                for margin in margin_levels:
-                    for depth in depth_levels:
-                        key = (
-                            axis_mode,
-                            start_corner,
-                            round(margin, 5),
-                            round(depth, 5),
-                        )
-                        if key in seen:
-                            continue
-                        seen.add(key)
-
-                        center_3d, positions, num_passes, actual_step = self._generate_sweep_3d(
-                            margin=margin,
-                            depth=depth,
-                            axis_mode=axis_mode,
-                            start_corner=start_corner,
-                        )
-                        if not positions:
-                            continue
-
-                        if self._is_approach_reachable_for_tip(positions[0]):
-                            return (
-                                center_3d,
-                                positions,
-                                num_passes,
-                                actual_step,
-                                depth,
-                                axis_mode,
-                                start_corner,
-                            )
-
-                        if self._is_approach_reachable_for_tip(positions[-1]):
-                            rev = list(reversed(positions))
-                            return (
-                                center_3d,
-                                rev,
-                                num_passes,
-                                actual_step,
-                                depth,
-                                axis_mode,
-                                f'{start_corner}-rev',
-                            )
-
-        return None
+        self.get_logger().info(
+            f'Generated radial sweep: arcs={used_passes}/{num_passes}, '
+            f'min_r={min_r:.2f}m, max_r={max_r:.2f}m, pts={len(pts_3d)}')
+        return center_3d, pts_3d, num_passes, step_size
 
     # ------------------------------------------------------------------
     # Drawing generation with rejection sampling

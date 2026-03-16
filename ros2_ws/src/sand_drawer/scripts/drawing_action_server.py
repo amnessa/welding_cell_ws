@@ -623,25 +623,38 @@ class DrawingActionServer(Node):
     # Constrained multi-seed IK (for RRT goal)
     # ------------------------------------------------------------------
     def _constrained_ik_for_pose(
-            self, T_target: np.ndarray) -> Optional[np.ndarray]:
+            self,
+            T_target: np.ndarray,
+            seed_center: Optional[np.ndarray] = None,
+            fast_mode: bool = False) -> Optional[np.ndarray]:
         from ur5e_rrt_planner import ik_solve
         import random as _random
 
         home = self._home_positions.copy()
         candidates = []
-        seeds = [home.copy()]
-        for _ in range(self.ik_num_seeds):
-            s = home.copy()
-            s[0] += _random.uniform(-1.5, 1.5)
-            s[1] += _random.uniform(-1.0, 0.3)
-            s[2] += _random.uniform(-0.5, 0.5)
-            s[3] += _random.uniform(-1.0, 1.0)
-            s[4] += _random.uniform(-1.0, 1.0)
-            s[5] += _random.uniform(-1.0, 1.0)
+        base_seed = seed_center.copy() if seed_center is not None else home.copy()
+        seeds = [base_seed, home.copy()]
+
+        num_seeds = max(6, int(self.ik_num_seeds // 2)) if fast_mode else int(self.ik_num_seeds)
+        pan_span = 1.2 if fast_mode else 1.5
+        shoulder_lo = -0.8 if fast_mode else -1.0
+        shoulder_hi = 0.2 if fast_mode else 0.3
+        elbow_span = 0.35 if fast_mode else 0.5
+        wrist_span = 0.6 if fast_mode else 1.0
+        max_iter = 120 if fast_mode else 300
+
+        for _ in range(num_seeds):
+            s = base_seed.copy()
+            s[0] += _random.uniform(-pan_span, pan_span)
+            s[1] += _random.uniform(shoulder_lo, shoulder_hi)
+            s[2] += _random.uniform(-elbow_span, elbow_span)
+            s[3] += _random.uniform(-wrist_span, wrist_span)
+            s[4] += _random.uniform(-wrist_span, wrist_span)
+            s[5] += _random.uniform(-wrist_span, wrist_span)
             seeds.append(s)
 
         for seed in seeds:
-            q_sol = ik_solve(T_target, seed, max_iter=300,
+            q_sol = ik_solve(T_target, seed, max_iter=max_iter,
                              pos_tol=5e-4, orient_tol=1e-3,
                              damping=self.ik_damping)
             if q_sol is not None and self._config_ok(q_sol):
@@ -660,6 +673,36 @@ class DrawingActionServer(Node):
             f'  Constrained IK: {len(candidates)}/{len(seeds)} valid  '
             f'best shoulder_lift={best_q[1]:.3f} elbow={best_q[2]:.3f}')
         return best_q
+
+    def _quick_pose_ik(self, T_target: np.ndarray, q_seed: np.ndarray) -> Optional[np.ndarray]:
+        """Fast IK for sweep approach without costly global constrained search."""
+        from ur5e_rrt_planner import ik_solve
+
+        base = q_seed.copy()
+        seeds = [
+            base,
+            self._home_positions.copy(),
+            base + np.array([0.5, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            base + np.array([-0.5, 0.0, 0.0, 0.0, 0.0, 0.0]),
+        ]
+
+        relaxed_candidate = None
+        for seed in seeds:
+            q_sol = ik_solve(T_target, seed, max_iter=35,
+                             pos_tol=7e-4, orient_tol=2e-3,
+                             damping=self.ik_damping)
+            if q_sol is None:
+                continue
+            if self._config_ok(q_sol):
+                return q_sol
+            if relaxed_candidate is None:
+                relaxed_candidate = q_sol
+
+        if relaxed_candidate is not None:
+            self.get_logger().warn(
+                'Using relaxed sweep approach IK outside elbow-up preference')
+            return relaxed_candidate
+        return None
 
     # ------------------------------------------------------------------
     # FK helper
@@ -987,7 +1030,7 @@ class DrawingActionServer(Node):
         feedback.current_phase = 'PRE_COMPUTING'
         goal_handle.publish_feedback(feedback)
 
-        max_retries = 1 if len(draw_positions) > 200 else 3
+        max_retries = 1 if len(draw_positions) > 120 else 3
         phases = None
         for attempt in range(1, max_retries + 1):
             if goal_handle.is_cancel_requested:
@@ -1092,10 +1135,14 @@ class DrawingActionServer(Node):
         if q_current is None:
             self._last_precompute_fail_reason = 'no_joint_state'
             return None
+
+        sweep_fast = (self._active_tool == 'spatula' and len(draw_positions) >= 120)
         # Real robot: UR controller interpolates internally, so 10 Hz
         # Cartesian density is plenty.  Sim: 100 Hz drives the sim loop.
         if self._real_robot:
             cart_dt = 0.10   # 10 Hz — keeps trajectories < 2 000 pts
+        elif sweep_fast:
+            cart_dt = max(0.04, 1.0 / max(float(self.execution_hz), 1.0))
         else:
             cart_dt = 1.0 / self.execution_hz  # 100 Hz for sim
 
@@ -1166,64 +1213,121 @@ class DrawingActionServer(Node):
                 f'  [HOMING] {n_home} interp steps + '
                 f'{self._home_hold_sec:.1f}s hold')
 
-        # ── 3. RRT (last phase end → approach above first draw point) ─
+        # ── 3. Approach transfer (fast sweep: direct; otherwise RRT) ─
         last_q = phases[-1][1][-1]
-        approach_pos_tip = (draw_positions[0]
-                    - self.approach_height * self.plane_n)
-        T_approach = self._dynamic_wrist_pose_from_tip(approach_pos_tip)
+        selected_idx = 0
+        q_goal = None
+        T_approach = None
+        approach_pos_tip = None
+        approach_seed_q = last_q
+
+        if sweep_fast:
+            n = len(draw_positions)
+            candidate_idxs = sorted(set([0, n // 2, n - 1]))
+
+            q_entry = None
+            for idx in candidate_idxs:
+                test_tip = draw_positions[idx]
+                test_T = self._dynamic_wrist_pose_from_tip(test_tip)
+                cand = self._quick_pose_ik(test_T, last_q)
+                if cand is not None:
+                    selected_idx = idx
+                    q_entry = cand
+                    break
+
+            if q_entry is not None:
+                if selected_idx != 0:
+                    draw_positions = draw_positions[selected_idx:] + draw_positions[:selected_idx]
+
+                q_goal = q_entry
+                approach_pos_tip = draw_positions[0].copy()
+                T_approach = self._dynamic_wrist_pose_from_tip(approach_pos_tip)
+
+                n_direct = max(int(0.5 * self.execution_hz), 20)
+                direct_path = [last_q.copy()]
+                for i in range(1, n_direct + 1):
+                    alpha = 0.5 * (1.0 - math.cos(math.pi * i / n_direct))
+                    q_interp = (1.0 - alpha) * last_q + alpha * q_goal
+                    direct_path.append(q_interp)
+                phases.append(('approach_direct', direct_path, None))
+                approach_seed_q = direct_path[-1]
+            else:
+                approach_pos_tip = draw_positions[0].copy()
+                T_approach = self._dynamic_wrist_pose_from_tip(approach_pos_tip)
+                self.get_logger().warn(
+                    'Fast sweep entry IK unavailable; '
+                    'starting drawing IK directly from current joint seed')
+        else:
+            approach_pos_tip = (draw_positions[0]
+                        - self.approach_height * self.plane_n)
+            T_approach = self._dynamic_wrist_pose_from_tip(approach_pos_tip)
+            q_goal = self._constrained_ik_for_pose(T_approach)
+            if q_goal is None:
+                self._last_precompute_fail_reason = 'rrt_goal_ik'
+                self.get_logger().error('RRT goal IK failed')
+                return None
+
         approach_pos_wrist = T_approach[:3, 3]
-
         self.get_logger().info(
-            f'  [RRT] planning → approach '
+            f'  [APPROACH] target '
             f'[{approach_pos_wrist[0]:.3f}, {approach_pos_wrist[1]:.3f}, '
-            f'{approach_pos_wrist[2]:.3f}] (wrist)')
+            f'{approach_pos_wrist[2]:.3f}] (wrist), entry_idx={selected_idx}')
 
-        q_goal = self._constrained_ik_for_pose(T_approach)
-        if q_goal is None:
-            self._last_precompute_fail_reason = 'rrt_goal_ik'
-            self.get_logger().error('RRT goal IK failed')
-            return None
+        if not sweep_fast:
+            raw_rrt = rrt_connect(last_q, q_goal,
+                                  step_size=0.2, max_iter=10000)
+            if raw_rrt is None:
+                self._last_precompute_fail_reason = 'rrt_plan'
+                self.get_logger().error('RRT planning failed')
+                return None
 
-        raw_rrt = rrt_connect(last_q, q_goal,
-                              step_size=0.2, max_iter=10000)
-        if raw_rrt is None:
-            self._last_precompute_fail_reason = 'rrt_plan'
-            self.get_logger().error('RRT planning failed')
-            return None
+            smoothed = smooth_path(raw_rrt, max_attempts=200)
+            rrt_dense = bezier_smooth_path(smoothed, max_step=0.02)
+            phases.append(('rrt', list(rrt_dense), None))
 
-        smoothed = smooth_path(raw_rrt, max_attempts=200)
-        rrt_dense = bezier_smooth_path(smoothed, max_step=0.02)
-        phases.append(('rrt', list(rrt_dense), None))
-
-        self.get_logger().info(
-            f'        {len(raw_rrt)} raw → {len(smoothed)} smoothed '
-            f'→ {len(rrt_dense)} dense')
+            self.get_logger().info(
+                f'        {len(raw_rrt)} raw → {len(smoothed)} smoothed '
+                f'→ {len(rrt_dense)} dense')
+            approach_seed_q = rrt_dense[-1]
 
         # Verify approach FK
-        T_goal_fk = ur5e_fk(rrt_dense[-1])
+        T_goal_fk = ur5e_fk(approach_seed_q)
         goal_pos = T_goal_fk[:3, 3]
         self.get_logger().info(
             f'        Approach FK = [{goal_pos[0]:.4f}, '
             f'{goal_pos[1]:.4f}, {goal_pos[2]:.4f}]')
 
         # ── 4. DESCENT (approach → surface) ───────────────────────────
-        descent_wps, descent_times = _interpolate_cartesian_smooth(
-            [approach_pos_tip, draw_positions[0].copy()],
-            orientation_xyzw,
-            self.approach_v_max, self.approach_a_max, cart_dt)
-        descent_wps = tip_to_dynamic_wrist(descent_wps)
-        descent_path, descent_valid_times = self._ik_solve_cartesian_path(
-            descent_wps, descent_times, rrt_dense[-1], 'Descent')
-        if descent_path:
-            phases.append(('descent', descent_path, descent_valid_times))
+        if not sweep_fast:
+            descent_wps, descent_times = _interpolate_cartesian_smooth(
+                [approach_pos_tip, draw_positions[0].copy()],
+                orientation_xyzw,
+                self.approach_v_max, self.approach_a_max, cart_dt)
+            descent_wps = tip_to_dynamic_wrist(descent_wps)
+            descent_path, descent_valid_times = self._ik_solve_cartesian_path(
+                descent_wps, descent_times, approach_seed_q, 'Descent')
+            if descent_path:
+                phases.append(('descent', descent_path, descent_valid_times))
+            else:
+                self.get_logger().warn(
+                    '  Descent IK failed — drawing starts from approach height')
         else:
-            self.get_logger().warn(
-                '  Descent IK failed — drawing starts from approach height')
+            self.get_logger().info('  [DESCENT] skipped in fast sweep mode')
 
         # ── 5. DRAWING (surface waypoints) ────────────────────────────
-        draw_wps, draw_times = _interpolate_cartesian_smooth(
-            draw_positions, orientation_xyzw,
-            self.v_max, self.a_max, cart_dt)
+        if sweep_fast:
+            draw_wps = [(p.copy(), orientation_xyzw) for p in draw_positions]
+            draw_times: List[float] = [0.0]
+            speed = max(float(self.v_max), 0.05)
+            t_acc = 0.0
+            for i in range(1, len(draw_positions)):
+                seg = float(np.linalg.norm(draw_positions[i] - draw_positions[i - 1]))
+                t_acc += seg / speed
+                draw_times.append(t_acc)
+        else:
+            draw_wps, draw_times = _interpolate_cartesian_smooth(
+                draw_positions, orientation_xyzw,
+                self.v_max, self.a_max, cart_dt)
         draw_wps = tip_to_dynamic_wrist(draw_wps)
         last_q_for_draw = phases[-1][1][-1]
         draw_path, draw_valid_times = self._ik_solve_cartesian_path(
