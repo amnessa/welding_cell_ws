@@ -70,6 +70,38 @@ def _quat_to_rotmat(q_xyzw) -> np.ndarray:
     ])
 
 
+def _rotmat_to_quat(R: np.ndarray) -> list:
+    """3×3 rotation matrix → [x, y, z, w]."""
+    trace = R[0, 0] + R[1, 1] + R[2, 2]
+    if trace > 0:
+        s = 0.5 / math.sqrt(trace + 1.0)
+        w = 0.25 / s
+        x = (R[2, 1] - R[1, 2]) * s
+        y = (R[0, 2] - R[2, 0]) * s
+        z = (R[1, 0] - R[0, 1]) * s
+    elif R[0, 0] > R[1, 1] and R[0, 0] > R[2, 2]:
+        s = 2.0 * math.sqrt(1.0 + R[0, 0] - R[1, 1] - R[2, 2])
+        w = (R[2, 1] - R[1, 2]) / s
+        x = 0.25 * s
+        y = (R[0, 1] + R[1, 0]) / s
+        z = (R[0, 2] + R[2, 0]) / s
+    elif R[1, 1] > R[2, 2]:
+        s = 2.0 * math.sqrt(1.0 + R[1, 1] - R[0, 0] - R[2, 2])
+        w = (R[0, 2] - R[2, 0]) / s
+        x = (R[0, 1] + R[1, 0]) / s
+        y = 0.25 * s
+        z = (R[1, 2] + R[2, 1]) / s
+    else:
+        s = 2.0 * math.sqrt(1.0 + R[2, 2] - R[0, 0] - R[1, 1])
+        w = (R[1, 0] - R[0, 1]) / s
+        x = (R[0, 2] + R[2, 0]) / s
+        y = (R[1, 2] + R[2, 1]) / s
+        z = 0.25 * s
+    q = np.array([x, y, z, w], dtype=float)
+    q /= np.linalg.norm(q)
+    return q.tolist()
+
+
 # ── Valid shape names ────────────────────────────────────────────────────
 # Geometric primitives for the random pool.  'text' is handled separately
 # (only via trajectory_key=text) so random mode doesn't pick it.
@@ -99,6 +131,7 @@ class DrawingDispatcher(Node):
         self.declare_parameter('text_min_point_spacing_m', 0.005)
         self.declare_parameter('text_fit_attempts', 24)
         self.declare_parameter('text_rotation_max_deg', 45.0)
+        self.declare_parameter('active_tool', 'pointy')
 
         self._traj_key = self.get_parameter('trajectory_key').value
         self._text_string = self.get_parameter('text_string').value
@@ -115,6 +148,7 @@ class DrawingDispatcher(Node):
         self._text_fit_attempts = int(self.get_parameter('text_fit_attempts').value)
         self._text_rot_max_rad = math.radians(
             float(self.get_parameter('text_rotation_max_deg').value))
+        self._active_tool = self.get_parameter('active_tool').value
 
         # Home configuration — absolute baseline IK seed
         self._ik_seed = np.array(
@@ -152,9 +186,90 @@ class DrawingDispatcher(Node):
         self.get_logger().info(
             f'Drawing dispatcher ready — '
             f'trajectory_key={self._traj_key}, '
+            f'active_tool={self._active_tool}, '
             f'continuous={self._continuous}, '
             f'size={self._size_min_pct*100:.0f}–{self._size_max_pct*100:.0f}% '
             f'of table')
+
+    def _get_tool_transform(self, tool_name: str) -> Tuple[float, list]:
+        """Return (tool_length_m, wrist_orientation_xyzw) for active tool."""
+        N = self.plane_n
+        X = self.plane_x
+        Y = self.plane_y
+
+        # Tool selection around wrist Z (parallel to plane).
+        # pointy = 0°, fork = +90°, spatula = -90°.
+        if tool_name == 'pointy':
+            length = 0.15
+            R = np.column_stack([N, X, Y])
+        elif tool_name == 'fork':
+            length = 0.13
+            R = np.column_stack([X, -N, Y])
+        elif tool_name == 'spatula':
+            length = 0.13
+            R = np.column_stack([-X, N, Y])
+        elif tool_name == 'empty':
+            length = 0.0
+            R = np.column_stack([-N, -X, Y])
+        else:
+            self.get_logger().error(
+                f"Unknown tool '{tool_name}'. Defaulting to pointy.")
+            length = 0.15
+            R = np.column_stack([N, X, Y])
+
+        return length, _rotmat_to_quat(R)
+
+    def _tool_length_and_yaw_offset(self, tool_name: str) -> Tuple[float, float]:
+        """Return (tool_length_m, yaw_offset_rad) about local wrist Z."""
+        if tool_name == 'pointy':
+            return 0.15, 0.0
+        if tool_name == 'fork':
+            return 0.13, math.pi / 2.0
+        if tool_name == 'spatula':
+            return 0.13, -math.pi / 2.0
+        if tool_name == 'empty':
+            return 0.0, math.pi
+        self.get_logger().error(
+            f"Unknown tool '{tool_name}'. Defaulting to pointy.")
+        return 0.15, 0.0
+
+    def _dynamic_wrist_pose_from_tip(self, tip_pos: np.ndarray) -> np.ndarray:
+        """Build wrist pose for a tip point using dynamic yaw and tool offset."""
+        tool_length, yaw_offset = self._tool_length_and_yaw_offset(
+            self._active_tool)
+
+        N = self.plane_n
+        z_wrist = tip_pos - np.dot(tip_pos, N) * N
+        z_norm = float(np.linalg.norm(z_wrist))
+        if z_norm < 1e-6:
+            z_wrist = self.plane_x.copy()
+        else:
+            z_wrist = z_wrist / z_norm
+
+        x_base = N / max(float(np.linalg.norm(N)), 1e-9)
+        y_base = np.cross(z_wrist, x_base)
+        y_norm = float(np.linalg.norm(y_base))
+        if y_norm < 1e-6:
+            y_base = self.plane_y.copy()
+        else:
+            y_base = y_base / y_norm
+
+        x_base = np.cross(y_base, z_wrist)
+        x_base = x_base / max(float(np.linalg.norm(x_base)), 1e-9)
+
+        c = math.cos(yaw_offset)
+        s = math.sin(yaw_offset)
+        x_wrist = c * x_base + s * y_base
+        y_wrist = -s * x_base + c * y_base
+
+        wrist_pos = tip_pos - tool_length * x_wrist
+
+        T = np.eye(4)
+        T[:3, 0] = x_wrist
+        T[:3, 1] = y_wrist
+        T[:3, 2] = z_wrist
+        T[:3, 3] = wrist_pos
+        return T
 
     # ------------------------------------------------------------------
     # Plane JSON loading (with Rz(π) frame correction)
@@ -214,19 +329,16 @@ class DrawingDispatcher(Node):
         self.table_width_m = float(np.linalg.norm(self.rect_width_vec))
         self.table_height_m = float(np.linalg.norm(self.rect_height_vec))
 
-        # Default orientation from trajectory data
-        traj = data.get('square_trajectory', [])
-        if traj:
-            self._default_orientation = list(traj[0]['orientation_xyzw'])
-        else:
-            self._default_orientation = [0.0, 0.0, 0.0, 1.0]
-            self.get_logger().warn(
-                'No square_trajectory in JSON — using identity orientation')
+        # Tool-aware orientation and wrist-tip offset
+        self.tool_length, self._default_orientation = \
+            self._get_tool_transform(self._active_tool)
 
         self.get_logger().info(
             f'Loaded plane — '
             f'width={self.table_width_m:.3f}m, '
-            f'height={self.table_height_m:.3f}m')
+            f'height={self.table_height_m:.3f}m, '
+            f'tool={self._active_tool}, '
+            f'tool_length={self.tool_length:.3f}m')
 
     # ------------------------------------------------------------------
     # Fast-Fail IK Reachability Check
@@ -250,8 +362,7 @@ class DrawingDispatcher(Node):
         return True
 
     def _is_reachable(self, center_3d: np.ndarray,
-                      positions: List[np.ndarray],
-                      orientation_xyzw: list) -> bool:
+                      positions: List[np.ndarray]) -> bool:
         """Two-stage reachability check with edge-midpoint coverage.
 
         Stage 1 — Fast fail: IK for the shape centre using the home seed.
@@ -262,12 +373,8 @@ class DrawingDispatcher(Node):
                   This catches unreachable regions between corners that
                   are individually reachable.
         """
-        R = _quat_to_rotmat(orientation_xyzw)
-        T = np.eye(4)
-        T[:3, :3] = R
-
         # Stage 1: centre fast-fail (with multi-seed config check)
-        T[:3, 3] = center_3d
+        T = self._dynamic_wrist_pose_from_tip(center_3d)
         center_sol = None
         for seed in self._ik_seeds:
             sol = ik_solve(T, seed, max_iter=80)
@@ -289,7 +396,7 @@ class DrawingDispatcher(Node):
 
         current_seed = center_sol
         for pt in check_points:
-            T[:3, 3] = pt
+            T = self._dynamic_wrist_pose_from_tip(pt)
             # Try continuity seed first; fall back to global elbow-up seeds.
             seed_list = [current_seed] + self._ik_seeds
             sol = None
@@ -570,14 +677,12 @@ class DrawingDispatcher(Node):
                 # Reachability via bounding-box corners only (9 IK checks)
                 # instead of all 151+ waypoints.  If the rectangle fits,
                 # every letter stroke inside it is reachable.
-                reachable = self._is_reachable(
-                    center_3d, bbox_check, orientation)
+                reachable = self._is_reachable(center_3d, bbox_check)
             else:
                 center_3d, positions = self._generate_random_shape_3d(shape)
                 if not positions:
                     continue
-                reachable = self._is_reachable(
-                    center_3d, positions, orientation)
+                reachable = self._is_reachable(center_3d, positions)
 
             if reachable:
                 self.get_logger().info(

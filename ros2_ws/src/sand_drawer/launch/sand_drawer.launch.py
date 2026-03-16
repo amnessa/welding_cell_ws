@@ -71,6 +71,7 @@ def launch_setup(context, *args, **kwargs):
     real_robot        = real_robot_str == "true"
     continuous_str    = LaunchConfiguration("continuous").perform(context)
     text_string_str   = LaunchConfiguration("text_string").perform(context)
+    active_tool_str   = LaunchConfiguration("active_tool").perform(context)
     max_joint_speed_deg = float(
         LaunchConfiguration("max_joint_speed_deg").perform(context))
     max_joint_accel_deg = float(
@@ -176,6 +177,7 @@ def launch_setup(context, *args, **kwargs):
                 "max_joint_accel_deg": max_joint_accel_deg,
                 "totg_path_tolerance": 0.1,
                 "totg_resample_dt": 0.01,
+                "active_tool": active_tool_str,
             }],
         ))
         # TOTG service node (MoveIt 2 Time-Optimal Trajectory Generation)
@@ -197,6 +199,7 @@ def launch_setup(context, *args, **kwargs):
                 "trajectory_key": action_traj_key,
                 "continuous": continuous_str == "true",
                 "text_string": text_string_str,
+                "active_tool": active_tool_str,
             }],
         ))
         return nodes
@@ -362,6 +365,8 @@ def generate_launch_description():
                               description="Continuous drawing dispatch (action mode)"),
         DeclareLaunchArgument("text_string",     default_value="ROMER",
                               description="Text string to draw (action mode, trajectory_key=text)"),
+        DeclareLaunchArgument("active_tool",     default_value="pointy",
+                      description="Active tool face: fork | pointy | spatula | empty (action mode)"),
         # Line UV coordinates (shared by cartesian & velocity modes)
         DeclareLaunchArgument("line_u_start",   default_value="0.5"),
         DeclareLaunchArgument("line_v_start",   default_value="0.3"),

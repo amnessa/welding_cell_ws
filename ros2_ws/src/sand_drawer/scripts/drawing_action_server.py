@@ -226,6 +226,7 @@ class DrawingActionServer(Node):
         self.declare_parameter('max_joint_accel_deg', 40.0)
         self.declare_parameter('totg_path_tolerance', 0.1)
         self.declare_parameter('totg_resample_dt', 0.01)
+        self.declare_parameter('active_tool', 'pointy')
 
         self._load_params()
         self._load_plane_json()
@@ -311,6 +312,7 @@ class DrawingActionServer(Node):
             f'Drawing action server ready — '
             f'approach_height={self.approach_height:.3f}m, '
             f'execution_hz={self.execution_hz:.0f}, '
+            f'active_tool={self._active_tool}, '
             f'real_robot={self._real_robot}')
 
     # ------------------------------------------------------------------
@@ -335,6 +337,87 @@ class DrawingActionServer(Node):
         self._max_joint_accel_deg = float(g('max_joint_accel_deg').value)
         self._totg_path_tolerance = float(g('totg_path_tolerance').value)
         self._totg_resample_dt   = float(g('totg_resample_dt').value)
+        self._active_tool        = str(g('active_tool').value)
+
+    def _get_tool_transform(self, tool_name: str) -> Tuple[float, list]:
+        """Return (tool_length_m, wrist_orientation_xyzw) for active tool."""
+        N = self.plane_n
+        X = self.plane_x
+        Y = self.plane_y
+
+        # Tool selection around wrist Z (parallel to plane).
+        # pointy = 0°, fork = +90°, spatula = -90°.
+        if tool_name == 'pointy':
+            length = 0.15
+            R = np.column_stack([N, X, Y])
+        elif tool_name == 'fork':
+            length = 0.13
+            R = np.column_stack([X, -N, Y])
+        elif tool_name == 'spatula':
+            length = 0.13
+            R = np.column_stack([-X, N, Y])
+        elif tool_name == 'empty':
+            length = 0.0
+            R = np.column_stack([-N, -X, Y])
+        else:
+            self.get_logger().error(
+                f"Unknown tool '{tool_name}'. Defaulting to pointy.")
+            length = 0.15
+            R = np.column_stack([N, X, Y])
+
+        return length, rotmat_to_quat(R)
+
+    def _tool_length_and_yaw_offset(self, tool_name: str) -> Tuple[float, float]:
+        """Return (tool_length_m, yaw_offset_rad) about local wrist Z."""
+        if tool_name == 'pointy':
+            return 0.15, 0.0
+        if tool_name == 'fork':
+            return 0.13, math.pi / 2.0
+        if tool_name == 'spatula':
+            return 0.13, -math.pi / 2.0
+        if tool_name == 'empty':
+            return 0.0, math.pi
+        self.get_logger().error(
+            f"Unknown tool '{tool_name}'. Defaulting to pointy.")
+        return 0.15, 0.0
+
+    def _dynamic_wrist_pose_from_tip(self, tip_pos: np.ndarray) -> np.ndarray:
+        """Build wrist pose for a tip point using dynamic yaw and tool offset."""
+        tool_length, yaw_offset = self._tool_length_and_yaw_offset(
+            self._active_tool)
+
+        N = self.plane_n
+        z_wrist = tip_pos - np.dot(tip_pos, N) * N
+        z_norm = float(np.linalg.norm(z_wrist))
+        if z_norm < 1e-6:
+            z_wrist = self.plane_x.copy()
+        else:
+            z_wrist = z_wrist / z_norm
+
+        x_base = N / max(float(np.linalg.norm(N)), 1e-9)
+        y_base = np.cross(z_wrist, x_base)
+        y_norm = float(np.linalg.norm(y_base))
+        if y_norm < 1e-6:
+            y_base = self.plane_y.copy()
+        else:
+            y_base = y_base / y_norm
+
+        x_base = np.cross(y_base, z_wrist)
+        x_base = x_base / max(float(np.linalg.norm(x_base)), 1e-9)
+
+        c = math.cos(yaw_offset)
+        s = math.sin(yaw_offset)
+        x_wrist = c * x_base + s * y_base
+        y_wrist = -s * x_base + c * y_base
+
+        wrist_pos = tip_pos - tool_length * x_wrist
+
+        T = np.eye(4)
+        T[:3, 0] = x_wrist
+        T[:3, 1] = y_wrist
+        T[:3, 2] = z_wrist
+        T[:3, 3] = wrist_pos
+        return T
 
     # ------------------------------------------------------------------
     # Plane JSON loading — only plane geometry (normal, etc.)
@@ -974,12 +1057,29 @@ class DrawingActionServer(Node):
             cart_dt = 0.10   # 10 Hz — keeps trajectories < 2 000 pts
         else:
             cart_dt = 1.0 / self.execution_hz  # 100 Hz for sim
+
+        tool_length, yaw_offset = self._tool_length_and_yaw_offset(
+            self._active_tool)
+
+        # Convert tip waypoints into dynamic wrist pose waypoints.
+        def tip_to_dynamic_wrist(
+            wps: List[Tuple[np.ndarray, list]]
+        ) -> List[Tuple[np.ndarray, list]]:
+            out: List[Tuple[np.ndarray, list]] = []
+            for tip_pos, _ in wps:
+                T = self._dynamic_wrist_pose_from_tip(tip_pos)
+                out.append((T[:3, 3].copy(), rotmat_to_quat(T[:3, :3])))
+            return out
+
         phases: List[Tuple[str, List[np.ndarray], Optional[List[float]]]] = []
 
         self.get_logger().info(
             '═══════════════════════════════════════════════\n'
             '  PRE-COMPUTING TRAJECTORY FOR GOAL\n'
             '═══════════════════════════════════════════════')
+        self.get_logger().info(
+            f'  Tool TCP: {self._active_tool} '
+            f'(len={tool_length:.3f}m, yaw={math.degrees(yaw_offset):.0f}deg)')
 
         # ── 1. RETRACT UP (Cartesian vertical lift) ───────────────────
         T_now = ur5e_fk(q_current)
@@ -1026,14 +1126,15 @@ class DrawingActionServer(Node):
 
         # ── 3. RRT (last phase end → approach above first draw point) ─
         last_q = phases[-1][1][-1]
-        approach_pos = (draw_positions[0]
-                        - self.approach_height * self.plane_n)
-        T_approach = self._pose44(approach_pos, orientation_xyzw)
+        approach_pos_tip = (draw_positions[0]
+                    - self.approach_height * self.plane_n)
+        T_approach = self._dynamic_wrist_pose_from_tip(approach_pos_tip)
+        approach_pos_wrist = T_approach[:3, 3]
 
         self.get_logger().info(
             f'  [RRT] planning → approach '
-            f'[{approach_pos[0]:.3f}, {approach_pos[1]:.3f}, '
-            f'{approach_pos[2]:.3f}]')
+            f'[{approach_pos_wrist[0]:.3f}, {approach_pos_wrist[1]:.3f}, '
+            f'{approach_pos_wrist[2]:.3f}] (wrist)')
 
         q_goal = self._constrained_ik_for_pose(T_approach)
         if q_goal is None:
@@ -1063,9 +1164,10 @@ class DrawingActionServer(Node):
 
         # ── 4. DESCENT (approach → surface) ───────────────────────────
         descent_wps, descent_times = _interpolate_cartesian_smooth(
-            [approach_pos, draw_positions[0].copy()],
+            [approach_pos_tip, draw_positions[0].copy()],
             orientation_xyzw,
             self.approach_v_max, self.approach_a_max, cart_dt)
+        descent_wps = tip_to_dynamic_wrist(descent_wps)
         descent_path, descent_valid_times = self._ik_solve_cartesian_path(
             descent_wps, descent_times, rrt_dense[-1], 'Descent')
         if descent_path:
@@ -1078,6 +1180,7 @@ class DrawingActionServer(Node):
         draw_wps, draw_times = _interpolate_cartesian_smooth(
             draw_positions, orientation_xyzw,
             self.v_max, self.a_max, cart_dt)
+        draw_wps = tip_to_dynamic_wrist(draw_wps)
         last_q_for_draw = phases[-1][1][-1]
         draw_path, draw_valid_times = self._ik_solve_cartesian_path(
             draw_wps, draw_times, last_q_for_draw, 'Drawing')
@@ -1092,6 +1195,7 @@ class DrawingActionServer(Node):
         ascent_wps, ascent_times = _interpolate_cartesian_smooth(
             [last_draw_pos, ascent_pos], orientation_xyzw,
             self.approach_v_max, self.approach_a_max, cart_dt)
+        ascent_wps = tip_to_dynamic_wrist(ascent_wps)
         ascent_path, ascent_valid_times = self._ik_solve_cartesian_path(
             ascent_wps, ascent_times, draw_path[-1], 'Ascent')
         if ascent_path:

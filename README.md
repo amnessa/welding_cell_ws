@@ -90,6 +90,13 @@ welding_cell_ws/
 
 ### Using ur_robot_driver
 ```bash
+cd /workspaces/welding_cell_ws/ros2_ws
+unset AMENT_PREFIX_PATH COLCON_PREFIX_PATH CMAKE_PREFIX_PATH ROS_PACKAGE_PATH PYTHONPATH
+source /opt/ros/jazzy/setup.bash
+ros2 pkg prefix ur_description # (should print jazzy)
+```
+then launch the driver:
+```bash
 # Launch UR5e driver (after installing ur_robot_driver)
 ros2 launch ur_robot_driver ur_control.launch.py \
     ur_type:=ur5e \
