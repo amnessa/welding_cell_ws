@@ -13,18 +13,6 @@ goal.  The first goal includes a HOMING phase; subsequent goals skip it
 
 On shutdown (Ctrl-C) the server commands RETRACT_UP → HOMING to park safely.
 
-Current TCP/tool behavior
--------------------------
-The action server uses active tool selection and dynamic TCP handling.
-
-- Tool faces are selected around wrist-3 as:
-        fork=0°, pointy=+90°, empty=-90°, spatula=180°.
-- Tool lengths from wrist axis:
-        fork=0.13 m, pointy=0.15 m, spatula=0.13 m, empty=0.00 m.
-- For draw/approach/descent/ascent path solving, the server computes a
-    dynamic wrist pose from each tip waypoint (per-waypoint yaw adaptation)
-    before IK. This reduces over-constraint and improves reachability.
-
 Architecture
 ------------
   For each incoming goal the entire motion is pre-computed in joint space
@@ -41,12 +29,9 @@ Action interface
 ----------------
   sand_drawer/action/ExecuteDrawing
     Goal:     geometry_msgs/Point[] waypoints
-                            geometry_msgs/Quaternion orientation
+              geometry_msgs/Quaternion orientation
     Result:   bool success, string message
     Feedback: string current_phase, float32 drawing_progress
-
-    Note: in action mode, the position waypoints are authoritative. The server
-    derives tool-consistent wrist orientation internally for IK robustness.
 
 Publishes
 ---------
@@ -305,7 +290,6 @@ class DrawingActionServer(Node):
         self._first_goal = True
         self._executing = False
         self._last_q: Optional[np.ndarray] = None
-        self._last_precompute_fail_reason = ''
 
         # ---- TOTG service client ----
         self._totg_client = self.create_client(
@@ -469,33 +453,6 @@ class DrawingActionServer(Node):
         self.plane_y = np.array(plane['y_axis'], dtype=float)
         self.plane_n = np.array(plane['normal'], dtype=float)
 
-        corners = [np.array(c, dtype=float) for c in data.get('rectangle_corners', [])]
-        if len(corners) >= 4:
-            self.rect_origin = corners[0]
-            self.rect_width_vec = corners[1] - corners[0]
-            self.rect_height_vec = corners[3] - corners[0]
-            self.table_width_m = float(np.linalg.norm(self.rect_width_vec))
-            self.table_height_m = float(np.linalg.norm(self.rect_height_vec))
-            self.table_center_3d = (
-                self.rect_origin
-                + 0.5 * self.rect_width_vec
-                + 0.5 * self.rect_height_vec)
-        else:
-            self.rect_origin = self.plane_origin.copy()
-            self.rect_width_vec = self.plane_x.copy()
-            self.rect_height_vec = self.plane_y.copy()
-            self.table_width_m = 1.0
-            self.table_height_m = 1.0
-            self.table_center_3d = self.plane_origin + 0.5 * self.plane_x + 0.5 * self.plane_y
-
-        vec_to_center = self.table_center_3d.copy()
-        vec_to_center = vec_to_center - np.dot(vec_to_center, self.plane_n) * self.plane_n
-        if abs(float(np.dot(self.plane_x, vec_to_center))) > abs(float(np.dot(self.plane_y, vec_to_center))):
-            self.base_forward = self.plane_x if float(np.dot(self.plane_x, vec_to_center)) > 0.0 else -self.plane_x
-        else:
-            self.base_forward = self.plane_y if float(np.dot(self.plane_y, vec_to_center)) > 0.0 else -self.plane_y
-        self.base_forward = self.base_forward / max(float(np.linalg.norm(self.base_forward)), 1e-9)
-
         self.get_logger().info(
             f'Loaded plane: origin={self.plane_origin.tolist()}, '
             f'normal={self.plane_n.tolist()}')
@@ -632,38 +589,25 @@ class DrawingActionServer(Node):
     # Constrained multi-seed IK (for RRT goal)
     # ------------------------------------------------------------------
     def _constrained_ik_for_pose(
-            self,
-            T_target: np.ndarray,
-            seed_center: Optional[np.ndarray] = None,
-            fast_mode: bool = False) -> Optional[np.ndarray]:
+            self, T_target: np.ndarray) -> Optional[np.ndarray]:
         from ur5e_rrt_planner import ik_solve
         import random as _random
 
         home = self._home_positions.copy()
         candidates = []
-        base_seed = seed_center.copy() if seed_center is not None else home.copy()
-        seeds = [base_seed, home.copy()]
-
-        num_seeds = max(6, int(self.ik_num_seeds // 2)) if fast_mode else int(self.ik_num_seeds)
-        pan_span = 1.2 if fast_mode else 1.5
-        shoulder_lo = -0.8 if fast_mode else -1.0
-        shoulder_hi = 0.2 if fast_mode else 0.3
-        elbow_span = 0.35 if fast_mode else 0.5
-        wrist_span = 0.6 if fast_mode else 1.0
-        max_iter = 120 if fast_mode else 300
-
-        for _ in range(num_seeds):
-            s = base_seed.copy()
-            s[0] += _random.uniform(-pan_span, pan_span)
-            s[1] += _random.uniform(shoulder_lo, shoulder_hi)
-            s[2] += _random.uniform(-elbow_span, elbow_span)
-            s[3] += _random.uniform(-wrist_span, wrist_span)
-            s[4] += _random.uniform(-wrist_span, wrist_span)
-            s[5] += _random.uniform(-wrist_span, wrist_span)
+        seeds = [home.copy()]
+        for _ in range(self.ik_num_seeds):
+            s = home.copy()
+            s[0] += _random.uniform(-1.5, 1.5)
+            s[1] += _random.uniform(-1.0, 0.3)
+            s[2] += _random.uniform(-0.5, 0.5)
+            s[3] += _random.uniform(-1.0, 1.0)
+            s[4] += _random.uniform(-1.0, 1.0)
+            s[5] += _random.uniform(-1.0, 1.0)
             seeds.append(s)
 
         for seed in seeds:
-            q_sol = ik_solve(T_target, seed, max_iter=max_iter,
+            q_sol = ik_solve(T_target, seed, max_iter=300,
                              pos_tol=5e-4, orient_tol=1e-3,
                              damping=self.ik_damping)
             if q_sol is not None and self._config_ok(q_sol):
@@ -682,36 +626,6 @@ class DrawingActionServer(Node):
             f'  Constrained IK: {len(candidates)}/{len(seeds)} valid  '
             f'best shoulder_lift={best_q[1]:.3f} elbow={best_q[2]:.3f}')
         return best_q
-
-    def _quick_pose_ik(self, T_target: np.ndarray, q_seed: np.ndarray) -> Optional[np.ndarray]:
-        """Fast IK for sweep approach without costly global constrained search."""
-        from ur5e_rrt_planner import ik_solve
-
-        base = q_seed.copy()
-        seeds = [
-            base,
-            self._home_positions.copy(),
-            base + np.array([0.5, 0.0, 0.0, 0.0, 0.0, 0.0]),
-            base + np.array([-0.5, 0.0, 0.0, 0.0, 0.0, 0.0]),
-        ]
-
-        relaxed_candidate = None
-        for seed in seeds:
-            q_sol = ik_solve(T_target, seed, max_iter=35,
-                             pos_tol=7e-4, orient_tol=2e-3,
-                             damping=self.ik_damping)
-            if q_sol is None:
-                continue
-            if self._config_ok(q_sol):
-                return q_sol
-            if relaxed_candidate is None:
-                relaxed_candidate = q_sol
-
-        if relaxed_candidate is not None:
-            self.get_logger().warn(
-                'Using relaxed sweep approach IK outside elbow-up preference')
-            return relaxed_candidate
-        return None
 
     # ------------------------------------------------------------------
     # FK helper
@@ -1121,8 +1035,6 @@ class DrawingActionServer(Node):
         from ur5e_rrt_planner import (ur5e_fk, rrt_connect,
                                       smooth_path, bezier_smooth_path)
 
-        self._last_precompute_fail_reason = ''
-
         # In real-robot mode, prefer the actual robot joint state over
         # the sim joint state, which may lag or be stale after a prior
         # execution.  This prevents trajectory-start mismatches that
@@ -1138,9 +1050,7 @@ class DrawingActionServer(Node):
         else:
             q_current = self._get_ordered_joints()
         if q_current is None:
-            self._last_precompute_fail_reason = 'no_joint_state'
             return None
-
         # Real robot: UR controller interpolates internally, so 10 Hz
         # Cartesian density is plenty.  Sim: 100 Hz drives the sim loop.
         if self._real_robot:
@@ -1189,7 +1099,6 @@ class DrawingActionServer(Node):
         retract_path, retract_valid_times = self._ik_solve_cartesian_path(
             retract_wps, retract_times, q_current, 'Retract up')
         if not retract_path:
-            self._last_precompute_fail_reason = 'retract_ik'
             self.get_logger().error('RETRACT_UP IK failed')
             return None
         phases.append(('retract_up', retract_path, retract_valid_times))
@@ -1215,58 +1124,26 @@ class DrawingActionServer(Node):
                 f'  [HOMING] {n_home} interp steps + '
                 f'{self._home_hold_sec:.1f}s hold')
 
-        # ── 3. Approach transfer (RRT to approach pose) ─
+        # ── 3. RRT (last phase end → approach above first draw point) ─
         last_q = phases[-1][1][-1]
-        selected_idx = 0
-
-        n_draw = len(draw_positions)
-        if n_draw >= 40:
-            candidate_idxs = sorted(set([
-                0,
-                n_draw // 4,
-                n_draw // 2,
-                (3 * n_draw) // 4,
-                n_draw - 1,
-            ]))
-        else:
-            candidate_idxs = [0]
-
-        q_goal = None
-        T_approach = None
-        approach_pos_tip = None
-        for idx in candidate_idxs:
-            tip = draw_positions[idx]
-            candidate_approach_tip = tip - self.approach_height * self.plane_n
-            candidate_T = self._dynamic_wrist_pose_from_tip(candidate_approach_tip)
-            candidate_q = self._constrained_ik_for_pose(candidate_T)
-            if candidate_q is not None:
-                selected_idx = idx
-                q_goal = candidate_q
-                T_approach = candidate_T
-                approach_pos_tip = candidate_approach_tip
-                break
-
-        if q_goal is None or T_approach is None or approach_pos_tip is None:
-            self._last_precompute_fail_reason = 'rrt_goal_ik'
-            self.get_logger().error(
-                f'RRT goal IK failed for all entry candidates: {candidate_idxs}')
-            return None
-
-        if selected_idx != 0:
-            draw_positions = draw_positions[selected_idx:] + draw_positions[:selected_idx]
-            self.get_logger().info(
-                f'  [ENTRY_SELECT] using waypoint index {selected_idx}/{n_draw - 1}')
-
+        approach_pos_tip = (draw_positions[0]
+                    - self.approach_height * self.plane_n)
+        T_approach = self._dynamic_wrist_pose_from_tip(approach_pos_tip)
         approach_pos_wrist = T_approach[:3, 3]
+
         self.get_logger().info(
-            f'  [APPROACH] target '
+            f'  [RRT] planning → approach '
             f'[{approach_pos_wrist[0]:.3f}, {approach_pos_wrist[1]:.3f}, '
-            f'{approach_pos_wrist[2]:.3f}] (wrist), entry_idx={selected_idx}')
+            f'{approach_pos_wrist[2]:.3f}] (wrist)')
+
+        q_goal = self._constrained_ik_for_pose(T_approach)
+        if q_goal is None:
+            self.get_logger().error('RRT goal IK failed')
+            return None
 
         raw_rrt = rrt_connect(last_q, q_goal,
                               step_size=0.2, max_iter=10000)
         if raw_rrt is None:
-            self._last_precompute_fail_reason = 'rrt_plan'
             self.get_logger().error('RRT planning failed')
             return None
 
@@ -1277,10 +1154,9 @@ class DrawingActionServer(Node):
         self.get_logger().info(
             f'        {len(raw_rrt)} raw → {len(smoothed)} smoothed '
             f'→ {len(rrt_dense)} dense')
-        approach_seed_q = rrt_dense[-1]
 
         # Verify approach FK
-        T_goal_fk = ur5e_fk(approach_seed_q)
+        T_goal_fk = ur5e_fk(rrt_dense[-1])
         goal_pos = T_goal_fk[:3, 3]
         self.get_logger().info(
             f'        Approach FK = [{goal_pos[0]:.4f}, '
@@ -1293,7 +1169,7 @@ class DrawingActionServer(Node):
             self.approach_v_max, self.approach_a_max, cart_dt)
         descent_wps = tip_to_dynamic_wrist(descent_wps)
         descent_path, descent_valid_times = self._ik_solve_cartesian_path(
-            descent_wps, descent_times, approach_seed_q, 'Descent')
+            descent_wps, descent_times, rrt_dense[-1], 'Descent')
         if descent_path:
             phases.append(('descent', descent_path, descent_valid_times))
         else:
