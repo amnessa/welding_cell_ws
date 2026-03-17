@@ -253,24 +253,35 @@ class DrawingDispatcher(Node):
         return 0.15, math.pi / 2.0
 
     def _dynamic_wrist_pose_from_tip(self, tip_pos: np.ndarray) -> np.ndarray:
-        """Build wrist pose using a constant table-aligned orientation."""
+        """
+        WINDSHIELD WIPER TCP:
+        Uses a radial orientation away from the base. Because the base keepout
+        zone prevents the origin singularity, the wrist stays untwisted.
+        """
         tool_length, yaw_offset = self._tool_length_and_yaw_offset(
             self._active_tool)
 
-        down = -self.plane_n
+        N = self.plane_n
+        down = -N
         down = down / max(float(np.linalg.norm(down)), 1e-9)
-        forward = self.base_forward
-        forward = forward / max(float(np.linalg.norm(forward)), 1e-9)
-        right = np.cross(down, forward)
-        right = right / max(float(np.linalg.norm(right)), 1e-9)
+
+        radial = tip_pos - np.dot(tip_pos, N) * N
+        r_norm = float(np.linalg.norm(radial))
+        if r_norm < 1e-6:
+            radial = self.plane_x.copy()
+        else:
+            radial = radial / r_norm
+
+        tangent = np.cross(down, radial)
+        tangent = tangent / max(float(np.linalg.norm(tangent)), 1e-9)
 
         c = math.cos(yaw_offset)
         s = math.sin(yaw_offset)
-        x_wrist = c * down + s * right
+        x_wrist = c * down + s * tangent
         x_wrist = x_wrist / max(float(np.linalg.norm(x_wrist)), 1e-9)
-        y_wrist = -s * down + c * right
+        y_wrist = -s * down + c * tangent
         y_wrist = y_wrist / max(float(np.linalg.norm(y_wrist)), 1e-9)
-        z_wrist = forward
+        z_wrist = radial
 
         wrist_pos = tip_pos - tool_length * x_wrist
 
@@ -710,11 +721,13 @@ class DrawingDispatcher(Node):
         return self.plane_origin, [], []
 
     def _generate_sweep_3d(self) -> Tuple[np.ndarray, List[np.ndarray], int, float]:
-        """Generate concentric radial-arc sweep around robot base (fast mode)."""
+        """
+        Generates concentric radial arcs (windshield sweep).
+        Circle/rectangle intersections are used so points stay inside bounds.
+        """
         margin = max(self._sweep_margin, 0.0)
         depth = max(self._sweep_depth, 0.0)
-        step_size = max(self._sweep_tool_width - self._sweep_overlap, 0.01)
-        arc_spacing = max(self._sweep_arc_spacing, 0.01)
+        tool_width = max(self._sweep_tool_width - self._sweep_overlap, 0.01)
 
         w_hat = self.rect_width_vec / max(self.table_width_m, 1e-9)
         h_hat = self.rect_height_vec / max(self.table_height_m, 1e-9)
@@ -723,33 +736,31 @@ class DrawingDispatcher(Node):
         c1 = self.rect_origin + ((self.table_width_m - margin) * w_hat) + (margin * h_hat)
         c2 = self.rect_origin + ((self.table_width_m - margin) * w_hat) + ((self.table_height_m - margin) * h_hat)
         c3 = self.rect_origin + (margin * w_hat) + ((self.table_height_m - margin) * h_hat)
+        corners_2d = [
+            np.array([float(c[0]), float(c[1])], dtype=float)
+            for c in (c0, c1, c2, c3)
+        ]
 
-        corners_3d = [c0, c1, c2, c3]
-        corners_2d = [np.array([float(c[0]), float(c[1])], dtype=float)
-                      for c in corners_3d]
-
-        def dist_to_segment(p: np.ndarray, v: np.ndarray, w: np.ndarray) -> float:
+        def dist_to_seg(p: np.ndarray, v: np.ndarray, w: np.ndarray) -> float:
             l2 = float(np.sum((w - v) ** 2))
             if l2 <= 1e-12:
                 return float(np.linalg.norm(p - v))
             t = max(0.0, min(1.0, float(np.dot(p - v, w - v) / l2)))
-            proj = v + t * (w - v)
-            return float(np.linalg.norm(p - proj))
+            return float(np.linalg.norm(p - (v + t * (w - v))))
 
-        origin_2d = np.array([0.0, 0.0], dtype=float)
-
-        edge_dists = [dist_to_segment(origin_2d, corners_2d[i], corners_2d[(i + 1) % 4])
-                      for i in range(4)]
-        min_r = max(min(edge_dists), self._base_keepout)
-        corner_dists = [float(np.linalg.norm(c)) for c in corners_2d]
-        max_r = max(corner_dists)
+        origin = np.array([0.0, 0.0], dtype=float)
+        min_r = max(
+            min([dist_to_seg(origin, corners_2d[i], corners_2d[(i + 1) % 4]) for i in range(4)]),
+            self._base_keepout,
+        )
+        max_r = min(max([float(np.linalg.norm(c)) for c in corners_2d]), 0.80)
 
         if min_r >= max_r:
             self.get_logger().error(
-                'Sweep geometry invalid (safe table area inside keepout).')
+                'Sweep geometry invalid (table inside keepout or beyond reach).')
             return self.plane_origin, [], 0, 0.0
 
-        radii = np.arange(min_r, max_r + step_size * 0.5, step_size)
+        radii = np.arange(min_r, max_r + tool_width, tool_width)
         num_passes = int(len(radii))
 
         ox, oy, oz = [float(v) for v in self.plane_origin]
@@ -758,20 +769,7 @@ class DrawingDispatcher(Node):
         def get_z_on_plane(x: float, y: float) -> float:
             if abs(nz) < 1e-9:
                 return oz
-            return oz - (((x - ox) * nx) + ((y - oy) * ny)) / nz
-
-        u_min = margin
-        u_max = self.table_width_m - margin
-        v_min = margin
-        v_max = self.table_height_m - margin
-
-        def point_inside_rect_xy(x: float, y: float) -> bool:
-            z = get_z_on_plane(x, y)
-            p = np.array([x, y, z], dtype=float)
-            rel = p - self.rect_origin
-            u = float(np.dot(rel, w_hat))
-            v = float(np.dot(rel, h_hat))
-            return (u_min <= u <= u_max) and (v_min <= v <= v_max)
+            return oz - ((x - ox) * nx + (y - oy) * ny) / nz
 
         pts_3d: List[np.ndarray] = []
         forward = True
@@ -779,52 +777,61 @@ class DrawingDispatcher(Node):
         used_passes = 0
 
         for r in radii:
-            n_theta = max(int(math.ceil((2.0 * math.pi * r) / arc_spacing)), 64)
-            angles = np.linspace(-math.pi, math.pi, n_theta, endpoint=False)
-            inside_mask = [
-                point_inside_rect_xy(
-                    float(r * math.cos(float(a))),
-                    float(r * math.sin(float(a))),
-                )
-                for a in angles
-            ]
+            intersections: List[np.ndarray] = []
+            for i in range(4):
+                A = corners_2d[i]
+                B = corners_2d[(i + 1) % 4]
+                d = B - A
+                f = A
+                a = float(np.dot(d, d))
+                b = float(2.0 * np.dot(f, d))
+                c = float(np.dot(f, f) - (r * r))
+                disc = b * b - 4.0 * a * c
+                if disc < 0.0 or a <= 1e-12:
+                    continue
+                root = math.sqrt(disc)
+                for t in ((-b - root) / (2.0 * a), (-b + root) / (2.0 * a)):
+                    if 0.0 <= t <= 1.0:
+                        intersections.append(A + t * d)
 
-            if not any(inside_mask):
+            if len(intersections) < 2:
                 continue
 
-            best_len = 0
-            best_start = 0
-            cur_len = 0
-            cur_start = 0
-            n = len(inside_mask)
-            for i in range(2 * n):
-                if inside_mask[i % n]:
-                    if cur_len == 0:
-                        cur_start = i
-                    cur_len += 1
-                    capped = min(cur_len, n)
-                    if capped > best_len:
-                        best_len = capped
-                        best_start = cur_start
-                else:
-                    cur_len = 0
-
-            if best_len < 2:
+            angles = sorted([math.atan2(float(pt[1]), float(pt[0])) for pt in intersections])
+            if len(angles) < 2:
                 continue
 
-            idxs = [((best_start + k) % n) for k in range(best_len)]
+            # Pick the inside interval as complement of the largest wrap gap.
+            max_gap = -1.0
+            gap_idx = 0
+            for i in range(len(angles)):
+                a0 = angles[i]
+                a1 = angles[(i + 1) % len(angles)]
+                if i == len(angles) - 1:
+                    a1 += 2.0 * math.pi
+                gap = a1 - a0
+                if gap > max_gap:
+                    max_gap = gap
+                    gap_idx = i
+
+            start = angles[(gap_idx + 1) % len(angles)]
+            end = angles[gap_idx]
+            if end < start:
+                end += 2.0 * math.pi
+
+            arc_len = max(r * (end - start), 0.0)
+            num_pts = max(int(arc_len / 0.03), 2)
+            arc_angles = np.linspace(start, end, num_pts)
             if not forward:
-                idxs = idxs[::-1]
+                arc_angles = arc_angles[::-1]
 
             stroke: List[np.ndarray] = []
-            for idx in idxs:
-                ang = float(angles[idx])
-                x = float(r * math.cos(ang))
-                y = float(r * math.sin(ang))
+            for ang in arc_angles:
+                angf = float(((ang + math.pi) % (2.0 * math.pi)) - math.pi)
+                x = float(r * math.cos(angf))
+                y = float(r * math.sin(angf))
                 z = get_z_on_plane(x, y) - depth
-                pt = np.array([x, y, z], dtype=float)
-                if not stroke or float(np.linalg.norm(pt - stroke[-1])) >= 0.01:
-                    stroke.append(pt)
+                stroke.append(np.array([x, y, z], dtype=float))
 
             if not stroke:
                 continue
@@ -838,9 +845,9 @@ class DrawingDispatcher(Node):
 
         center_3d = self.rect_origin + 0.5 * self.rect_width_vec + 0.5 * self.rect_height_vec
         self.get_logger().info(
-            f'Generated radial sweep: arcs={used_passes}/{num_passes}, '
+            f'Generated windshield sweep: arcs={used_passes}/{num_passes}, '
             f'min_r={min_r:.2f}m, max_r={max_r:.2f}m, pts={len(pts_3d)}')
-        return center_3d, pts_3d, num_passes, step_size
+        return center_3d, pts_3d, num_passes, tool_width
 
     # ------------------------------------------------------------------
     # Drawing generation with rejection sampling
@@ -873,24 +880,13 @@ class DrawingDispatcher(Node):
             elif shape == 'sweep':
                 center_3d, positions, num_passes, actual_step = self._generate_sweep_3d()
                 if not positions:
-                    self.get_logger().error(
-                        'No sweep path could be generated with current geometry settings.')
                     return None
-
-                # Fast geometric start selection: begin from endpoint farther
-                # from robot base to improve first approach pose without
-                # expensive dispatcher-side IK screening.
-                if len(positions) >= 2:
-                    d0 = math.hypot(float(positions[0][0]), float(positions[0][1]))
-                    d1 = math.hypot(float(positions[-1][0]), float(positions[-1][1]))
-                    if d1 > d0:
-                        positions = list(reversed(positions))
 
                 self.get_logger().info(
                     f'Generated sweep (fast mode): passes={num_passes}, '
                     f'step={actual_step*100:.1f}cm, depth={self._sweep_depth*100:.1f}cm, '
                     f'pts={len(positions)}')
-                reachable = True
+                reachable = self._is_path_reachable(positions)
             else:
                 center_3d, positions = self._generate_random_shape_3d(shape)
                 if not positions:

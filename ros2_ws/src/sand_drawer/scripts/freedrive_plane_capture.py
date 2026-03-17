@@ -439,34 +439,43 @@ class FreedrivePlaneCapture(Node):
 
     def _solve_plane(self, p1, p2, p3, p4):
         eps = 1e-8
-        x_axis = p2 - p1
+        z_avg = float((p1[2] + p2[2] + p3[2] + p4[2]) / 4.0)
+
+        p1_flat = np.array([p1[0], p1[1], z_avg], dtype=float)
+        p2_flat = np.array([p2[0], p2[1], z_avg], dtype=float)
+        p3_flat = np.array([p3[0], p3[1], z_avg], dtype=float)
+        p4_flat = np.array([p4[0], p4[1], z_avg], dtype=float)
+
+        x_axis = p2_flat - p1_flat
         x_norm = np.linalg.norm(x_axis)
         if x_norm < eps:
             raise ValueError("Points 1 and 2 are too close.")
         x_axis /= x_norm
 
-        y_seed = p3 - p1
+        y_seed = p3_flat - p1_flat
         y_axis = y_seed - np.dot(y_seed, x_axis) * x_axis
         y_norm = np.linalg.norm(y_axis)
         if y_norm < eps:
             raise ValueError("Point 3 is collinear with 1-2.")
         y_axis /= y_norm
 
-        normal = np.cross(x_axis, y_axis)
-        n_norm = np.linalg.norm(normal)
-        if n_norm < eps:
-            raise ValueError("Cannot compute plane normal.")
-        normal /= n_norm
+        # For this project the surface is assumed level (parallel to ground).
+        # Keep XY orientation from captured points, but force a constant Z plane.
+        normal = np.array([0.0, 0.0, -1.0], dtype=float)
+        y_axis = np.cross(normal, x_axis)
+        y_axis /= max(np.linalg.norm(y_axis), eps)
+        if np.dot(y_axis, y_seed) < 0.0:
+            y_axis = -y_axis
 
-        u4 = float(np.dot(p4 - p1, x_axis))
-        v4 = float(np.dot(p4 - p1, y_axis))
+        u4 = float(np.dot(p4_flat - p1_flat, x_axis))
+        v4 = float(np.dot(p4_flat - p1_flat, y_axis))
         if abs(u4) < eps: u4 = x_norm
         if abs(v4) < eps: v4 = y_norm
 
-        c1 = p1
-        c2 = p1 + u4 * x_axis
-        c4 = p1 + v4 * y_axis
-        c3 = p1 + u4 * x_axis + v4 * y_axis
+        c1 = p1_flat
+        c2 = p1_flat + u4 * x_axis
+        c4 = p1_flat + v4 * y_axis
+        c3 = p1_flat + u4 * x_axis + v4 * y_axis
         rectangle = [c1, c2, c3, c4]
 
         width = abs(u4)
@@ -517,7 +526,7 @@ class FreedrivePlaneCapture(Node):
             "captured_points_base": [
                 p.tolist() for p in self.captured_points],
             "plane": {
-                "origin": self.captured_points[0].tolist(),
+                "origin": result['rectangle'][0].tolist(),
                 "x_axis": result['x_axis'].tolist(),
                 "y_axis": result['y_axis'].tolist(),
                 "normal": result['normal'].tolist(),

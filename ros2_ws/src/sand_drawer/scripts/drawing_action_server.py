@@ -398,24 +398,35 @@ class DrawingActionServer(Node):
         return 0.15, math.pi / 2.0
 
     def _dynamic_wrist_pose_from_tip(self, tip_pos: np.ndarray) -> np.ndarray:
-        """Build wrist pose using a constant table-aligned orientation."""
+        """
+        WINDSHIELD WIPER TCP:
+        Uses a radial orientation away from the base. Because the base keepout
+        zone prevents the origin singularity, the wrist stays untwisted.
+        """
         tool_length, yaw_offset = self._tool_length_and_yaw_offset(
             self._active_tool)
 
-        down = -self.plane_n
+        N = self.plane_n
+        down = -N
         down = down / max(float(np.linalg.norm(down)), 1e-9)
-        forward = self.base_forward
-        forward = forward / max(float(np.linalg.norm(forward)), 1e-9)
-        right = np.cross(down, forward)
-        right = right / max(float(np.linalg.norm(right)), 1e-9)
+
+        radial = tip_pos - np.dot(tip_pos, N) * N
+        r_norm = float(np.linalg.norm(radial))
+        if r_norm < 1e-6:
+            radial = self.plane_x.copy()
+        else:
+            radial = radial / r_norm
+
+        tangent = np.cross(down, radial)
+        tangent = tangent / max(float(np.linalg.norm(tangent)), 1e-9)
 
         c = math.cos(yaw_offset)
         s = math.sin(yaw_offset)
-        x_wrist = c * down + s * right
+        x_wrist = c * down + s * tangent
         x_wrist = x_wrist / max(float(np.linalg.norm(x_wrist)), 1e-9)
-        y_wrist = -s * down + c * right
+        y_wrist = -s * down + c * tangent
         y_wrist = y_wrist / max(float(np.linalg.norm(y_wrist)), 1e-9)
-        z_wrist = forward
+        z_wrist = radial
 
         wrist_pos = tip_pos - tool_length * x_wrist
 
