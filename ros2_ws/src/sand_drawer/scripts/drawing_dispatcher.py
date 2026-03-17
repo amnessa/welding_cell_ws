@@ -776,8 +776,8 @@ class DrawingDispatcher(Node):
             return self.plane_origin, [], 0, 0.0
 
         natural_radii = np.arange(min_r, max_r + tool_width, tool_width)
-        if self._active_tool == 'spatula' and len(natural_radii) > 6:
-            radii = np.linspace(min_r, max_r, 6)
+        if self._active_tool == 'spatula' and len(natural_radii) > 2:
+            radii = np.linspace(min_r, max_r, 2)
         else:
             radii = natural_radii
         num_passes = int(len(radii))
@@ -880,8 +880,10 @@ class DrawingDispatcher(Node):
                 y = float(r * math.sin(angf))
                 if not point_inside_rect_xy(x, y):
                     continue
-                z = get_z_on_plane(x, y) - depth
-                pt = np.array([x, y, z], dtype=float)
+                base_pt = np.array([x, y, get_z_on_plane(x, y)], dtype=float)
+                # Keep sweep consistent with other drawing modes (on-plane),
+                # with optional positive offset along -normal.
+                pt = base_pt - depth * self.plane_n
                 if not stroke or float(np.linalg.norm(pt - stroke[-1])) >= 0.008:
                     stroke.append(pt)
 

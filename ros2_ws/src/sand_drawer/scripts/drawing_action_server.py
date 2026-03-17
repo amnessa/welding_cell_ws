@@ -1141,10 +1141,29 @@ class DrawingActionServer(Node):
             self._last_precompute_fail_reason = 'no_joint_state'
             return None
 
+        heavy_sweep = (self._active_tool == 'spatula' and len(draw_positions) >= 40)
+
+        if heavy_sweep:
+            min_spacing = 0.015
+            reduced_positions: List[np.ndarray] = [draw_positions[0].copy()]
+            for pt in draw_positions[1:]:
+                if float(np.linalg.norm(pt - reduced_positions[-1])) >= min_spacing:
+                    reduced_positions.append(pt.copy())
+            if float(np.linalg.norm(reduced_positions[-1] - draw_positions[-1])) > 1e-6:
+                reduced_positions.append(draw_positions[-1].copy())
+
+            if len(reduced_positions) >= 3:
+                self.get_logger().info(
+                    f'  [SWEEP_OPT] downsample tip path: {len(draw_positions)} → {len(reduced_positions)} '
+                    f'(min_spacing={min_spacing*100:.1f}cm)')
+                draw_positions = reduced_positions
+
         # Real robot: UR controller interpolates internally, so 10 Hz
         # Cartesian density is plenty.  Sim: 100 Hz drives the sim loop.
         if self._real_robot:
             cart_dt = 0.10   # 10 Hz — keeps trajectories < 2 000 pts
+        elif heavy_sweep:
+            cart_dt = max(0.02, 1.0 / max(float(self.execution_hz), 1.0))
         else:
             cart_dt = 1.0 / self.execution_hz  # 100 Hz for sim
 
@@ -1287,10 +1306,11 @@ class DrawingActionServer(Node):
             f'{goal_pos[1]:.4f}, {goal_pos[2]:.4f}]')
 
         # ── 4. DESCENT (approach → surface) ───────────────────────────
+        descent_dt = max(cart_dt, 0.02) if heavy_sweep else cart_dt
         descent_wps, descent_times = _interpolate_cartesian_smooth(
             [approach_pos_tip, draw_positions[0].copy()],
             orientation_xyzw,
-            self.approach_v_max, self.approach_a_max, cart_dt)
+            self.approach_v_max, self.approach_a_max, descent_dt)
         descent_wps = tip_to_dynamic_wrist(descent_wps)
         descent_path, descent_valid_times = self._ik_solve_cartesian_path(
             descent_wps, descent_times, approach_seed_q, 'Descent')
@@ -1301,9 +1321,10 @@ class DrawingActionServer(Node):
                 '  Descent IK failed — drawing starts from approach height')
 
         # ── 5. DRAWING (surface waypoints) ────────────────────────────
+        draw_dt = max(cart_dt, 0.02) if heavy_sweep else cart_dt
         draw_wps, draw_times = _interpolate_cartesian_smooth(
             draw_positions, orientation_xyzw,
-            self.v_max, self.a_max, cart_dt)
+            self.v_max, self.a_max, draw_dt)
         draw_wps = tip_to_dynamic_wrist(draw_wps)
         last_q_for_draw = phases[-1][1][-1]
         draw_path, draw_valid_times = self._ik_solve_cartesian_path(
