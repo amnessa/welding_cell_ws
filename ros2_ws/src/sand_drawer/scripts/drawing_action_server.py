@@ -632,6 +632,11 @@ class DrawingActionServer(Node):
         T[:3, 3] = pos
         return T
 
+    @staticmethod
+    def _unwrap_to_seed(q_sol: np.ndarray, q_seed: np.ndarray) -> np.ndarray:
+        """Map IK solution to the nearest 2*pi-equivalent around the seed."""
+        return q_seed + ((q_sol - q_seed + math.pi) % (2.0 * math.pi) - math.pi)
+
     # ------------------------------------------------------------------
     # IK with joint-jump rejection + elbow-up constraint
     # ------------------------------------------------------------------
@@ -646,10 +651,12 @@ class DrawingActionServer(Node):
         if q_sol is None:
             self._ik_fail_count += 1
             return None
+        q_sol = self._unwrap_to_seed(q_sol, q_seed)
         if not self._config_ok(q_sol):
             self._ik_cfg_count += 1
             return None
-        joint_delta = np.abs(q_sol - q_seed)
+        # Use wrapped angular distance to avoid false "jumps" at +/-pi.
+        joint_delta = np.abs((q_sol - q_seed + math.pi) % (2.0 * math.pi) - math.pi)
         if float(np.max(joint_delta)) > self.max_joint_step:
             self._ik_jump_count += 1
             return None
@@ -701,6 +708,8 @@ class DrawingActionServer(Node):
             q_sol = ik_solve(T_target, seed, max_iter=max_iter,
                              pos_tol=5e-4, orient_tol=1e-3,
                              damping=self.ik_damping)
+            if q_sol is not None:
+                q_sol = self._unwrap_to_seed(q_sol, seed)
             if q_sol is not None and self._config_ok(q_sol):
                 dist_to_home = float(np.linalg.norm(q_sol - home))
                 candidates.append((dist_to_home, q_sol))
@@ -737,6 +746,7 @@ class DrawingActionServer(Node):
                              damping=self.ik_damping)
             if q_sol is None:
                 continue
+            q_sol = self._unwrap_to_seed(q_sol, seed)
             if self._config_ok(q_sol):
                 return q_sol
             if relaxed_candidate is None:

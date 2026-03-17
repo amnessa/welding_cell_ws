@@ -460,6 +460,12 @@ class DrawingDispatcher(Node):
         if center_sol is None:
             return False
 
+        # For side-mounted flange faces, dispatcher full-edge gating is often
+        # too strict due wrist branch ambiguity; let action-server precompute
+        # run the full-path IK feasibility pipeline.
+        if str(self._active_tool) in ('spatula', 'empty'):
+            return True
+
         # Stage 2: ALL waypoints + edge midpoints
         # For a 5-point square this is ~9 checks, still very fast.
         check_points: List[np.ndarray] = []
