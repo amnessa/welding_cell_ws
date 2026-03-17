@@ -435,6 +435,35 @@ class DrawingActionServer(Node):
         T[:3, 3] = wrist_pos
         return T
 
+    def _table_aligned_wrist_pose_from_tip(self, tip_pos: np.ndarray) -> np.ndarray:
+        """Build wrist pose with stable table-aligned orientation."""
+        tool_length, yaw_offset = self._tool_length_and_yaw_offset(
+            self._active_tool)
+
+        down = -self.plane_n
+        down = down / max(float(np.linalg.norm(down)), 1e-9)
+        forward = self.base_forward
+        forward = forward / max(float(np.linalg.norm(forward)), 1e-9)
+        right = np.cross(down, forward)
+        right = right / max(float(np.linalg.norm(right)), 1e-9)
+
+        c = math.cos(yaw_offset)
+        s = math.sin(yaw_offset)
+        x_wrist = c * down + s * right
+        x_wrist = x_wrist / max(float(np.linalg.norm(x_wrist)), 1e-9)
+        y_wrist = -s * down + c * right
+        y_wrist = y_wrist / max(float(np.linalg.norm(y_wrist)), 1e-9)
+        z_wrist = forward
+
+        wrist_pos = tip_pos - tool_length * x_wrist
+
+        T = np.eye(4)
+        T[:3, 0] = x_wrist
+        T[:3, 1] = y_wrist
+        T[:3, 2] = z_wrist
+        T[:3, 3] = wrist_pos
+        return T
+
     # ------------------------------------------------------------------
     # Plane JSON loading — only plane geometry (normal, etc.)
     # ------------------------------------------------------------------
@@ -1170,13 +1199,20 @@ class DrawingActionServer(Node):
         tool_length, yaw_offset = self._tool_length_and_yaw_offset(
             self._active_tool)
 
-        # Convert tip waypoints into dynamic wrist pose waypoints.
+        use_dynamic_wrist = heavy_sweep
+
+        def tip_to_wrist_pose(tip_pos: np.ndarray) -> np.ndarray:
+            if self._active_tool == 'spatula' and not use_dynamic_wrist:
+                return self._table_aligned_wrist_pose_from_tip(tip_pos)
+            return self._dynamic_wrist_pose_from_tip(tip_pos)
+
+        # Convert tip waypoints into selected wrist pose waypoints.
         def tip_to_dynamic_wrist(
             wps: List[Tuple[np.ndarray, list]]
         ) -> List[Tuple[np.ndarray, list]]:
             out: List[Tuple[np.ndarray, list]] = []
             for tip_pos, _ in wps:
-                T = self._dynamic_wrist_pose_from_tip(tip_pos)
+                T = tip_to_wrist_pose(tip_pos)
                 out.append((T[:3, 3].copy(), rotmat_to_quat(T[:3, :3])))
             return out
 
@@ -1256,7 +1292,7 @@ class DrawingActionServer(Node):
         for idx in candidate_idxs:
             tip = draw_positions[idx]
             candidate_approach_tip = tip - self.approach_height * self.plane_n
-            candidate_T = self._dynamic_wrist_pose_from_tip(candidate_approach_tip)
+            candidate_T = tip_to_wrist_pose(candidate_approach_tip)
             candidate_q = self._constrained_ik_for_pose(candidate_T)
             if candidate_q is not None:
                 selected_idx = idx

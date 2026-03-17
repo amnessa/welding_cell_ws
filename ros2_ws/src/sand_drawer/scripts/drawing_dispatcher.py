@@ -290,6 +290,41 @@ class DrawingDispatcher(Node):
         T[:3, 3] = wrist_pos
         return T
 
+    def _table_aligned_wrist_pose_from_tip(self, tip_pos: np.ndarray) -> np.ndarray:
+        """Build wrist pose with stable table-aligned orientation."""
+        tool_length, yaw_offset = self._tool_length_and_yaw_offset(
+            self._active_tool)
+
+        down = -self.plane_n
+        down = down / max(float(np.linalg.norm(down)), 1e-9)
+        forward = self.base_forward
+        forward = forward / max(float(np.linalg.norm(forward)), 1e-9)
+        right = np.cross(down, forward)
+        right = right / max(float(np.linalg.norm(right)), 1e-9)
+
+        c = math.cos(yaw_offset)
+        s = math.sin(yaw_offset)
+        x_wrist = c * down + s * right
+        x_wrist = x_wrist / max(float(np.linalg.norm(x_wrist)), 1e-9)
+        y_wrist = -s * down + c * right
+        y_wrist = y_wrist / max(float(np.linalg.norm(y_wrist)), 1e-9)
+        z_wrist = forward
+
+        wrist_pos = tip_pos - tool_length * x_wrist
+
+        T = np.eye(4)
+        T[:3, 0] = x_wrist
+        T[:3, 1] = y_wrist
+        T[:3, 2] = z_wrist
+        T[:3, 3] = wrist_pos
+        return T
+
+    def _wrist_pose_from_tip(self, tip_pos: np.ndarray) -> np.ndarray:
+        """Select wrist strategy: stable for normal spatula, dynamic for sweep."""
+        if self._active_tool == 'spatula' and self._traj_key != 'sweep':
+            return self._table_aligned_wrist_pose_from_tip(tip_pos)
+        return self._dynamic_wrist_pose_from_tip(tip_pos)
+
     # ------------------------------------------------------------------
     # Plane JSON loading (with Rz(π) frame correction)
     # ------------------------------------------------------------------
@@ -405,7 +440,7 @@ class DrawingDispatcher(Node):
                   are individually reachable.
         """
         # Stage 1: centre fast-fail (with multi-seed config check)
-        T = self._dynamic_wrist_pose_from_tip(center_3d)
+        T = self._wrist_pose_from_tip(center_3d)
         center_sol = None
         for seed in self._ik_seeds:
             sol = ik_solve(T, seed, max_iter=80)
@@ -427,7 +462,7 @@ class DrawingDispatcher(Node):
 
         current_seed = center_sol
         for pt in check_points:
-            T = self._dynamic_wrist_pose_from_tip(pt)
+            T = self._wrist_pose_from_tip(pt)
             # Try continuity seed first; fall back to global elbow-up seeds.
             seed_list = [current_seed] + self._ik_seeds
             sol = None
@@ -458,7 +493,7 @@ class DrawingDispatcher(Node):
             check_points = [check_points[int(i)] for i in idxs]
 
         start_sol = None
-        T0 = self._dynamic_wrist_pose_from_tip(check_points[0])
+        T0 = self._wrist_pose_from_tip(check_points[0])
         for seed in self._ik_seeds:
             cand = ik_solve(T0, seed, max_iter=80)
             if cand is not None and self._config_ok(cand):
@@ -469,7 +504,7 @@ class DrawingDispatcher(Node):
 
         current_seed = start_sol
         for pt in check_points[1:]:
-            T = self._dynamic_wrist_pose_from_tip(pt)
+            T = self._wrist_pose_from_tip(pt)
             seed_list = [current_seed] + self._ik_seeds
             sol = None
             for seed in seed_list:
@@ -486,7 +521,7 @@ class DrawingDispatcher(Node):
         """Lightweight guard: ensure at least the first sweep point has an IK solution."""
         if not positions:
             return False
-        T0 = self._dynamic_wrist_pose_from_tip(positions[0])
+        T0 = self._wrist_pose_from_tip(positions[0])
         for seed in self._ik_seeds:
             cand = ik_solve(T0, seed, max_iter=100)
             if cand is not None and self._config_ok(cand):
@@ -776,8 +811,8 @@ class DrawingDispatcher(Node):
             return self.plane_origin, [], 0, 0.0
 
         natural_radii = np.arange(min_r, max_r + tool_width, tool_width)
-        if self._active_tool == 'spatula' and len(natural_radii) > 2:
-            radii = np.linspace(min_r, max_r, 2)
+        if self._active_tool == 'spatula' and len(natural_radii) > 3:
+            radii = np.linspace(min_r, max_r, 3)
         else:
             radii = natural_radii
         num_passes = int(len(radii))
