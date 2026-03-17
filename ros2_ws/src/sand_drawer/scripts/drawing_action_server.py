@@ -357,50 +357,56 @@ class DrawingActionServer(Node):
 
     def _get_tool_transform(self, tool_name: str) -> Tuple[float, list]:
         """Return (tool_length_m, wrist_orientation_xyzw) for active tool."""
-        N = self.plane_n
-        X = self.plane_x
-        Y = self.plane_y
+        length, yaw_offset = self._tool_length_and_yaw_offset(tool_name)
 
-        # Tool selection around wrist Z (parallel to plane).
-        # fork = 0°, pointy = +90°, empty = -90°, spatula = 180°.
-        if tool_name == 'fork':
-            length = 0.13
-            R = np.column_stack([N, X, Y])
-        elif tool_name == 'pointy':
-            length = 0.15
-            R = np.column_stack([X, -N, Y])
-        elif tool_name == 'empty':
-            length = 0.0
-            R = np.column_stack([-X, N, Y])
-        elif tool_name == 'spatula':
-            length = 0.13
-            R = np.column_stack([-N, -X, Y])
-        else:
-            self.get_logger().error(
-                f"Unknown tool '{tool_name}'. Defaulting to pointy.")
-            length = 0.15
-            R = np.column_stack([X, -N, Y])
+        # Build a strict orthonormal basis, then apply only yaw about local Z.
+        z_axis = self.plane_y / max(float(np.linalg.norm(self.plane_y)), 1e-9)
+        x_seed = self.plane_n - float(np.dot(self.plane_n, z_axis)) * z_axis
+        if float(np.linalg.norm(x_seed)) < 1e-9:
+            x_seed = self.plane_x - float(np.dot(self.plane_x, z_axis)) * z_axis
+        x_seed = x_seed / max(float(np.linalg.norm(x_seed)), 1e-9)
+        y_seed = np.cross(z_axis, x_seed)
+        y_seed = y_seed / max(float(np.linalg.norm(y_seed)), 1e-9)
+        x_seed = np.cross(y_seed, z_axis)
+        x_seed = x_seed / max(float(np.linalg.norm(x_seed)), 1e-9)
+
+        c = math.cos(yaw_offset)
+        s = math.sin(yaw_offset)
+        x_axis = c * x_seed + s * y_seed
+        y_axis = -s * x_seed + c * y_seed
+        R = np.column_stack([x_axis, y_axis, z_axis])
 
         return length, rotmat_to_quat(R)
 
     def _tool_length_and_yaw_offset(self, tool_name: str) -> Tuple[float, float]:
-        """Return (tool_length_m, yaw_offset_rad) about local wrist Z."""
+        """Return (tool_length_m, yaw_offset_rad) about local wrist_3 axis.
+
+        Calibrated flange quadrant mapping (latest observed):
+          pointy = 0 deg
+          fork = +90 deg
+          spatula = 180 deg
+          empty = -90 deg
+
+        All four faces are treated as flange-mounted tool sides with equal
+        effective radius from the wrist axis.
+        """
+        tool_radius = 0.15
         if tool_name == 'fork':
-            return 0.13, 0.0
+            return tool_radius, 0.0
         if tool_name == 'pointy':
-            return 0.15, math.pi / 2.0
-        if tool_name == 'empty':
-            return 0.0, -math.pi / 2.0
+            return tool_radius, math.pi / 2.0
         if tool_name == 'spatula':
-            return 0.13, math.pi
+            return tool_radius, math.pi
+        if tool_name == 'empty':
+            return tool_radius, -math.pi / 2.0
         self.get_logger().error(
             f"Unknown tool '{tool_name}'. Defaulting to pointy.")
-        return 0.15, math.pi / 2.0
+        return tool_radius, 0.0
 
     def _dynamic_wrist_pose_from_tip(self, tip_pos: np.ndarray) -> np.ndarray:
         """Build wrist pose for a tip point using dynamic yaw and tool offset."""
         tool_length, yaw_offset = self._tool_length_and_yaw_offset(
-            self._active_tool)
+            str(self._active_tool))
 
         N = self.plane_n
         z_wrist = tip_pos - np.dot(tip_pos, N) * N
@@ -438,7 +444,7 @@ class DrawingActionServer(Node):
     def _table_aligned_wrist_pose_from_tip(self, tip_pos: np.ndarray) -> np.ndarray:
         """Build wrist pose with stable table-aligned orientation."""
         tool_length, yaw_offset = self._tool_length_and_yaw_offset(
-            self._active_tool)
+            str(self._active_tool))
 
         down = -self.plane_n
         down = down / max(float(np.linalg.norm(down)), 1e-9)
@@ -1200,13 +1206,12 @@ class DrawingActionServer(Node):
             cart_dt = 1.0 / self.execution_hz  # 100 Hz for sim
 
         tool_length, yaw_offset = self._tool_length_and_yaw_offset(
-            self._active_tool)
+            str(self._active_tool))
 
         use_dynamic_wrist = heavy_sweep
 
         def tip_to_wrist_pose(tip_pos: np.ndarray) -> np.ndarray:
-            if self._active_tool == 'spatula' and not use_dynamic_wrist:
-                return self._table_aligned_wrist_pose_from_tip(tip_pos)
+            # Keep one motion model across tools; active_tool only changes TCP offset.
             return self._dynamic_wrist_pose_from_tip(tip_pos)
 
         # Convert tip waypoints into selected wrist pose waypoints.
