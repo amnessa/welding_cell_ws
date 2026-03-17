@@ -85,6 +85,10 @@ def launch_setup(context, *args, **kwargs):
     continuous_str    = LaunchConfiguration("continuous").perform(context)
     text_string_str   = LaunchConfiguration("text_string").perform(context)
     active_tool_str   = LaunchConfiguration("active_tool").perform(context)
+    sweep_max_passes = int(
+        LaunchConfiguration("sweep_max_passes").perform(context))
+    sweep_spatula_max_passes = int(
+        LaunchConfiguration("sweep_spatula_max_passes").perform(context))
     max_joint_speed_deg = float(
         LaunchConfiguration("max_joint_speed_deg").perform(context))
     max_joint_accel_deg = float(
@@ -214,6 +218,8 @@ def launch_setup(context, *args, **kwargs):
                 "continuous": continuous_str == "true",
                 "text_string": text_string_str,
                 "active_tool": active_tool_str,
+                "sweep_max_passes": sweep_max_passes,
+                "sweep_spatula_max_passes": sweep_spatula_max_passes,
             }],
         ))
         return nodes
@@ -381,6 +387,10 @@ def generate_launch_description():
                               description="Text string to draw (action mode, trajectory_key=text)"),
         DeclareLaunchArgument("active_tool",     default_value="pointy",
                       description="Active tool face: fork | pointy | spatula | empty (action mode)"),
+        DeclareLaunchArgument("sweep_max_passes", default_value="0",
+                      description="Max sweep passes for non-spatula tools (0 disables cap)"),
+        DeclareLaunchArgument("sweep_spatula_max_passes", default_value="6",
+                      description="Max sweep passes for spatula tool"),
         # Line UV coordinates (shared by cartesian & velocity modes)
         DeclareLaunchArgument("line_u_start",   default_value="0.5"),
         DeclareLaunchArgument("line_v_start",   default_value="0.3"),

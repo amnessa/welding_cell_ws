@@ -221,7 +221,7 @@ class DrawingActionServer(Node):
         # ---- parameters ----
         self.declare_parameter('plane_json_file', '')
         self.declare_parameter('approach_height', 0.10)
-        self.declare_parameter('max_linear_vel', 0.05)
+        self.declare_parameter('max_linear_vel', 0.075)
         self.declare_parameter('max_linear_accel', 0.05)
         self.declare_parameter('approach_linear_vel', 0.20)
         self.declare_parameter('approach_linear_accel', 0.20)
@@ -1170,7 +1170,10 @@ class DrawingActionServer(Node):
             self._last_precompute_fail_reason = 'no_joint_state'
             return None
 
-        heavy_sweep = (self._active_tool == 'spatula' and len(draw_positions) >= 40)
+        heavy_sweep = (
+            self._active_tool in ('spatula', 'pointy')
+            and len(draw_positions) >= 40
+        )
 
         if heavy_sweep:
             min_spacing = 0.015

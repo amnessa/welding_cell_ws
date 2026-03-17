@@ -140,6 +140,8 @@ class DrawingDispatcher(Node):
         self.declare_parameter('sweep_depth_m', 0.005)
         self.declare_parameter('sweep_arc_spacing_m', 0.03)
         self.declare_parameter('base_keepout_radius_m', 0.22)
+        self.declare_parameter('sweep_max_passes', 0)
+        self.declare_parameter('sweep_spatula_max_passes', 6)
 
         self._traj_key = self.get_parameter('trajectory_key').value
         self._text_string = self.get_parameter('text_string').value
@@ -168,6 +170,10 @@ class DrawingDispatcher(Node):
             self.get_parameter('sweep_arc_spacing_m').value)
         self._base_keepout = float(
             self.get_parameter('base_keepout_radius_m').value)
+        self._sweep_max_passes = int(
+            self.get_parameter('sweep_max_passes').value)
+        self._sweep_spatula_max_passes = int(
+            self.get_parameter('sweep_spatula_max_passes').value)
 
         # Home configuration — absolute baseline IK seed
         self._ik_seed = np.array(
@@ -450,6 +456,11 @@ class DrawingDispatcher(Node):
         if center_sol is None:
             return False
 
+        # For non-sweep spatula drawings, dispatcher uses center-only gate
+        # and lets action server perform full-path feasibility.
+        if self._active_tool == 'spatula' and self._traj_key != 'sweep':
+            return True
+
         # Stage 2: ALL waypoints + edge midpoints
         # For a 5-point square this is ~9 checks, still very fast.
         check_points: List[np.ndarray] = []
@@ -543,9 +554,15 @@ class DrawingDispatcher(Node):
         """
         # Random size: 10–50% of the smallest table dimension
         min_dim = min(self.table_width_m, self.table_height_m)
+        size_min_pct = float(self._size_min_pct)
+        size_max_pct = float(self._size_max_pct)
+        if self._active_tool == 'spatula':
+            size_max_pct = min(size_max_pct, 0.25)
+            size_min_pct = min(size_min_pct, size_max_pct)
+
         radius = random.uniform(
-            self._size_min_pct * min_dim / 2.0,
-            self._size_max_pct * min_dim / 2.0)
+            size_min_pct * min_dim / 2.0,
+            size_max_pct * min_dim / 2.0)
 
         # Safe centre location in local metric coords
         margin = radius + 0.02  # 2 cm padding from rectangle edge
@@ -811,8 +828,13 @@ class DrawingDispatcher(Node):
             return self.plane_origin, [], 0, 0.0
 
         natural_radii = np.arange(min_r, max_r + tool_width, tool_width)
-        if self._active_tool == 'spatula' and len(natural_radii) > 3:
-            radii = np.linspace(min_r, max_r, 3)
+
+        max_passes = int(self._sweep_max_passes)
+        if self._active_tool == 'spatula':
+            max_passes = int(self._sweep_spatula_max_passes)
+
+        if max_passes > 0 and len(natural_radii) > max_passes:
+            radii = np.linspace(min_r, max_r, max_passes)
         else:
             radii = natural_radii
         num_passes = int(len(radii))
