@@ -83,6 +83,8 @@ def launch_setup(context, *args, **kwargs):
     real_robot_str   = LaunchConfiguration("real_robot").perform(context)
     real_robot        = real_robot_str == "true"
     continuous_str    = LaunchConfiguration("continuous").perform(context)
+    approach_height_str = LaunchConfiguration("approach_height").perform(context)
+    surface_z_offset_str = LaunchConfiguration("surface_z_offset").perform(context)
     text_string_str   = LaunchConfiguration("text_string").perform(context)
     active_tool_str   = LaunchConfiguration("active_tool").perform(context)
     sweep_max_passes = int(
@@ -93,6 +95,8 @@ def launch_setup(context, *args, **kwargs):
         LaunchConfiguration("max_joint_speed_deg").perform(context))
     max_joint_accel_deg = float(
         LaunchConfiguration("max_joint_accel_deg").perform(context))
+    approach_height = float(approach_height_str)
+    surface_z_offset = float(surface_z_offset_str)
 
     # When real_robot is active, force use_sim_time=false (wall clock)
     use_sim_time = False if real_robot else (use_sim_time_str == "true")
@@ -177,7 +181,8 @@ def launch_setup(context, *args, **kwargs):
             parameters=[{
                 "use_sim_time": use_sim_time,
                 "plane_json_file": plane_json_str or default_plane_json,
-                "approach_height": 0.10,
+                "approach_height": approach_height,
+                "surface_z_offset": surface_z_offset,
                 "max_linear_vel": 0.07,
                 "max_linear_accel": 0.05,
                 "approach_linear_vel": 0.04,
@@ -216,6 +221,7 @@ def launch_setup(context, *args, **kwargs):
                 "plane_json_file": plane_json_str or default_plane_json,
                 "trajectory_key": action_traj_key,
                 "continuous": continuous_str == "true",
+                "approach_height": approach_height,
                 "text_string": text_string_str,
                 "active_tool": active_tool_str,
                 "sweep_max_passes": sweep_max_passes,
@@ -383,6 +389,10 @@ def generate_launch_description():
                               description="trajectory | teleop | cartesian | action | capture | freedrive_capture"),
         DeclareLaunchArgument("continuous",      default_value="false",
                               description="Continuous drawing dispatch (action mode)"),
+        DeclareLaunchArgument("approach_height", default_value="0.10",
+                      description="Approach/ascent offset from drawing surface (meters)"),
+        DeclareLaunchArgument("surface_z_offset", default_value="-0.03",
+                  description="Drawing surface offset along -plane normal (meters)"),
         DeclareLaunchArgument("text_string",     default_value="ROMER",
                               description="Text string to draw (action mode, trajectory_key=text)"),
         DeclareLaunchArgument("active_tool",     default_value="pointy",

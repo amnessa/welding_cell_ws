@@ -137,7 +137,6 @@ class DrawingDispatcher(Node):
         self.declare_parameter('sweep_margin_m', 0.05)
         self.declare_parameter('sweep_tool_width_m', 0.10)
         self.declare_parameter('sweep_overlap_m', 0.01)
-        self.declare_parameter('sweep_depth_m', 0.005)
         self.declare_parameter('sweep_arc_spacing_m', 0.03)
         self.declare_parameter('base_keepout_radius_m', 0.22)
         self.declare_parameter('sweep_max_passes', 0)
@@ -165,7 +164,6 @@ class DrawingDispatcher(Node):
         self._sweep_tool_width = float(
             self.get_parameter('sweep_tool_width_m').value)
         self._sweep_overlap = float(self.get_parameter('sweep_overlap_m').value)
-        self._sweep_depth = float(self.get_parameter('sweep_depth_m').value)
         self._sweep_arc_spacing = float(
             self.get_parameter('sweep_arc_spacing_m').value)
         self._base_keepout = float(
@@ -248,21 +246,23 @@ class DrawingDispatcher(Node):
           spatula = 180 deg
           empty = -90 deg
 
-        All four faces are treated as flange-mounted tool sides with equal
-        effective radius from the wrist axis.
+        Tool length from the wrist axis:
+          pointy = 0.15 m
+          fork/spatula/empty = 0.13 m
         """
-        tool_radius = 0.15
+        pointy_len = 0.15
+        other_len = 0.13
         if tool_name == 'fork':
-            return tool_radius, 0.0
+            return other_len, 0.0
         if tool_name == 'pointy':
-            return tool_radius, math.pi / 2.0
+            return pointy_len, math.pi / 2.0
         if tool_name == 'spatula':
-            return tool_radius, math.pi
+            return other_len, math.pi
         if tool_name == 'empty':
-            return tool_radius, -math.pi / 2.0
+            return other_len, -math.pi / 2.0
         self.get_logger().error(
             f"Unknown tool '{tool_name}'. Defaulting to pointy.")
-        return tool_radius, 0.0
+        return pointy_len, 0.0
 
     def _dynamic_wrist_pose_from_tip(self, tip_pos: np.ndarray) -> np.ndarray:
         """Build wrist pose for a tip point using dynamic yaw and tool offset."""
@@ -793,7 +793,6 @@ class DrawingDispatcher(Node):
         Circle/rectangle intersections are used so points stay inside bounds.
         """
         margin = max(self._sweep_margin, 0.0)
-        depth = max(self._sweep_depth, 0.0)
         tool_width = max(self._sweep_tool_width - self._sweep_overlap, 0.01)
 
         w_hat = self.rect_width_vec / max(self.table_width_m, 1e-9)
@@ -936,9 +935,7 @@ class DrawingDispatcher(Node):
                 if not point_inside_rect_xy(x, y):
                     continue
                 base_pt = np.array([x, y, get_z_on_plane(x, y)], dtype=float)
-                # Keep sweep consistent with other drawing modes (on-plane),
-                # with optional positive offset along -normal.
-                pt = base_pt - depth * self.plane_n
+                pt = base_pt
                 if not stroke or float(np.linalg.norm(pt - stroke[-1])) >= 0.008:
                     stroke.append(pt)
 
@@ -993,7 +990,7 @@ class DrawingDispatcher(Node):
 
                 self.get_logger().info(
                     f'Generated sweep (fast mode): passes={num_passes}, '
-                    f'step={actual_step*100:.1f}cm, depth={self._sweep_depth*100:.1f}cm, '
+                    f'step={actual_step*100:.1f}cm, '
                     f'pts={len(positions)}')
 
                 # Sweep is deterministic; let action-server precompute decide

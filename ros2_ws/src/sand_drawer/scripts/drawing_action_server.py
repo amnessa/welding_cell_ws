@@ -220,9 +220,10 @@ class DrawingActionServer(Node):
 
         # ---- parameters ----
         self.declare_parameter('plane_json_file', '')
-        self.declare_parameter('approach_height', 0.10)
+        self.declare_parameter('approach_height', 0.07)
+        self.declare_parameter('surface_z_offset', 0.0)
         self.declare_parameter('max_linear_vel', 0.075)
-        self.declare_parameter('max_linear_accel', 0.05)
+        self.declare_parameter('max_linear_accel', 0.075)
         self.declare_parameter('approach_linear_vel', 0.20)
         self.declare_parameter('approach_linear_accel', 0.20)
         self.declare_parameter('ik_damping', 0.05)
@@ -327,6 +328,7 @@ class DrawingActionServer(Node):
         self.get_logger().info(
             f'Drawing action server ready — '
             f'approach_height={self.approach_height:.3f}m, '
+            f'surface_z_offset={float(self.surface_z_offset):.3f}m, '
             f'execution_hz={self.execution_hz:.0f}, '
             f'active_tool={self._active_tool}, '
             f'real_robot={self._real_robot}')
@@ -336,7 +338,8 @@ class DrawingActionServer(Node):
     # ------------------------------------------------------------------
     def _load_params(self):
         g = self.get_parameter
-        self.approach_height     = g('approach_height').value
+        self.approach_height     = float(g('approach_height').value)
+        self.surface_z_offset    = float(g('surface_z_offset').value)
         self.v_max               = g('max_linear_vel').value
         self.a_max               = g('max_linear_accel').value
         self.approach_v_max      = g('approach_linear_vel').value
@@ -387,21 +390,23 @@ class DrawingActionServer(Node):
           spatula = 180 deg
           empty = -90 deg
 
-        All four faces are treated as flange-mounted tool sides with equal
-        effective radius from the wrist axis.
+        Tool length from the wrist axis:
+          pointy = 0.15 m
+          fork/spatula/empty = 0.13 m
         """
-        tool_radius = 0.15
+        pointy_len = 0.15
+        other_len = 0.13
         if tool_name == 'fork':
-            return tool_radius, 0.0
+            return other_len, 0.0
         if tool_name == 'pointy':
-            return tool_radius, math.pi / 2.0
+            return pointy_len, math.pi / 2.0
         if tool_name == 'spatula':
-            return tool_radius, math.pi
+            return other_len, math.pi
         if tool_name == 'empty':
-            return tool_radius, -math.pi / 2.0
+            return other_len, -math.pi / 2.0
         self.get_logger().error(
             f"Unknown tool '{tool_name}'. Defaulting to pointy.")
-        return tool_radius, 0.0
+        return pointy_len, 0.0
 
     def _dynamic_wrist_pose_from_tip(self, tip_pos: np.ndarray) -> np.ndarray:
         """Build wrist pose for a tip point using dynamic yaw and tool offset."""
@@ -1056,11 +1061,29 @@ class DrawingActionServer(Node):
             np.array([p.x, p.y, p.z], dtype=float)
             for p in goal_handle.request.waypoints
         ]
+        raw_first = draw_positions[0].copy() if draw_positions else None
+        if abs(self.surface_z_offset) > 1e-9:
+            draw_positions = [
+                p - self.surface_z_offset * self.plane_n
+                for p in draw_positions
+            ]
+        else:
+            self.get_logger().warn(
+                'surface_z_offset=0.0m -> drawing follows raw plane waypoints (no surface offset)')
         q = goal_handle.request.orientation
         orientation = [q.x, q.y, q.z, q.w]
 
+        if raw_first is not None:
+            shifted_first = draw_positions[0]
+            n_hat = self.plane_n / max(float(np.linalg.norm(self.plane_n)), 1e-9)
+            delta_n = float(np.dot(shifted_first - raw_first, n_hat))
+            self.get_logger().info(
+                f'Waypoint[0] offset along normal = {delta_n*1000.0:.1f} mm '
+                f'(configured surface_z_offset={self.surface_z_offset*1000.0:.1f} mm)')
+
         self.get_logger().info(
-            f'Executing drawing: {len(draw_positions)} waypoints')
+            f'Executing drawing: {len(draw_positions)} waypoints '
+            f'(surface_z_offset={self.surface_z_offset*1000.0:.1f}mm)')
 
         # ---- wait for joint state ----
         feedback.current_phase = 'WAITING_JOINTS'
