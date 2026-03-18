@@ -790,7 +790,10 @@ class DrawingDispatcher(Node):
     def _generate_sweep_3d(self) -> Tuple[np.ndarray, List[np.ndarray], int, float]:
         """
         Generates concentric radial arcs (windshield sweep).
-        Circle/rectangle intersections are used so points stay inside bounds.
+        Circle/rectangle intersections define angular limits per radius,
+        then one continuous arc is drawn between those limits.
+        This intentionally allows mild off-table overshoot between limits
+        to avoid fragmented/stuttered arcs near corners.
         """
         margin = max(self._sweep_margin, 0.0)
         tool_width = max(self._sweep_tool_width - self._sweep_overlap, 0.01)
@@ -853,13 +856,13 @@ class DrawingDispatcher(Node):
         v_min = margin
         v_max = self.table_height_m - margin
 
-        def point_inside_rect_xy(x: float, y: float) -> bool:
+        def point_inside_rect_xy(x: float, y: float, eps: float = 1e-5) -> bool:
             z = get_z_on_plane(x, y)
             p = np.array([x, y, z], dtype=float)
             rel = p - self.rect_origin
             u = float(np.dot(rel, w_hat))
             v = float(np.dot(rel, h_hat))
-            return (u_min <= u <= u_max) and (v_min <= v <= v_max)
+            return ((u_min - eps) <= u <= (u_max + eps)) and ((v_min - eps) <= v <= (v_max + eps))
 
         pts_3d: List[np.ndarray] = []
         forward = True
@@ -891,23 +894,30 @@ class DrawingDispatcher(Node):
             if len(angles) < 2:
                 continue
 
-            # Pick the inside interval as complement of the largest wrap gap.
-            max_gap = -1.0
-            gap_idx = 0
-            for i in range(len(angles)):
+            # Build candidate circular intervals and keep those whose midpoint
+            # lies inside the rectangle footprint.
+            intervals: List[Tuple[float, float]] = []
+            n_ang = len(angles)
+            for i in range(n_ang):
                 a0 = angles[i]
-                a1 = angles[(i + 1) % len(angles)]
-                if i == len(angles) - 1:
+                a1 = angles[(i + 1) % n_ang]
+                if i == n_ang - 1:
                     a1 += 2.0 * math.pi
-                gap = a1 - a0
-                if gap > max_gap:
-                    max_gap = gap
-                    gap_idx = i
+                if (a1 - a0) <= 1e-6:
+                    continue
 
-            start = angles[(gap_idx + 1) % len(angles)]
-            end = angles[gap_idx]
-            if end < start:
-                end += 2.0 * math.pi
+                amid = 0.5 * (a0 + a1)
+                amidf = float(((amid + math.pi) % (2.0 * math.pi)) - math.pi)
+                xm = float(r * math.cos(amidf))
+                ym = float(r * math.sin(amidf))
+                if point_inside_rect_xy(xm, ym):
+                    intervals.append((a0, a1))
+
+            if not intervals:
+                continue
+
+            # Use the longest valid inside interval for a single continuous arc.
+            start, end = max(intervals, key=lambda ab: ab[1] - ab[0])
 
             span = max(end - start, 0.0)
             if span <= 1e-4:
@@ -932,8 +942,6 @@ class DrawingDispatcher(Node):
                 angf = float(((ang + math.pi) % (2.0 * math.pi)) - math.pi)
                 x = float(r * math.cos(angf))
                 y = float(r * math.sin(angf))
-                if not point_inside_rect_xy(x, y):
-                    continue
                 base_pt = np.array([x, y, get_z_on_plane(x, y)], dtype=float)
                 pt = base_pt
                 if not stroke or float(np.linalg.norm(pt - stroke[-1])) >= 0.008:

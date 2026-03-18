@@ -74,7 +74,7 @@ private:
     }
 
     double path_tolerance = request->path_tolerance;
-    if (path_tolerance <= 0.0) path_tolerance = 0.1;
+    if (path_tolerance <= 0.0) path_tolerance = 0.02;
 
     double resample_dt = request->resample_dt;
     if (resample_dt <= 0.0) resample_dt = 0.1;
