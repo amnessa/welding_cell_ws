@@ -198,7 +198,7 @@ def launch_setup(context, *args, **kwargs):
                 "real_robot": real_robot,
                 "max_joint_speed_deg": max_joint_speed_deg,
                 "max_joint_accel_deg": max_joint_accel_deg,
-                "totg_path_tolerance": 0.02,
+                "totg_path_tolerance": 0.005,
                 "totg_resample_dt": 0.01,
                 "active_tool": active_tool_str,
             }],

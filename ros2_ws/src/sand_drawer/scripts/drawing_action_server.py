@@ -222,8 +222,8 @@ class DrawingActionServer(Node):
         self.declare_parameter('plane_json_file', '')
         self.declare_parameter('approach_height', 0.07)
         self.declare_parameter('surface_z_offset', 0.00) # in cm
-        self.declare_parameter('max_linear_vel', 0.075)
-        self.declare_parameter('max_linear_accel', 0.075)
+        self.declare_parameter('max_linear_vel', 0.065)
+        self.declare_parameter('max_linear_accel', 0.065)
         self.declare_parameter('approach_linear_vel', 0.20)
         self.declare_parameter('approach_linear_accel', 0.20)
         self.declare_parameter('ik_damping', 0.05)
@@ -240,7 +240,7 @@ class DrawingActionServer(Node):
                                '/scaled_joint_trajectory_controller/joint_trajectory')
         self.declare_parameter('max_joint_speed_deg', 45.0)
         self.declare_parameter('max_joint_accel_deg', 40.0)
-        self.declare_parameter('totg_path_tolerance', 0.1)
+        self.declare_parameter('totg_path_tolerance', 0.002)
         self.declare_parameter('totg_resample_dt', 0.01)
         self.declare_parameter('active_tool', 'pointy')
 
@@ -1397,19 +1397,34 @@ class DrawingActionServer(Node):
             self.get_logger().warn(
                 '  Descent IK failed — drawing starts from approach height')
 
-        # ── 5. DRAWING (surface waypoints) ────────────────────────────
-        draw_dt = max(cart_dt, 0.02) if heavy_sweep else cart_dt
-        draw_wps, draw_times = _interpolate_cartesian_smooth(
-            draw_positions, orientation_xyzw,
-            self.v_max, self.a_max, draw_dt)
-        draw_wps = tip_to_dynamic_wrist(draw_wps)
+        # ── 5. DRAWING (surface waypoints -> TOTG) ───────────────────
+        # Generate evenly spaced Cartesian points and let phase concat route
+        # this phase through TOTG by passing times=None.
+        spatial_wps: List[np.ndarray] = []
+        spatial_res = 0.01  # 1 cm
+        for i in range(len(draw_positions) - 1):
+            p1 = draw_positions[i]
+            p2 = draw_positions[i + 1]
+            dist = float(np.linalg.norm(p2 - p1))
+            steps = max(int(dist / spatial_res), 1)
+            for j in range(steps):
+                spatial_wps.append(p1 + (p2 - p1) * (j / steps))
+        spatial_wps.append(draw_positions[-1].copy())
+
+        self.get_logger().info(
+            f'  [DRAW_TOTG] spatial res={spatial_res*1000.0:.0f}mm, '
+            f'{len(draw_positions)} -> {len(spatial_wps)} tip points')
+
+        draw_wps = tip_to_dynamic_wrist(
+            [(p, orientation_xyzw) for p in spatial_wps])
         last_q_for_draw = phases[-1][1][-1]
-        draw_path, draw_valid_times = self._ik_solve_cartesian_path(
-            draw_wps, draw_times, last_q_for_draw, 'Drawing')
+        dummy_times = [0.0] * len(draw_wps)
+        draw_path, _ = self._ik_solve_cartesian_path(
+            draw_wps, dummy_times, last_q_for_draw, 'Drawing')
         if not draw_path or len(draw_path) < 2:
             self.get_logger().error('Drawing IK returned too few solutions')
             return None
-        phases.append(('drawing', draw_path, draw_valid_times))
+        phases.append(('drawing', draw_path, None))
 
         # ── 6. ASCENT (surface → approach height) ─────────────────────
         last_draw_pos = draw_positions[-1].copy()
