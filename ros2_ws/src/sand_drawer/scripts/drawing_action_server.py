@@ -222,8 +222,8 @@ class DrawingActionServer(Node):
         self.declare_parameter('plane_json_file', '')
         self.declare_parameter('approach_height', 0.07)
         self.declare_parameter('surface_z_offset', 0.00) # in cm
-        self.declare_parameter('max_linear_vel', 0.065)
-        self.declare_parameter('max_linear_accel', 0.065)
+        self.declare_parameter('max_linear_vel', 0.05)
+        self.declare_parameter('max_linear_accel', 0.05)
         self.declare_parameter('approach_linear_vel', 0.20)
         self.declare_parameter('approach_linear_accel', 0.20)
         self.declare_parameter('ik_damping', 0.05)
