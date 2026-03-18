@@ -391,7 +391,7 @@ def generate_launch_description():
                               description="Continuous drawing dispatch (action mode)"),
         DeclareLaunchArgument("approach_height", default_value="0.10",
                       description="Approach/ascent offset from drawing surface (meters)"),
-        DeclareLaunchArgument("surface_z_offset", default_value="-0.03",
+        DeclareLaunchArgument("surface_z_offset", default_value="-0.00",
                   description="Drawing surface offset along -plane normal (meters)"),
         DeclareLaunchArgument("text_string",     default_value="ROMER",
                               description="Text string to draw (action mode, trajectory_key=text)"),
