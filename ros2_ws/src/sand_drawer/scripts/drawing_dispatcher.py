@@ -27,7 +27,7 @@ Trajectory keys
   square    — random square
   circle    — random circle (resolution scales with size)
   text      — render text_string as multi-stroke trajectory (pen up/down)
-    sweep     — full-table boustrophedon sweep path (operator-triggered)
+  sweep     — full-table boustrophedon sweep path (operator-triggered)
   random    — pick a random geometric shape each time (default)
 
 Subscribes to:  (none)

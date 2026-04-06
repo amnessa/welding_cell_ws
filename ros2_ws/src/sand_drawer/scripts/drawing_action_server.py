@@ -986,11 +986,13 @@ class DrawingActionServer(Node):
     # Send full trajectory to real robot
     # ------------------------------------------------------------------
     def _send_full_trajectory(self, path: List[np.ndarray],
-                              times: List[float]) -> None:
+                              times: List[float],
+                              start_stamp=None) -> None:
         if self._real_traj_pub is None:
             return
         traj = JointTrajectory()
-        traj.header.stamp = self.get_clock().now().to_msg()
+        traj.header.stamp = start_stamp if start_stamp is not None \
+            else self.get_clock().now().to_msg()
         traj.joint_names = list(self._joint_names)
         for q, t in zip(path, times):
             pt = JointTrajectoryPoint()
@@ -1216,29 +1218,9 @@ class DrawingActionServer(Node):
             and len(draw_positions) >= 40
         )
 
-        if heavy_sweep:
-            min_spacing = 0.015
-            reduced_positions: List[np.ndarray] = [draw_positions[0].copy()]
-            for pt in draw_positions[1:]:
-                if float(np.linalg.norm(pt - reduced_positions[-1])) >= min_spacing:
-                    reduced_positions.append(pt.copy())
-            if float(np.linalg.norm(reduced_positions[-1] - draw_positions[-1])) > 1e-6:
-                reduced_positions.append(draw_positions[-1].copy())
-
-            if len(reduced_positions) >= 3:
-                self.get_logger().info(
-                    f'  [SWEEP_OPT] downsample tip path: {len(draw_positions)} → {len(reduced_positions)} '
-                    f'(min_spacing={min_spacing*100:.1f}cm)')
-                draw_positions = reduced_positions
-
-        # Real robot: UR controller interpolates internally, so 10 Hz
-        # Cartesian density is plenty.  Sim: 100 Hz drives the sim loop.
-        if self._real_robot:
-            cart_dt = 0.10   # 10 Hz — keeps trajectories < 2 000 pts
-        elif heavy_sweep:
-            cart_dt = max(0.02, 1.0 / max(float(self.execution_hz), 1.0))
-        else:
-            cart_dt = 1.0 / self.execution_hz  # 100 Hz for sim
+        # Use execution_hz (100 Hz) unconditionally so TOTG receives
+        # the same density it outputs — no wasteful down/up-sampling.
+        cart_dt = 1.0 / max(float(self.execution_hz), 1.0)
 
         tool_length, yaw_offset = self._tool_length_and_yaw_offset(
             str(self._active_tool))
@@ -1527,15 +1509,16 @@ class DrawingActionServer(Node):
     ) -> bool:
         """Stream trajectory to real robot in batches and monitor convergence.
 
-        Global Planning, Chunked Execution:
+        Global Planning, Chunked Execution with Absolute Time Locking:
         TOTG has already produced a single globally-optimal C2 speed
         profile.  We slice that output into batches of
         ≤ trajectory_batch_size points and stream them to the UR
-        controller.  The next batch is dispatched when the robot
-        reaches ~80% of the current batch so the controller's
-        interpolation buffer never empties — timestamps are kept
-        absolute (time_from_start relative to the trajectory start)
-        so the controller seamlessly appends batches.
+        controller.  header.stamp is locked to T0 (captured once
+        before the first batch) so that all batches share the same
+        time origin — the controller uses header.stamp +
+        time_from_start to schedule each point.  The next batch is
+        dispatched when the robot reaches ~70% of the current batch
+        so the controller's interpolation buffer never empties.
         """
         batch_sz = max(self._traj_batch_size, 500)
         n_master = len(master_path)
@@ -1558,18 +1541,21 @@ class DrawingActionServer(Node):
             f'{n_batches} batches (max {batch_sz} pts each), '
             f'{total_time:.1f}s total')
 
+        # ---- Absolute Time Lock: capture T0 once for ALL batches ----
+        t0 = self.get_clock().now()
+        t0_msg = t0.to_msg()
+
         # ---- Send first batch ----
         cur_batch = 0
         b_start, b_end = batches[cur_batch]
         self._send_full_trajectory(
             master_path[b_start:b_end],
-            master_times[b_start:b_end])
+            master_times[b_start:b_end],
+            start_stamp=t0_msg)
         self.get_logger().info(
             f'  Batch {cur_batch+1}/{n_batches} sent: '
             f'pts [{b_start}..{b_end-1}], '
             f't=[{master_times[b_start]:.1f}..{master_times[b_end-1]:.1f}]s')
-
-        t0 = self.get_clock().now()
         last_feedback_time = 0.0
         last_closest_idx = 0
 
@@ -1593,15 +1579,16 @@ class DrawingActionServer(Node):
             # ---- Stream next batch at 80% of current batch ----
             if cur_batch < n_batches - 1:
                 b_start_cur, b_end_cur = batches[cur_batch]
-                # 80% point of current batch by index
+                # 70% point of current batch by index
                 trigger_idx = b_start_cur + int(
-                    0.80 * (b_end_cur - b_start_cur))
+                    0.70 * (b_end_cur - b_start_cur))
                 if last_closest_idx >= trigger_idx:
                     cur_batch += 1
                     b_start, b_end = batches[cur_batch]
                     self._send_full_trajectory(
                         master_path[b_start:b_end],
-                        master_times[b_start:b_end])
+                        master_times[b_start:b_end],
+                        start_stamp=t0_msg)
                     self.get_logger().info(
                         f'  Batch {cur_batch+1}/{n_batches} sent: '
                         f'pts [{b_start}..{b_end-1}], '
