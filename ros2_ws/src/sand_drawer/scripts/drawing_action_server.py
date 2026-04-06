@@ -243,6 +243,7 @@ class DrawingActionServer(Node):
         self.declare_parameter('totg_path_tolerance', 0.002)
         self.declare_parameter('totg_resample_dt', 0.01)
         self.declare_parameter('active_tool', 'pointy')
+        self.declare_parameter('trajectory_batch_size', 4000)
 
         self._load_params()
         self._load_plane_json()
@@ -357,6 +358,7 @@ class DrawingActionServer(Node):
         self._totg_path_tolerance = float(g('totg_path_tolerance').value)
         self._totg_resample_dt   = float(g('totg_resample_dt').value)
         self._active_tool        = str(g('active_tool').value)
+        self._traj_batch_size    = int(g('trajectory_batch_size').value)
 
     def _get_tool_transform(self, tool_name: str) -> Tuple[float, list]:
         """Return (tool_length_m, wrist_orientation_xyzw) for active tool."""
@@ -1523,37 +1525,57 @@ class DrawingActionServer(Node):
         goal_handle,
         feedback: ExecuteDrawing.Feedback,
     ) -> bool:
-        """Send trajectory to real robot and monitor convergence."""
+        """Stream trajectory to real robot in batches and monitor convergence.
 
-        # Send the full trajectory directly — the exact trapezoidal
-        # timestamps from _interpolate_cartesian_smooth already enforce
-        # v→0 at corners.  Downsampling would destroy corner geometry
-        # and re-introduce velocity jumps.
-        self._send_full_trajectory(master_path, master_times)
-
+        Global Planning, Chunked Execution:
+        TOTG has already produced a single globally-optimal C2 speed
+        profile.  We slice that output into batches of
+        ≤ trajectory_batch_size points and stream them to the UR
+        controller.  The next batch is dispatched when the robot
+        reaches ~80% of the current batch so the controller's
+        interpolation buffer never empties — timestamps are kept
+        absolute (time_from_start relative to the trajectory start)
+        so the controller seamlessly appends batches.
+        """
+        batch_sz = max(self._traj_batch_size, 500)
+        n_master = len(master_path)
         target_q = master_path[-1]
         total_time = master_times[-1]
+
+        # ---- Build batch boundaries ----
+        # Each batch is [start_idx, end_idx) except the last which
+        # includes the final point.  All timestamps stay absolute.
+        batches: List[Tuple[int, int]] = []
+        idx = 0
+        while idx < n_master:
+            end = min(idx + batch_sz, n_master)
+            batches.append((idx, end))
+            idx = end
+        n_batches = len(batches)
+
+        self.get_logger().info(
+            f'Trajectory streaming: {n_master} pts → '
+            f'{n_batches} batches (max {batch_sz} pts each), '
+            f'{total_time:.1f}s total')
+
+        # ---- Send first batch ----
+        cur_batch = 0
+        b_start, b_end = batches[cur_batch]
+        self._send_full_trajectory(
+            master_path[b_start:b_end],
+            master_times[b_start:b_end])
+        self.get_logger().info(
+            f'  Batch {cur_batch+1}/{n_batches} sent: '
+            f'pts [{b_start}..{b_end-1}], '
+            f't=[{master_times[b_start]:.1f}..{master_times[b_end-1]:.1f}]s')
+
         t0 = self.get_clock().now()
         last_feedback_time = 0.0
-        last_closest_idx = 0  # track progress through trajectory
+        last_closest_idx = 0
 
-        # Monitor at 10 Hz — the full trajectory is already on the robot
-        # controller; we only need to watch convergence, not drive the motion.
         monitor_dt = 0.1
-
-        # Minimum time before convergence checks — prevents false positives
-        # from closed shapes (square/circle) where start ≈ end config.
-        # 80% of trajectory time ensures the robot has nearly finished.
         min_monitor_time = total_time * 0.80
-
-        # Minimum progress fraction (0-1) before convergence is accepted.
-        # This prevents early convergence when the robot passes through a
-        # configuration similar to the target partway through the motion.
         min_progress_fraction = 0.85
-
-        n_master = len(master_path)
-
-        # Allow extra time for real robot to finish
         timeout = total_time * 1.5 + 15.0
 
         while True:
@@ -1564,19 +1586,33 @@ class DrawingActionServer(Node):
             try:
                 self._mirror_real_to_sim()
             except Exception:
-                pass  # best-effort sim mirror
+                pass
 
             elapsed = (self.get_clock().now() - t0).nanoseconds * 1e-9
 
-            # Convergence check — THREE gates must ALL pass:
-            #  1. Elapsed time > 80% of expected trajectory duration
-            #  2. Estimated trajectory progress > 85%
-            #  3. Joint error to final target < convergence tolerance
+            # ---- Stream next batch at 80% of current batch ----
+            if cur_batch < n_batches - 1:
+                b_start_cur, b_end_cur = batches[cur_batch]
+                # 80% point of current batch by index
+                trigger_idx = b_start_cur + int(
+                    0.80 * (b_end_cur - b_start_cur))
+                if last_closest_idx >= trigger_idx:
+                    cur_batch += 1
+                    b_start, b_end = batches[cur_batch]
+                    self._send_full_trajectory(
+                        master_path[b_start:b_end],
+                        master_times[b_start:b_end])
+                    self.get_logger().info(
+                        f'  Batch {cur_batch+1}/{n_batches} sent: '
+                        f'pts [{b_start}..{b_end-1}], '
+                        f't=[{master_times[b_start]:.1f}..'
+                        f'{master_times[b_end-1]:.1f}]s')
+
+            # ---- Convergence check ----
             progress_frac = last_closest_idx / max(n_master - 1, 1)
             if (elapsed > min_monitor_time
                     and progress_frac >= min_progress_fraction
                     and self._real_robot_converged(target_q)):
-                # Sync _last_q with ACTUAL real robot joints
                 real_q = self._get_real_ordered_joints()
                 self._last_q = real_q if real_q is not None \
                     else target_q.copy()
@@ -1588,7 +1624,6 @@ class DrawingActionServer(Node):
                 return True
 
             if elapsed > timeout:
-                # Sync state even on timeout
                 real_q = self._get_real_ordered_joints()
                 if real_q is not None:
                     self._last_q = real_q
@@ -1598,16 +1633,13 @@ class DrawingActionServer(Node):
                     f'progress={progress_frac*100:.0f}%')
                 return False
 
-            # Estimate progress from nearest master_path point
+            # ---- Progress estimation ----
             real_q = self._get_real_ordered_joints()
             if real_q is not None and elapsed - last_feedback_time >= 1.0:
                 last_feedback_time = elapsed
-                # Vectorised distance — avoids 12 k-iteration Python loop
                 diff = np.array(master_path) - real_q
                 dists = np.max(np.abs(diff), axis=1)
                 closest = int(np.argmin(dists))
-                # Monotonic progress: prevent going backwards due to
-                # noise or closed-shape ambiguity
                 last_closest_idx = max(last_closest_idx, closest)
                 phase_label = self._phase_for_idx(
                     last_closest_idx, phase_info)
@@ -1619,7 +1651,8 @@ class DrawingActionServer(Node):
                 pct = 100.0 * last_closest_idx / max(n_master - 1, 1)
                 self.get_logger().info(
                     f'  ~step {last_closest_idx}/{n_master-1}  '
-                    f'({pct:.0f}%)  [{phase_label}]')
+                    f'({pct:.0f}%)  [{phase_label}]  '
+                    f'batch {cur_batch+1}/{n_batches}')
 
             _time.sleep(monitor_dt)
 

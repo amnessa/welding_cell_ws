@@ -135,12 +135,12 @@ class DrawingDispatcher(Node):
         self.declare_parameter('approach_height', 0.10)
         self.declare_parameter('active_tool', 'pointy')
         self.declare_parameter('sweep_margin_m', 0.05)
-        self.declare_parameter('sweep_tool_width_m', 0.10)
-        self.declare_parameter('sweep_overlap_m', 0.01)
-        self.declare_parameter('sweep_arc_spacing_m', 0.03)
+        self.declare_parameter('sweep_tool_width_m', 0.08)
+        self.declare_parameter('sweep_overlap_m', 0.015)
+        self.declare_parameter('sweep_arc_spacing_m', 0.025)
         self.declare_parameter('base_keepout_radius_m', 0.22)
         self.declare_parameter('sweep_max_passes', 0)
-        self.declare_parameter('sweep_spatula_max_passes', 6)
+        self.declare_parameter('sweep_spatula_max_passes', 8)
 
         self._traj_key = self.get_parameter('trajectory_key').value
         self._text_string = self.get_parameter('text_string').value
