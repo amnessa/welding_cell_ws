@@ -134,6 +134,7 @@ class DrawingDispatcher(Node):
         self.declare_parameter('text_rotation_max_deg', 45.0)
         self.declare_parameter('approach_height', 0.10)
         self.declare_parameter('active_tool', 'pointy')
+        self.declare_parameter('orthogonal_tool_length_m', 0.13)
         self.declare_parameter('sweep_margin_m', 0.05)
         self.declare_parameter('sweep_tool_width_m', 0.08)
         self.declare_parameter('sweep_overlap_m', 0.015)
@@ -160,6 +161,8 @@ class DrawingDispatcher(Node):
         self._approach_height = float(
             self.get_parameter('approach_height').value)
         self._active_tool = self.get_parameter('active_tool').value
+        self._orthogonal_tool_length = float(
+            self.get_parameter('orthogonal_tool_length_m').value)
         self._sweep_margin = float(self.get_parameter('sweep_margin_m').value)
         self._sweep_tool_width = float(
             self.get_parameter('sweep_tool_width_m').value)
@@ -241,17 +244,20 @@ class DrawingDispatcher(Node):
         """Return (tool_length_m, yaw_offset_rad) about local wrist_3 axis.
 
         Calibrated flange quadrant mapping (latest observed):
-          pointy = 0 deg
-          fork = +90 deg
+          fork = 0 deg
+          pointy = +90 deg
           spatula = 180 deg
           empty = -90 deg
+          orthogonal = 0 deg
 
         Tool length from the wrist axis:
           pointy = 0.15 m
           fork/spatula/empty = 0.13 m
+          orthogonal = orthogonal_tool_length_m (default 0.13 m)
         """
         pointy_len = 0.15
         other_len = 0.13
+        orthogonal_len = max(float(self._orthogonal_tool_length), 0.0)
         if tool_name == 'fork':
             return other_len, 0.0
         if tool_name == 'pointy':
@@ -260,9 +266,11 @@ class DrawingDispatcher(Node):
             return other_len, math.pi
         if tool_name == 'empty':
             return other_len, -math.pi / 2.0
+        if tool_name == 'orthogonal':
+            return orthogonal_len, 0.0
         self.get_logger().error(
             f"Unknown tool '{tool_name}'. Defaulting to pointy.")
-        return pointy_len, 0.0
+        return pointy_len, math.pi / 2.0
 
     def _dynamic_wrist_pose_from_tip(self, tip_pos: np.ndarray) -> np.ndarray:
         """Build wrist pose for a tip point using dynamic yaw and tool offset."""

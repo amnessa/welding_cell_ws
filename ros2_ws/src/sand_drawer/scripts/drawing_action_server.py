@@ -18,9 +18,10 @@ Current TCP/tool behavior
 The action server uses active tool selection and dynamic TCP handling.
 
 - Tool faces are selected around wrist-3 as:
-        fork=0°, pointy=+90°, empty=-90°, spatula=180°.
+    fork=0°, pointy=+90°, empty=-90°, spatula=180°, orthogonal=0°.
 - Tool lengths from wrist axis:
-        fork=0.13 m, pointy=0.15 m, spatula=0.13 m, empty=0.00 m.
+    fork=0.13 m, pointy=0.15 m, spatula=0.13 m, empty=0.13 m,
+    orthogonal=orthogonal_tool_length_m.
 - For draw/approach/descent/ascent path solving, the server computes a
     dynamic wrist pose from each tip waypoint (per-waypoint yaw adaptation)
     before IK. This reduces over-constraint and improves reachability.
@@ -243,6 +244,7 @@ class DrawingActionServer(Node):
         self.declare_parameter('totg_path_tolerance', 0.002)
         self.declare_parameter('totg_resample_dt', 0.01)
         self.declare_parameter('active_tool', 'pointy')
+        self.declare_parameter('orthogonal_tool_length_m', 0.13)
         self.declare_parameter('trajectory_batch_size', 4000)
 
         self._load_params()
@@ -358,6 +360,8 @@ class DrawingActionServer(Node):
         self._totg_path_tolerance = float(g('totg_path_tolerance').value)
         self._totg_resample_dt   = float(g('totg_resample_dt').value)
         self._active_tool        = str(g('active_tool').value)
+        self._orthogonal_tool_length = float(
+            g('orthogonal_tool_length_m').value)
         self._traj_batch_size    = int(g('trajectory_batch_size').value)
 
     def _get_tool_transform(self, tool_name: str) -> Tuple[float, list]:
@@ -387,17 +391,20 @@ class DrawingActionServer(Node):
         """Return (tool_length_m, yaw_offset_rad) about local wrist_3 axis.
 
         Calibrated flange quadrant mapping (latest observed):
-          pointy = 0 deg
-          fork = +90 deg
+          fork = 0 deg
+          pointy = +90 deg
           spatula = 180 deg
           empty = -90 deg
+          orthogonal = 0 deg
 
         Tool length from the wrist axis:
           pointy = 0.15 m
           fork/spatula/empty = 0.13 m
+          orthogonal = orthogonal_tool_length_m (default 0.13 m)
         """
         pointy_len = 0.15
         other_len = 0.13
+        orthogonal_len = max(float(self._orthogonal_tool_length), 0.0)
         if tool_name == 'fork':
             return other_len, 0.0
         if tool_name == 'pointy':
@@ -406,9 +413,11 @@ class DrawingActionServer(Node):
             return other_len, math.pi
         if tool_name == 'empty':
             return other_len, -math.pi / 2.0
+        if tool_name == 'orthogonal':
+            return orthogonal_len, 0.0
         self.get_logger().error(
             f"Unknown tool '{tool_name}'. Defaulting to pointy.")
-        return pointy_len, 0.0
+        return pointy_len, math.pi / 2.0
 
     def _dynamic_wrist_pose_from_tip(self, tip_pos: np.ndarray) -> np.ndarray:
         """Build wrist pose for a tip point using dynamic yaw and tool offset."""
@@ -1214,7 +1223,7 @@ class DrawingActionServer(Node):
             return None
 
         heavy_sweep = (
-            self._active_tool in ('spatula', 'pointy')
+            self._active_tool in ('spatula', 'pointy', 'orthogonal')
             and len(draw_positions) >= 40
         )
 

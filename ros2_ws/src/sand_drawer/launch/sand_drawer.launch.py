@@ -8,7 +8,7 @@ Current action-mode behavior:
     - Uses drawing_action_server + drawing_dispatcher + TOTG service.
     - Supports dynamic TCP tool selection via active_tool.
     - Tool faces are selected around wrist-3 as:
-            fork=0°, pointy=+90°, empty=-90°, spatula=180°.
+            fork=0°, pointy=+90°, empty=-90°, spatula=180°, orthogonal=0°.
     - In action mode, dynamic per-waypoint wrist yaw is used to improve IK
         robustness while keeping the selected tool tip on the drawing path.
 
@@ -31,6 +31,7 @@ Usage:
     ros2 launch sand_drawer sand_drawer.launch.py mode:=action active_tool:=fork
     ros2 launch sand_drawer sand_drawer.launch.py mode:=action active_tool:=spatula
     ros2 launch sand_drawer sand_drawer.launch.py mode:=action active_tool:=empty
+        ros2 launch sand_drawer sand_drawer.launch.py mode:=action active_tool:=orthogonal orthogonal_tool_length_m:=0.13
   ros2 launch sand_drawer sand_drawer.launch.py loop:=true
   ros2 launch sand_drawer sand_drawer.launch.py mode:=capture
   ros2 launch sand_drawer sand_drawer.launch.py mode:=freedrive_capture
@@ -87,6 +88,8 @@ def launch_setup(context, *args, **kwargs):
     surface_z_offset_str = LaunchConfiguration("surface_z_offset").perform(context)
     text_string_str   = LaunchConfiguration("text_string").perform(context)
     active_tool_str   = LaunchConfiguration("active_tool").perform(context)
+    orthogonal_tool_length_str = LaunchConfiguration(
+        "orthogonal_tool_length_m").perform(context)
     sweep_max_passes = int(
         LaunchConfiguration("sweep_max_passes").perform(context))
     sweep_spatula_max_passes = int(
@@ -97,6 +100,7 @@ def launch_setup(context, *args, **kwargs):
         LaunchConfiguration("max_joint_accel_deg").perform(context))
     approach_height = float(approach_height_str)
     surface_z_offset = float(surface_z_offset_str)
+    orthogonal_tool_length = float(orthogonal_tool_length_str)
 
     # When real_robot is active, force use_sim_time=false (wall clock)
     use_sim_time = False if real_robot else (use_sim_time_str == "true")
@@ -201,6 +205,7 @@ def launch_setup(context, *args, **kwargs):
                 "totg_path_tolerance": 0.005,
                 "totg_resample_dt": 0.01,
                 "active_tool": active_tool_str,
+                "orthogonal_tool_length_m": orthogonal_tool_length,
             }],
         ))
         # TOTG service node (MoveIt 2 Time-Optimal Trajectory Generation)
@@ -224,6 +229,7 @@ def launch_setup(context, *args, **kwargs):
                 "approach_height": approach_height,
                 "text_string": text_string_str,
                 "active_tool": active_tool_str,
+                "orthogonal_tool_length_m": orthogonal_tool_length,
                 "sweep_max_passes": sweep_max_passes,
                 "sweep_spatula_max_passes": sweep_spatula_max_passes,
             }],
@@ -396,7 +402,9 @@ def generate_launch_description():
         DeclareLaunchArgument("text_string",     default_value="ROMER",
                               description="Text string to draw (action mode, trajectory_key=text)"),
         DeclareLaunchArgument("active_tool",     default_value="pointy",
-                      description="Active tool face: fork | pointy | spatula | empty (action mode)"),
+                      description="Active tool face: fork | pointy | spatula | empty | orthogonal (action mode)"),
+        DeclareLaunchArgument("orthogonal_tool_length_m", default_value="0.13",
+                      description="Tool length for active_tool:=orthogonal (meters)"),
         DeclareLaunchArgument("sweep_max_passes", default_value="0",
                       description="Max sweep passes for non-spatula tools (0 disables cap)"),
         DeclareLaunchArgument("sweep_spatula_max_passes", default_value="8",

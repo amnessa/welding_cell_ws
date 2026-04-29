@@ -92,21 +92,43 @@ welding_cell_ws/
 ```bash
 cd /workspaces/welding_cell_ws/ros2_ws
 unset AMENT_PREFIX_PATH COLCON_PREFIX_PATH CMAKE_PREFIX_PATH ROS_PACKAGE_PATH PYTHONPATH
+
+# Install the Universal Robots Jazzy packages once
+sudo apt-get update
+sudo apt-get install -y ros-jazzy-ur
+
 source /opt/ros/jazzy/setup.bash
-ros2 pkg prefix ur_description # (should print jazzy)
+ros2 pkg prefix ur_description # should print /opt/ros/jazzy
 ```
 then launch the driver:
 ```bash
-# Launch UR5e driver (after installing ur_robot_driver)
+# Launch UR5e driver
 ros2 launch ur_robot_driver ur_control.launch.py \
     ur_type:=ur5e \
     robot_ip:=192.168.8.4 \
     launch_rviz:=false
 ```
+
+If the driver starts but `ros2_control_node` dies with a FastRTPS/Fast-CDR
+symbol lookup error from `libpal_statistics_msgs__rosidl_typesupport_fastrtps_cpp.so`,
+refresh the Jazzy middleware packages and retry:
+
 ```bash
-using realtime data exchange between the physical robot
+sudo apt-get install -y --only-upgrade \
+    ros-jazzy-fastcdr \
+    ros-jazzy-fastrtps \
+    ros-jazzy-fastrtps-cmake-module \
+    ros-jazzy-rmw-fastrtps-cpp \
+    ros-jazzy-rmw-fastrtps-shared-cpp \
+    ros-jazzy-rosidl-dynamic-typesupport-fastrtps \
+    ros-jazzy-rosidl-typesupport-fastrtps-c \
+    ros-jazzy-rosidl-typesupport-fastrtps-cpp
+```
+
+Optional RTDE Python access:
+
+```bash
 pip3 install --user ur_rtde
-sudo apt-get install ros-distro{jazzy}-ur
 ```
 
 ### Network Configuration
@@ -150,6 +172,9 @@ Isaac Sim 5.1.0 includes ROS2 Humble support. Key features:
 ### Container Build Fails
 - Ensure Isaac Sim image is pulled: `docker pull nvcr.io/nvidia/isaac-sim:5.1.0`
 - Check Docker has GPU access: `docker run --gpus all nvidia/cuda:12.0-base nvidia-smi`
+
+### UR Driver Symbol Lookup Error
+- If `ur_robot_driver` launches but `ros2_control_node` dies with an undefined symbol from `libpal_statistics_msgs__rosidl_typesupport_fastrtps_cpp.so`, upgrade the Jazzy FastRTPS/Fast-CDR packages using the command above and relaunch from a fresh terminal after sourcing `/opt/ros/jazzy/setup.bash`.
 
 ## Resources
 
