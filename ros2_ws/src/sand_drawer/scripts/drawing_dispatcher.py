@@ -320,8 +320,8 @@ class DrawingDispatcher(Node):
         tool_length, yaw_offset = self._tool_length_and_yaw_offset(
             str(self._active_tool))
 
-        # Use tool0_z along the plane normal, then apply the stand-off in the
-        # opposite direction so the wrist stays above the drawing surface.
+        # The physical orthogonal tip follows +tool0_z, so tool0_z must point
+        # toward the plane normal for the tip to point down at the surface.
         z_wrist = self.plane_n / max(float(np.linalg.norm(self.plane_n)), 1e-9)
         x_seed = self.base_forward - float(np.dot(self.base_forward, z_wrist)) * z_wrist
         x_norm = float(np.linalg.norm(x_seed))
