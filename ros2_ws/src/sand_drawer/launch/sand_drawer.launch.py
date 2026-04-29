@@ -11,6 +11,8 @@ Current action-mode behavior:
             fork=0°, pointy=+90°, empty=-90°, spatula=180°, orthogonal=0°.
     - In action mode, dynamic per-waypoint wrist yaw is used to improve IK
         robustness while keeping the selected tool tip on the drawing path.
+    - orthogonal is special: wrist_3 stays normal to the plane and
+        orthogonal_tool_length_m is applied as plane-normal stand-off.
 
 Modes (via mode:= launch argument):
   trajectory (default)  — follow waypoints from the plane JSON (velocity servo)

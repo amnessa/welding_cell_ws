@@ -219,6 +219,11 @@ class DrawingDispatcher(Node):
 
     def _get_tool_transform(self, tool_name: str) -> Tuple[float, list]:
         """Return (tool_length_m, wrist_orientation_xyzw) for active tool."""
+        if tool_name == 'orthogonal':
+            T = self._orthogonal_wrist_pose_from_tip(self.table_center_3d)
+            return max(float(self._orthogonal_tool_length), 0.0), \
+                _rotmat_to_quat(T[:3, :3])
+
         length, yaw_offset = self._tool_length_and_yaw_offset(tool_name)
 
         # Build a strict orthonormal basis, then apply only yaw about local Z.
@@ -253,7 +258,7 @@ class DrawingDispatcher(Node):
         Tool length from the wrist axis:
           pointy = 0.15 m
           fork/spatula/empty = 0.13 m
-          orthogonal = orthogonal_tool_length_m (default 0.13 m)
+          orthogonal = orthogonal_tool_length_m (default 0.10 m)
         """
         pointy_len = 0.15
         other_len = 0.13
@@ -310,27 +315,38 @@ class DrawingDispatcher(Node):
         T[:3, 3] = wrist_pos
         return T
 
-    def _table_aligned_wrist_pose_from_tip(self, tip_pos: np.ndarray) -> np.ndarray:
-        """Build wrist pose with stable table-aligned orientation."""
+    def _orthogonal_wrist_pose_from_tip(self, tip_pos: np.ndarray) -> np.ndarray:
+        """Build tool0 pose for an orthogonal tool with wrist_3 normal to the plane."""
         tool_length, yaw_offset = self._tool_length_and_yaw_offset(
             str(self._active_tool))
 
-        down = -self.plane_n
-        down = down / max(float(np.linalg.norm(down)), 1e-9)
-        forward = self.base_forward
-        forward = forward / max(float(np.linalg.norm(forward)), 1e-9)
-        right = np.cross(down, forward)
-        right = right / max(float(np.linalg.norm(right)), 1e-9)
+        # tool0_z is opposite wrist_3_z in the UR5e fixed wrist_3 -> tool0 transform.
+        # To make wrist_3 look down at the plane, tool0_z must point opposite the plane normal.
+        z_wrist = -self.plane_n / max(float(np.linalg.norm(self.plane_n)), 1e-9)
+        x_seed = tip_pos - float(np.dot(tip_pos, z_wrist)) * z_wrist
+        x_norm = float(np.linalg.norm(x_seed))
+        if x_norm < 1e-6:
+            x_seed = self.base_forward - float(np.dot(self.base_forward, z_wrist)) * z_wrist
+            x_norm = float(np.linalg.norm(x_seed))
+        if x_norm < 1e-6:
+            x_seed = self.plane_x.copy()
+            x_norm = float(np.linalg.norm(x_seed))
+        x_seed = x_seed / max(x_norm, 1e-9)
+
+        y_seed = np.cross(z_wrist, x_seed)
+        y_seed = y_seed / max(float(np.linalg.norm(y_seed)), 1e-9)
+        x_seed = np.cross(y_seed, z_wrist)
+        x_seed = x_seed / max(float(np.linalg.norm(x_seed)), 1e-9)
 
         c = math.cos(yaw_offset)
         s = math.sin(yaw_offset)
-        x_wrist = c * down + s * right
+        x_wrist = c * x_seed + s * y_seed
         x_wrist = x_wrist / max(float(np.linalg.norm(x_wrist)), 1e-9)
-        y_wrist = -s * down + c * right
+        y_wrist = -s * x_seed + c * y_seed
         y_wrist = y_wrist / max(float(np.linalg.norm(y_wrist)), 1e-9)
-        z_wrist = forward
 
-        wrist_pos = tip_pos - tool_length * x_wrist
+        # orthogonal_tool_length_m is the stand-off along the plane normal.
+        wrist_pos = tip_pos + tool_length * z_wrist
 
         T = np.eye(4)
         T[:3, 0] = x_wrist
@@ -340,7 +356,9 @@ class DrawingDispatcher(Node):
         return T
 
     def _wrist_pose_from_tip(self, tip_pos: np.ndarray) -> np.ndarray:
-        """Use one kinematic strategy for all tools; only TCP offset changes."""
+        """Select the wrist-pose strategy for the active tool."""
+        if str(self._active_tool) == 'orthogonal':
+            return self._orthogonal_wrist_pose_from_tip(tip_pos)
         return self._dynamic_wrist_pose_from_tip(tip_pos)
 
     # ------------------------------------------------------------------
@@ -995,10 +1013,15 @@ class DrawingDispatcher(Node):
                 center_3d, positions, bbox_check = self._generate_text_3d()
                 if not positions:
                     continue
-                # Reachability via bounding-box corners only (9 IK checks)
-                # instead of all 151+ waypoints.  If the rectangle fits,
-                # every letter stroke inside it is reachable.
-                reachable = self._is_reachable(center_3d, bbox_check)
+                if str(self._active_tool) == 'orthogonal':
+                    # For orthogonal text, the bounding box is overly conservative:
+                    # it checks corners the letter never visits and rejects viable fits.
+                    reachable = self._is_path_reachable(positions, max_checks=16)
+                else:
+                    # Reachability via bounding-box corners only (9 IK checks)
+                    # instead of all 151+ waypoints.  If the rectangle fits,
+                    # every letter stroke inside it is reachable.
+                    reachable = self._is_reachable(center_3d, bbox_check)
             elif shape == 'sweep':
                 center_3d, positions, num_passes, actual_step = self._generate_sweep_3d()
                 if not positions:

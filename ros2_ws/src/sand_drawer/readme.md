@@ -8,10 +8,12 @@ around wrist-3 with `active_tool`:
 - `pointy` = +90°
 - `empty` = -90°
 - `spatula` = 180°
-- `orthogonal` = 0° with configurable tip length via `orthogonal_tool_length_m`
+- `orthogonal` = wrist_3 normal to the plane, with a configurable plane-normal stand-off via `orthogonal_tool_length_m`
 
 Action mode computes a dynamic wrist pose from each tip waypoint during IK,
-which improves robustness on larger drawings.
+which improves robustness on larger drawings. `orthogonal` is the exception:
+it keeps `wrist_3` normal to the defined plane while the tool length is applied
+as plane-normal stand-off.
 
 ---
 
@@ -173,7 +175,9 @@ which improves robustness on larger drawings.
 | `orthogonal` | 0° | `orthogonal_tool_length_m` (default 0.13 m) |
 
 In action mode, the dispatcher sends tip paths and the action server computes
-per-waypoint dynamic wrist poses before IK.
+per-waypoint wrist poses before IK. `orthogonal` keeps `wrist_3` normal to the
+plane instead of following the shared dynamic yaw strategy used by the other
+tool modes.
 
 ---
 
@@ -928,7 +932,7 @@ If IK fails for a waypoint, the controller logs a warning and skips to the next 
 | `loop` | `false` | Loop the drawing trajectory (cartesian/trajectory modes) |
 | `continuous` | `false` | Continuous drawing dispatch (action mode) |
 | `active_tool` | `pointy` | Action mode tool face (`fork` / `pointy` / `empty` / `spatula` / `orthogonal`) |
-| `orthogonal_tool_length_m` | `0.13` | Tool length used when `active_tool=orthogonal` |
+| `orthogonal_tool_length_m` | `0.13` | Plane-normal stand-off used when `active_tool=orthogonal` |
 | `trajectory_key` | `projected_vector_trajectory` | Which JSON key to follow (`line` / `square_trajectory` / `projected_vector_trajectory`) |
 | `plane_json` | `<auto>` | Path to plane JSON file |
 | `use_sim_time` | `true` | Use `/clock` topic (auto-disabled when `real_robot=true`) |
@@ -973,8 +977,8 @@ Inherits all Cartesian Controller parameters above, plus:
 | `max_joint_accel_deg` | 40.0 °/s² | launch file | Per-joint acceleration limit for TOTG |
 | `totg_path_tolerance` | 0.1 rad | launch file | TOTG corner blending radius (~5.7° deviation allowed) |
 | `totg_resample_dt` | 0.01 s | launch file | TOTG output timestep (100 Hz matches execution_hz) |
-| `active_tool` | `pointy` | launch arg | Tool face used in dynamic TCP IK (`fork`/`pointy`/`empty`/`spatula`/`orthogonal`) |
-| `orthogonal_tool_length_m` | `0.13` | launch arg | Tool length used for `active_tool:=orthogonal` |
+| `active_tool` | `pointy` | launch arg | Tool mode used in TCP IK (`fork`/`pointy`/`empty`/`spatula`/`orthogonal`, where `orthogonal` keeps `wrist_3` normal to the plane) |
+| `orthogonal_tool_length_m` | `0.13` | launch arg | Plane-normal stand-off used for `active_tool:=orthogonal` |
 
 ### Velocity Controller Additional Parameters
 
