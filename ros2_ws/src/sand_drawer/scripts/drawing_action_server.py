@@ -1344,7 +1344,14 @@ class DrawingActionServer(Node):
         approach_pos_tip = None
         for idx in candidate_idxs:
             tip = draw_positions[idx]
-            candidate_approach_tip = tip - self.approach_height * self.plane_n
+            # Text paths include explicit pen-lift waypoints above the plane.
+            # Do not stack another full approach_height on top of an already
+            # lifted tip or the visible clearance becomes misleadingly large.
+            tip_clearance = -float(np.dot(tip - self.plane_origin, self.plane_n))
+            if tip_clearance >= 0.5 * float(self.approach_height):
+                candidate_approach_tip = tip.copy()
+            else:
+                candidate_approach_tip = tip - self.approach_height * self.plane_n
             candidate_T = tip_to_wrist_pose(candidate_approach_tip)
             candidate_q = self._constrained_ik_for_pose(candidate_T)
             if candidate_q is not None:
