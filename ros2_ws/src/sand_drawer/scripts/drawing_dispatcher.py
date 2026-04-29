@@ -320,16 +320,16 @@ class DrawingDispatcher(Node):
         tool_length, yaw_offset = self._tool_length_and_yaw_offset(
             str(self._active_tool))
 
-        # tool0_z is opposite wrist_3_z in the UR5e fixed wrist_3 -> tool0 transform.
-        # To make wrist_3 look down at the plane, tool0_z must point opposite the plane normal.
-        z_wrist = -self.plane_n / max(float(np.linalg.norm(self.plane_n)), 1e-9)
-        x_seed = tip_pos - float(np.dot(tip_pos, z_wrist)) * z_wrist
+        # Use tool0_z along the plane normal, then apply the stand-off in the
+        # opposite direction so the wrist stays above the drawing surface.
+        z_wrist = self.plane_n / max(float(np.linalg.norm(self.plane_n)), 1e-9)
+        x_seed = self.base_forward - float(np.dot(self.base_forward, z_wrist)) * z_wrist
         x_norm = float(np.linalg.norm(x_seed))
         if x_norm < 1e-6:
-            x_seed = self.base_forward - float(np.dot(self.base_forward, z_wrist)) * z_wrist
+            x_seed = self.plane_x - float(np.dot(self.plane_x, z_wrist)) * z_wrist
             x_norm = float(np.linalg.norm(x_seed))
         if x_norm < 1e-6:
-            x_seed = self.plane_x.copy()
+            x_seed = self.plane_y.copy()
             x_norm = float(np.linalg.norm(x_seed))
         x_seed = x_seed / max(x_norm, 1e-9)
 
@@ -346,7 +346,7 @@ class DrawingDispatcher(Node):
         y_wrist = y_wrist / max(float(np.linalg.norm(y_wrist)), 1e-9)
 
         # orthogonal_tool_length_m is the stand-off along the plane normal.
-        wrist_pos = tip_pos + tool_length * z_wrist
+        wrist_pos = tip_pos - tool_length * z_wrist
 
         T = np.eye(4)
         T[:3, 0] = x_wrist

@@ -122,6 +122,8 @@ class DrawingVisualizerGUI(QMainWindow):
         self._start_markers = []        # scatter artists
         self._drawing_count = 0
         self._plane_json_path = plane_json_path
+        self._plane_normal = np.array([0.0, 0.0, 1.0], dtype=float)
+        self._path_display_offset_m = 0.002
 
         # ── Draw the static environment ──
         self._draw_environment()
@@ -178,6 +180,9 @@ class DrawingVisualizerGUI(QMainWindow):
             normal = np.array(data['plane']['normal'], dtype=float)
             if data.get('target_frame', 'base_link') == 'base':
                 normal = np.array([-normal[0], -normal[1], normal[2]])
+            normal_norm = float(np.linalg.norm(normal))
+            if normal_norm > 1e-9:
+                self._plane_normal = normal / normal_norm
             ax.quiver(*centre, *(normal * 0.05),
                       color='lime', arrow_length_ratio=0.3, linewidth=1.5,
                       label='Normal')
@@ -206,13 +211,22 @@ class DrawingVisualizerGUI(QMainWindow):
     def _on_new_path(self, xs, ys, zs):
         self._drawing_count += 1
 
+        xs_arr = np.asarray(xs, dtype=float)
+        ys_arr = np.asarray(ys, dtype=float)
+        zs_arr = np.asarray(zs, dtype=float)
+        display_offset = -self._plane_normal * self._path_display_offset_m
+        xs_plot = xs_arr + display_offset[0]
+        ys_plot = ys_arr + display_offset[1]
+        zs_plot = zs_arr + display_offset[2]
+
         # Draw the trajectory
-        line, = self.ax.plot(xs, ys, zs, color='magenta', linewidth=2.5,
+        line, = self.ax.plot(xs_plot, ys_plot, zs_plot,
+                             color='magenta', linewidth=2.5,
                              alpha=0.85)
         self._trajectory_artists.append(line)
 
         # Start-point marker
-        sc = self.ax.scatter(xs[0], ys[0], zs[0], color='lime', s=40,
+        sc = self.ax.scatter(xs_plot[0], ys_plot[0], zs_plot[0], color='lime', s=40,
                              depthshade=False)
         self._start_markers.append(sc)
 
