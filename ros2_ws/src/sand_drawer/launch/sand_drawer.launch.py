@@ -92,6 +92,10 @@ def launch_setup(context, *args, **kwargs):
     active_tool_str   = LaunchConfiguration("active_tool").perform(context)
     orthogonal_tool_length_str = LaunchConfiguration(
         "orthogonal_tool_length_m").perform(context)
+    sweep_margin_str = LaunchConfiguration("sweep_margin_m").perform(context)
+    sweep_tool_width_str = LaunchConfiguration("sweep_tool_width_m").perform(context)
+    sweep_overlap_str = LaunchConfiguration("sweep_overlap_m").perform(context)
+    base_keepout_radius_str = LaunchConfiguration("base_keepout_radius_m").perform(context)
     sweep_max_passes = int(
         LaunchConfiguration("sweep_max_passes").perform(context))
     sweep_spatula_max_passes = int(
@@ -103,6 +107,10 @@ def launch_setup(context, *args, **kwargs):
     approach_height = float(approach_height_str)
     surface_z_offset = float(surface_z_offset_str)
     orthogonal_tool_length = float(orthogonal_tool_length_str)
+    sweep_margin = float(sweep_margin_str)
+    sweep_tool_width = float(sweep_tool_width_str)
+    sweep_overlap = float(sweep_overlap_str)
+    base_keepout_radius = float(base_keepout_radius_str)
 
     # When real_robot is active, force use_sim_time=false (wall clock)
     use_sim_time = False if real_robot else (use_sim_time_str == "true")
@@ -232,6 +240,10 @@ def launch_setup(context, *args, **kwargs):
                 "text_string": text_string_str,
                 "active_tool": active_tool_str,
                 "orthogonal_tool_length_m": orthogonal_tool_length,
+                "sweep_margin_m": sweep_margin,
+                "sweep_tool_width_m": sweep_tool_width,
+                "sweep_overlap_m": sweep_overlap,
+                "base_keepout_radius_m": base_keepout_radius,
                 "sweep_max_passes": sweep_max_passes,
                 "sweep_spatula_max_passes": sweep_spatula_max_passes,
             }],
@@ -407,6 +419,14 @@ def generate_launch_description():
                       description="Active tool face: fork | pointy | spatula | empty | orthogonal (action mode)"),
         DeclareLaunchArgument("orthogonal_tool_length_m", default_value="0.13",
                       description="Tool length for active_tool:=orthogonal (meters)"),
+        DeclareLaunchArgument("sweep_margin_m", default_value="0.05",
+                  description="Per-edge crop margin for sweep generation (meters)"),
+        DeclareLaunchArgument("sweep_tool_width_m", default_value="0.08",
+                  description="Nominal sweep tool width used to set linear pass spacing (meters)"),
+        DeclareLaunchArgument("sweep_overlap_m", default_value="0.015",
+                  description="Overlap between adjacent linear sweep passes (meters)"),
+        DeclareLaunchArgument("base_keepout_radius_m", default_value="0.27",
+                  description="Minimum wrist-center distance from base origin during sweep generation (meters)"),
         DeclareLaunchArgument("sweep_max_passes", default_value="0",
                       description="Max sweep passes for non-spatula tools (0 disables cap)"),
         DeclareLaunchArgument("sweep_spatula_max_passes", default_value="8",

@@ -139,7 +139,7 @@ class DrawingDispatcher(Node):
         self.declare_parameter('sweep_tool_width_m', 0.08)
         self.declare_parameter('sweep_overlap_m', 0.015)
         self.declare_parameter('sweep_arc_spacing_m', 0.025)
-        self.declare_parameter('base_keepout_radius_m', 0.22)
+        self.declare_parameter('base_keepout_radius_m', 0.27)
         self.declare_parameter('sweep_max_passes', 0)
         self.declare_parameter('sweep_spatula_max_passes', 8)
 
@@ -814,167 +814,96 @@ class DrawingDispatcher(Node):
         return self.plane_origin, [], []
 
     def _generate_sweep_3d(self) -> Tuple[np.ndarray, List[np.ndarray], int, float]:
-        """
-        Generates concentric radial arcs (windshield sweep).
-        Circle/rectangle intersections define angular limits per radius,
-        then one continuous arc is drawn between those limits.
-        This intentionally allows mild off-table overshoot between limits
-        to avoid fragmented/stuttered arcs near corners.
-        """
+        """Generate a linear boustrophedon sweep clipped by active plane constraints."""
         margin = max(self._sweep_margin, 0.0)
-        tool_width = max(self._sweep_tool_width - self._sweep_overlap, 0.01)
+        step_nominal = max(self._sweep_tool_width - self._sweep_overlap, 0.01)
+        wrist_keepout = max(self._base_keepout, 0.0)
+        max_tip_radius = 0.80
 
         w_hat = self.rect_width_vec / max(self.table_width_m, 1e-9)
         h_hat = self.rect_height_vec / max(self.table_height_m, 1e-9)
-
-        c0 = self.rect_origin + (margin * w_hat) + (margin * h_hat)
-        c1 = self.rect_origin + ((self.table_width_m - margin) * w_hat) + (margin * h_hat)
-        c2 = self.rect_origin + ((self.table_width_m - margin) * w_hat) + ((self.table_height_m - margin) * h_hat)
-        c3 = self.rect_origin + (margin * w_hat) + ((self.table_height_m - margin) * h_hat)
-        corners_2d = [
-            np.array([float(c[0]), float(c[1])], dtype=float)
-            for c in (c0, c1, c2, c3)
-        ]
-
-        def dist_to_seg(p: np.ndarray, v: np.ndarray, w: np.ndarray) -> float:
-            l2 = float(np.sum((w - v) ** 2))
-            if l2 <= 1e-12:
-                return float(np.linalg.norm(p - v))
-            t = max(0.0, min(1.0, float(np.dot(p - v, w - v) / l2)))
-            return float(np.linalg.norm(p - (v + t * (w - v))))
-
-        origin = np.array([0.0, 0.0], dtype=float)
-        min_r = max(
-            min([dist_to_seg(origin, corners_2d[i], corners_2d[(i + 1) % 4]) for i in range(4)]),
-            self._base_keepout,
-        )
-        max_r = min(max([float(np.linalg.norm(c)) for c in corners_2d]), 0.80)
-
-        if min_r >= max_r:
-            self.get_logger().error(
-                'Sweep geometry invalid (table inside keepout or beyond reach).')
-            return self.plane_origin, [], 0, 0.0
-
-        natural_radii = np.arange(min_r, max_r + tool_width, tool_width)
-
-        max_passes = int(self._sweep_max_passes)
-
-        if max_passes > 0 and len(natural_radii) > max_passes:
-            radii = np.linspace(min_r, max_r, max_passes)
-        else:
-            radii = natural_radii
-        num_passes = int(len(radii))
-        if num_passes >= 2:
-            actual_step = float((radii[-1] - radii[0]) / (num_passes - 1))
-        else:
-            actual_step = tool_width
-
-        ox, oy, oz = [float(v) for v in self.plane_origin]
-        nx, ny, nz = [float(v) for v in self.plane_n]
-
-        def get_z_on_plane(x: float, y: float) -> float:
-            if abs(nz) < 1e-9:
-                return oz
-            return oz - ((x - ox) * nx + (y - oy) * ny) / nz
 
         u_min = margin
         u_max = self.table_width_m - margin
         v_min = margin
         v_max = self.table_height_m - margin
+        cropped_width = u_max - u_min
+        cropped_height = v_max - v_min
 
-        def point_inside_rect_xy(x: float, y: float, eps: float = 1e-5) -> bool:
-            z = get_z_on_plane(x, y)
-            p = np.array([x, y, z], dtype=float)
-            rel = p - self.rect_origin
-            u = float(np.dot(rel, w_hat))
-            v = float(np.dot(rel, h_hat))
-            return ((u_min - eps) <= u <= (u_max + eps)) and ((v_min - eps) <= v <= (v_max + eps))
+        if cropped_width <= 0.02 or cropped_height <= 0.02:
+            self.get_logger().error(
+                'Sweep geometry invalid after rectangle crop '
+                f'(margin={margin:.3f}m, width={cropped_width:.3f}m, '
+                f'height={cropped_height:.3f}m).')
+            return self.plane_origin, [], 0, 0.0
+
+        natural_pass_offsets = np.arange(v_min, v_max + step_nominal * 0.5, step_nominal)
+        max_passes = int(self._sweep_max_passes)
+        if max_passes > 0 and len(natural_pass_offsets) > max_passes:
+            pass_offsets = np.linspace(v_min, v_max, max_passes)
+        else:
+            pass_offsets = natural_pass_offsets
+
+        num_passes = int(len(pass_offsets))
+        if num_passes >= 2:
+            actual_step = float((pass_offsets[-1] - pass_offsets[0]) / (num_passes - 1))
+        else:
+            actual_step = step_nominal
+
+        self.get_logger().info(
+            f'[SWEEP_CONSTRAINTS] pattern=linear, tool={self._active_tool}, '
+            f'rect_crop_margin={margin:.3f}m, '
+            f'cropped_width={cropped_width:.3f}m, '
+            f'cropped_height={cropped_height:.3f}m, '
+            f'pass_step={actual_step:.3f}m '
+            f'(tool_width={self._sweep_tool_width:.3f}m, overlap={self._sweep_overlap:.3f}m), '
+            f'min_wrist_base_radius={wrist_keepout:.3f}m, '
+            f'max_tip_base_radius={max_tip_radius:.3f}m')
+
+        def tip_at(u: float, v: float) -> np.ndarray:
+            return self.rect_origin + u * w_hat + v * h_hat
+
+        def tip_is_valid(tip_pos: np.ndarray) -> bool:
+            tip_radius = math.hypot(float(tip_pos[0]), float(tip_pos[1]))
+            if tip_radius > max_tip_radius + 1e-9:
+                return False
+            T_wrist = self._wrist_pose_from_tip(tip_pos)
+            wrist_pos = T_wrist[:3, 3]
+            wrist_radius = math.hypot(float(wrist_pos[0]), float(wrist_pos[1]))
+            return wrist_radius >= wrist_keepout - 1e-9
+
+        sample_ds = min(max(step_nominal / 4.0, 0.01), 0.03)
+        num_samples = max(int(math.ceil(cropped_width / sample_ds)), 2) + 1
 
         pts_3d: List[np.ndarray] = []
         forward = True
         lift_height = 0.08
         used_passes = 0
+        rejected_passes = 0
 
-        for r in radii:
-            intersections: List[np.ndarray] = []
-            for i in range(4):
-                A = corners_2d[i]
-                B = corners_2d[(i + 1) % 4]
-                d = B - A
-                f = A
-                a = float(np.dot(d, d))
-                b = float(2.0 * np.dot(f, d))
-                c = float(np.dot(f, f) - (r * r))
-                disc = b * b - 4.0 * a * c
-                if disc < 0.0 or a <= 1e-12:
-                    continue
-                root = math.sqrt(disc)
-                for t in ((-b - root) / (2.0 * a), (-b + root) / (2.0 * a)):
-                    if 0.0 <= t <= 1.0:
-                        intersections.append(A + t * d)
+        for v in pass_offsets:
+            segment_candidates: List[List[np.ndarray]] = []
+            current_segment: List[np.ndarray] = []
 
-            if len(intersections) < 2:
+            for u in np.linspace(u_min, u_max, num_samples):
+                tip_pos = tip_at(float(u), float(v))
+                if tip_is_valid(tip_pos):
+                    current_segment.append(tip_pos)
+                else:
+                    if len(current_segment) >= 2:
+                        segment_candidates.append(current_segment)
+                    current_segment = []
+
+            if len(current_segment) >= 2:
+                segment_candidates.append(current_segment)
+
+            if not segment_candidates:
+                rejected_passes += 1
                 continue
 
-            angles = sorted([math.atan2(float(pt[1]), float(pt[0])) for pt in intersections])
-            if len(angles) < 2:
-                continue
-
-            # Build candidate circular intervals and keep those whose midpoint
-            # lies inside the rectangle footprint.
-            intervals: List[Tuple[float, float]] = []
-            n_ang = len(angles)
-            for i in range(n_ang):
-                a0 = angles[i]
-                a1 = angles[(i + 1) % n_ang]
-                if i == n_ang - 1:
-                    a1 += 2.0 * math.pi
-                if (a1 - a0) <= 1e-6:
-                    continue
-
-                amid = 0.5 * (a0 + a1)
-                amidf = float(((amid + math.pi) % (2.0 * math.pi)) - math.pi)
-                xm = float(r * math.cos(amidf))
-                ym = float(r * math.sin(amidf))
-                if point_inside_rect_xy(xm, ym):
-                    intervals.append((a0, a1))
-
-            if not intervals:
-                continue
-
-            # Use the longest valid inside interval for a single continuous arc.
-            start, end = max(intervals, key=lambda ab: ab[1] - ab[0])
-
-            span = max(end - start, 0.0)
-            if span <= 1e-4:
-                continue
-
-            # Pull arc endpoints slightly inward to avoid exact edge-touch points
-            # while preserving near-edge coverage on base-side arcs.
-            endpoint_pad = min(0.015 / max(float(r), 1e-6), 0.10 * span)
-            start += endpoint_pad
-            end -= endpoint_pad
-            if end <= start:
-                continue
-
-            arc_len = max(r * (end - start), 0.0)
-            num_pts = max(int(arc_len / 0.03), 2)
-            arc_angles = np.linspace(start, end, num_pts)
+            stroke = max(segment_candidates, key=len)
             if not forward:
-                arc_angles = arc_angles[::-1]
-
-            stroke: List[np.ndarray] = []
-            for ang in arc_angles:
-                angf = float(((ang + math.pi) % (2.0 * math.pi)) - math.pi)
-                x = float(r * math.cos(angf))
-                y = float(r * math.sin(angf))
-                base_pt = np.array([x, y, get_z_on_plane(x, y)], dtype=float)
-                pt = base_pt
-                if not stroke or float(np.linalg.norm(pt - stroke[-1])) >= 0.008:
-                    stroke.append(pt)
-
-            if len(stroke) < 2:
-                continue
+                stroke = list(reversed(stroke))
 
             if pts_3d:
                 pts_3d.append(pts_3d[-1] - self.plane_n * lift_height)
@@ -985,8 +914,8 @@ class DrawingDispatcher(Node):
 
         center_3d = self.rect_origin + 0.5 * self.rect_width_vec + 0.5 * self.rect_height_vec
         self.get_logger().info(
-            f'Generated windshield sweep: arcs={used_passes}/{num_passes}, '
-            f'min_r={min_r:.2f}m, max_r={max_r:.2f}m, pts={len(pts_3d)}')
+            f'Generated linear sweep: passes={used_passes}/{num_passes}, '
+            f'rejected={rejected_passes}, step={actual_step:.3f}m, pts={len(pts_3d)}')
         return center_3d, pts_3d, num_passes, actual_step
 
     # ------------------------------------------------------------------
@@ -1028,7 +957,7 @@ class DrawingDispatcher(Node):
                     return None
 
                 self.get_logger().info(
-                    f'Generated sweep (fast mode): passes={num_passes}, '
+                    f'Generated linear sweep: passes={num_passes}, '
                     f'step={actual_step*100:.1f}cm, '
                     f'pts={len(positions)}')
 

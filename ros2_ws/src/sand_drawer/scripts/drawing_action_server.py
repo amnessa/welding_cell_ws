@@ -1552,8 +1552,9 @@ class DrawingActionServer(Node):
         before the first batch) so that all batches share the same
         time origin — the controller uses header.stamp +
         time_from_start to schedule each point.  The next batch is
-        dispatched when the robot reaches ~70% of the current batch
-        so the controller's interpolation buffer never empties.
+        dispatched before the current batch's scheduled end time
+        (with a closest-index fallback) so the controller's
+        interpolation buffer never empties.
         """
         batch_sz = max(self._traj_batch_size, 500)
         n_master = len(master_path)
@@ -1611,24 +1612,44 @@ class DrawingActionServer(Node):
 
             elapsed = (self.get_clock().now() - t0).nanoseconds * 1e-9
 
-            # ---- Stream next batch at 80% of current batch ----
+            # ---- Stream next batch before current batch expires ----
             if cur_batch < n_batches - 1:
                 b_start_cur, b_end_cur = batches[cur_batch]
-                # 70% point of current batch by index
+                cur_batch_t0 = master_times[b_start_cur]
+                cur_batch_t1 = master_times[b_end_cur - 1]
+                cur_batch_dur = max(cur_batch_t1 - cur_batch_t0, monitor_dt)
+
+                # Send with time margin because the controller schedules by
+                # absolute time, not by how many points the monitor has matched.
+                lead_time = max(1.0, min(3.0, 0.10 * cur_batch_dur))
+                trigger_time = max(cur_batch_t0, cur_batch_t1 - lead_time)
+
+                # Keep the old progress-based trigger as a fallback.
                 trigger_idx = b_start_cur + int(
                     0.70 * (b_end_cur - b_start_cur))
-                if last_closest_idx >= trigger_idx:
+
+                if elapsed >= trigger_time or last_closest_idx >= trigger_idx:
+                    trigger_reason = (
+                        f'time elapsed={elapsed:.1f}s >= {trigger_time:.1f}s '
+                        f'(lead={lead_time:.1f}s)'
+                        if elapsed >= trigger_time else
+                        f'progress idx={last_closest_idx} >= {trigger_idx}')
                     cur_batch += 1
                     b_start, b_end = batches[cur_batch]
+
+                    # Include the previous boundary point so the controller
+                    # sees a continuous splice across batch transitions.
+                    send_start = max(b_start - 1, 0)
                     self._send_full_trajectory(
-                        master_path[b_start:b_end],
-                        master_times[b_start:b_end],
+                        master_path[send_start:b_end],
+                        master_times[send_start:b_end],
                         start_stamp=t0_msg)
                     self.get_logger().info(
                         f'  Batch {cur_batch+1}/{n_batches} sent: '
-                        f'pts [{b_start}..{b_end-1}], '
+                        f'pts [{send_start}..{b_end-1}], '
                         f't=[{master_times[b_start]:.1f}..'
-                        f'{master_times[b_end-1]:.1f}]s')
+                        f'{master_times[b_end-1]:.1f}]s, '
+                        f'trigger={trigger_reason}')
 
             # ---- Convergence check ----
             progress_frac = last_closest_idx / max(n_master - 1, 1)
