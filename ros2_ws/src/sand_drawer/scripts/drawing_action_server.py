@@ -1647,7 +1647,7 @@ class DrawingActionServer(Node):
                     self.get_logger().info(
                         f'  Batch {cur_batch+1}/{n_batches} sent: '
                         f'pts [{send_start}..{b_end-1}], '
-                        f't=[{master_times[b_start]:.1f}..'
+                        f't=[{master_times[send_start]:.1f}..'
                         f'{master_times[b_end-1]:.1f}]s, '
                         f'trigger={trigger_reason}')
 
