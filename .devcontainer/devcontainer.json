@@ -7,6 +7,8 @@
         "--network=host",
         "--privileged",
         "--gpus=all",
+        "--volume=/dev/bus/usb:/dev/bus/usb",
+        "--volume=/run/udev:/run/udev:ro",
         "--volume=/tmp/.X11-unix:/tmp/.X11-unix:rw",
         "--volume=${localEnv:HOME}/.Xauthority:/isaac-sim/.Xauthority:rw",
         "--volume=${localEnv:HOME}/docker/isaac-sim/cache/main:/isaac-sim/.cache:rw",
