@@ -1,0 +1,13 @@
+ipywidgets
+numpy
+notebook
+ipykernel
+matplotlib
+opencv-contrib-python
+pyrealsense2
+torch
+torchvision
+huggingface-hub
+pillow
+ur-rtde
+sam3
