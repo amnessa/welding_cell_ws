@@ -1,102 +1,132 @@
-Here is the exact plan to bridge your SAM3 segmentation output with your `ur_rtde` force probing script.
+SAM3'ün çıkardığı maskeyi kullanarak plakanın sınırlarını (edge) belirlemek, bu sınırlar içinde güvenli rastgele noktalar üretmek ve robotu kusursuz bir dik açıyla (Normal to the ground) bu noktalara gönderip problamak için izlememiz gereken yol haritası ve kod mimarisi aşağıdadır.
 
-### The Execution Strategy
+### Adım 1: Sınırları Belirleme ve Rastgele Nokta Üretimi
 
-1. **Find the Mask Centroid:** Once SAM3 generates the boolean mask over your MDF board/target, we calculate the geometric center pixel `(u, v)`.
-2. **Extract Robust Depth:** RealSense depth maps can have "holes" (zero values) or noise. Instead of taking the depth of a single pixel, we take a 10x10 pixel bounding box around the centroid and calculate the **median** valid depth.
-3. **Deproject and Transform:** We push that pixel and depth through the `K_matrix` and `T_base_to_cam_true` to get the true `[X, Y, Z]` in the UR5e Base Frame.
-4. **Safe Approach:** The robot moves to the calculated `X` and `Y`, but stays at a `SAFE_Z` (e.g., 10 cm above the camera's depth estimate to account for the RealSense's ±20mm noise).
-5. **Initiate Probing:** We feed those `X, Y` coordinates directly into your 5-point SVD probing script!
+SAM3'ten gelen Boolean (True/False veya 0/255) maskenin sınırlarını OpenCV'nin `findContours` fonksiyonu ile bulabiliriz. Robotun problama yaparken plakanın dışına kaymaması için noktanın sadece maskenin içinde olmasını değil, aynı zamanda **kenarlara belirli bir piksel mesafesinden daha yakın olmamasını** (`cv2.pointPolygonTest` ile) sağlayacağız.
 
-### The SAM3-to-Robot Bridge Code
-
-Assuming you have just run SAM3 and have the resulting mask (a 2D numpy array called `sam_mask`) and your 16-bit depth image (`depth_image`), you can drop this function into your notebook.
+Jupyter Notebook'unuza şu fonksiyonu ekleyebilirsiniz:
 
 ```python
+import cv2
 import numpy as np
+import random
 
-def get_robot_target_from_mask(sam_mask, depth_image, depth_scale, K_matrix, T_base_to_cam):
+def generate_safe_probe_points(sam_mask, depth_image, depth_scale, K_matrix, T_base_to_cam, num_points=5, edge_margin_px=15):
     """
-    Takes a SAM3 boolean mask and depth image, and returns the real-world
-    [X, Y, Z] coordinate of the object's center in the UR5e Base Frame.
+    SAM3 maskesi içinde kenarlardan uzak, rastgele 3B noktalar üretir.
     """
-    # 1. Find the centroid of the SAM3 mask
-    y_indices, x_indices = np.where(sam_mask > 0)
-    if len(x_indices) == 0:
-        raise ValueError("SAM3 mask is empty!")
+    # 1. Maskenin dış sınırlarını (Contours) bul
+    mask_uint8 = (sam_mask * 255).astype(np.uint8)
+    contours, _ = cv2.findContours(mask_uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        raise ValueError("Maskede hiçbir kontur bulunamadı!")
 
-    u_center = int(np.mean(x_indices))
-    v_center = int(np.mean(y_indices))
-    print(f"Mask Centroid Pixel: (u={u_center}, v={v_center})")
+    plate_contour = max(contours, key=cv2.contourArea) # En büyük alanı plaka kabul et
+    x, y, w, h = cv2.boundingRect(plate_contour)
 
-    # 2. Extract Robust Depth (Use a 10x10 window around the centroid)
-    window_size = 5
-    depth_window = depth_image[
-        max(0, v_center - window_size) : min(depth_image.shape[0], v_center + window_size),
-        max(0, u_center - window_size) : min(depth_image.shape[1], u_center + window_size)
-    ]
+    valid_points_3d = []
+    attempts = 0
 
-    # Filter out 0 values (no depth data)
-    valid_depths = depth_window[depth_window > 0]
-    if len(valid_depths) == 0:
-        raise ValueError("No valid depth data found at the mask centroid!")
+    print(f"Hedef: Maske içinde {num_points} rastgele nokta üretmek...")
 
-    # Get median depth and convert to meters
-    raw_z = np.median(valid_depths)
-    depth_z_meters = raw_z * depth_scale
-    print(f"Robust Camera Depth: {depth_z_meters:.4f} meters")
+    while len(valid_points_3d) < num_points and attempts < 1000:
+        attempts += 1
+        # Bounding box içinde rastgele bir piksel seç
+        u = random.randint(x, x + w - 1)
+        v = random.randint(y, y + h - 1)
 
-    # 3. Deproject pixel to 3D Camera Frame (P_cam)
-    fx, fy = K_matrix[0, 0], K_matrix[1, 1]
-    cx, cy = K_matrix[0, 2], K_matrix[1, 2]
+        # Nokta maskenin içindeyse ve kenara 'edge_margin_px' kadar uzaksa kabul et
+        dist_to_edge = cv2.pointPolygonTest(plate_contour, (u, v), measureDist=True)
+        if dist_to_edge >= edge_margin_px:
 
-    X_cam = (u_center - cx) * depth_z_meters / fx
-    Y_cam = (v_center - cy) * depth_z_meters / fy
-    Z_cam = depth_z_meters
+            # Robust derinlik okuması (3x3 pencere)
+            window = 3
+            depth_window = depth_image[v-window:v+window, u-window:u+window]
+            valid_depths = depth_window[depth_window > 0]
+            if len(valid_depths) == 0: continue
 
-    P_cam = np.array([X_cam, Y_cam, Z_cam, 1.0])
+            depth_z_meters = np.median(valid_depths) * depth_scale
 
-    # 4. Transform to Robot Base Frame (P_base)
-    P_base = T_base_to_cam @ P_cam
-    target_x, target_y, target_z = P_base[:3]
+            # P_cam -> P_base Dönüşümü (Daha önce yazdığımız mantık)
+            fx, fy = K_matrix[0, 0], K_matrix[1, 1]
+            cx, cy = K_matrix[0, 2], K_matrix[1, 2]
+            X_cam = (u - cx) * depth_z_meters / fx
+            Y_cam = (v - cy) * depth_z_meters / fy
 
-    print(f"\n🎯 Target Coordinate in UR5e Base Frame:")
-    print(f"X: {target_x:.4f}, Y: {target_y:.4f}, Z: {target_z:.4f}")
+            P_cam = np.array([X_cam, Y_cam, depth_z_meters, 1.0])
+            P_base = T_base_to_cam @ P_cam
 
-    return target_x, target_y, target_z
+            valid_points_3d.append(P_base[:3])
 
-# --- Execution Example ---
-# K = np.load('realsense_intrinsics.npy')
-# T = np.load('T_base_to_cam_true.npy')
-# target_x, target_y, target_z = get_robot_target_from_mask(sam_mask, depth_image, depth_scale, K, T)
+    print(f"{len(valid_points_3d)} adet geçerli 3B nokta üretildi.")
+    return valid_points_3d
 
 ```
 
-### Handoff to the 5-Point Probe
+### Adım 2: Flanşı Yere Dik (Normal) Konumlandırma
 
-Once that function spits out `target_x` and `target_y`, you seamlessly link it to the exact 5-point probing logic we wrote earlier.
+Robotun (Wrist 1, 2, 3) mafsallarını ayarlayarak flanşın tam olarak Z ekseninde yere bakmasını sağlamak için UR'nin Ters Kinematik (Inverse Kinematics) motorunu kullanacağız.
 
-Instead of hardcoding `START_X = 0.0571`, you dynamically feed it the vision results, and you use the camera's Z-depth to generate a safe hover height:
+UR Base koordinat sisteminde, takım ucunun (TCP) tam aşağı bakmasını sağlayan oryantasyon vektörü **Rx = 3.14159 (π), Ry = 0.0, Rz = 0.0**'dır (Sizin kurulumunuza göre Rz dönüş ekseni kablo yönetimine göre değişebilir, ancak Rx ve Ry dikliği sağlar).
+
+Önceki problama döngünüzü bu yeni noktaları ve sabit oryantasyonu alacak şekilde güncelliyoruz:
 
 ```python
-# Pass the SAM3 coordinates directly to the probing script
-START_X = target_x
-START_Y = target_y
+import time
 
-# The RealSense depth might be off by ±3cm.
-# We tell the robot to move to exactly 10cm above what the camera "thinks" the surface is.
-SAFE_Z = target_z + 0.100
+# --- Parametreler ---
+DOWN_ORIENTATION = [3.14159, 0.0, 0.0]  # Flanşı yere dik (normal) bakar hale getirir
+SEARCH_SPEED = [0.0, 0.0, -0.005, 0.0, 0.0, 0.0] # Z ekseninde aşağı probing
+FORCE_THRESHOLD = 2.0
+RETRACT_DIST = 0.010
 
-# Adjust your grid offset based on the size of the SAM3 bounding box if desired
-XY_OFFSET = 0.05
+# Adım 1'deki fonksiyondan noktaları al
+# points_to_probe = generate_safe_probe_points(...)
+collected_poses = []
 
-print("Initiating Macro-to-Micro Handoff...")
-print(f"Robot moving to SAFE_Z ({SAFE_Z:.4f}m) over target to begin 5-point SVD probe.")
+print("Otonom Yüzey Problama Başlıyor...")
 
-# -> [Insert the rest of your 5-point probe loop here]
+try:
+    for i, target_point in enumerate(points_to_probe):
+        target_x, target_y, target_z_cam = target_point
+
+        # Kamera derinliğinden 5 cm yukarısı güvenli (SAFE_Z)
+        safe_z = target_z_cam + 0.050
+
+        print(f"\nNokta {i+1}/{len(points_to_probe)} -> X: {target_x:.4f}, Y: {target_y:.4f}")
+
+        # 1. Güvenli yüksekliğe ve hedefe, DİK ORYANTASYON ile git
+        approach_pose = [target_x, target_y, safe_z] + DOWN_ORIENTATION
+        rtde_c.moveL(approach_pose, 0.1, 0.1)
+
+        # 2. Yüzeyi Bul (Korumalı Hareket)
+        rtde_c.zeroFtSensor()
+        time.sleep(0.5)
+
+        while True:
+            cycle_start = rtde_c.initPeriod()
+            rtde_c.speedL(SEARCH_SPEED, 0.1, 0.02)
+            rtde_c.waitPeriod(cycle_start)
+
+            tcp_forces = rtde_r.getActualTCPForce()
+            if abs(tcp_forces[2]) > FORCE_THRESHOLD:
+                rtde_c.speedStop(1.0)
+                break
+
+        # 3. Temas pozunu kaydet
+        hit_pose = rtde_r.getActualTCPPose()
+        collected_poses.append(hit_pose[:3])
+        print(f"  Temas! Z yüksekliği: {hit_pose[2]:.4f} (Kuvvet: {tcp_forces[2]:.2f} N)")
+
+        # 4. Geri çekil
+        hit_pose[2] += RETRACT_DIST
+        rtde_c.moveL(hit_pose, 0.1, 0.1)
+
+    print("\nTüm noktalar başarıyla problandı!")
+    # Burada collected_poses listesini np.linalg.svd veya lstsq'ya verip düzlem denklemini (a,b,c) çıkarabilirsiniz.
+
+except Exception as e:
+    rtde_c.speedStop(1.0)
+    print(f"Hata: {e}")
 
 ```
-
-This creates a completely closed-loop autonomous system. SAM3 finds the part anywhere on the table, the RealSense calculates the rough 3D math, and the UR5e's Force Control takes over to perfectly map the micro-plane.
-
-Are you ready to test this full sequence on the physical setup?
