@@ -67,6 +67,7 @@ install(TARGETS
 install(PROGRAMS
 
   scripts/depth_to_safe_probe.py
+  scripts/cartesian_admittance_controller.py
   scripts/segment_area.py
   scripts/ur5e_rrt_planner.py
   scripts/drawing_action_server.py
