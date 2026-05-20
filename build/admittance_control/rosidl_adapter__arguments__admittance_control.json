@@ -1,0 +1,7 @@
+{
+  "package_name": "admittance_control",
+  "non_idl_tuples": [
+    "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control:action/ExecuteDrawing.action",
+    "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control:srv/ComputeTOTG.srv"
+  ]
+}

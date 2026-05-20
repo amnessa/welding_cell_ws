@@ -3,6 +3,7 @@ numpy
 notebook
 ipykernel
 matplotlib
+PyQt5
 opencv-contrib-python
 pyrealsense2
 torch

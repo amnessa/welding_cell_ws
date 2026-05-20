@@ -24,7 +24,6 @@ apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
     python3-pyqt5 \
     python3-matplotlib \
     build-essential \
-    python -m venv .venv \
     2>/dev/null || echo "Some packages may not be available, continuing..."
 
 # Mark workspace as safe for git (fixes VS Code git detection in containers)

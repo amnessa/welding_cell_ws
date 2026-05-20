@@ -1,0 +1,51 @@
+{
+  "camera_info": {
+    "device_name": "Intel RealSense D435",
+    "serial_number": "022422070965",
+    "sensor_names": [
+      "Stereo Module",
+      "RGB Camera"
+    ],
+    "depth_scale": 0.0010000000474974513,
+    "rgb_resolution": [
+      1280,
+      720
+    ],
+    "depth_resolution": [
+      848,
+      480
+    ],
+    "fps": 30
+  },
+  "mask_info": {
+    "mode": "sam3_prompt",
+    "prompt": "metal plate or sheet metal plate part in the middle of the MDF board",
+    "score": 0.8162656426429749,
+    "device": "cuda",
+    "box_xyxy": [
+      508.2291259765625,
+      332.6300048828125,
+      706.1840209960938,
+      442.1856689453125
+    ]
+  },
+  "depth_summary": {
+    "centroid_uv": [
+      608,
+      385
+    ],
+    "depth_m": 1.0470000497298315,
+    "valid_depth_count": 100,
+    "mask_pixel_count": 11288
+  },
+  "mask_mode": "sam3_prompt",
+  "prompt_text": "metal plate or sheet metal plate part in the middle of the MDF board",
+  "artifact_paths": {
+    "run_dir": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/artifacts/segment_area/20260520_140813",
+    "color_bgr_png": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/artifacts/segment_area/20260520_140813/color_bgr.png",
+    "overlay_bgr_png": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/artifacts/segment_area/20260520_140813/overlay_bgr.png",
+    "mask_png": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/artifacts/segment_area/20260520_140813/mask.png",
+    "depth_m_npy": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/artifacts/segment_area/20260520_140813/depth_m.npy",
+    "metadata_json": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/artifacts/segment_area/20260520_140813/metadata.json"
+  }
+}

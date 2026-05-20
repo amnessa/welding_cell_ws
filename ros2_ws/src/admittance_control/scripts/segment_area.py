@@ -77,11 +77,51 @@ def _log(logger: Optional[Any], level: str, message: str) -> None:
 		print(message)
 		return
 
-	log_method = getattr(logger, level, None)
-	if callable(log_method):
-		log_method(message)
-	else:
-		logger.info(message)
+	target_logger = logger.get_logger() if hasattr(logger, 'get_logger') else logger
+	severity = str(level).lower()
+
+	if severity in ('warn', 'warning'):
+		warning_method = getattr(target_logger, 'warning', None)
+		if callable(warning_method):
+			warning_method(message)
+			return
+		warn_method = getattr(target_logger, 'warn', None)
+		if callable(warn_method):
+			warn_method(message)
+			return
+		print(message)
+		return
+
+	if severity == 'error':
+		error_method = getattr(target_logger, 'error', None)
+		if callable(error_method):
+			error_method(message)
+			return
+		print(message)
+		return
+
+	if severity == 'debug':
+		debug_method = getattr(target_logger, 'debug', None)
+		if callable(debug_method):
+			debug_method(message)
+			return
+		print(message)
+		return
+
+	if severity == 'fatal':
+		fatal_method = getattr(target_logger, 'fatal', None)
+		if callable(fatal_method):
+			fatal_method(message)
+			return
+		print(message)
+		return
+
+	info_method = getattr(target_logger, 'info', None)
+	if callable(info_method):
+		info_method(message)
+		return
+
+	print(message)
 
 
 def _parse_manual_roi(raw_roi: str) -> Optional[Tuple[int, int, int, int]]:

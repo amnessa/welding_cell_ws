@@ -1,0 +1,35 @@
+# ComputeTOTG.srv
+# Time-Optimal Trajectory Generation via MoveIt 2 TOTG
+#
+# Send raw joint-space waypoints (positions only).
+# Receives fully time-parameterized trajectory with positions, velocities,
+# and timestamps computed by the TOTG algorithm.
+
+# ── Request ──────────────────────────────────────────────────────────────
+# Flattened waypoint positions: [q0_j0, q0_j1, ..., q0_jN, q1_j0, ...]
+float64[] waypoints_flat
+uint32 num_joints
+
+# Per-joint velocity limits (rad/s) — length = num_joints
+float64[] max_velocity
+# Per-joint acceleration limits (rad/s²) — length = num_joints
+float64[] max_acceleration
+
+# Max deviation at intermediate waypoints for corner blending (rad).
+# Larger → smoother corners but less path accuracy.  Default ~0.1
+float64 path_tolerance
+
+# Desired output timestep for resampled trajectory (s).  Default ~0.1
+float64 resample_dt
+---
+# ── Response ─────────────────────────────────────────────────────────────
+# Resampled trajectory positions: [q0_j0, ..., q0_jN, q1_j0, ...]
+float64[] timed_positions_flat
+# Resampled trajectory velocities: same layout as positions
+float64[] timed_velocities_flat
+# Timestamp for each output waypoint (seconds from start)
+float64[] timestamps
+uint32 num_output_points
+
+bool success
+string message

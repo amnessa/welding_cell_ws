@@ -1,0 +1,178 @@
+{
+  "source_segment_run_dir": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/artifacts/segment_area/20260520_140813",
+  "centroid_target": {
+    "base_point": [
+      0.3763175051947399,
+      -0.2860610093764157,
+      -0.1209204652564495
+    ],
+    "centroid_uv": [
+      608,
+      385
+    ],
+    "depth_m": 1.0470000505447388,
+    "valid_depth_count": 100
+  },
+  "probe_sampling_debug": {
+    "attempt_count": 19,
+    "bounding_rect": [
+      508,
+      333,
+      197,
+      108
+    ],
+    "edge_margin_px": 15
+  },
+  "probe_targets": [
+    {
+      "index": 1,
+      "pixel_uv": [
+        575,
+        363
+      ],
+      "distance_to_edge_px": 18.681541692269406,
+      "depth_m": 1.061000108718872,
+      "camera_point": [
+        -0.08752812962589061,
+        0.014293875048428495,
+        1.061000108718872
+      ],
+      "base_point": [
+        0.3804378905710454,
+        -0.3337599617785605,
+        -0.11613656595792532
+      ]
+    },
+    {
+      "index": 2,
+      "pixel_uv": [
+        602,
+        387
+      ],
+      "distance_to_edge_px": 27.202941017470888,
+      "depth_m": 1.0470000505447388,
+      "camera_point": [
+        -0.05562827001767243,
+        0.04144987189240667,
+        1.0470000505447388
+      ],
+      "base_point": [
+        0.38223823225434345,
+        -0.2900171833265578,
+        -0.12199992161963358
+      ]
+    },
+    {
+      "index": 3,
+      "pixel_uv": [
+        622,
+        392
+      ],
+      "distance_to_edge_px": 28.160255680657446,
+      "depth_m": 1.0390000343322754,
+      "camera_point": [
+        -0.03260322477072613,
+        0.04678642229503743,
+        1.0390000343322754
+      ],
+      "base_point": [
+        0.37376630593436644,
+        -0.26667520884428286,
+        -0.11954830380253267
+      ]
+    },
+    {
+      "index": 4,
+      "pixel_uv": [
+        667,
+        418
+      ],
+      "distance_to_edge_px": 18.027756377319946,
+      "depth_m": 1.027000069618225,
+      "camera_point": [
+        0.01803602359138074,
+        0.07530351492229535,
+        1.027000069618225
+      ],
+      "base_point": [
+        0.36322312918509997,
+        -0.2089731555061678,
+        -0.12854117121667008
+      ]
+    },
+    {
+      "index": 5,
+      "pixel_uv": [
+        645,
+        400
+      ],
+      "distance_to_edge_px": 27.85677655436824,
+      "depth_m": 1.0360000133514404,
+      "camera_point": [
+        -0.006594134778644815,
+        0.05567043649796645,
+        1.0360000133514404
+      ],
+      "base_point": [
+        0.363427593676221,
+        -0.24131455019417192,
+        -0.12333599678577567
+      ]
+    }
+  ],
+  "segment_metadata": {
+    "camera_info": {
+      "device_name": "Intel RealSense D435",
+      "serial_number": "022422070965",
+      "sensor_names": [
+        "Stereo Module",
+        "RGB Camera"
+      ],
+      "depth_scale": 0.0010000000474974513,
+      "rgb_resolution": [
+        1280,
+        720
+      ],
+      "depth_resolution": [
+        848,
+        480
+      ],
+      "fps": 30
+    },
+    "mask_info": {
+      "mode": "sam3_prompt",
+      "prompt": "metal plate or sheet metal plate part in the middle of the MDF board",
+      "score": 0.8162656426429749,
+      "device": "cuda",
+      "box_xyxy": [
+        508.2291259765625,
+        332.6300048828125,
+        706.1840209960938,
+        442.1856689453125
+      ]
+    },
+    "depth_summary": {
+      "centroid_uv": [
+        608,
+        385
+      ],
+      "depth_m": 1.0470000497298315,
+      "valid_depth_count": 100,
+      "mask_pixel_count": 11288
+    },
+    "mask_mode": "sam3_prompt",
+    "prompt_text": "metal plate or sheet metal plate part in the middle of the MDF board",
+    "artifact_paths": {
+      "run_dir": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/artifacts/segment_area/20260520_140813",
+      "color_bgr_png": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/artifacts/segment_area/20260520_140813/color_bgr.png",
+      "overlay_bgr_png": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/artifacts/segment_area/20260520_140813/overlay_bgr.png",
+      "mask_png": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/artifacts/segment_area/20260520_140813/mask.png",
+      "depth_m_npy": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/artifacts/segment_area/20260520_140813/depth_m.npy",
+      "metadata_json": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/artifacts/segment_area/20260520_140813/metadata.json"
+    }
+  },
+  "artifact_paths": {
+    "probe_overlay_bgr_png": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/artifacts/segment_area/20260520_140813/probe_targets_overlay_bgr.png",
+    "safe_probe_targets_json": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/artifacts/segment_area/20260520_140813/safe_probe_targets.json"
+  }
+}

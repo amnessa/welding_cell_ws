@@ -1,7 +1,7 @@
 """Launch safe-probe target generation together with the 3D visualizer.
 
 Usage:
-  1. Run `ros2 run sand_drawer segment_area.py` and inspect the segmentation.
+    1. Run `ros2 run admittance_control segment_area.py` and inspect the segmentation.
   2. Run this launch file to compute safe probe points from the latest saved
      segmentation artifact bundle and show them in the GUI.
 """
@@ -16,7 +16,7 @@ from ament_index_python.packages import get_package_share_directory
 
 
 def generate_launch_description():
-    pkg_share = get_package_share_directory('sand_drawer')
+    pkg_share = get_package_share_directory('admittance_control')
     default_plane_json = os.path.join(
         pkg_share, 'generated_planes', 'sand_drawer_plane.json')
 
@@ -37,7 +37,7 @@ def generate_launch_description():
             description='Keep depth_to_safe_probe running so its latched outputs stay available',
         ),
         Node(
-            package='sand_drawer',
+            package='admittance_control',
             executable='depth_to_safe_probe.py',
             name='depth_to_safe_probe',
             output='screen',
@@ -47,7 +47,7 @@ def generate_launch_description():
             }],
         ),
         Node(
-            package='sand_drawer',
+            package='admittance_control',
             executable='drawing_gui.py',
             name='drawing_gui',
             output='screen',
