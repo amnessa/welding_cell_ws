@@ -15,16 +15,13 @@ On shutdown (Ctrl-C) the server commands RETRACT_UP → HOMING to park safely.
 
 Current TCP/tool behavior
 -------------------------
-The action server uses active tool selection and dynamic TCP handling.
+The action server assumes a single orthogonal drawing tool.
 
-- Tool faces are selected around wrist-3 as:
-    fork=0°, pointy=+90°, empty=-90°, spatula=180°, orthogonal=0°.
-- Tool lengths from wrist axis:
-    fork=0.13 m, pointy=0.15 m, spatula=0.13 m, empty=0.13 m,
-    orthogonal=orthogonal_tool_length_m.
-- For draw/approach/descent/ascent path solving, the server computes a
-    dynamic wrist pose from each tip waypoint (per-waypoint yaw adaptation)
-    before IK. This reduces over-constraint and improves reachability.
+- The tool stands off from the wrist along local +tool0_z by
+    orthogonal_tool_length_m.
+- For draw/approach/descent/ascent path solving, the server derives the
+    wrist pose from the plane normal and the plane's forward axis, keeping
+    the tool normal to the surface throughout execution.
 
 Architecture
 ------------
@@ -40,14 +37,15 @@ Reuses
 
 Action interface
 ----------------
-  sand_drawer/action/ExecuteDrawing
+    admittance_control/action/ExecuteDrawing
     Goal:     geometry_msgs/Point[] waypoints
                             geometry_msgs/Quaternion orientation
     Result:   bool success, string message
     Feedback: string current_phase, float32 drawing_progress
 
-    Note: in action mode, the position waypoints are authoritative. The server
-    derives tool-consistent wrist orientation internally for IK robustness.
+        Note: in action mode, the position waypoints are authoritative. The server
+        derives the orthogonal wrist orientation internally and does not rely on
+        the goal quaternion for IK.
 
 Publishes
 ---------
@@ -81,8 +79,12 @@ from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
-from sand_drawer.action import ExecuteDrawing
-from sand_drawer.srv import ComputeTOTG
+try:
+    from admittance_control.action import ExecuteDrawing
+    from admittance_control.srv import ComputeTOTG
+except ImportError:
+    from sand_drawer.action import ExecuteDrawing
+    from sand_drawer.srv import ComputeTOTG
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -243,7 +245,7 @@ class DrawingActionServer(Node):
         self.declare_parameter('max_joint_accel_deg', 40.0)
         self.declare_parameter('totg_path_tolerance', 0.002)
         self.declare_parameter('totg_resample_dt', 0.01)
-        self.declare_parameter('active_tool', 'pointy')
+        self.declare_parameter('active_tool', 'orthogonal')
         self.declare_parameter('orthogonal_tool_length_m', 0.13)
         self.declare_parameter('trajectory_batch_size', 4000)
 
@@ -359,113 +361,19 @@ class DrawingActionServer(Node):
         self._max_joint_accel_deg = float(g('max_joint_accel_deg').value)
         self._totg_path_tolerance = float(g('totg_path_tolerance').value)
         self._totg_resample_dt   = float(g('totg_resample_dt').value)
-        self._active_tool        = str(g('active_tool').value)
+        requested_tool = str(g('active_tool').value)
+        self._active_tool        = 'orthogonal'
         self._orthogonal_tool_length = float(
             g('orthogonal_tool_length_m').value)
         self._traj_batch_size    = int(g('trajectory_batch_size').value)
-
-    def _get_tool_transform(self, tool_name: str) -> Tuple[float, list]:
-        """Return (tool_length_m, wrist_orientation_xyzw) for active tool."""
-        if tool_name == 'orthogonal':
-            T = self._orthogonal_wrist_pose_from_tip(self.table_center_3d)
-            return max(float(self._orthogonal_tool_length), 0.0), \
-                rotmat_to_quat(T[:3, :3])
-
-        length, yaw_offset = self._tool_length_and_yaw_offset(tool_name)
-
-        # Build a strict orthonormal basis, then apply only yaw about local Z.
-        z_axis = self.plane_y / max(float(np.linalg.norm(self.plane_y)), 1e-9)
-        x_seed = self.plane_n - float(np.dot(self.plane_n, z_axis)) * z_axis
-        if float(np.linalg.norm(x_seed)) < 1e-9:
-            x_seed = self.plane_x - float(np.dot(self.plane_x, z_axis)) * z_axis
-        x_seed = x_seed / max(float(np.linalg.norm(x_seed)), 1e-9)
-        y_seed = np.cross(z_axis, x_seed)
-        y_seed = y_seed / max(float(np.linalg.norm(y_seed)), 1e-9)
-        x_seed = np.cross(y_seed, z_axis)
-        x_seed = x_seed / max(float(np.linalg.norm(x_seed)), 1e-9)
-
-        c = math.cos(yaw_offset)
-        s = math.sin(yaw_offset)
-        x_axis = c * x_seed + s * y_seed
-        y_axis = -s * x_seed + c * y_seed
-        R = np.column_stack([x_axis, y_axis, z_axis])
-
-        return length, rotmat_to_quat(R)
-
-    def _tool_length_and_yaw_offset(self, tool_name: str) -> Tuple[float, float]:
-        """Return (tool_length_m, yaw_offset_rad) about local wrist_3 axis.
-
-        Calibrated flange quadrant mapping (latest observed):
-          fork = 0 deg
-          pointy = +90 deg
-          spatula = 180 deg
-          empty = -90 deg
-          orthogonal = 0 deg
-
-        Tool length from the wrist axis:
-          pointy = 0.15 m
-          fork/spatula/empty = 0.13 m
-          orthogonal = orthogonal_tool_length_m (default 0.13 m)
-        """
-        pointy_len = 0.15
-        other_len = 0.13
-        orthogonal_len = max(float(self._orthogonal_tool_length), 0.0)
-        if tool_name == 'fork':
-            return other_len, 0.0
-        if tool_name == 'pointy':
-            return pointy_len, math.pi / 2.0
-        if tool_name == 'spatula':
-            return other_len, math.pi
-        if tool_name == 'empty':
-            return other_len, -math.pi / 2.0
-        if tool_name == 'orthogonal':
-            return orthogonal_len, 0.0
-        self.get_logger().error(
-            f"Unknown tool '{tool_name}'. Defaulting to pointy.")
-        return pointy_len, math.pi / 2.0
-
-    def _dynamic_wrist_pose_from_tip(self, tip_pos: np.ndarray) -> np.ndarray:
-        """Build wrist pose for a tip point using dynamic yaw and tool offset."""
-        tool_length, yaw_offset = self._tool_length_and_yaw_offset(
-            str(self._active_tool))
-
-        N = self.plane_n
-        z_wrist = tip_pos - np.dot(tip_pos, N) * N
-        z_norm = float(np.linalg.norm(z_wrist))
-        if z_norm < 1e-6:
-            z_wrist = self.plane_x.copy()
-        else:
-            z_wrist = z_wrist / z_norm
-
-        x_base = N / max(float(np.linalg.norm(N)), 1e-9)
-        y_base = np.cross(z_wrist, x_base)
-        y_norm = float(np.linalg.norm(y_base))
-        if y_norm < 1e-6:
-            y_base = self.plane_y.copy()
-        else:
-            y_base = y_base / y_norm
-
-        x_base = np.cross(y_base, z_wrist)
-        x_base = x_base / max(float(np.linalg.norm(x_base)), 1e-9)
-
-        c = math.cos(yaw_offset)
-        s = math.sin(yaw_offset)
-        x_wrist = c * x_base + s * y_base
-        y_wrist = -s * x_base + c * y_base
-
-        wrist_pos = tip_pos - tool_length * x_wrist
-
-        T = np.eye(4)
-        T[:3, 0] = x_wrist
-        T[:3, 1] = y_wrist
-        T[:3, 2] = z_wrist
-        T[:3, 3] = wrist_pos
-        return T
+        if requested_tool != self._active_tool:
+            self.get_logger().warn(
+                f'Ignoring active_tool={requested_tool!r}; '
+                'drawing_action_server currently supports only the orthogonal surface tool.')
 
     def _orthogonal_wrist_pose_from_tip(self, tip_pos: np.ndarray) -> np.ndarray:
         """Build tool0 pose for an orthogonal tool with wrist_3 normal to the plane."""
-        tool_length, yaw_offset = self._tool_length_and_yaw_offset(
-            str(self._active_tool))
+        tool_length = max(float(self._orthogonal_tool_length), 0.0)
 
         # The physical orthogonal tip follows +tool0_z, so tool0_z must point
         # toward the plane normal for the tip to point down at the surface.
@@ -482,15 +390,9 @@ class DrawingActionServer(Node):
 
         y_seed = np.cross(z_wrist, x_seed)
         y_seed = y_seed / max(float(np.linalg.norm(y_seed)), 1e-9)
-        x_seed = np.cross(y_seed, z_wrist)
-        x_seed = x_seed / max(float(np.linalg.norm(x_seed)), 1e-9)
-
-        c = math.cos(yaw_offset)
-        s = math.sin(yaw_offset)
-        x_wrist = c * x_seed + s * y_seed
+        x_wrist = np.cross(y_seed, z_wrist)
         x_wrist = x_wrist / max(float(np.linalg.norm(x_wrist)), 1e-9)
-        y_wrist = -s * x_seed + c * y_seed
-        y_wrist = y_wrist / max(float(np.linalg.norm(y_wrist)), 1e-9)
+        y_wrist = y_seed
 
         # orthogonal_tool_length_m is the stand-off along the plane normal.
         wrist_pos = tip_pos - tool_length * z_wrist
@@ -1099,8 +1001,8 @@ class DrawingActionServer(Node):
         else:
             self.get_logger().warn(
                 'surface_z_offset=0.0m -> drawing follows raw plane waypoints (no surface offset)')
-        q = goal_handle.request.orientation
-        orientation = [q.x, q.y, q.z, q.w]
+        orientation = rotmat_to_quat(
+            self._orthogonal_wrist_pose_from_tip(draw_positions[0])[:3, :3])
 
         if raw_first is not None:
             shifted_first = draw_positions[0]
@@ -1238,29 +1140,17 @@ class DrawingActionServer(Node):
             self._last_precompute_fail_reason = 'no_joint_state'
             return None
 
-        heavy_sweep = (
-            self._active_tool in ('spatula', 'pointy', 'orthogonal')
-            and len(draw_positions) >= 40
-        )
-
         # Use execution_hz (100 Hz) unconditionally so TOTG receives
         # the same density it outputs — no wasteful down/up-sampling.
         cart_dt = 1.0 / max(float(self.execution_hz), 1.0)
 
-        tool_length, yaw_offset = self._tool_length_and_yaw_offset(
-            str(self._active_tool))
-
-        use_dynamic_wrist = heavy_sweep
+        tool_length = max(float(self._orthogonal_tool_length), 0.0)
 
         def tip_to_wrist_pose(tip_pos: np.ndarray) -> np.ndarray:
-            if str(self._active_tool) == 'orthogonal':
-                return self._orthogonal_wrist_pose_from_tip(tip_pos)
-
-            # Keep one motion model across tools; active_tool only changes TCP offset.
-            return self._dynamic_wrist_pose_from_tip(tip_pos)
+            return self._orthogonal_wrist_pose_from_tip(tip_pos)
 
         # Convert tip waypoints into selected wrist pose waypoints.
-        def tip_to_dynamic_wrist(
+        def tip_to_wrist_waypoints(
             wps: List[Tuple[np.ndarray, list]]
         ) -> List[Tuple[np.ndarray, list]]:
             out: List[Tuple[np.ndarray, list]] = []
@@ -1276,8 +1166,8 @@ class DrawingActionServer(Node):
             '  PRE-COMPUTING TRAJECTORY FOR GOAL\n'
             '═══════════════════════════════════════════════')
         self.get_logger().info(
-            f'  Tool TCP: {self._active_tool} '
-            f'(len={tool_length:.3f}m, yaw={math.degrees(yaw_offset):.0f}deg)')
+            f'  Tool TCP: orthogonal '
+            f'(len={tool_length:.3f}m)')
 
         # ── 1. RETRACT UP (Cartesian vertical lift) ───────────────────
         T_now = ur5e_fk(q_current)
@@ -1402,12 +1292,12 @@ class DrawingActionServer(Node):
             f'{goal_pos[1]:.4f}, {goal_pos[2]:.4f}]')
 
         # ── 4. DESCENT (approach → surface) ───────────────────────────
-        descent_dt = max(cart_dt, 0.02) if heavy_sweep else cart_dt
+        descent_dt = cart_dt
         descent_wps, descent_times = _interpolate_cartesian_smooth(
             [approach_pos_tip, draw_positions[0].copy()],
             orientation_xyzw,
             self.approach_v_max, self.approach_a_max, descent_dt)
-        descent_wps = tip_to_dynamic_wrist(descent_wps)
+        descent_wps = tip_to_wrist_waypoints(descent_wps)
         descent_path, descent_valid_times = self._ik_solve_cartesian_path(
             descent_wps, descent_times, approach_seed_q, 'Descent')
         if descent_path:
@@ -1434,7 +1324,7 @@ class DrawingActionServer(Node):
             f'  [DRAW_TOTG] spatial res={spatial_res*1000.0:.0f}mm, '
             f'{len(draw_positions)} -> {len(spatial_wps)} tip points')
 
-        draw_wps = tip_to_dynamic_wrist(
+        draw_wps = tip_to_wrist_waypoints(
             [(p, orientation_xyzw) for p in spatial_wps])
         last_q_for_draw = phases[-1][1][-1]
         dummy_times = [0.0] * len(draw_wps)
@@ -1451,7 +1341,7 @@ class DrawingActionServer(Node):
         ascent_wps, ascent_times = _interpolate_cartesian_smooth(
             [last_draw_pos, ascent_pos], orientation_xyzw,
             self.approach_v_max, self.approach_a_max, cart_dt)
-        ascent_wps = tip_to_dynamic_wrist(ascent_wps)
+        ascent_wps = tip_to_wrist_waypoints(ascent_wps)
         ascent_path, ascent_valid_times = self._ik_solve_cartesian_path(
             ascent_wps, ascent_times, draw_path[-1], 'Ascent')
         if ascent_path:
