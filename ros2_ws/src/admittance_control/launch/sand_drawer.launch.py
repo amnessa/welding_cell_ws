@@ -6,13 +6,10 @@ in simulation and/or real-hardware bridge mode.
 
 Current action-mode behavior:
     - Uses drawing_action_server + drawing_dispatcher + TOTG service.
-    - Supports dynamic TCP tool selection via active_tool.
-    - Tool faces are selected around wrist-3 as:
-            fork=0°, pointy=+90°, empty=-90°, spatula=180°, orthogonal=0°.
-    - In action mode, dynamic per-waypoint wrist yaw is used to improve IK
-        robustness while keeping the selected tool tip on the drawing path.
-    - orthogonal is special: wrist_3 stays normal to the plane and
-        orthogonal_tool_length_m is applied as plane-normal stand-off.
+    - Assumes a single orthogonal surface-drawing tool.
+    - The action server derives wrist orientation internally so the tool stays
+        normal to the plane.
+    - orthogonal_tool_length_m sets the plane-normal stand-off from wrist to tip.
 
 Modes (via mode:= launch argument):
   trajectory (default)  — follow waypoints from the plane JSON (velocity servo)
@@ -29,11 +26,7 @@ Usage:
   ros2 launch sand_drawer sand_drawer.launch.py mode:=cartesian loop:=true
   ros2 launch sand_drawer sand_drawer.launch.py mode:=action real_robot:=true
   ros2 launch sand_drawer sand_drawer.launch.py mode:=action continuous:=true
-    ros2 launch sand_drawer sand_drawer.launch.py mode:=action active_tool:=pointy
-    ros2 launch sand_drawer sand_drawer.launch.py mode:=action active_tool:=fork
-    ros2 launch sand_drawer sand_drawer.launch.py mode:=action active_tool:=spatula
-    ros2 launch sand_drawer sand_drawer.launch.py mode:=action active_tool:=empty
-        ros2 launch sand_drawer sand_drawer.launch.py mode:=action active_tool:=orthogonal orthogonal_tool_length_m:=0.13
+    ros2 launch sand_drawer sand_drawer.launch.py mode:=action orthogonal_tool_length_m:=0.13
   ros2 launch sand_drawer sand_drawer.launch.py loop:=true
   ros2 launch sand_drawer sand_drawer.launch.py mode:=capture
   ros2 launch sand_drawer sand_drawer.launch.py mode:=freedrive_capture
@@ -88,18 +81,8 @@ def launch_setup(context, *args, **kwargs):
     continuous_str    = LaunchConfiguration("continuous").perform(context)
     approach_height_str = LaunchConfiguration("approach_height").perform(context)
     surface_z_offset_str = LaunchConfiguration("surface_z_offset").perform(context)
-    text_string_str   = LaunchConfiguration("text_string").perform(context)
-    active_tool_str   = LaunchConfiguration("active_tool").perform(context)
     orthogonal_tool_length_str = LaunchConfiguration(
         "orthogonal_tool_length_m").perform(context)
-    sweep_margin_str = LaunchConfiguration("sweep_margin_m").perform(context)
-    sweep_tool_width_str = LaunchConfiguration("sweep_tool_width_m").perform(context)
-    sweep_overlap_str = LaunchConfiguration("sweep_overlap_m").perform(context)
-    base_keepout_radius_str = LaunchConfiguration("base_keepout_radius_m").perform(context)
-    sweep_max_passes = int(
-        LaunchConfiguration("sweep_max_passes").perform(context))
-    sweep_spatula_max_passes = int(
-        LaunchConfiguration("sweep_spatula_max_passes").perform(context))
     max_joint_speed_deg = float(
         LaunchConfiguration("max_joint_speed_deg").perform(context))
     max_joint_accel_deg = float(
@@ -107,10 +90,6 @@ def launch_setup(context, *args, **kwargs):
     approach_height = float(approach_height_str)
     surface_z_offset = float(surface_z_offset_str)
     orthogonal_tool_length = float(orthogonal_tool_length_str)
-    sweep_margin = float(sweep_margin_str)
-    sweep_tool_width = float(sweep_tool_width_str)
-    sweep_overlap = float(sweep_overlap_str)
-    base_keepout_radius = float(base_keepout_radius_str)
 
     # When real_robot is active, force use_sim_time=false (wall clock)
     use_sim_time = False if real_robot else (use_sim_time_str == "true")
@@ -183,10 +162,13 @@ def launch_setup(context, *args, **kwargs):
         #   'triangle' — random equilateral triangle
         #   'square'   — random square
         #   'circle'   — random circle
-        #   'text'     — render text_string as multi-stroke trajectory
-        #   'sweep'    — full-table boustrophedon sweep path
-        # If user didn't explicitly set it, default to 'random'.
-        action_traj_key = traj_key_str if traj_key_str != "projected_vector_trajectory" else "random"
+        # Any legacy or unsupported key falls back to 'random'.
+        action_supported_traj_keys = {
+            "random", "line", "triangle", "square", "circle"
+        }
+        action_traj_key = traj_key_str
+        if action_traj_key == "projected_vector_trajectory" or action_traj_key not in action_supported_traj_keys:
+            action_traj_key = "random"
         nodes.append(Node(
             package="sand_drawer",
             executable="drawing_action_server.py",
@@ -214,7 +196,6 @@ def launch_setup(context, *args, **kwargs):
                 "max_joint_accel_deg": max_joint_accel_deg,
                 "totg_path_tolerance": 0.005,
                 "totg_resample_dt": 0.01,
-                "active_tool": active_tool_str,
                 "orthogonal_tool_length_m": orthogonal_tool_length,
             }],
         ))
@@ -236,16 +217,7 @@ def launch_setup(context, *args, **kwargs):
                 "plane_json_file": plane_json_str or default_plane_json,
                 "trajectory_key": action_traj_key,
                 "continuous": continuous_str == "true",
-                "approach_height": approach_height,
-                "text_string": text_string_str,
-                "active_tool": active_tool_str,
                 "orthogonal_tool_length_m": orthogonal_tool_length,
-                "sweep_margin_m": sweep_margin,
-                "sweep_tool_width_m": sweep_tool_width,
-                "sweep_overlap_m": sweep_overlap,
-                "base_keepout_radius_m": base_keepout_radius,
-                "sweep_max_passes": sweep_max_passes,
-                "sweep_spatula_max_passes": sweep_spatula_max_passes,
             }],
         ))
         return nodes
@@ -413,24 +385,8 @@ def generate_launch_description():
                       description="Approach/ascent offset from drawing surface (meters)"),
         DeclareLaunchArgument("surface_z_offset", default_value="-0.01",
                   description="Drawing surface offset along -plane normal (meters)"),
-        DeclareLaunchArgument("text_string",     default_value="ROMER",
-                              description="Text string to draw (action mode, trajectory_key=text)"),
-        DeclareLaunchArgument("active_tool",     default_value="pointy",
-                      description="Active tool face: fork | pointy | spatula | empty | orthogonal (action mode)"),
         DeclareLaunchArgument("orthogonal_tool_length_m", default_value="0.13",
-                      description="Tool length for active_tool:=orthogonal (meters)"),
-        DeclareLaunchArgument("sweep_margin_m", default_value="0.05",
-                  description="Per-edge crop margin for sweep generation (meters)"),
-        DeclareLaunchArgument("sweep_tool_width_m", default_value="0.08",
-                  description="Nominal sweep tool width used to set linear pass spacing (meters)"),
-        DeclareLaunchArgument("sweep_overlap_m", default_value="0.015",
-                  description="Overlap between adjacent linear sweep passes (meters)"),
-        DeclareLaunchArgument("base_keepout_radius_m", default_value="0.27",
-                  description="Minimum wrist-center distance from base origin during sweep generation (meters)"),
-        DeclareLaunchArgument("sweep_max_passes", default_value="0",
-                      description="Max sweep passes for non-spatula tools (0 disables cap)"),
-        DeclareLaunchArgument("sweep_spatula_max_passes", default_value="8",
-                      description="Max sweep passes for spatula tool"),
+                      description="Orthogonal drawing tool length from wrist to tip (meters)"),
         # Line UV coordinates (shared by cartesian & velocity modes)
         DeclareLaunchArgument("line_u_start",   default_value="0.5"),
         DeclareLaunchArgument("line_v_start",   default_value="0.3"),

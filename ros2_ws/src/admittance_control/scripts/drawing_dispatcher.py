@@ -104,18 +104,7 @@ class DrawingDispatcher(Node):
         self.declare_parameter('shape_size_min_pct', 0.10)
         self.declare_parameter('shape_size_max_pct', 0.50)
         self.declare_parameter('ik_max_attempts', 100)
-        # Legacy parameters kept declared during migration so existing launch
-        # files can still pass them while the dispatcher is simplified.
-        self.declare_parameter('approach_height', 0.10)
-        self.declare_parameter('active_tool', 'orthogonal')
         self.declare_parameter('orthogonal_tool_length_m', 0.13)
-        self.declare_parameter('sweep_margin_m', 0.05)
-        self.declare_parameter('sweep_tool_width_m', 0.08)
-        self.declare_parameter('sweep_overlap_m', 0.015)
-        self.declare_parameter('sweep_arc_spacing_m', 0.025)
-        self.declare_parameter('base_keepout_radius_m', 0.27)
-        self.declare_parameter('sweep_max_passes', 0)
-        self.declare_parameter('sweep_spatula_max_passes', 8)
 
         self._traj_key = self.get_parameter('trajectory_key').value
         self._continuous = self.get_parameter('continuous').value
@@ -123,14 +112,9 @@ class DrawingDispatcher(Node):
         self._size_max_pct = self.get_parameter('shape_size_max_pct').value
         self._ik_max_attempts = int(
             self.get_parameter('ik_max_attempts').value)
-        requested_tool = str(self.get_parameter('active_tool').value)
         self._active_tool = 'orthogonal'
         self._orthogonal_tool_length = float(
             self.get_parameter('orthogonal_tool_length_m').value)
-        if requested_tool != self._active_tool:
-            self.get_logger().warn(
-                f'Ignoring active_tool={requested_tool!r}; '
-                'the admittance_control dispatcher currently supports only the orthogonal drawing tool.')
 
         # Home configuration — absolute baseline IK seed
         self._ik_seed = np.array(
@@ -168,7 +152,7 @@ class DrawingDispatcher(Node):
         self.get_logger().info(
             f'Drawing dispatcher ready — '
             f'trajectory_key={self._traj_key}, '
-            f'active_tool={self._active_tool}, '
+            f'tool={self._active_tool}, '
             f'continuous={self._continuous}, '
             f'size={self._size_min_pct*100:.0f}–{self._size_max_pct*100:.0f}% '
             f'of table')

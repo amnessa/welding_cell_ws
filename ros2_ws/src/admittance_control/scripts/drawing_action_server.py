@@ -245,7 +245,6 @@ class DrawingActionServer(Node):
         self.declare_parameter('max_joint_accel_deg', 40.0)
         self.declare_parameter('totg_path_tolerance', 0.002)
         self.declare_parameter('totg_resample_dt', 0.01)
-        self.declare_parameter('active_tool', 'orthogonal')
         self.declare_parameter('orthogonal_tool_length_m', 0.13)
         self.declare_parameter('trajectory_batch_size', 4000)
 
@@ -335,7 +334,7 @@ class DrawingActionServer(Node):
             f'approach_height={self.approach_height:.3f}m, '
             f'surface_z_offset={float(self.surface_z_offset):.3f}m, '
             f'execution_hz={self.execution_hz:.0f}, '
-            f'active_tool={self._active_tool}, '
+            f'tool={self._active_tool}, '
             f'real_robot={self._real_robot}')
 
     # ------------------------------------------------------------------
@@ -361,15 +360,10 @@ class DrawingActionServer(Node):
         self._max_joint_accel_deg = float(g('max_joint_accel_deg').value)
         self._totg_path_tolerance = float(g('totg_path_tolerance').value)
         self._totg_resample_dt   = float(g('totg_resample_dt').value)
-        requested_tool = str(g('active_tool').value)
         self._active_tool        = 'orthogonal'
         self._orthogonal_tool_length = float(
             g('orthogonal_tool_length_m').value)
         self._traj_batch_size    = int(g('trajectory_batch_size').value)
-        if requested_tool != self._active_tool:
-            self.get_logger().warn(
-                f'Ignoring active_tool={requested_tool!r}; '
-                'drawing_action_server currently supports only the orthogonal surface tool.')
 
     def _orthogonal_wrist_pose_from_tip(self, tip_pos: np.ndarray) -> np.ndarray:
         """Build tool0 pose for an orthogonal tool with wrist_3 normal to the plane."""
