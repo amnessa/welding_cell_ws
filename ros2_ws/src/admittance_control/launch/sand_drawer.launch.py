@@ -1,53 +1,40 @@
-"""
-Sand Drawer — Planar Servo Launch File
+"""Sand drawer action-mode launch file.
 
-Launches the full pipeline for constrained plane servoing on a UR5e
-in simulation and/or real-hardware bridge mode.
+Launches the surface-drawing action stack for a UR5e in simulation and/or
+real-hardware bridge mode.
 
-Current action-mode behavior:
-    - Uses drawing_action_server + drawing_dispatcher + TOTG service.
-    - Assumes a single orthogonal surface-drawing tool.
-    - The action server derives wrist orientation internally so the tool stays
-        normal to the plane.
-    - orthogonal_tool_length_m sets the plane-normal stand-off from wrist to tip.
+Current behavior:
+        - Uses drawing_action_server + drawing_dispatcher + TOTG service.
+        - Assumes a single orthogonal surface-drawing tool.
+        - The action server derives wrist orientation internally so the tool stays
+            normal to the plane.
+        - orthogonal_tool_length_m sets the plane-normal stand-off from wrist to tip.
 
-Modes (via mode:= launch argument):
-  trajectory (default)  — follow waypoints from the plane JSON (velocity servo)
-  teleop                — move EE to plane center, then accept keyboard commands
-  cartesian             — position-controlled square drawing via Cartesian IK
-  action                — action-based sequential drawing (server + dispatcher)
-  capture               — run plane_solver_node to capture 4 points (sim, red ball)
-  freedrive_capture     — capture 4 TCP poses on real robot via freedrive mode
+Supported trajectory_key values:
+    random | line | triangle | square | circle
 
 Usage:
-  ros2 launch sand_drawer sand_drawer.launch.py
-  ros2 launch sand_drawer sand_drawer.launch.py mode:=teleop
-  ros2 launch sand_drawer sand_drawer.launch.py mode:=cartesian real_robot:=true
-  ros2 launch sand_drawer sand_drawer.launch.py mode:=cartesian loop:=true
-  ros2 launch sand_drawer sand_drawer.launch.py mode:=action real_robot:=true
-  ros2 launch sand_drawer sand_drawer.launch.py mode:=action continuous:=true
-    ros2 launch sand_drawer sand_drawer.launch.py mode:=action orthogonal_tool_length_m:=0.13
-  ros2 launch sand_drawer sand_drawer.launch.py loop:=true
-  ros2 launch sand_drawer sand_drawer.launch.py mode:=capture
-  ros2 launch sand_drawer sand_drawer.launch.py mode:=freedrive_capture
+    ros2 launch sand_drawer sand_drawer.launch.py
+    ros2 launch sand_drawer sand_drawer.launch.py real_robot:=true
+    ros2 launch sand_drawer sand_drawer.launch.py continuous:=true
+    ros2 launch sand_drawer sand_drawer.launch.py trajectory_key:=circle
+    ros2 launch sand_drawer sand_drawer.launch.py orthogonal_tool_length_m:=0.13
 """
 
 import os
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
-from launch.substitutions import Command, LaunchConfiguration
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-from launch_ros.descriptions import ParameterValue
 from ament_index_python.packages import get_package_share_directory
 
 
 def launch_setup(context, *args, **kwargs):
-    """Resolve all substitutions and build the node list based on mode."""
+    """Resolve substitutions and build the action-mode node list."""
 
     pkg_share = get_package_share_directory("sand_drawer")
     urdf_file = os.path.join(pkg_share, "urdf", "ur5e.urdf.xacro")
-    srdf_file = os.path.join(pkg_share, "config", "ur5e.srdf")
 
     workspace_root = (
         pkg_share.split("/install/sand_drawer/share/sand_drawer")[0]
@@ -65,17 +52,7 @@ def launch_setup(context, *args, **kwargs):
     # ---- resolve launch-time arguments ----
     use_sim_time_str = LaunchConfiguration("use_sim_time").perform(context)
     plane_json_str   = LaunchConfiguration("plane_json").perform(context)
-    loop_str         = LaunchConfiguration("loop").perform(context)
     traj_key_str     = LaunchConfiguration("trajectory_key").perform(context)
-    mode_str         = LaunchConfiguration("mode").perform(context)
-    line_u_start_str = LaunchConfiguration("line_u_start").perform(context)
-    line_v_start_str = LaunchConfiguration("line_v_start").perform(context)
-    line_u_end_str   = LaunchConfiguration("line_u_end").perform(context)
-    line_v_end_str   = LaunchConfiguration("line_v_end").perform(context)
-    kp_linear_str    = LaunchConfiguration("kp_linear").perform(context)
-    kd_linear_str    = LaunchConfiguration("kd_linear").perform(context)
-    kp_angular_str   = LaunchConfiguration("kp_angular").perform(context)
-    kd_angular_str   = LaunchConfiguration("kd_angular").perform(context)
     real_robot_str   = LaunchConfiguration("real_robot").perform(context)
     real_robot        = real_robot_str == "true"
     continuous_str    = LaunchConfiguration("continuous").perform(context)
@@ -98,9 +75,6 @@ def launch_setup(context, *args, **kwargs):
     robot_description_str = check_output(
         ["xacro", urdf_file]).decode("utf-8")
 
-    with open(srdf_file, "r") as f:
-        srdf_str = f.read()
-
     nodes = []
 
     # ---- Robot State Publisher (always — needed so sim mirrors real robot) ----
@@ -119,238 +93,71 @@ def launch_setup(context, *args, **kwargs):
         remappings=[("joint_states", rsp_joint_remap)],
     ))
 
-    if mode_str == "capture":
-        # ---- Plane capture mode (simulation — uses red ball TF) ----
-        nodes.append(Node(
-            package="sand_drawer",
-            executable="plane_solver_node.py",
-            name="plane_solver_node",
-            output="screen",
-            parameters=[{
-                "use_sim_time": use_sim_time,
-                "input_point_topic": "/red_ball/ground_truth",
-                "source_frame": "world",
-                "target_frame": "base_link",
-                "output_file": plane_json_str or default_plane_json,
-            }],
-        ))
-        return nodes
+    # ---- Action-based sequential drawing ----
+    # trajectory_key values:
+    #   'random'   — random geometric shape each time (default)
+    #   'line'     — random line on the plane
+    #   'triangle' — random equilateral triangle
+    #   'square'   — random square
+    #   'circle'   — random circle
+    # Any legacy or unsupported key falls back to 'random'.
+    action_supported_traj_keys = {
+        "random", "line", "triangle", "square", "circle"
+    }
+    action_traj_key = traj_key_str
+    if action_traj_key not in action_supported_traj_keys:
+        action_traj_key = "random"
 
-    if mode_str == "freedrive_capture":
-        # ---- Plane capture on real robot (freedrive + TCP pose) ----
-        nodes.append(Node(
-            package="sand_drawer",
-            executable="freedrive_plane_capture.py",
-            name="freedrive_plane_capture",
-            output="screen",
-            prefix="xterm -e" if False else "",  # set True for separate terminal
-            parameters=[{
-                "output_file": plane_json_str or default_plane_json,
-                "square_scale": 0.8,
-                "tcp_pose_topic": "/tcp_pose_broadcaster/pose",
-                "freedrive_controller": "freedrive_mode_controller",
-                "trajectory_controller": "scaled_joint_trajectory_controller",
-            }],
-        ))
-        return nodes
-
-    if mode_str == "action":
-        # ---- Action-based sequential drawing (server + dispatcher) ----
-        # trajectory_key for action mode:
-        #   'random'   — random geometric shape each time (default)
-        #   'line'     — random line on the plane
-        #   'triangle' — random equilateral triangle
-        #   'square'   — random square
-        #   'circle'   — random circle
-        # Any legacy or unsupported key falls back to 'random'.
-        action_supported_traj_keys = {
-            "random", "line", "triangle", "square", "circle"
-        }
-        action_traj_key = traj_key_str
-        if action_traj_key == "projected_vector_trajectory" or action_traj_key not in action_supported_traj_keys:
-            action_traj_key = "random"
-        nodes.append(Node(
-            package="sand_drawer",
-            executable="drawing_action_server.py",
-            name="drawing_action_server",
-            output="screen",
-            parameters=[{
-                "use_sim_time": use_sim_time,
-                "plane_json_file": plane_json_str or default_plane_json,
-                "approach_height": approach_height,
-                "surface_z_offset": surface_z_offset,
-                "max_linear_vel": 0.07,
-                "max_linear_accel": 0.05,
-                "approach_linear_vel": 0.04,
-                "approach_linear_accel": 0.03,
-                "ik_damping": 0.05,
-                "execution_hz": 100.0,
-                "max_joint_step": 0.15,
-                "shoulder_lift_max": 0.0,
-                "shoulder_lift_min": -2.5,
-                "elbow_max": -0.3,
-                "elbow_min": -3.14,
-                "ik_num_seeds": 30,
-                "real_robot": real_robot,
-                "max_joint_speed_deg": max_joint_speed_deg,
-                "max_joint_accel_deg": max_joint_accel_deg,
-                "totg_path_tolerance": 0.005,
-                "totg_resample_dt": 0.01,
-                "orthogonal_tool_length_m": orthogonal_tool_length,
-            }],
-        ))
-        # TOTG service node (MoveIt 2 Time-Optimal Trajectory Generation)
-        nodes.append(Node(
-            package="sand_drawer",
-            executable="totg_service_node",
-            name="totg_service_node",
-            output="screen",
-            parameters=[{"use_sim_time": use_sim_time}],
-        ))
-        nodes.append(Node(
-            package="sand_drawer",
-            executable="drawing_dispatcher.py",
-            name="drawing_dispatcher",
-            output="screen",
-            parameters=[{
-                "use_sim_time": use_sim_time,
-                "plane_json_file": plane_json_str or default_plane_json,
-                "trajectory_key": action_traj_key,
-                "continuous": continuous_str == "true",
-                "orthogonal_tool_length_m": orthogonal_tool_length,
-            }],
-        ))
-        return nodes
-
-    if mode_str == "cartesian":
-        # ---- Position-controlled Cartesian drawing ----
-        # Default to 'line' unless user explicitly set a different trajectory_key
-        cart_traj_key = traj_key_str if traj_key_str != "projected_vector_trajectory" else "line"
-        nodes.append(Node(
-            package="sand_drawer",
-            executable="cartesian_square_controller.py",
-            name="cartesian_draw_controller",
-            output="screen",
-            parameters=[{
-                "use_sim_time": use_sim_time,
-                "plane_json_file": plane_json_str or default_plane_json,
-                "approach_height": 0.10,
-                "max_linear_vel": 10.0,
-                "max_linear_accel": 10.0,
-                "approach_linear_vel": 10.0,
-                "approach_linear_accel": 10.0,
-                "ik_damping": 0.05,
-                "execution_hz": 100.0,
-                "waypoints_per_tick": 1,
-                "loop_trajectory": loop_str == "true",
-                "trajectory_key": cart_traj_key,
-                "max_joint_step": 0.15,
-                # Elbow-up constraints to prevent table collisions
-                "shoulder_lift_max": 0.0,
-                "shoulder_lift_min": -2.5,
-                "elbow_max": -0.3,
-                "elbow_min": -3.14,
-                "ik_num_seeds": 30,
-                # Line UV coordinates (used when trajectory_key='line')
-                "line_u_start": float(line_u_start_str),
-                "line_v_start": float(line_v_start_str),
-                "line_u_end":   float(line_u_end_str),
-                "line_v_end":   float(line_v_end_str),
-                # Real robot
-                "real_robot": real_robot,
-                "max_joint_speed_deg": max_joint_speed_deg,
-                "max_joint_accel_deg": max_joint_accel_deg,
-            }],
-        ))
-        return nodes
-
-    # ---- Plane Frame Broadcaster ----
     nodes.append(Node(
         package="sand_drawer",
-        executable="plane_frame_broadcaster.py",
-        name="plane_frame_broadcaster",
+        executable="drawing_action_server.py",
+        name="drawing_action_server",
         output="screen",
         parameters=[{
             "use_sim_time": use_sim_time,
             "plane_json_file": plane_json_str or default_plane_json,
-            "parent_frame": "base_link",
-            "child_frame": "drawing_plane",
-        }],
-    ))
-
-    is_teleop = mode_str == "teleop"
-
-    # ---- Planar Servo Controller ----
-    nodes.append(Node(
-        package="sand_drawer",
-        executable="planar_servo_controller.py",
-        name="planar_servo_controller",
-        output="screen",
-        parameters=[{
-            "use_sim_time": use_sim_time,
-            "plane_json_file": plane_json_str or default_plane_json,
-            "ee_link": "tool0",
-            "base_frame": "base_link",
-            "approach_height": 0.10,
-            "waypoint_threshold": 0.03,
-            "approach_threshold": 0.06,
-            "orientation_threshold": 0.15,
-            "kp_linear": float(kp_linear_str),
-            "kd_linear": float(kd_linear_str),
-            "kp_angular": float(kp_angular_str),
-            "kd_angular": float(kd_angular_str),
-            "max_linear_vel": 0.25,
-            "max_angular_vel": 0.60,
-            "plane_z_correction_gain": 2.0,
-            "loop_trajectory": loop_str == "true",
-            "trajectory_key": traj_key_str,
-            "boundary_margin": 0.01,
-            "teleop_mode": is_teleop,
-            "teleop_speed": 0.10,
+            "approach_height": approach_height,
+            "surface_z_offset": surface_z_offset,
+            "max_linear_vel": 0.07,
+            "max_linear_accel": 0.05,
+            "approach_linear_vel": 0.04,
+            "approach_linear_accel": 0.03,
+            "ik_damping": 0.05,
             "execution_hz": 100.0,
-            "descent_step": 0.002,
-            # Elbow-up configuration constraints
+            "max_joint_step": 0.15,
             "shoulder_lift_max": 0.0,
             "shoulder_lift_min": -2.5,
             "elbow_max": -0.3,
             "elbow_min": -3.14,
             "ik_num_seeds": 30,
-            "ik_damping": 0.05,
-            "max_joint_step": 0.15,
-            # Line UV coordinates (used when trajectory_key='line')
-            "line_u_start": float(line_u_start_str),
-            "line_v_start": float(line_v_start_str),
-            "line_u_end":   float(line_u_end_str),
-            "line_v_end":   float(line_v_end_str),
-            # Real robot
             "real_robot": real_robot,
             "max_joint_speed_deg": max_joint_speed_deg,
             "max_joint_accel_deg": max_joint_accel_deg,
+            "totg_path_tolerance": 0.005,
+            "totg_resample_dt": 0.01,
+            "orthogonal_tool_length_m": orthogonal_tool_length,
         }],
     ))
 
-    # ---- Jacobian Calculator ----
     nodes.append(Node(
         package="sand_drawer",
-        executable="sand_drawer_jacobian_node",
-        name="jacobian_calculator_node",
+        executable="totg_service_node",
+        name="totg_service_node",
+        output="screen",
+        parameters=[{"use_sim_time": use_sim_time}],
+    ))
+
+    nodes.append(Node(
+        package="sand_drawer",
+        executable="drawing_dispatcher.py",
+        name="drawing_dispatcher",
         output="screen",
         parameters=[{
             "use_sim_time": use_sim_time,
-            "robot_description": robot_description_str,
-            "robot_description_semantic": srdf_str,
-            "planning_group": "ur_manipulator",
-            "end_effector_link": "tool0",
-            "control_mode": "position",
-            "joint_state_topic": "/isaac_joint_states",
-            "min_manipulability": 0.005,
-            "w2_manipulability": 1.0,
-            "manipulability_gain": 0.4,
-            "damping_mu_reference": 0.02,
-            "slowdown_mu_threshold": 0.01,
-            "max_joint_velocity": 1.5,
-            "use_nullspace_posture": True,
-            "posture_gain": 0.4,
+            "plane_json_file": plane_json_str or default_plane_json,
+            "trajectory_key": action_traj_key,
+            "continuous": continuous_str == "true",
+            "orthogonal_tool_length_m": orthogonal_tool_length,
         }],
     ))
 
@@ -375,28 +182,16 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument("use_sim_time",   default_value="true"),
         DeclareLaunchArgument("plane_json",     default_value=default_plane_json),
-        DeclareLaunchArgument("loop",           default_value="false"),
-        DeclareLaunchArgument("trajectory_key", default_value="projected_vector_trajectory"),
-        DeclareLaunchArgument("mode",           default_value="trajectory",
-                              description="trajectory | teleop | cartesian | action | capture | freedrive_capture"),
+        DeclareLaunchArgument("trajectory_key", default_value="random",
+                              description="Action-mode drawing primitive: random | line | triangle | square | circle"),
         DeclareLaunchArgument("continuous",      default_value="false",
-                              description="Continuous drawing dispatch (action mode)"),
+                              description="Continuous action-mode drawing dispatch"),
         DeclareLaunchArgument("approach_height", default_value="0.10",
                       description="Approach/ascent offset from drawing surface (meters)"),
         DeclareLaunchArgument("surface_z_offset", default_value="-0.01",
                   description="Drawing surface offset along -plane normal (meters)"),
         DeclareLaunchArgument("orthogonal_tool_length_m", default_value="0.13",
                       description="Orthogonal drawing tool length from wrist to tip (meters)"),
-        # Line UV coordinates (shared by cartesian & velocity modes)
-        DeclareLaunchArgument("line_u_start",   default_value="0.5"),
-        DeclareLaunchArgument("line_v_start",   default_value="0.3"),
-        DeclareLaunchArgument("line_u_end",     default_value="0.5"),
-        DeclareLaunchArgument("line_v_end",     default_value="0.7"),
-        # PD gains (velocity controller)
-        DeclareLaunchArgument("kp_linear",      default_value="1.5"),
-        DeclareLaunchArgument("kd_linear",      default_value="0.0"),
-        DeclareLaunchArgument("kp_angular",     default_value="1.5"),
-        DeclareLaunchArgument("kd_angular",     default_value="0.0"),
         DeclareLaunchArgument("real_robot",      default_value="false",
                               description="Enable bridging to real UR robot via JointTrajectory"),
         DeclareLaunchArgument("max_joint_speed_deg", default_value="90.0",
