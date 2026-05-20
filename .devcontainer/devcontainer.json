@@ -7,6 +7,7 @@
         "--network=host",
         "--privileged",
         "--gpus=all",
+        "--volume=/dev:/dev",
         "--volume=/dev/bus/usb:/dev/bus/usb",
         "--volume=/run/udev:/run/udev:ro",
         "--volume=/tmp/.X11-unix:/tmp/.X11-unix:rw",
