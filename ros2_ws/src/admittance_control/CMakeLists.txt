@@ -69,6 +69,8 @@ install(PROGRAMS
   scripts/plane_frame_broadcaster.py
   scripts/planar_servo_controller.py
   scripts/plane_teleop_keyboard.py
+  scripts/depth_to_safe_probe.py
+  scripts/segment_area.py
   scripts/ur5e_rrt_planner.py
   scripts/cartesian_square_controller.py
   scripts/pd_auto_tuner.py

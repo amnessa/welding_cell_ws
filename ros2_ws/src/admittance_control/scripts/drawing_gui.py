@@ -3,10 +3,11 @@
 Sand Drawer — PyQt5 + Matplotlib 3D Trajectory Visualizer
 
 Standalone GUI that subscribes to /visualizer/drawing_path (nav_msgs/Path)
-published by the DrawingDispatcher.  Displays:
+and /visualizer/safe_probe_targets (geometry_msgs/PoseArray). Displays:
   • Robot base link origin (red dot)
   • Table rectangle from the plane JSON (translucent cyan)
   • Each incoming trajectory in magenta (updated live)
+    • Safe probe targets as numbered amber markers
 
 The ROS 2 node runs on a background QThread so the GUI stays responsive.
 
@@ -22,19 +23,22 @@ Usage:
 import json
 import os
 import sys
+from pathlib import Path
 
 import numpy as np
 
 import rclpy
+from ament_index_python.packages import get_package_share_directory
+from geometry_msgs.msg import PoseArray
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, DurabilityPolicy
-from nav_msgs.msg import Path
+from nav_msgs.msg import Path as NavPath
 
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout,
                               QWidget, QLabel, QHBoxLayout, QPushButton)
 from PyQt5.QtCore import pyqtSignal, QThread, pyqtSlot, Qt
 
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
@@ -47,10 +51,11 @@ class ROS2ListenerThread(QThread):
     """Spins a ROS 2 node on a background thread and emits Qt signals."""
 
     path_received = pyqtSignal(list, list, list)   # xs, ys, zs
+    probe_targets_received = pyqtSignal(object)
 
     def __init__(self):
         super().__init__()
-        self.node: Node = None
+        self.node = None
         self._running = True
 
     def run(self):
@@ -60,9 +65,11 @@ class ROS2ListenerThread(QThread):
             depth=10,
             durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.node.create_subscription(
-            Path, '/visualizer/drawing_path', self._path_cb, _qos)
+            NavPath, '/visualizer/drawing_path', self._path_cb, _qos)
+        self.node.create_subscription(
+            PoseArray, '/visualizer/safe_probe_targets', self._probe_targets_cb, _qos)
         self.node.get_logger().info(
-            'GUI visualizer listening on /visualizer/drawing_path …')
+            'GUI visualizer listening on /visualizer/drawing_path and /visualizer/safe_probe_targets …')
 
         while self._running and rclpy.ok():
             rclpy.spin_once(self.node, timeout_sec=0.05)
@@ -70,11 +77,23 @@ class ROS2ListenerThread(QThread):
         self.node.destroy_node()
         rclpy.try_shutdown()
 
-    def _path_cb(self, msg: Path):
+    def _path_cb(self, msg: NavPath):
         xs = [p.pose.position.x for p in msg.poses]
         ys = [p.pose.position.y for p in msg.poses]
         zs = [p.pose.position.z for p in msg.poses]
         self.path_received.emit(xs, ys, zs)
+
+    def _probe_targets_cb(self, msg: PoseArray):
+        targets = [
+            {
+                'index': index + 1,
+                'x': pose.position.x,
+                'y': pose.position.y,
+                'z': pose.position.z,
+            }
+            for index, pose in enumerate(msg.poses)
+        ]
+        self.probe_targets_received.emit(targets)
 
     def stop(self):
         self._running = False
@@ -120,10 +139,13 @@ class DrawingVisualizerGUI(QMainWindow):
         # ── State ──
         self._trajectory_artists = []   # list of Line3D artists
         self._start_markers = []        # scatter artists
+        self._probe_artists = []        # probe markers, guide lines, labels
         self._drawing_count = 0
+        self._probe_target_count = 0
         self._plane_json_path = plane_json_path
         self._plane_normal = np.array([0.0, 0.0, 1.0], dtype=float)
         self._path_display_offset_m = 0.002
+        self._probe_display_offset_m = 0.003
 
         # ── Draw the static environment ──
         self._draw_environment()
@@ -131,6 +153,7 @@ class DrawingVisualizerGUI(QMainWindow):
         # ── Start ROS listener ──
         self._ros_thread = ROS2ListenerThread()
         self._ros_thread.path_received.connect(self._on_new_path)
+        self._ros_thread.probe_targets_received.connect(self._on_probe_targets)
         self._ros_thread.start()
 
     # ------------------------------------------------------------------
@@ -234,6 +257,40 @@ class DrawingVisualizerGUI(QMainWindow):
             f'Drawing #{self._drawing_count}: {len(xs)} waypoints')
         self.canvas.draw_idle()
 
+    @pyqtSlot(object)
+    def _on_probe_targets(self, targets):
+        self._clear_probe_targets()
+        if not targets:
+            self.status_label.setText('No safe probe targets received.')
+            self.canvas.draw_idle()
+            return
+
+        self._probe_target_count = len(targets)
+        probe_offset = self._plane_normal * self._probe_display_offset_m
+        xs = np.asarray([target['x'] for target in targets], dtype=float) + probe_offset[0]
+        ys = np.asarray([target['y'] for target in targets], dtype=float) + probe_offset[1]
+        zs = np.asarray([target['z'] for target in targets], dtype=float) + probe_offset[2]
+
+        probe_line, = self.ax.plot(
+            xs, ys, zs,
+            color='orange', linewidth=1.5, alpha=0.75, linestyle='--')
+        self._probe_artists.append(probe_line)
+
+        probe_scatter = self.ax.scatter(
+            xs, ys, zs,
+            color='orange', edgecolors='black', s=55, depthshade=False)
+        self._probe_artists.append(probe_scatter)
+
+        for index, (x_pos, y_pos, z_pos) in enumerate(zip(xs, ys, zs), start=1):
+            label = self.ax.text(
+                x_pos, y_pos, z_pos + 0.005,
+                f'P{index}', color='white', fontsize=8)
+            self._probe_artists.append(label)
+
+        self.status_label.setText(
+            f'Safe probe targets: {self._probe_target_count} points')
+        self.canvas.draw_idle()
+
     # ------------------------------------------------------------------
     # Clear button
     # ------------------------------------------------------------------
@@ -250,17 +307,27 @@ class DrawingVisualizerGUI(QMainWindow):
                 pass
         self._trajectory_artists.clear()
         self._start_markers.clear()
+        self._clear_probe_targets()
         self._drawing_count = 0
         self.status_label.setText('Cleared — waiting for new trajectory …')
         self.canvas.draw_idle()
 
+    def _clear_probe_targets(self):
+        for artist in self._probe_artists:
+            try:
+                artist.remove()
+            except Exception:
+                pass
+        self._probe_artists.clear()
+        self._probe_target_count = 0
+
     # ------------------------------------------------------------------
     # Shutdown
     # ------------------------------------------------------------------
-    def closeEvent(self, event):
+    def closeEvent(self, a0):
         self._ros_thread.stop()
         self._ros_thread.wait(3000)
-        super().closeEvent(event)
+        super().closeEvent(a0)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -272,10 +339,14 @@ def main():
     if len(sys.argv) > 1:
         json_path = sys.argv[1]
     else:
-        # Auto-discover relative to this script
-        json_path = os.path.join(
-            os.path.dirname(os.path.realpath(__file__)),
-            '..', 'generated_planes', 'sand_drawer_plane.json')
+        source_package_root = Path(__file__).resolve().parents[1]
+        source_plane_json = source_package_root / 'generated_planes' / 'sand_drawer_plane.json'
+        if source_plane_json.exists():
+            json_path = str(source_plane_json)
+        else:
+            json_path = os.path.join(
+                get_package_share_directory('sand_drawer'),
+                'generated_planes', 'sand_drawer_plane.json')
 
     if not os.path.exists(json_path):
         print(f'ERROR: Plane JSON not found: {json_path}', file=sys.stderr)
