@@ -1,37 +1,15 @@
 #!/usr/bin/env python3
-"""
-Drawing Dispatcher — IK-aware action client that feeds drawings to the server.
+"""Action-mode drawing dispatcher for the admittance_control migration.
 
-Loads the plane JSON, generates drawing waypoints in STRICT METRIC SPACE using
-orthogonal basis vectors from the plane definition.  This eliminates the
-"baklava" skew that occurs when UV coordinates are mapped onto physically
-non-square rectangles.
+This trimmed dispatcher keeps only the behavior needed to draw on a detected
+surface:
+- load the plane JSON,
+- generate metric-space geometric primitives on that plane,
+- validate reachability with the orthogonal drawing tool, and
+- send the path to the ExecuteDrawing action server.
 
-Shapes are randomly placed and sized between 10% and 50% of the shortest
-table dimension.  Kinematic reachability is verified via a Fast-Fail Center
-Check: IK is tested on the shape centre first; only if it succeeds is the
-centre's joint solution used as seed for boundary points.  This is both
-faster (centre is a single IK call vs. 3) and prevents configuration flips
-(all points share the same elbow-up solution branch).
-
-Usage (via launch):
-  ros2 launch sand_drawer sand_drawer.launch.py mode:=action
-  ros2 launch sand_drawer sand_drawer.launch.py mode:=action continuous:=true
-  ros2 launch sand_drawer sand_drawer.launch.py mode:=action trajectory_key:=circle
-  ros2 launch sand_drawer sand_drawer.launch.py mode:=action trajectory_key:=text text_string:=HELLO
-
-Trajectory keys
----------------
-  line      — random line on the plane
-  triangle  — random equilateral triangle
-  square    — random square
-  circle    — random circle (resolution scales with size)
-  text      — render text_string as multi-stroke trajectory (pen up/down)
-  sweep     — full-table boustrophedon sweep path (operator-triggered)
-  random    — pick a random geometric shape each time (default)
-
-Subscribes to:  (none)
-Publishes to:   /visualizer/drawing_path (nav_msgs/Path)
+Text trajectories, sweep patterns, and non-orthogonal tool variants are
+intentionally excluded here so the migration surface stays small.
 """
 
 import json
@@ -41,7 +19,6 @@ import random
 import sys
 from typing import List, Optional, Tuple
 
-from matplotlib.textpath import TextPath
 import numpy as np
 import rclpy
 from geometry_msgs.msg import Point, PoseStamped, Quaternion
@@ -50,7 +27,10 @@ from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, DurabilityPolicy
 
-from sand_drawer.action import ExecuteDrawing
+try:
+    from admittance_control.action import ExecuteDrawing
+except ImportError:
+    from sand_drawer.action import ExecuteDrawing
 
 # ── Import IK solver from the kinematics library ─────────────────────────
 _scripts_dir = os.path.dirname(os.path.realpath(__file__))
@@ -103,14 +83,13 @@ def _rotmat_to_quat(R: np.ndarray) -> list:
     return q.tolist()
 
 
-# ── Valid shape names ────────────────────────────────────────────────────
-# Geometric primitives for the random pool.  'text' is handled separately
-# (only via trajectory_key=text) so random mode doesn't pick it.
+# ── Supported shape names ────────────────────────────────────────────────
 _SHAPE_POOL = ('line', 'triangle', 'square', 'circle')
+_SUPPORTED_TRAJECTORY_KEYS = _SHAPE_POOL + ('random',)
 
 
 class DrawingDispatcher(Node):
-    """Generates IK-validated, geometrically perfect drawing paths."""
+    """Generates IK-validated drawing paths for a fixed orthogonal tool."""
 
     # ------------------------------------------------------------------
     # Initialisation
@@ -125,15 +104,10 @@ class DrawingDispatcher(Node):
         self.declare_parameter('shape_size_min_pct', 0.10)
         self.declare_parameter('shape_size_max_pct', 0.50)
         self.declare_parameter('ik_max_attempts', 100)
-        self.declare_parameter('text_string', 'ROMER')
-        self.declare_parameter('text_height_min_m', 0.08)
-        self.declare_parameter('text_height_max_m', 0.15)
-        self.declare_parameter('text_table_margin_m', 0.02)
-        self.declare_parameter('text_min_point_spacing_m', 0.005)
-        self.declare_parameter('text_fit_attempts', 24)
-        self.declare_parameter('text_rotation_max_deg', 45.0)
+        # Legacy parameters kept declared during migration so existing launch
+        # files can still pass them while the dispatcher is simplified.
         self.declare_parameter('approach_height', 0.10)
-        self.declare_parameter('active_tool', 'pointy')
+        self.declare_parameter('active_tool', 'orthogonal')
         self.declare_parameter('orthogonal_tool_length_m', 0.13)
         self.declare_parameter('sweep_margin_m', 0.05)
         self.declare_parameter('sweep_tool_width_m', 0.08)
@@ -144,37 +118,19 @@ class DrawingDispatcher(Node):
         self.declare_parameter('sweep_spatula_max_passes', 8)
 
         self._traj_key = self.get_parameter('trajectory_key').value
-        self._text_string = self.get_parameter('text_string').value
         self._continuous = self.get_parameter('continuous').value
         self._size_min_pct = self.get_parameter('shape_size_min_pct').value
         self._size_max_pct = self.get_parameter('shape_size_max_pct').value
         self._ik_max_attempts = int(
             self.get_parameter('ik_max_attempts').value)
-        self._text_h_min_m = float(self.get_parameter('text_height_min_m').value)
-        self._text_h_max_m = float(self.get_parameter('text_height_max_m').value)
-        self._text_margin_m = float(self.get_parameter('text_table_margin_m').value)
-        self._text_min_pt_spacing_m = float(
-            self.get_parameter('text_min_point_spacing_m').value)
-        self._text_fit_attempts = int(self.get_parameter('text_fit_attempts').value)
-        self._text_rot_max_rad = math.radians(
-            float(self.get_parameter('text_rotation_max_deg').value))
-        self._approach_height = float(
-            self.get_parameter('approach_height').value)
-        self._active_tool = self.get_parameter('active_tool').value
+        requested_tool = str(self.get_parameter('active_tool').value)
+        self._active_tool = 'orthogonal'
         self._orthogonal_tool_length = float(
             self.get_parameter('orthogonal_tool_length_m').value)
-        self._sweep_margin = float(self.get_parameter('sweep_margin_m').value)
-        self._sweep_tool_width = float(
-            self.get_parameter('sweep_tool_width_m').value)
-        self._sweep_overlap = float(self.get_parameter('sweep_overlap_m').value)
-        self._sweep_arc_spacing = float(
-            self.get_parameter('sweep_arc_spacing_m').value)
-        self._base_keepout = float(
-            self.get_parameter('base_keepout_radius_m').value)
-        self._sweep_max_passes = int(
-            self.get_parameter('sweep_max_passes').value)
-        self._sweep_spatula_max_passes = int(
-            self.get_parameter('sweep_spatula_max_passes').value)
+        if requested_tool != self._active_tool:
+            self.get_logger().warn(
+                f'Ignoring active_tool={requested_tool!r}; '
+                'the admittance_control dispatcher currently supports only the orthogonal drawing tool.')
 
         # Home configuration — absolute baseline IK seed
         self._ik_seed = np.array(
@@ -217,108 +173,15 @@ class DrawingDispatcher(Node):
             f'size={self._size_min_pct*100:.0f}–{self._size_max_pct*100:.0f}% '
             f'of table')
 
-    def _get_tool_transform(self, tool_name: str) -> Tuple[float, list]:
-        """Return (tool_length_m, wrist_orientation_xyzw) for active tool."""
-        if tool_name == 'orthogonal':
-            T = self._orthogonal_wrist_pose_from_tip(self.table_center_3d)
-            return max(float(self._orthogonal_tool_length), 0.0), \
-                _rotmat_to_quat(T[:3, :3])
-
-        length, yaw_offset = self._tool_length_and_yaw_offset(tool_name)
-
-        # Build a strict orthonormal basis, then apply only yaw about local Z.
-        z_axis = self.plane_y / max(float(np.linalg.norm(self.plane_y)), 1e-9)
-        x_seed = self.plane_n - float(np.dot(self.plane_n, z_axis)) * z_axis
-        if float(np.linalg.norm(x_seed)) < 1e-9:
-            x_seed = self.plane_x - float(np.dot(self.plane_x, z_axis)) * z_axis
-        x_seed = x_seed / max(float(np.linalg.norm(x_seed)), 1e-9)
-        y_seed = np.cross(z_axis, x_seed)
-        y_seed = y_seed / max(float(np.linalg.norm(y_seed)), 1e-9)
-        x_seed = np.cross(y_seed, z_axis)
-        x_seed = x_seed / max(float(np.linalg.norm(x_seed)), 1e-9)
-
-        c = math.cos(yaw_offset)
-        s = math.sin(yaw_offset)
-        x_axis = c * x_seed + s * y_seed
-        y_axis = -s * x_seed + c * y_seed
-        R = np.column_stack([x_axis, y_axis, z_axis])
-
-        return length, _rotmat_to_quat(R)
-
-    def _tool_length_and_yaw_offset(self, tool_name: str) -> Tuple[float, float]:
-        """Return (tool_length_m, yaw_offset_rad) about local wrist_3 axis.
-
-        Calibrated flange quadrant mapping (latest observed):
-          fork = 0 deg
-          pointy = +90 deg
-          spatula = 180 deg
-          empty = -90 deg
-          orthogonal = 0 deg
-
-        Tool length from the wrist axis:
-          pointy = 0.15 m
-          fork/spatula/empty = 0.13 m
-          orthogonal = orthogonal_tool_length_m (default 0.10 m)
-        """
-        pointy_len = 0.15
-        other_len = 0.13
-        orthogonal_len = max(float(self._orthogonal_tool_length), 0.0)
-        if tool_name == 'fork':
-            return other_len, 0.0
-        if tool_name == 'pointy':
-            return pointy_len, math.pi / 2.0
-        if tool_name == 'spatula':
-            return other_len, math.pi
-        if tool_name == 'empty':
-            return other_len, -math.pi / 2.0
-        if tool_name == 'orthogonal':
-            return orthogonal_len, 0.0
-        self.get_logger().error(
-            f"Unknown tool '{tool_name}'. Defaulting to pointy.")
-        return pointy_len, math.pi / 2.0
-
-    def _dynamic_wrist_pose_from_tip(self, tip_pos: np.ndarray) -> np.ndarray:
-        """Build wrist pose for a tip point using dynamic yaw and tool offset."""
-        tool_length, yaw_offset = self._tool_length_and_yaw_offset(
-            str(self._active_tool))
-
-        N = self.plane_n
-        z_wrist = tip_pos - np.dot(tip_pos, N) * N
-        z_norm = float(np.linalg.norm(z_wrist))
-        if z_norm < 1e-6:
-            z_wrist = self.plane_x.copy()
-        else:
-            z_wrist = z_wrist / z_norm
-
-        x_base = N / max(float(np.linalg.norm(N)), 1e-9)
-        y_base = np.cross(z_wrist, x_base)
-        y_norm = float(np.linalg.norm(y_base))
-        if y_norm < 1e-6:
-            y_base = self.plane_y.copy()
-        else:
-            y_base = y_base / y_norm
-
-        x_base = np.cross(y_base, z_wrist)
-        x_base = x_base / max(float(np.linalg.norm(x_base)), 1e-9)
-
-        c = math.cos(yaw_offset)
-        s = math.sin(yaw_offset)
-        x_wrist = c * x_base + s * y_base
-        y_wrist = -s * x_base + c * y_base
-
-        wrist_pos = tip_pos - tool_length * x_wrist
-
-        T = np.eye(4)
-        T[:3, 0] = x_wrist
-        T[:3, 1] = y_wrist
-        T[:3, 2] = z_wrist
-        T[:3, 3] = wrist_pos
-        return T
+    def _get_tool_transform(self) -> Tuple[float, list]:
+        """Return (tool_length_m, wrist_orientation_xyzw) for the orthogonal tool."""
+        T = self._orthogonal_wrist_pose_from_tip(self.table_center_3d)
+        return max(float(self._orthogonal_tool_length), 0.0), \
+            _rotmat_to_quat(T[:3, :3])
 
     def _orthogonal_wrist_pose_from_tip(self, tip_pos: np.ndarray) -> np.ndarray:
-        """Build tool0 pose for an orthogonal tool with wrist_3 normal to the plane."""
-        tool_length, yaw_offset = self._tool_length_and_yaw_offset(
-            str(self._active_tool))
+        """Build tool0 pose for the orthogonal tool with wrist_3 normal to the plane."""
+        tool_length = max(float(self._orthogonal_tool_length), 0.0)
 
         # The physical orthogonal tip follows +tool0_z, so tool0_z must point
         # toward the plane normal for the tip to point down at the surface.
@@ -335,15 +198,9 @@ class DrawingDispatcher(Node):
 
         y_seed = np.cross(z_wrist, x_seed)
         y_seed = y_seed / max(float(np.linalg.norm(y_seed)), 1e-9)
-        x_seed = np.cross(y_seed, z_wrist)
-        x_seed = x_seed / max(float(np.linalg.norm(x_seed)), 1e-9)
-
-        c = math.cos(yaw_offset)
-        s = math.sin(yaw_offset)
-        x_wrist = c * x_seed + s * y_seed
+        x_wrist = np.cross(y_seed, z_wrist)
         x_wrist = x_wrist / max(float(np.linalg.norm(x_wrist)), 1e-9)
-        y_wrist = -s * x_seed + c * y_seed
-        y_wrist = y_wrist / max(float(np.linalg.norm(y_wrist)), 1e-9)
+        y_wrist = y_seed
 
         # orthogonal_tool_length_m is the stand-off along the plane normal.
         wrist_pos = tip_pos - tool_length * z_wrist
@@ -356,10 +213,8 @@ class DrawingDispatcher(Node):
         return T
 
     def _wrist_pose_from_tip(self, tip_pos: np.ndarray) -> np.ndarray:
-        """Select the wrist-pose strategy for the active tool."""
-        if str(self._active_tool) == 'orthogonal':
-            return self._orthogonal_wrist_pose_from_tip(tip_pos)
-        return self._dynamic_wrist_pose_from_tip(tip_pos)
+        """Build the wrist pose for the fixed orthogonal tool."""
+        return self._orthogonal_wrist_pose_from_tip(tip_pos)
 
     # ------------------------------------------------------------------
     # Plane JSON loading (with Rz(π) frame correction)
@@ -432,8 +287,7 @@ class DrawingDispatcher(Node):
         self.base_forward = self.base_forward / max(float(np.linalg.norm(self.base_forward)), 1e-9)
 
         # Tool-aware orientation and wrist-tip offset
-        self.tool_length, self._default_orientation = \
-            self._get_tool_transform(str(self._active_tool))
+        self.tool_length, self._default_orientation = self._get_tool_transform()
 
         self.get_logger().info(
             f'Loaded plane — '
@@ -485,12 +339,6 @@ class DrawingDispatcher(Node):
                 break
         if center_sol is None:
             return False
-
-        # For side-mounted flange faces, dispatcher full-edge gating is often
-        # too strict due wrist branch ambiguity; let action-server precompute
-        # run the full-path IK feasibility pipeline.
-        if str(self._active_tool) in ('spatula', 'empty'):
-            return True
 
         # Stage 2: ALL waypoints + edge midpoints
         # For a 5-point square this is ~9 checks, still very fast.
@@ -646,290 +494,18 @@ class DrawingDispatcher(Node):
         return center_3d, pts
 
     # ------------------------------------------------------------------
-    # Text-to-trajectory generation (multi-stroke with pen lifts)
-    # ------------------------------------------------------------------
-    @staticmethod
-    def _decimate_polyline(points: List[np.ndarray], min_dist: float
-                           ) -> List[np.ndarray]:
-        """Drop overly dense points while preserving endpoints."""
-        if len(points) <= 2 or min_dist <= 0.0:
-            return points
-        out = [points[0]]
-        for pt in points[1:-1]:
-            if float(np.linalg.norm(pt - out[-1])) >= min_dist:
-                out.append(pt)
-        out.append(points[-1])
-        return out
-
-    def _generate_text_3d(
-        self,
-    ) -> Tuple[np.ndarray, List[np.ndarray], List[np.ndarray]]:
-        """Convert a text string into a 3D multi-stroke trajectory.
-
-        Uses matplotlib.textpath to discretise TrueType font outlines
-        into polygon arrays.  Pen-up/pen-down transitions are encoded
-        as Z-axis offsets along the plane normal, so the existing
-        action server handles them as ordinary 3D waypoints — slowing
-        down at the end of a stroke, lifting, gliding, lowering, and
-        resuming the next stroke.
-
-        Returns
-        -------
-        center_3d     : 3D centre of the text bounding box
-        pts_3d        : full trajectory (all strokes with pen lifts)
-        bbox_corners  : bounding rectangle corners for IK reachability
-                        check (much cheaper than testing all waypoints)
-        """
-        text = self._text_string
-
-        # 1. Discretise the font glyphs into 2D polygon arrays
-        tp = TextPath((0, 0), text, size=1.0)
-        polygons = tp.to_polygons()
-        if not polygons:
-            self.get_logger().warn(
-                f'TextPath returned no polygons for "{text}"')
-            return self.plane_origin, [], []
-
-        # 2. Bounding box → scale to fit the drawing table
-        all_points = np.vstack(polygons)
-        min_xy = np.min(all_points, axis=0)
-        max_xy = np.max(all_points, axis=0)
-        text_width = max_xy[0] - min_xy[0]
-        text_height = max_xy[1] - min_xy[1]
-        if text_width < 1e-6 or text_height < 1e-6:
-            return self.plane_origin, [], []
-
-        # Auto-orient text along the LONGER table axis, but use basis
-        # vectors derived from the captured rectangle edges so placement
-        # always stays inside the table footprint.
-        width_hat = self.rect_width_vec / max(float(np.linalg.norm(self.rect_width_vec)), 1e-9)
-        height_hat = self.rect_height_vec / max(float(np.linalg.norm(self.rect_height_vec)), 1e-9)
-        if self.table_height_m > self.table_width_m:
-            u_hat = height_hat   # text width  → long axis
-            v_hat = width_hat    # text height → short axis
-            span_along = self.table_height_m
-            span_across = self.table_width_m
-        else:
-            u_hat = width_hat
-            v_hat = height_hat
-            span_along = self.table_width_m
-            span_across = self.table_height_m
-
-        # Absolute text sizing (height in metres) + guaranteed fit.
-        # Width is derived from glyph aspect ratio and clamped to table.
-        safe_margin = max(self._text_margin_m, 0.0)
-        avail_along = span_along - 2.0 * safe_margin
-        avail_across = span_across - 2.0 * safe_margin
-        if avail_along <= 0.02 or avail_across <= 0.02:
-            self.get_logger().warn('Table too small after text margin clamp')
-            return self.plane_origin, [], []
-
-        aspect_wh = text_width / text_height  # width per unit height
-        h_max_fit_by_width = avail_along / max(aspect_wh, 1e-9)
-        h_max = min(self._text_h_max_m, avail_across, h_max_fit_by_width)
-        h_min = min(self._text_h_min_m, h_max)
-        if h_max <= 1e-6:
-            self.get_logger().warn('No feasible text height for current plane')
-            return self.plane_origin, [], []
-
-        # Start with a large random text height.
-        h_lo = max(h_min, 0.65 * h_max)
-        target_height = random.uniform(h_lo, h_max)
-        scale = target_height / text_height
-
-        center_2d = np.array([
-            min_xy[0] + text_width / 2.0,
-            min_xy[1] + text_height / 2.0], dtype=float)
-        centered_polys = [(poly - center_2d) * scale for poly in polygons]
-        centered_all = np.vstack(centered_polys)
-
-        lift_height = 0.10  # 10 cm lift → tip 6 cm above sand
-        fit_attempts = max(self._text_fit_attempts, 1)
-
-        for fit_idx in range(fit_attempts):
-            if fit_idx == 0:
-                angle = 0.0
-            elif fit_idx == 1:
-                angle = math.pi / 2.0
-            else:
-                angle = random.uniform(-self._text_rot_max_rad,
-                                       self._text_rot_max_rad)
-
-            c, s = math.cos(angle), math.sin(angle)
-            R2 = np.array([[c, -s], [s, c]], dtype=float)
-            rotated_all = centered_all @ R2.T
-
-            min_uv = np.min(rotated_all, axis=0)
-            max_uv = np.max(rotated_all, axis=0)
-            extent_u = float(max_uv[0] - min_uv[0])
-            extent_v = float(max_uv[1] - min_uv[1])
-            if extent_u > avail_along or extent_v > avail_across:
-                continue
-
-            margin_u = (extent_u / 2.0) + safe_margin
-            margin_v = (extent_v / 2.0) + safe_margin
-            if span_along <= 2.0 * margin_u or span_across <= 2.0 * margin_v:
-                continue
-
-            cu = random.uniform(margin_u, span_along - margin_u)
-            cv = random.uniform(margin_v, span_across - margin_v)
-            center_3d = self.rect_origin + cu * u_hat + cv * v_hat
-
-            half_w = extent_u / 2.0
-            half_h = extent_v / 2.0
-            bbox_corners = [
-                center_3d - half_w * u_hat - half_h * v_hat,
-                center_3d + half_w * u_hat - half_h * v_hat,
-                center_3d + half_w * u_hat + half_h * v_hat,
-                center_3d - half_w * u_hat + half_h * v_hat,
-                center_3d - half_w * u_hat - half_h * v_hat,
-            ]
-
-            pts_3d: List[np.ndarray] = []
-            for poly_scaled in centered_polys:
-                rotated_poly = poly_scaled @ R2.T
-                # Top-side readable text: flip local u (left↔right) and keep
-                # local v inversion for the plane handedness.
-                stroke_3d = [
-                    center_3d - pu * u_hat - pv * v_hat
-                    for (pu, pv) in rotated_poly
-                ]
-                stroke_3d = self._decimate_polyline(
-                    stroke_3d, self._text_min_pt_spacing_m)
-                if not stroke_3d:
-                    continue
-                pts_3d.append(stroke_3d[0] - self.plane_n * lift_height)
-                pts_3d.extend(stroke_3d)
-                pts_3d.append(stroke_3d[-1] - self.plane_n * lift_height)
-
-            self.get_logger().info(
-                f'Text "{text}": {len(polygons)} strokes, '
-                f'{len(pts_3d)} waypoints, '
-                f'width={extent_u*100:.1f}cm, '
-                f'height={extent_v*100:.1f}cm, '
-                f'rot={math.degrees(angle):.0f}deg '
-                f'(along {"height" if self.table_height_m > self.table_width_m else "width"})')
-            return center_3d, pts_3d, bbox_corners
-
-        return self.plane_origin, [], []
-
-    def _generate_sweep_3d(self) -> Tuple[np.ndarray, List[np.ndarray], int, float]:
-        """Generate a linear boustrophedon sweep clipped by active plane constraints."""
-        margin = max(self._sweep_margin, 0.0)
-        step_nominal = max(self._sweep_tool_width - self._sweep_overlap, 0.01)
-        wrist_keepout = max(self._base_keepout, 0.0)
-        max_tip_radius = 0.80
-
-        w_hat = self.rect_width_vec / max(self.table_width_m, 1e-9)
-        h_hat = self.rect_height_vec / max(self.table_height_m, 1e-9)
-
-        u_min = margin
-        u_max = self.table_width_m - margin
-        v_min = margin
-        v_max = self.table_height_m - margin
-        cropped_width = u_max - u_min
-        cropped_height = v_max - v_min
-
-        if cropped_width <= 0.02 or cropped_height <= 0.02:
-            self.get_logger().error(
-                'Sweep geometry invalid after rectangle crop '
-                f'(margin={margin:.3f}m, width={cropped_width:.3f}m, '
-                f'height={cropped_height:.3f}m).')
-            return self.plane_origin, [], 0, 0.0
-
-        natural_pass_offsets = np.arange(v_min, v_max + step_nominal * 0.5, step_nominal)
-        max_passes = int(self._sweep_max_passes)
-        if max_passes > 0 and len(natural_pass_offsets) > max_passes:
-            pass_offsets = np.linspace(v_min, v_max, max_passes)
-        else:
-            pass_offsets = natural_pass_offsets
-
-        num_passes = int(len(pass_offsets))
-        if num_passes >= 2:
-            actual_step = float((pass_offsets[-1] - pass_offsets[0]) / (num_passes - 1))
-        else:
-            actual_step = step_nominal
-
-        self.get_logger().info(
-            f'[SWEEP_CONSTRAINTS] pattern=linear, tool={self._active_tool}, '
-            f'rect_crop_margin={margin:.3f}m, '
-            f'cropped_width={cropped_width:.3f}m, '
-            f'cropped_height={cropped_height:.3f}m, '
-            f'pass_step={actual_step:.3f}m '
-            f'(tool_width={self._sweep_tool_width:.3f}m, overlap={self._sweep_overlap:.3f}m), '
-            f'min_wrist_base_radius={wrist_keepout:.3f}m, '
-            f'max_tip_base_radius={max_tip_radius:.3f}m')
-
-        def tip_at(u: float, v: float) -> np.ndarray:
-            return self.rect_origin + u * w_hat + v * h_hat
-
-        def tip_is_valid(tip_pos: np.ndarray) -> bool:
-            tip_radius = math.hypot(float(tip_pos[0]), float(tip_pos[1]))
-            if tip_radius > max_tip_radius + 1e-9:
-                return False
-            T_wrist = self._wrist_pose_from_tip(tip_pos)
-            wrist_pos = T_wrist[:3, 3]
-            wrist_radius = math.hypot(float(wrist_pos[0]), float(wrist_pos[1]))
-            return wrist_radius >= wrist_keepout - 1e-9
-
-        sample_ds = min(max(step_nominal / 4.0, 0.01), 0.03)
-        num_samples = max(int(math.ceil(cropped_width / sample_ds)), 2) + 1
-
-        pts_3d: List[np.ndarray] = []
-        forward = True
-        lift_height = 0.08
-        used_passes = 0
-        rejected_passes = 0
-
-        for v in pass_offsets:
-            segment_candidates: List[List[np.ndarray]] = []
-            current_segment: List[np.ndarray] = []
-
-            for u in np.linspace(u_min, u_max, num_samples):
-                tip_pos = tip_at(float(u), float(v))
-                if tip_is_valid(tip_pos):
-                    current_segment.append(tip_pos)
-                else:
-                    if len(current_segment) >= 2:
-                        segment_candidates.append(current_segment)
-                    current_segment = []
-
-            if len(current_segment) >= 2:
-                segment_candidates.append(current_segment)
-
-            if not segment_candidates:
-                rejected_passes += 1
-                continue
-
-            stroke = max(segment_candidates, key=len)
-            if not forward:
-                stroke = list(reversed(stroke))
-
-            if pts_3d:
-                pts_3d.append(pts_3d[-1] - self.plane_n * lift_height)
-                pts_3d.append(stroke[0] - self.plane_n * lift_height)
-            pts_3d.extend(stroke)
-            forward = not forward
-            used_passes += 1
-
-        center_3d = self.rect_origin + 0.5 * self.rect_width_vec + 0.5 * self.rect_height_vec
-        self.get_logger().info(
-            f'Generated linear sweep: passes={used_passes}/{num_passes}, '
-            f'rejected={rejected_passes}, step={actual_step:.3f}m, pts={len(pts_3d)}')
-        return center_3d, pts_3d, num_passes, actual_step
-
-    # ------------------------------------------------------------------
     # Drawing generation with rejection sampling
     # ------------------------------------------------------------------
     def _generate_drawing(self) -> Optional[Tuple[List[Point], Quaternion]]:
         """Generate a reachable, geometrically correct drawing goal."""
         if self._traj_key == 'random':
             pick_random = True
-        elif self._traj_key in _SHAPE_POOL or self._traj_key in ('text', 'sweep'):
+        elif self._traj_key in _SHAPE_POOL:
             pick_random = False
         else:
             self.get_logger().error(
-                f'Unknown trajectory_key: "{self._traj_key}"')
+                f'Unsupported trajectory_key: "{self._traj_key}". '
+                f'Use one of {list(_SUPPORTED_TRAJECTORY_KEYS)}.')
             return None
 
         orientation = self._default_orientation
@@ -938,42 +514,10 @@ class DrawingDispatcher(Node):
             shape = (random.choice(_SHAPE_POOL)
                      if pick_random else self._traj_key)
 
-            if shape == 'text':
-                center_3d, positions, bbox_check = self._generate_text_3d()
-                if not positions:
-                    continue
-                if str(self._active_tool) == 'orthogonal':
-                    # For orthogonal text, the bounding box is overly conservative:
-                    # it checks corners the letter never visits and rejects viable fits.
-                    reachable = self._is_path_reachable(positions, max_checks=16)
-                else:
-                    # Reachability via bounding-box corners only (9 IK checks)
-                    # instead of all 151+ waypoints.  If the rectangle fits,
-                    # every letter stroke inside it is reachable.
-                    reachable = self._is_reachable(center_3d, bbox_check)
-            elif shape == 'sweep':
-                center_3d, positions, num_passes, actual_step = self._generate_sweep_3d()
-                if not positions:
-                    return None
-
-                self.get_logger().info(
-                    f'Generated linear sweep: passes={num_passes}, '
-                    f'step={actual_step*100:.1f}cm, '
-                    f'pts={len(positions)}')
-
-                # Sweep is deterministic; let action-server precompute decide
-                # full feasibility with its richer IK pipeline.
-                if len(positions) >= 2:
-                    d0 = math.hypot(float(positions[0][0]), float(positions[0][1]))
-                    d1 = math.hypot(float(positions[-1][0]), float(positions[-1][1]))
-                    if d1 > d0:
-                        positions = list(reversed(positions))
-                reachable = True
-            else:
-                center_3d, positions = self._generate_random_shape_3d(shape)
-                if not positions:
-                    continue
-                reachable = self._is_reachable(center_3d, positions)
+            center_3d, positions = self._generate_random_shape_3d(shape)
+            if not positions:
+                continue
+            reachable = self._is_reachable(center_3d, positions)
 
             if reachable:
                 self.get_logger().info(
