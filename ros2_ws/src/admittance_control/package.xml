@@ -1,11 +1,11 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>sand_drawer</name>
+  <name>admittance_control</name>
   <version>1.0.0</version>
   <description>
     UR5e task-space plane extraction and trajectory preparation pipeline
-    for Isaac Sim based sand drawing workflows.
+    for Isaac Sim based admittance control workflows.
   </description>
   <maintainer email="cagdas96vkp@gmail.com">Cagdas</maintainer>
   <license>MIT</license>

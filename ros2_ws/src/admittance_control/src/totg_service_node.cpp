@@ -14,14 +14,14 @@
 #include <Eigen/Core>
 #include <cmath>
 #include <moveit/trajectory_processing/time_optimal_trajectory_generation.hpp>
-#include "sand_drawer/srv/compute_totg.hpp"
+#include "admittance_control/srv/compute_totg.hpp"
 
 class TotgServiceNode : public rclcpp::Node
 {
 public:
   TotgServiceNode() : Node("totg_service_node")
   {
-    service_ = this->create_service<sand_drawer::srv::ComputeTOTG>(
+    service_ = this->create_service<admittance_control::srv::ComputeTOTG>(
         "compute_totg",
         std::bind(&TotgServiceNode::handle_request, this,
                   std::placeholders::_1, std::placeholders::_2));
@@ -31,8 +31,8 @@ public:
 
 private:
   void handle_request(
-      const std::shared_ptr<sand_drawer::srv::ComputeTOTG::Request> request,
-      std::shared_ptr<sand_drawer::srv::ComputeTOTG::Response> response)
+      const std::shared_ptr<admittance_control::srv::ComputeTOTG::Request> request,
+      std::shared_ptr<admittance_control::srv::ComputeTOTG::Response> response)
   {
     const uint32_t n_joints = request->num_joints;
     const size_t n_values = request->waypoints_flat.size();
@@ -190,7 +190,7 @@ private:
                 "TOTG response: %zu pts, %.3fs", n_output, duration);
   }
 
-  rclcpp::Service<sand_drawer::srv::ComputeTOTG>::SharedPtr service_;
+  rclcpp::Service<admittance_control::srv::ComputeTOTG>::SharedPtr service_;
 };
 
 int main(int argc, char** argv)

@@ -65,16 +65,10 @@ install(TARGETS
 # Python scripts
 # ============================================
 install(PROGRAMS
-  scripts/plane_solver_node.py
-  scripts/plane_frame_broadcaster.py
-  scripts/planar_servo_controller.py
-  scripts/plane_teleop_keyboard.py
+
   scripts/depth_to_safe_probe.py
   scripts/segment_area.py
   scripts/ur5e_rrt_planner.py
-  scripts/cartesian_square_controller.py
-  scripts/pd_auto_tuner.py
-  scripts/freedrive_plane_capture.py
   scripts/drawing_action_server.py
   scripts/drawing_dispatcher.py
   scripts/drawing_gui.py
