@@ -109,6 +109,19 @@ ros2 launch ur_robot_driver ur_control.launch.py \
     launch_rviz:=false
 ```
 
+Then configure the External Control URCap on the teach pendant to connect to
+the machine running the driver, not to the robot itself:
+
+- Host/IP: `192.168.8.100` in the current lab setup
+- Port: `50002`
+
+Important:
+- Do not enter the robot IP `192.168.8.4` in the URCap host field.
+- `connection refused` on the pendant usually means the URCap is pointing at the
+    wrong IP or port, or the driver is not currently running.
+- With this devcontainer, the driver listens on the host network and exposes the
+    External Control ports `50001` to `50004` while `ur_control.launch.py` is running.
+
 If the driver starts but `ros2_control_node` dies with a FastRTPS/Fast-CDR
 symbol lookup error from `libpal_statistics_msgs__rosidl_typesupport_fastrtps_cpp.so`,
 refresh the Jazzy middleware packages and retry:
