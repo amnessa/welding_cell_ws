@@ -14,8 +14,8 @@
                 double radius = 500
             }
             dictionary Perspective = {
-                double3 position = (0.16113416275098963, 2.3936805102805367, 1.4961935788441074)
-                double3 target = (0.08352534281902167, -3.8130753704111475, -3.8454436159809564)
+                double3 position = (0.8033764444943641, 1.7461670587380058, 0.9518705136622649)
+                double3 target = (-2.074706811905475, -3.2753131244903657, -3.695735422262345)
             }
             dictionary Right = {
                 double3 position = (0, -1688400, -3.7490011095542286e-10)
@@ -2839,6 +2839,74 @@ def Xform "Root" (
             )
         }
     }
+
+    def Xform "Realsense" (
+        prepend references = @https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.1/Isaac/Sensors/Intel/RealSense/rsd455.usd@
+    )
+    {
+        quatd xformOp:orient = (0.8138757102979929, 0.29478562233745825, 0.3556039058578435, -0.352496279680653)
+        double3 xformOp:scale = (1, 1, 1)
+        double3 xformOp:translate = (-0.3198825012629546, 0.6330073668737852, -0.32783328317087734)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+        over "RSD455"
+        {
+            bool physics:rigidBodyEnabled = 0
+
+            over "Camera_Pseudo_Depth"
+            {
+                float focalLength = 9.1947
+                float fthetaCx = 650.8524
+                float fthetaCy = 350.62
+                float fthetaHeight = 720
+                float fthetaPolyB = 0
+                float fthetaWidth = 1280
+                float horizontalAperture = 12.8
+                float verticalAperture = 7.2
+                quatd xformOp:orient = (0.5, 0.5, 0.5, 0.5)
+                double3 xformOp:translate = (0, 0, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+            }
+
+            over "Camera_OmniVision_OV9782_Left"
+            {
+                float focalLength = 9.1947
+                float fthetaCx = 650.8524
+                float fthetaCy = 350.62
+                float fthetaHeight = 720
+                float fthetaPolyB = 0
+                float fthetaWidth = 1280
+                float horizontalAperture = 12.8
+                float verticalAperture = 7.2
+                double3 xformOp:translate = (0, -0.025, 0)
+            }
+
+            over "Camera_OmniVision_OV9782_Right"
+            {
+                float focalLength = 9.1947
+                float fthetaCx = 650.8524
+                float fthetaCy = 350.62
+                float fthetaHeight = 720
+                float fthetaPolyB = 0
+                float fthetaWidth = 1280
+                float horizontalAperture = 12.8
+                float verticalAperture = 7.2
+                double3 xformOp:translate = (0, 0.025, 0)
+            }
+
+            over "Camera_OmniVision_OV9782_Color"
+            {
+                float focalLength = 9.1947
+                float fthetaCx = 650.8524
+                float fthetaCy = 350.62
+                float fthetaHeight = 720
+                float fthetaPolyB = 0
+                float fthetaWidth = 1280
+                float horizontalAperture = 12.8
+                float verticalAperture = 7.2
+            }
+        }
+    }
 }
 
 def "Render" (
@@ -3085,6 +3153,69 @@ def "Render" (
                 custom bool overrideClipRange = 0
                 uniform int2 resolution = (1280, 720)
             }
+
+            def RenderProduct "Replicator_07" (
+                prepend apiSchemas = ["OmniRtxSettingsCommonAdvancedAPI_1", "OmniRtxSettingsRtAdvancedAPI_1", "OmniRtxSettingsPtAdvancedAPI_1", "OmniRtxPostColorGradingAPI_1", "OmniRtxPostChromaticAberrationAPI_1", "OmniRtxPostBloomPhysicalAPI_1", "OmniRtxPostMatteObjectAPI_1", "OmniRtxPostCompositingAPI_1", "OmniRtxPostDofAPI_1", "OmniRtxPostMotionBlurAPI_1", "OmniRtxPostTvNoiseAPI_1", "OmniRtxPostTonemapIrayReinhardAPI_1", "OmniRtxPostDebugSettingsAPI_1", "OmniRtxDebugSettingsAPI_1", "OmniSensorDepthSensorSingleViewAPI"]
+                hide_in_stage_window = true
+                no_delete = true
+            )
+            {
+                rel camera = </Root/Realsense/RSD455/Camera_Pseudo_Depth>
+                token omni:rtx:background:source:texture:textureMode = "repeatMirrored"
+                token omni:rtx:background:source:type = "domeLight"
+                bool omni:rtx:dlss:frameGeneration = 0
+                bool omni:rtx:material:db:nonVisualMaterialCSV:enabled = 0
+                bool omni:rtx:material:db:syncLoads = 1
+                float omni:rtx:post:depthSensor:baselineMM = 55
+                float omni:rtx:post:depthSensor:confidenceThreshold = 0.95
+                bool omni:rtx:post:depthSensor:enabled = 1
+                float omni:rtx:post:depthSensor:focalLengthPixel = 897
+                float omni:rtx:post:depthSensor:maxDisparityPixel = 110
+                float omni:rtx:post:depthSensor:maxDistance = 10000000
+                float omni:rtx:post:depthSensor:minDistance = 0.5
+                float omni:rtx:post:depthSensor:noiseDownscaleFactorPixel = 1
+                float omni:rtx:post:depthSensor:noiseMean = 0.25
+                float omni:rtx:post:depthSensor:noiseSigma = 0.25
+                int omni:rtx:post:depthSensor:outlierRemovalEnabled = 3
+                int omni:rtx:post:depthSensor:rgbDepthOutputMode = 0
+                float omni:rtx:post:depthSensor:sensorSizePixel = 1280
+                bool omni:rtx:post:depthSensor:showDistance = 0
+                token omni:rtx:post:dlss:execMode = "performance"
+                bool omni:rtx:post:registeredCompositing:invertColorCorrection = 1
+                bool omni:rtx:post:registeredCompositing:invertToneMap = 1
+                bool omni:rtx:pt:lightcache:cached:dontResolveConflicts = 1
+                int omni:rtx:pt:maxSamplesPerLaunch = 2073600
+                int omni:rtx:pt:mgpu:maxPixelsPerRegionExponent = 12
+                color3f omni:rtx:rt:ambientLight:color = (0.1, 0.1, 0.1)
+                bool omni:rtx:rt:ambientocclusion:enabled = 0
+                int omni:rtx:rt:caustics:filterIterations = 0
+                float omni:rtx:rt:caustics:normalPhi = 0.29999998
+                int omni:rtx:rt:caustics:photonCount = 1
+                int omni:rtx:rt:caustics:photonMaxBounces = 1
+                float omni:rtx:rt:caustics:positionPhi = 0.099999994
+                bool omni:rtx:rt:demoire = 0
+                uint omni:rtx:rt:directLighting:samples = 1
+                bool omni:rtx:rt:indirectdiffuse:enabled = 0
+                float omni:rtx:rt:inscattering:blurSigma = 0
+                int omni:rtx:rt:inscattering:depthSlices = 16
+                int omni:rtx:rt:inscattering:maxAccumulationFrames = 0
+                int omni:rtx:rt:inscattering:pixelRatio = 4
+                float omni:rtx:rt:inscattering:sliceDistributionExponent = 1
+                float omni:rtx:rt:inscattering:spatialJitterScale = 0
+                float omni:rtx:rt:inscattering:temporalJitterScale = 0
+                bool omni:rtx:rt:lightcache:spatialCache:dontResolveConflicts = 1
+                bool omni:rtx:rt:reflections:enabled = 0
+                bool omni:rtx:rt:refractions:enabled = 0
+                bool omni:rtx:rt:sss:fireflyFiltering = 0
+                int omni:rtx:rt:sss:samples = 1
+                bool omni:rtx:rt:sss:transmission:enabled = 0
+                bool omni:rtx:scene:hydra:materialSyncLoads = 1
+                bool omni:rtx:scene:hydra:mdlMaterialWarmup = 1
+                uint omni:rtx:viewTile:limit = 4294967295
+                rel orderedVars = </Render/Vars/LdrColor>
+                custom bool overrideClipRange = 0
+                uniform int2 resolution = (2048, 1080)
+            }
         }
     }
 
@@ -3102,6 +3233,7 @@ def "Render" (
             </Render/OmniverseKit/HydraTextures/Replicator_04>,
             </Render/OmniverseKit/HydraTextures/Replicator_05>,
             </Render/OmniverseKit/HydraTextures/Replicator_06>,
+            </Render/OmniverseKit/HydraTextures/Replicator_07>,
         ]
     }
 
