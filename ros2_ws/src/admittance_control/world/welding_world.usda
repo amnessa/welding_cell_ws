@@ -14,8 +14,8 @@
                 double radius = 500
             }
             dictionary Perspective = {
-                double3 position = (-0.006501915323517777, 1.5495641597268337, 0.5259745892119742)
-                double3 target = (-0.38928493376001705, -3.982902500105123, -4.177431678493896)
+                double3 position = (-1.1181592567144183, 1.6006095581769624, 0.6478493390434046)
+                double3 target = (0.5964348244913766, -3.872160232636442, -4.733445110524721)
             }
             dictionary Right = {
                 double3 position = (0, -1688400, -3.7490011095542286e-10)
@@ -25,10 +25,12 @@
                 double3 position = (0, 0, 1188305)
                 double radius = 500
             }
-            string boundCamera = "/OmniverseKit_Persp"
+            string boundCamera = "/Root/Realsense/RSD455/Camera_OmniVision_OV9782_Color"
         }
         dictionary metricsAssembler = {
             dictionary "/Root/Power_Drill_ply" = {
+            }
+            dictionary "/Root/Tblock" = {
             }
             int version = 1
         }
@@ -2849,9 +2851,9 @@ def Xform "Root" (
         prepend references = @https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.1/Isaac/Sensors/Intel/RealSense/rsd455.usd@
     )
     {
-        quatd xformOp:orient = (0.8138757102979929, 0.2947856223374583, 0.3556039058578434, -0.35249627968065295)
+        quatd xformOp:orient = (0.7799080635759428, 0.2630502294177863, 0.42496025936979004, -0.3767715051975588)
         double3 xformOp:scale = (1, 1, 1)
-        double3 xformOp:translate = (-0.45178351938054645, 0.6330073668737851, -0.3278332831708771)
+        double3 xformOp:translate = (-1.2257921971190293, 0.6330073668738011, -0.3278332831708762)
         uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
 
         over "RSD455"
@@ -2908,7 +2910,13 @@ def Xform "Root" (
                 float fthetaPolyB = 0
                 float fthetaWidth = 1280
                 float horizontalAperture = 12.8
+                bool omni:kit:cameraLock = 0
+                custom uniform vector3d omni:kit:centerOfInterest = (0, 0, -0.1005820418790688)
                 float verticalAperture = 7.2
+                quatd xformOp:orient = (0.5000000000000001, 0.5, 0.5, 0.49999999999999994)
+                double3 xformOp:scale = (1, 0.9999989867210388, 1)
+                double3 xformOp:translate = (0, -0.01, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
         }
     }
@@ -3127,7 +3135,7 @@ def Xform "Root" (
         double xformOp:rotateX:unitsResolve = 90
         float3 xformOp:scale = (0.05, 0.05, 0.05)
         double3 xformOp:scale:unitsResolve = (0.01, 0.01, 0.01)
-        double3 xformOp:translate = (-0.26850953665650745, 0.5623903096870936, -0.5755204598076796)
+        double3 xformOp:translate = (-1.0688747076909078, 0.48546586278395937, -0.674058367605083)
         uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale", "xformOp:rotateX:unitsResolve", "xformOp:scale:unitsResolve"]
 
         over "mesh_" (
@@ -3140,6 +3148,32 @@ def Xform "Root" (
             quatf xformOp:orient = (0.76229686, -0.471447, 0.17381687, -0.40795705)
             float3 xformOp:scale = (1, 1, 1)
             double3 xformOp:translate = (-138.92688059789282, -185.63757928897928, 111.59404092353748)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+        }
+    }
+
+    def "Tblock" (
+        displayName = "Tblock"
+        prepend payload = @../models/Tblock.usda@
+    )
+    {
+        quatf xformOp:orient = (0.94893265, -0.12352194, 0.13977134, 0.25442708)
+        double xformOp:rotateX:unitsResolve = 90
+        float3 xformOp:scale = (0.1, 0.1, 0.1)
+        double3 xformOp:scale:unitsResolve = (0.01, 0.01, 0.01)
+        double3 xformOp:translate = (-1.0983318546442449, 0.46776896032519494, -0.7013430908470603)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale", "xformOp:rotateX:unitsResolve", "xformOp:scale:unitsResolve"]
+
+        over "mesh_" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </Root/Robot_Mount_Point/ur5e/Looks/URBlue> (
+                bindMaterialAs = "weakerThanDescendants"
+            )
+            quatf xformOp:orient = (0.7923882, 0.4392069, 0.16666508, -0.38915423)
+            float3 xformOp:scale = (1, 1, 1)
+            double3 xformOp:translate = (30.12585860604733, 107.4701456275235, -8.102588696615612)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
         }
     }
@@ -3163,7 +3197,7 @@ def "Render" (
                 no_delete = true
             )
             {
-                rel camera = </OmniverseKit_Persp>
+                rel camera = </Root/Realsense/RSD455/Camera_OmniVision_OV9782_Color>
                 token omni:rtx:background:source:texture:textureMode = "repeatMirrored"
                 token omni:rtx:background:source:type = "domeLight"
                 bool omni:rtx:dlss:frameGeneration = 0
@@ -3460,10 +3494,14 @@ def "Render" (
             )
             {
                 rel camera = </Root/Realsense/RSD455/Camera_Pseudo_Depth>
+                custom string ogPostProcessPath = "/Render/OmniverseKit/HydraTextures/Replicator_08/PostRender"
                 bool omni:rtx:material:db:syncLoads = 1
                 bool omni:rtx:rt:ecoMode:enabled = 0
                 bool omni:rtx:scene:hydra:materialSyncLoads = 1
-                rel orderedVars = </Render/Vars/LdrColor>
+                rel orderedVars = [
+                    </Render/Vars/DistanceToImagePlaneSD>,
+                    </Render/Vars/LdrColor>,
+                ]
                 custom bool overrideClipRange = 0
                 uniform int2 resolution = (1280, 720)
             }
@@ -3475,10 +3513,14 @@ def "Render" (
             )
             {
                 rel camera = </Root/Realsense/RSD455/Camera_OmniVision_OV9782_Color>
+                custom string ogPostProcessPath = "/Render/OmniverseKit/HydraTextures/Replicator_09/PostRender"
                 bool omni:rtx:material:db:syncLoads = 1
                 bool omni:rtx:rt:ecoMode:enabled = 0
                 bool omni:rtx:scene:hydra:materialSyncLoads = 1
-                rel orderedVars = </Render/Vars/LdrColor>
+                rel orderedVars = [
+                    </Render/Vars/LdrColorSD>,
+                    </Render/Vars/LdrColor>,
+                ]
                 custom bool overrideClipRange = 0
                 uniform int2 resolution = (1280, 720)
             }
