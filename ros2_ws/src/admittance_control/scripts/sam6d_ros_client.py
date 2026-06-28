@@ -151,7 +151,7 @@ def normalize_depth_image(depth_image: np.ndarray, encoding: str, camera_payload
 	if normalized == '32fc1':
 		depth_m = np.nan_to_num(depth_image.astype(np.float32, copy=False), nan=0.0, posinf=0.0, neginf=0.0)
 		depth_mm = np.clip(np.rint(depth_m * 1000.0), 0.0, float(np.iinfo(np.uint16).max))
-		resolved_camera_payload['depth_scale'] = 0.001
+		resolved_camera_payload['depth_scale'] = 1.0
 		return depth_mm.astype(np.uint16), resolved_camera_payload
 
 	raise ValueError(f'Unsupported depth image encoding: {encoding}')
