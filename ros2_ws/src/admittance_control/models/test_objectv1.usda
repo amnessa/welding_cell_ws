@@ -1,0 +1,167 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    metersPerUnit = 0.01
+    upAxis = "Y"
+)
+
+def Xform "World" (
+    kind = "component"
+)
+{
+    quatf xformOp:orient = (1, 0, 0, 0)
+    float3 xformOp:scale = (1, 1, 1)
+    double3 xformOp:translate = (0, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+    def Scope "Looks"
+    {
+        def Material "material"
+        {
+            token outputs:mdl:displacement.connect = </World/Looks/material/material.outputs:out>
+            token outputs:mdl:surface.connect = </World/Looks/material/material.outputs:out>
+            token outputs:mdl:volume.connect = </World/Looks/material/material.outputs:out>
+
+            def Shader "material"
+            {
+                uniform token info:implementationSource = "sourceAsset"
+                uniform asset info:mdl:sourceAsset = @OmniPBR.mdl@
+                uniform token info:mdl:sourceAsset:subIdentifier = "OmniPBR"
+                color3f inputs:diffuse_color_constant = (1, 1, 1) (
+                    customData = {
+                        float3 default = (1, 1, 1)
+                        dictionary range = {
+                            float3 max = (1, 1, 1)
+                            float3 min = (0, 0, 0)
+                        }
+                    }
+                    displayGroup = "Albedo"
+                    displayName = "Base Color"
+                )
+                color3f inputs:emissive_color = (1, 1, 1) (
+                    customData = {
+                        float3 default = (1, 1, 1)
+                        dictionary range = {
+                            float3 max = (1, 1, 1)
+                            float3 min = (0, 0, 0)
+                        }
+                    }
+                    displayGroup = "Emissive"
+                    displayName = "Emissive Color"
+                )
+                float inputs:emissive_intensity = 10000 (
+                    customData = {
+                        float default = 10000
+                        dictionary range = {
+                            float max = 100000
+                            float min = 0
+                        }
+                    }
+                    displayGroup = "Emissive"
+                    displayName = "Emissive Intensity"
+                )
+                bool inputs:enable_emission = 0 (
+                    customData = {
+                        bool default = 0
+                    }
+                    displayGroup = "Emissive"
+                    displayName = "Enable Emission"
+                )
+                bool inputs:enable_opacity = 0 (
+                    customData = {
+                        bool default = 0
+                    }
+                    displayGroup = "Opacity"
+                    displayName = "Enable Opacity"
+                )
+                bool inputs:enable_opacity_texture = 0 (
+                    customData = {
+                        bool default = 0
+                    }
+                    displayGroup = "Opacity"
+                    displayName = "Enable Opacity Texture"
+                )
+                float inputs:opacity_constant = 1 (
+                    customData = {
+                        float default = 1
+                        dictionary range = {
+                            float max = 1
+                            float min = 0
+                        }
+                    }
+                    displayGroup = "Opacity"
+                    displayName = "Opacity Amount"
+                )
+                int inputs:opacity_mode = 1 (
+                    customData = {
+                        int default = 1
+                        dictionary range = {
+                            int max = 3
+                            int min = 0
+                        }
+                    }
+                    displayGroup = "Opacity"
+                    displayName = "Opacity Mono Source"
+                    renderType = "::base::mono_mode"
+                    sdrMetadata = {
+                        string __SDR__enum_value = "mono_average"
+                        string options = "mono_alpha:0|mono_average:1|mono_luminance:2|mono_maximum:3"
+                    }
+                )
+                float inputs:opacity_threshold = 0 (
+                    customData = {
+                        float default = 0
+                        dictionary range = {
+                            float max = 1
+                            float min = 0
+                        }
+                    }
+                    displayGroup = "Opacity"
+                    displayName = "Opacity Threshold"
+                )
+                float inputs:texture_rotate = 0 (
+                    customData = {
+                        float default = 0
+                        dictionary range = {
+                            float max = 360
+                            float min = 0
+                        }
+                    }
+                    displayGroup = "UV"
+                    displayName = "Texture Rotate"
+                )
+                float2 inputs:texture_scale = (1, 1) (
+                    customData = {
+                        float2 default = (1, 1)
+                    }
+                    displayGroup = "UV"
+                    displayName = "Texture Scale"
+                )
+                float2 inputs:texture_translate = (0, 0) (
+                    customData = {
+                        float2 default = (0, 0)
+                    }
+                    displayGroup = "UV"
+                    displayName = "Texture Translate"
+                )
+                token outputs:out
+            }
+        }
+    }
+
+    def Mesh "mesh_" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        float3[] extent = [(0, 0, 0), (180, 100, 54)]
+        int[] faceVertexCounts = [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3]
+        int[] faceVertexIndices = [0, 1, 2, 2, 1, 3, 4, 1, 0, 5, 1, 4, 5, 4, 6, 6, 4, 7, 8, 6, 7, 8, 7, 9, 3, 10, 11, 3, 11, 2, 8, 9, 12, 12, 9, 13, 14, 12, 13, 14, 13, 15, 16, 17, 18, 16, 18, 19, 18, 17, 15, 15, 17, 14, 16, 19, 20, 20, 19, 21, 11, 10, 22, 22, 10, 23, 23, 20, 21, 23, 21, 22, 9, 7, 4, 18, 15, 13, 18, 13, 9, 11, 22, 21, 11, 21, 19, 0, 2, 11, 4, 0, 11, 4, 11, 19, 4, 19, 18, 4, 18, 9, 8, 5, 6, 14, 8, 12, 14, 17, 8, 3, 1, 10, 23, 16, 20, 23, 10, 16, 1, 5, 8, 1, 8, 17, 1, 17, 16, 1, 16, 10]
+        rel material:binding = </World/Looks/material>
+        normal3f[] normals = [(0, -1, 0), (0, 1, 0), (0, -1, 0), (0, -1, 0), (0, 1, 0), (0, 1, 0), (0, -1, 0), (0, 1, 0), (0, -1, 0), (0, 1, 0), (0, 1, 0), (0, -1, 0), (0, 1, 0), (0, -1, 0), (0, 1, 0), (0, 1, 0), (0, -1, 0), (0, -1, 0), (0, 1, 0), (0, 1, 0), (0, -1, 0), (0, 1, 0), (0, -1, 0), (0, -1, 0), (0, 1, 0), (0, 1, 0), (0, -1, 0), (0, 1, 0), (0, -1, 0), (0, -1, 0), (0, 1, 0), (0, -1, 0), (0, 1, 0), (0, 1, 0), (0, -1, 0), (0, -1, 0), (0, 1, 0), (0, 1, 0), (0, -1, 0), (0, 1, 0), (0, -1, 0), (0, -1, 0), (0, 1, 0), (0, 1, 0), (0, -1, 0), (0, 1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, 1, 0), (0, -1, 0), (0, -1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, -1, 0), (0, 1, 0), (0, 1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, 1, 0), (0, -1, 0), (0, -1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, -1, 0), (0, 1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)] (
+            interpolation = "faceVarying"
+        )
+        point3f[] points = [(180, 0, 0), (180, 100, 0), (180, 0, 4), (180, 100, 4), (0, 0, 0), (0, 100, 0), (0, 100, 4), (0, 0, 4), (46, 100, 4), (46, 0, 4), (134, 100, 4), (134, 0, 4), (46, 100, 54), (46, 0, 54), (50, 100, 54), (50, 0, 54), (130, 100, 4), (50, 100, 4), (50, 0, 4), (130, 0, 4), (130, 100, 54), (130, 0, 54), (134, 0, 54), (134, 100, 54)]
+        uniform token subdivisionScheme = "none"
+    }
+}
+
