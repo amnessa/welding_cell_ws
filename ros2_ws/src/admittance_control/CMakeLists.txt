@@ -32,8 +32,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 # ============================================
 
 # Jacobian Calculator Node - Manipulability computation
-add_executable(sand_drawer_jacobian_node src/jacobian_calculator_node.cpp)
-ament_target_dependencies(sand_drawer_jacobian_node
+add_executable(admittance_control_jacobian_node src/jacobian_calculator_node.cpp)
+ament_target_dependencies(admittance_control_jacobian_node
   rclcpp
   sensor_msgs
   std_msgs
@@ -41,7 +41,7 @@ ament_target_dependencies(sand_drawer_jacobian_node
   moveit_ros_planning
   moveit_core
 )
-target_link_libraries(sand_drawer_jacobian_node Eigen3::Eigen)
+target_link_libraries(admittance_control_jacobian_node Eigen3::Eigen)
 
 # TOTG Service Node — Time-Optimal Trajectory Generation
 add_executable(totg_service_node src/totg_service_node.cpp)
@@ -56,7 +56,7 @@ target_link_libraries(totg_service_node ${totg_typesupport})
 
 # Install C++ executables
 install(TARGETS
-  sand_drawer_jacobian_node
+  admittance_control_jacobian_node
   totg_service_node
   DESTINATION lib/${PROJECT_NAME}
 )
@@ -64,10 +64,24 @@ install(TARGETS
 # ============================================
 # Python library module (importable as `admittance_control.*`)
 # Shared code (kinematics, geometry, sam6d I/O) lives here and is imported
-# by the node scripts. Coexists with the rosidl-generated interfaces package
-# because both ship an empty top-level __init__.py.
+# by the node scripts.
+#
+# NOTE: we deliberately do NOT call ament_python_install_package() here.
+# rosidl_generate_interfaces() already registers a Python package named
+# `admittance_control` (to ship the generated action/srv bindings), so a
+# second registration would clash on CMake target names. Instead we install
+# our module files straight into that same package directory. rosidl provides
+# the (empty) top-level __init__.py; our modules sit alongside its
+# action/ srv/ msg/ submodules.
 # ============================================
-ament_python_install_package(${PROJECT_NAME})
+install(
+  FILES
+    admittance_control/__init__.py
+    admittance_control/kinematics.py
+    admittance_control/geometry.py
+    admittance_control/sam6d_io.py
+  DESTINATION ${PYTHON_INSTALL_DIR}/${PROJECT_NAME}
+)
 
 # ============================================
 # Python scripts — main pipeline nodes only
