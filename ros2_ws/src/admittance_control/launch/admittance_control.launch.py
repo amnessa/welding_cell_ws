@@ -14,11 +14,11 @@ Supported trajectory_key values:
     random | line | triangle | square | circle
 
 Usage:
-    ros2 launch sand_drawer sand_drawer.launch.py
-    ros2 launch sand_drawer sand_drawer.launch.py real_robot:=true
-    ros2 launch sand_drawer sand_drawer.launch.py continuous:=true
-    ros2 launch sand_drawer sand_drawer.launch.py trajectory_key:=circle
-    ros2 launch sand_drawer sand_drawer.launch.py orthogonal_tool_length_m:=0.13
+    ros2 launch admittance_control admittance_control.launch.py
+    ros2 launch admittance_control admittance_control.launch.py real_robot:=true
+    ros2 launch admittance_control admittance_control.launch.py continuous:=true
+    ros2 launch admittance_control admittance_control.launch.py trajectory_key:=circle
+    ros2 launch admittance_control admittance_control.launch.py orthogonal_tool_length_m:=0.13
 """
 
 import os
@@ -33,16 +33,16 @@ from ament_index_python.packages import get_package_share_directory
 def launch_setup(context, *args, **kwargs):
     """Resolve substitutions and build the action-mode node list."""
 
-    pkg_share = get_package_share_directory("sand_drawer")
+    pkg_share = get_package_share_directory("admittance_control")
     urdf_file = os.path.join(pkg_share, "urdf", "ur5e.urdf.xacro")
 
     workspace_root = (
-        pkg_share.split("/install/sand_drawer/share/sand_drawer")[0]
-        if "/install/sand_drawer/share/sand_drawer" in pkg_share
+        pkg_share.split("/install/admittance_control/share/admittance_control")[0]
+        if "/install/admittance_control/share/admittance_control" in pkg_share
         else ""
     )
     default_plane_json = (
-        os.path.join(workspace_root, "src", "sand_drawer",
+        os.path.join(workspace_root, "src", "admittance_control",
                      "generated_planes", "sand_drawer_plane.json")
         if workspace_root
         else os.path.join(pkg_share, "generated_planes",
@@ -109,7 +109,7 @@ def launch_setup(context, *args, **kwargs):
         action_traj_key = "random"
 
     nodes.append(Node(
-        package="sand_drawer",
+        package="admittance_control",
         executable="drawing_action_server.py",
         name="drawing_action_server",
         output="screen",
@@ -140,7 +140,7 @@ def launch_setup(context, *args, **kwargs):
     ))
 
     nodes.append(Node(
-        package="sand_drawer",
+        package="admittance_control",
         executable="totg_service_node",
         name="totg_service_node",
         output="screen",
@@ -148,7 +148,7 @@ def launch_setup(context, *args, **kwargs):
     ))
 
     nodes.append(Node(
-        package="sand_drawer",
+        package="admittance_control",
         executable="drawing_dispatcher.py",
         name="drawing_dispatcher",
         output="screen",
@@ -165,14 +165,14 @@ def launch_setup(context, *args, **kwargs):
 
 
 def generate_launch_description():
-    pkg_share = get_package_share_directory("sand_drawer")
+    pkg_share = get_package_share_directory("admittance_control")
     workspace_root = (
-        pkg_share.split("/install/sand_drawer/share/sand_drawer")[0]
-        if "/install/sand_drawer/share/sand_drawer" in pkg_share
+        pkg_share.split("/install/admittance_control/share/admittance_control")[0]
+        if "/install/admittance_control/share/admittance_control" in pkg_share
         else ""
     )
     default_plane_json = (
-        os.path.join(workspace_root, "src", "sand_drawer",
+        os.path.join(workspace_root, "src", "admittance_control",
                      "generated_planes", "sand_drawer_plane.json")
         if workspace_root
         else os.path.join(pkg_share, "generated_planes",

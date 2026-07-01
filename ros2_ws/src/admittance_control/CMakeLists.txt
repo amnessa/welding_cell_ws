@@ -62,18 +62,16 @@ install(TARGETS
 )
 
 # ============================================
-# Python scripts
+# Python scripts — main pipeline nodes only
+# (calibration / legacy / GUI live under helper/ and are run directly, not
+#  installed as package executables)
 # ============================================
 install(PROGRAMS
-
-  scripts/depth_to_safe_probe.py
-  scripts/cartesian_admittance_controller.py
-  scripts/segment_area.py
   scripts/sam6d_ros_client.py
+  scripts/cartesian_admittance_controller.py
   scripts/ur5e_rrt_planner.py
   scripts/drawing_action_server.py
   scripts/drawing_dispatcher.py
-  scripts/drawing_gui.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -87,6 +85,7 @@ install(DIRECTORY
   meshes
   world
   generated_planes
+  helper
   scripts/rgb_depth_to_send
   DESTINATION share/${PROJECT_NAME}
 )
