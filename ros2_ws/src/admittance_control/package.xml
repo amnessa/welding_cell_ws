@@ -21,6 +21,10 @@
   <depend>sensor_msgs</depend>
   <depend>geometry_msgs</depend>
 
+  <!-- Perception pipeline (SAM-6D bridge) -->
+  <depend>vision_msgs</depend>
+  <depend>std_srvs</depend>
+
   <!-- TF and utility dependencies for plane capture -->
   <depend>tf2_ros</depend>
   <depend>tf2_geometry_msgs</depend>

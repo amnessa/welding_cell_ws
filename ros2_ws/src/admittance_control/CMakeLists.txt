@@ -62,14 +62,21 @@ install(TARGETS
 )
 
 # ============================================
+# Python library module (importable as `admittance_control.*`)
+# Shared code (kinematics, geometry, sam6d I/O) lives here and is imported
+# by the node scripts. Coexists with the rosidl-generated interfaces package
+# because both ship an empty top-level __init__.py.
+# ============================================
+ament_python_install_package(${PROJECT_NAME})
+
+# ============================================
 # Python scripts — main pipeline nodes only
 # (calibration / legacy / GUI live under helper/ and are run directly, not
 #  installed as package executables)
 # ============================================
 install(PROGRAMS
-  scripts/sam6d_ros_client.py
+  scripts/sam6d_bridge_node.py
   scripts/cartesian_admittance_controller.py
-  scripts/ur5e_rrt_planner.py
   scripts/drawing_action_server.py
   scripts/drawing_dispatcher.py
   DESTINATION lib/${PROJECT_NAME}

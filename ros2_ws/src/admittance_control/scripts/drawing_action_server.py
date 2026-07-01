@@ -33,7 +33,7 @@ Architecture
 
 Reuses
 ------
-  ur5e_rrt_planner.py — FK, IK, RRT-Connect, Catmull-Rom path smoothing
+  admittance_control.kinematics — FK, IK, RRT-Connect, Catmull-Rom path smoothing
 
 Action interface
 ----------------
@@ -62,11 +62,6 @@ import os
 import sys
 import time as _time
 from typing import List, Optional, Tuple
-
-# Ensure sibling scripts are importable (ur5e_rrt_planner.py etc.)
-_scripts_dir = os.path.dirname(os.path.realpath(__file__))
-if _scripts_dir not in sys.path:
-    sys.path.insert(0, _scripts_dir)
 
 import numpy as np
 import rclpy
@@ -570,7 +565,7 @@ class DrawingActionServer(Node):
     # ------------------------------------------------------------------
     def _ik(self, T_target: np.ndarray,
             q_seed: np.ndarray) -> Optional[np.ndarray]:
-        from ur5e_rrt_planner import ik_solve
+        from admittance_control.kinematics import ik_solve
 
         self._ik_total_count += 1
         q_sol = ik_solve(T_target, q_seed, max_iter=300,
@@ -606,7 +601,7 @@ class DrawingActionServer(Node):
             T_target: np.ndarray,
             seed_center: Optional[np.ndarray] = None,
             fast_mode: bool = False) -> Optional[np.ndarray]:
-        from ur5e_rrt_planner import ik_solve
+        from admittance_control.kinematics import ik_solve
         import random as _random
 
         home = self._home_positions.copy()
@@ -657,7 +652,7 @@ class DrawingActionServer(Node):
 
     def _quick_pose_ik(self, T_target: np.ndarray, q_seed: np.ndarray) -> Optional[np.ndarray]:
         """Fast IK for sweep approach without costly global constrained search."""
-        from ur5e_rrt_planner import ik_solve
+        from admittance_control.kinematics import ik_solve
 
         base = q_seed.copy()
         seeds = [
@@ -690,7 +685,7 @@ class DrawingActionServer(Node):
     # FK helper
     # ------------------------------------------------------------------
     def _fk_position(self, q: np.ndarray) -> np.ndarray:
-        from ur5e_rrt_planner import ur5e_fk
+        from admittance_control.kinematics import ur5e_fk
         return ur5e_fk(q)[:3, 3]
 
     # ------------------------------------------------------------------
@@ -1111,7 +1106,7 @@ class DrawingActionServer(Node):
     ) -> Optional[List[Tuple[str, List[np.ndarray], Optional[List[float]]]]]:
         """Build all phases for one drawing. Returns list of
         (label, joint_path, exact_timestamps_or_none) tuples."""
-        from ur5e_rrt_planner import (ur5e_fk, rrt_connect,
+        from admittance_control.kinematics import (ur5e_fk, rrt_connect,
                                       smooth_path, bezier_smooth_path)
 
         self._last_precompute_fail_reason = ''
@@ -1627,7 +1622,7 @@ class DrawingActionServer(Node):
             return
 
         try:
-            from ur5e_rrt_planner import ur5e_fk
+            from admittance_control.kinematics import ur5e_fk
 
             # Build retract + homing path
             T_now = ur5e_fk(q_current)

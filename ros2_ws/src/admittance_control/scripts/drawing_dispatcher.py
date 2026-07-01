@@ -33,10 +33,7 @@ except ImportError:
     from sand_drawer.action import ExecuteDrawing
 
 # ── Import IK solver from the kinematics library ─────────────────────────
-_scripts_dir = os.path.dirname(os.path.realpath(__file__))
-if _scripts_dir not in sys.path:
-    sys.path.insert(0, _scripts_dir)
-from ur5e_rrt_planner import ik_solve  # noqa: E402
+from admittance_control.kinematics import ik_solve
 
 
 # ── Quaternion → rotation matrix (self-contained helper) ─────────────────
