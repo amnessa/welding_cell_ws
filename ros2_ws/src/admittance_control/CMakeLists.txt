@@ -91,6 +91,8 @@ install(
 install(PROGRAMS
   scripts/realsense_camera_node.py
   scripts/sam6d_bridge_node.py
+  scripts/camera_extrinsic_tf_publisher.py
+  scripts/move_to_object_node.py
   scripts/cartesian_admittance_controller.py
   scripts/drawing_action_server.py
   scripts/drawing_dispatcher.py
