@@ -89,6 +89,7 @@ install(
 #  installed as package executables)
 # ============================================
 install(PROGRAMS
+  scripts/realsense_camera_node.py
   scripts/sam6d_bridge_node.py
   scripts/cartesian_admittance_controller.py
   scripts/drawing_action_server.py
