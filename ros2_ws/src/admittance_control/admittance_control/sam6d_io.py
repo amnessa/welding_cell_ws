@@ -8,6 +8,7 @@ of a `sensor_msgs/Image` but only via duck typing (width/height/step/data/...).
 
 from __future__ import annotations
 
+import base64
 import json
 import uuid
 from pathlib import Path
@@ -176,31 +177,56 @@ def post_files(url: str, files: Dict[str, Tuple[str, bytes, str]],
 
 # ── Response parsing ─────────────────────────────────────────────────────
 
-def parse_pem_response(status_code: int, body: bytes) -> Tuple[bool, str, List[dict]]:
+def parse_pem_response(status_code: int, body: bytes
+                       ) -> Tuple[bool, str, List[dict], Dict[str, str]]:
     """Parse the SAM-6D `/predict_pose` reply.
 
-    The server returns ``{"status": "success", "pose": [<detection_pem>...]}``
-    on success, or ``{"status"/"error": ..., "message"/"details": ...}`` on
-    failure. Returns ``(ok, message, detections)`` where ``detections`` is the
-    raw detection_pem list (each entry has ``R``, ``t`` [mm], ``score``,
-    ``category_id``, ``bbox``, ``segmentation``).
+    The server returns ``{"status": "success", "pose": [<detection_pem>...],
+    "artifacts": {<filename>: <base64>}}`` on success, or
+    ``{"status"/"error": ..., "message"/"details": ...}`` on failure. Returns
+    ``(ok, message, detections, artifacts)`` where ``detections`` is the raw
+    detection_pem list (each entry has ``R``, ``t`` [mm], ``score``,
+    ``category_id``, ``bbox``) and ``artifacts`` maps each raw output filename
+    to its base64 payload (empty when the server sent none).
     """
     text = body.decode('utf-8', errors='replace')
     if status_code != 200:
-        return False, f'server returned HTTP {status_code}: {text[:500]}', []
+        return False, f'server returned HTTP {status_code}: {text[:500]}', [], {}
     try:
         payload = json.loads(text)
     except ValueError:
-        return False, f'response was not valid JSON: {text[:500]}', []
+        return False, f'response was not valid JSON: {text[:500]}', [], {}
 
     if isinstance(payload, dict) and payload.get('status') == 'success':
         pose = payload.get('pose', [])
         if not isinstance(pose, list):
-            return False, 'response "pose" field was not a list', []
-        return True, f'{len(pose)} raw detections', pose
+            return False, 'response "pose" field was not a list', [], {}
+        artifacts = payload.get('artifacts', {})
+        if not isinstance(artifacts, dict):
+            artifacts = {}
+        return True, f'{len(pose)} raw detections', pose, artifacts
 
     message = ''
     if isinstance(payload, dict):
         message = str(payload.get('message') or payload.get('error')
                       or payload.get('details') or payload)
-    return False, f'SAM-6D reported failure: {message[:500]}', []
+    return False, f'SAM-6D reported failure: {message[:500]}', [], {}
+
+
+def save_artifacts(artifacts: Dict[str, str], dest_dir: Path) -> List[str]:
+    """base64-decode the raw pipeline outputs and write them into ``dest_dir``.
+
+    Files are overwritten each call. ``base64.b64decode`` reproduces the bytes
+    exactly, so the binary ``.npz`` survives the round-trip. The stored name is
+    reduced to its basename to guard against path traversal from the payload.
+    Returns the list of filenames written.
+    """
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    written: List[str] = []
+    for name, encoded in artifacts.items():
+        safe_name = Path(name).name
+        if not safe_name:
+            continue
+        (dest_dir / safe_name).write_bytes(base64.b64decode(encoded))
+        written.append(safe_name)
+    return written

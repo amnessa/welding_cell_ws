@@ -36,6 +36,7 @@ Notes
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import List, Optional
 
 import rclpy
@@ -60,6 +61,7 @@ from admittance_control.sam6d_io import (
     parse_pem_response,
     post_files,
     resolve_transfer_dir,
+    save_artifacts,
 )
 
 
@@ -80,6 +82,7 @@ class Sam6DBridgeNode(Node):
         self.declare_parameter('max_sync_delta_sec', 0.25)
         self.declare_parameter('min_score', 0.0)
         self.declare_parameter('auto_trigger', False)
+        self.declare_parameter('results_dir', '')
 
         self._server_url = self.get_parameter('server_url').value
         self._request_timeout_sec = float(self.get_parameter('request_timeout_sec').value)
@@ -90,6 +93,13 @@ class Sam6DBridgeNode(Node):
 
         self._transfer_dir = resolve_transfer_dir()
         self._camera_path = self._transfer_dir / 'camera.json'
+
+        # Raw pipeline artifacts returned by the server are written here,
+        # overwritten each trigger. Kept separate from the transfer dir, which
+        # holds the rgb/depth/camera inputs we send out.
+        results_dir = str(self.get_parameter('results_dir').value)
+        self._results_dir = (Path(results_dir) if results_dir
+                             else self._transfer_dir.parent / 'sam6d_results')
 
         self._latest_rgb: Optional[Image] = None
         self._latest_depth: Optional[Image] = None
@@ -109,7 +119,8 @@ class Sam6DBridgeNode(Node):
 
         self.get_logger().info(
             f'SAM-6D bridge ready. RGB={rgb_topic} depth={depth_topic} '
-            f'server={self._server_url} transfer_dir={self._transfer_dir}')
+            f'server={self._server_url} transfer_dir={self._transfer_dir} '
+            f'results_dir={self._results_dir}')
         if self._auto_trigger:
             self.get_logger().info('auto_trigger=true: will run once on first synced pair.')
 
@@ -177,9 +188,17 @@ class Sam6DBridgeNode(Node):
         except Exception as exc:  # noqa: BLE001 - surface any capture/HTTP error
             return False, f'capture/POST failed: {exc}', 0
 
-        ok, message, raw_detections = parse_pem_response(status_code, body)
+        ok, message, raw_detections, artifacts = parse_pem_response(status_code, body)
         if not ok:
             return False, message, 0
+
+        if artifacts:
+            try:
+                written = save_artifacts(artifacts, self._results_dir)
+                self.get_logger().info(
+                    f'saved {len(written)} artifact(s) to {self._results_dir}: {written}')
+            except Exception as exc:  # noqa: BLE001 - artifact write is best-effort
+                self.get_logger().warn(f'failed to save artifacts: {exc}')
 
         frame_id = rgb_msg.header.frame_id or self._camera_frame
         msg = self._build_detection_array(raw_detections, frame_id)
