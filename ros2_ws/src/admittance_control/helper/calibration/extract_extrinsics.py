@@ -21,12 +21,23 @@ PACKAGE_ROOT = next(
 NOTEBOOKS_DIR = PACKAGE_ROOT / "notebooks"
 DEFAULT_ROBOT_IP = "192.168.8.4"
 DEFAULT_INTRINSICS_PATH = NOTEBOOKS_DIR / "realsense_intrinsics.npy"
-DEFAULT_OUTPUT_PATH = NOTEBOOKS_DIR / "T_base_to_cam.npy"
 DEFAULT_SAMPLES_PATH = NOTEBOOKS_DIR / "handeye_samples.npz"
 DEFAULT_REFERENCE_BOARD_PATH = NOTEBOOKS_DIR / "charuco_reference.png"
 DEFAULT_DEBUG_FRAME_PATH = NOTEBOOKS_DIR / "handeye_debug_latest.png"
 DEFAULT_ARUCO_DICTIONARY = "DICT_4X4_250"
-DEFAULT_CALIBRATION_SETUP = "eye-to-hand"
+DEFAULT_CALIBRATION_SETUP = "eye-in-hand"
+
+# The solved extrinsic lives in a different frame depending on the setup:
+# eye-in-hand yields the camera pose in the TCP frame (constant while the
+# camera stays bolted to the wrist), eye-to-hand yields it in the base frame.
+DEFAULT_OUTPUT_PATHS = {
+    "eye-in-hand": NOTEBOOKS_DIR / "T_tcp_to_cam.npy",
+    "eye-to-hand": NOTEBOOKS_DIR / "T_base_to_cam.npy",
+}
+RESULT_LABELS = {
+    "eye-in-hand": "T_tcp_to_cam",
+    "eye-to-hand": "T_base_to_cam",
+}
 
 
 def available_dictionary_names() -> list[str]:
@@ -61,8 +72,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-path",
         type=Path,
-        default=DEFAULT_OUTPUT_PATH,
-        help="Path for the solved 4x4 extrinsic matrix (.npy).",
+        default=None,
+        help=(
+            "Path for the solved 4x4 extrinsic matrix (.npy). Defaults to "
+            "T_tcp_to_cam.npy for eye-in-hand and T_base_to_cam.npy for eye-to-hand."
+        ),
     )
     parser.add_argument(
         "--samples-output",
@@ -74,7 +88,10 @@ def parse_args() -> argparse.Namespace:
         "--calibration-setup",
         choices=["eye-to-hand", "eye-in-hand"],
         default=DEFAULT_CALIBRATION_SETUP,
-        help="Hand-eye setup. Use 'eye-to-hand' for a fixed camera looking at the robot workspace.",
+        help=(
+            "Hand-eye setup. Use 'eye-in-hand' for a camera mounted on the robot looking at a "
+            "fixed board, 'eye-to-hand' for a fixed camera looking at the robot workspace."
+        ),
     )
     parser.add_argument(
         "--reference-board-path",
@@ -133,7 +150,10 @@ def parse_args() -> argparse.Namespace:
         default=True,
         help="Use the legacy OpenCV ChArUco square parity. Enable this when the generated reference starts with the opposite square pattern from the printed board.",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.output_path is None:
+        args.output_path = DEFAULT_OUTPUT_PATHS[args.calibration_setup]
+    return args
 
 
 def load_intrinsics(intrinsics_path: Path) -> tuple[np.ndarray, np.ndarray]:
@@ -315,11 +335,16 @@ def solve_extrinsics(
             robot_translations,
         )
     else:
-        print("Solving eye-in-hand calibration directly from gripper->base robot poses.")
+        print(
+            "Solving eye-in-hand calibration directly from gripper->base robot poses. "
+            "The result is the camera pose in the TCP frame (T_tcp_to_cam)."
+        )
         calibration_rotations = robot_rotations
         calibration_translations = robot_translations
 
-    rotation_cam_to_base, translation_cam_to_base = cv2.calibrateHandEye(
+    # eye-in-hand: cv2 returns cam->gripper, i.e. the camera pose in the TCP frame.
+    # eye-to-hand (with inverted robot poses): cv2 returns cam->base instead.
+    rotation, translation = cv2.calibrateHandEye(
         calibration_rotations,
         calibration_translations,
         board_rotations,
@@ -327,10 +352,10 @@ def solve_extrinsics(
         method=cv2.CALIB_HAND_EYE_TSAI,
     )
 
-    transform_base_to_cam = np.eye(4, dtype=float)
-    transform_base_to_cam[:3, :3] = rotation_cam_to_base
-    transform_base_to_cam[:3, 3] = translation_cam_to_base.reshape(3)
-    return transform_base_to_cam
+    transform = np.eye(4, dtype=float)
+    transform[:3, :3] = rotation
+    transform[:3, 3] = translation.reshape(3)
+    return transform
 
 
 def main() -> int:
@@ -367,7 +392,13 @@ def main() -> int:
         pipeline_started = True
 
         print("Preview ready.")
-        print("Move the robot so the ChArUco board is clearly visible to the camera.")
+        if args.calibration_setup == "eye-in-hand":
+            print(
+                "Eye-in-hand: keep the ChArUco board fixed in the workspace and move the robot "
+                "so the wrist camera sees it from varied positions and orientations."
+            )
+        else:
+            print("Move the robot so the ChArUco board is clearly visible to the camera.")
         print("Press 'c' to capture a sample, 'q' to solve, or Esc to abort.")
         print(
             "Expected board: "
@@ -511,7 +542,7 @@ def main() -> int:
                 break
 
         print("Solving hand-eye calibration...")
-        transform_base_to_cam = solve_extrinsics(
+        transform = solve_extrinsics(
             robot_rotations,
             robot_translations,
             board_rotations,
@@ -520,13 +551,13 @@ def main() -> int:
         )
 
         print("\n=== Extrinsic Result ===")
-        print("T_base_to_cam:")
-        print(np.round(transform_base_to_cam, 4))
+        print(f"{RESULT_LABELS[args.calibration_setup]}:")
+        print(np.round(transform, 4))
 
         save_outputs(
             args.output_path,
             args.samples_output,
-            transform_base_to_cam,
+            transform,
             robot_rotations,
             robot_translations,
             board_rotations,

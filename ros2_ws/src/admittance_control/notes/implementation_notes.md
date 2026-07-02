@@ -72,3 +72,8 @@ ism:
 pem:
 
 [{"scene_id": 0, "image_id": 0, "category_id": 1, "bbox": [0, 2, 1278, 714], "score": 0.0037155821919441223, "time": 0.0, "segmentation": {"counts": [3, 716, 4, 716, 4, 716, 2, 718, 2, 718, 2, 718, 2, 718, 2, 718, 2, 718, 2, 718, 2, 718, 2, 718, 2, 718, 2, 718, 2, 718, 4, 716, 4, 716, 4, 716, 4, 716, 4, 716
+
+
+calibration update note:
+
+One thing to keep in mind downstream: with the camera on the wrist there is no longer a constant base→camera transform. The calibration constant is T_tcp_to_cam; consumers like the SAM-6D bridge need to compute T_base_to_cam = T_base_to_tcp(current pose) @ T_tcp_to_cam at each capture. The legacy sand-drawer script and the Sam_to_Surface_Plane notebook still load a static T_base_to_cam.npy, so they'd need that same update if you plan to reuse them with the new mount.
