@@ -25,6 +25,10 @@
   <depend>vision_msgs</depend>
   <depend>std_srvs</depend>
 
+  <!-- Colored pointcloud from rgb + aligned depth (pointcloud.launch.py) -->
+  <exec_depend>depth_image_proc</exec_depend>
+  <exec_depend>rclcpp_components</exec_depend>
+
   <!-- TF and utility dependencies for plane capture -->
   <depend>tf2_ros</depend>
   <depend>tf2_geometry_msgs</depend>

@@ -61,6 +61,7 @@ apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
     ros-jazzy-image-geometry \
     ros-jazzy-moveit \
     ros-jazzy-vision-msgs \
+    ros-jazzy-depth-image-proc \
     2>/dev/null || echo "Some ROS 2 packages may not be available, continuing..."
 
 # Initialize rosdep if not already done
