@@ -33,6 +33,17 @@ Usage
     ros2 launch admittance_control digital_twin_pointcloud.launch.py extrinsic_parent:=flange
 
 Requires: sudo apt install ros-jazzy-depth-image-proc
+
+
+To send rgbd readings to other computer
+
+
+ros2 launch admittance_control digital_twin_pointcloud.launch.py \
+  launch_sam6d:=true \
+  sam6d_server_url:=http://ip_to_that_pc:5000/predict_pose \
+  launch_rviz:=true \
+  detection_min_score:=0.1
+
 """
 
 import os
@@ -153,6 +164,37 @@ def launch_setup(context, *args, **kwargs):
         ],
     ))
 
+    # ---- SAM-6D bridge (optional; needs the Flask pose server reachable) ----
+    launch_sam6d = LaunchConfiguration("launch_sam6d").perform(context) == "true"
+    if launch_sam6d:
+        nodes.append(Node(
+            package="admittance_control",
+            executable="sam6d_bridge_node.py",
+            name="sam6d_bridge",
+            output="screen",
+            parameters=[{
+                "server_url": LaunchConfiguration("sam6d_server_url").perform(context),
+                "camera_frame": CAMERA_FRAME,
+                "use_sim_time": True,
+            }],
+        ))
+
+    # ---- Detection3DArray -> RViz MarkerArray (pose triads + labels + CAD box) ----
+    bbox_model = LaunchConfiguration("bbox_model_path").perform(context) \
+        or os.path.join(pkg_share, "models", "test_objv3.ply")
+    nodes.append(Node(
+        package="admittance_control",
+        executable="detection_marker_node.py",
+        name="detection_marker",
+        output="screen",
+        parameters=[{
+            "min_score": float(LaunchConfiguration("detection_min_score").perform(context)),
+            "bbox_model_path": bbox_model,
+            "bbox_model_units": LaunchConfiguration("bbox_model_units").perform(context),
+            "use_sim_time": True,
+        }],
+    ))
+
     nodes.append(Node(
         package="rviz2",
         executable="rviz2",
@@ -181,5 +223,22 @@ def generate_launch_description():
             "extrinsic_path", default_value="",
             description="Path to the 4x4 hand-eye transform (.npy). "
                         "Empty = notebooks/T_tcp_to_cam.npy."),
+        DeclareLaunchArgument(
+            "launch_sam6d", default_value="false",
+            description="Also start the SAM-6D bridge (needs the Flask pose "
+                        "server reachable at sam6d_server_url)."),
+        DeclareLaunchArgument(
+            "sam6d_server_url", default_value="http://127.0.0.1:5000/predict_pose",
+            description="SAM-6D Flask /predict_pose endpoint."),
+        DeclareLaunchArgument(
+            "detection_min_score", default_value="0.0",
+            description="Drop detections below this score in the RViz markers."),
+        DeclareLaunchArgument(
+            "bbox_model_path", default_value="",
+            description="CAD .ply for the oriented box on the best detection. "
+                        "Empty = models/test_objv3.ply (category_id 1)."),
+        DeclareLaunchArgument(
+            "bbox_model_units", default_value="mm",
+            description="Units of the CAD model vertices (mm or m)."),
         OpaqueFunction(function=launch_setup),
     ])

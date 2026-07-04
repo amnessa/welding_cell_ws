@@ -14,8 +14,8 @@
                 double radius = 500
             }
             dictionary Perspective = {
-                double3 position = (0.2728879054773363, 2.3839900681249393, 1.6625824012254904)
-                double3 target = (-0.5173675647763691, -4.148625233361027, -4.623152535160407)
+                double3 position = (0.2844684321571672, 2.06602812170341, 0.5892936009507765)
+                double3 target = (-1.4691738935127767, -4.502487830420439, -3.8880578015140523)
             }
             dictionary Right = {
                 double3 position = (0, -1688400, -3.7490011095542286e-10)
@@ -2655,6 +2655,7 @@ def Xform "Root" (
             bool physics:kinematicEnabled = 0
             bool physics:rigidBodyEnabled = 1
             bool physxRigidBody:disableGravity = 0
+            token visibility = "invisible"
             double3 xformOp:rotateZYX = (-0, 0, 135)
             double3 xformOp:scale = (0.0010000000474974513, 0.0010000000474974513, 0.0010000000474974513)
             double3 xformOp:translate = (0.8372159431711007, 0.20556901021970372, -0.13737472143524332)
@@ -3393,6 +3394,15 @@ def Xform "Root" (
         double3 xformOp:scale:unitsResolve = (0.01, 0.01, 0.01)
         double3 xformOp:translate = (-0.16672488974599042, 0.16779550584942535, -0.7058624333855081)
         uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale", "xformOp:rotateX:unitsResolve", "xformOp:scale:unitsResolve"]
+
+        over "mesh_" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </Root/Robot_Mount_Point/ur5e/Looks/JointGrey> (
+                bindMaterialAs = "weakerThanDescendants"
+            )
+        }
     }
 
     def "Realsense"
@@ -4132,11 +4142,15 @@ def "Render" (
             )
             {
                 rel camera = </Root/Robot_Mount_Point/ur5e/wrist_3_link/flange/Realsense/RSD455/Camera_OmniVision_OV9782_Color>
+                custom string ogPostProcessPath = "/Render/OmniverseKit/HydraTextures/Replicator_30/PostRender"
                 bool omni:rtx:material:db:syncLoads = 1
                 token omni:rtx:post:aa:op = "taa"
                 bool omni:rtx:rt:ecoMode:enabled = 0
                 bool omni:rtx:scene:hydra:materialSyncLoads = 1
-                rel orderedVars = </Render/Vars/LdrColor>
+                rel orderedVars = [
+                    </Render/Vars/LdrColorSD>,
+                    </Render/Vars/LdrColor>,
+                ]
                 custom bool overrideClipRange = 0
                 uniform int2 resolution = (1280, 720)
             }
@@ -4148,11 +4162,15 @@ def "Render" (
             )
             {
                 rel camera = </Root/Robot_Mount_Point/ur5e/wrist_3_link/flange/Realsense/RSD455/Camera_Pseudo_Depth>
+                custom string ogPostProcessPath = "/Render/OmniverseKit/HydraTextures/Replicator_31/PostRender"
                 bool omni:rtx:material:db:syncLoads = 1
                 token omni:rtx:post:aa:op = "taa"
                 bool omni:rtx:rt:ecoMode:enabled = 0
                 bool omni:rtx:scene:hydra:materialSyncLoads = 1
-                rel orderedVars = </Render/Vars/LdrColor>
+                rel orderedVars = [
+                    </Render/Vars/DistanceToImagePlaneSD>,
+                    </Render/Vars/LdrColor>,
+                ]
                 custom bool overrideClipRange = 0
                 uniform int2 resolution = (1280, 720)
             }
