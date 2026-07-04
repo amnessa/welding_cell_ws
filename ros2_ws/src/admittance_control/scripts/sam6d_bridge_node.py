@@ -31,6 +31,8 @@ Notes
   server needs cam_K + depth_scale); this mirrors the proven capture flow.
 - SAM-6D translations are millimetres in the camera optical frame; they are
   converted to metres here. Rotations arrive as a 3x3 matrix (``R``).
+
+  run from laptop ros2 run admittance_control sam6d_bridge_node.py   --ros-args -p server_url:=http://ip_to_home_desktop:5000/predict_pose
 """
 
 from __future__ import annotations
