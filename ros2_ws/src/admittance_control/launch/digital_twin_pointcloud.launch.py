@@ -195,6 +195,22 @@ def launch_setup(context, *args, **kwargs):
         }],
     ))
 
+    # ---- ICP pose refiner (segmented scene cloud vs CAD model at SAM-6D pose) ----
+    if LaunchConfiguration("launch_icp").perform(context) == "true":
+        nodes.append(Node(
+            package="admittance_control",
+            executable="icp_pose_refiner_node.py",
+            name="icp_pose_refiner",
+            output="screen",
+            parameters=[{
+                "model_path": bbox_model,
+                "model_units": LaunchConfiguration("bbox_model_units").perform(context),
+                "scene_from": LaunchConfiguration("icp_scene_from").perform(context),
+                "camera_frame": CAMERA_FRAME,
+                "use_sim_time": True,
+            }],
+        ))
+
     nodes.append(Node(
         package="rviz2",
         executable="rviz2",
@@ -240,5 +256,12 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "bbox_model_units", default_value="mm",
             description="Units of the CAD model vertices (mm or m)."),
+        DeclareLaunchArgument(
+            "launch_icp", default_value="true",
+            description="Start the ICP pose refiner (call its ~/run_icp service)."),
+        DeclareLaunchArgument(
+            "icp_scene_from", default_value="pointcloud",
+            description="ICP scene source: 'pointcloud' (live cloud) or "
+                        "'depth_png' (the saved frame SAM-6D processed)."),
         OpaqueFunction(function=launch_setup),
     ])

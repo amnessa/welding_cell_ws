@@ -24,6 +24,7 @@
   <!-- Perception pipeline (SAM-6D bridge) -->
   <depend>vision_msgs</depend>
   <depend>visualization_msgs</depend>
+  <depend>sensor_msgs_py</depend>
   <depend>std_srvs</depend>
 
   <!-- Colored pointcloud from rgb + aligned depth (pointcloud.launch.py) -->

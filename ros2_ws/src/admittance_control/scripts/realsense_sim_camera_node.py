@@ -104,8 +104,8 @@ class RealSenseSimCameraNode(Node):
         self.declare_parameter('color_out_topic', '/camera/color/image_raw')
         self.declare_parameter('depth_out_topic', '/camera/depth/image_rect_raw')
         # Depth Gaussian noise: sigma(z) = std_m + z2_coeff * z^2  (metres).
-        self.declare_parameter('depth_noise_std_m', 0.05)
-        self.declare_parameter('depth_noise_z2_coeff', 0.01)
+        self.declare_parameter('depth_noise_std_m', 0.02)
+        self.declare_parameter('depth_noise_z2_coeff', 0.005)
         # RGB Gaussian noise in 8-bit intensity units; 0 = passthrough baseline.
         self.declare_parameter('rgb_noise_std', 0.0)
         # Seed for reproducibility; <0 uses a nondeterministic generator.

@@ -80,6 +80,7 @@ install(
     admittance_control/kinematics.py
     admittance_control/geometry.py
     admittance_control/sam6d_io.py
+    admittance_control/icp.py
   DESTINATION ${PYTHON_INSTALL_DIR}/${PROJECT_NAME}
 )
 
@@ -93,6 +94,7 @@ install(PROGRAMS
   scripts/realsense_sim_camera_node.py
   scripts/sam6d_bridge_node.py
   scripts/detection_marker_node.py
+  scripts/icp_pose_refiner_node.py
   scripts/camera_extrinsic_tf_publisher.py
   scripts/move_to_object_node.py
   scripts/cartesian_admittance_controller.py
