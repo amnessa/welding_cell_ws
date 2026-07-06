@@ -139,14 +139,24 @@ camera ─▶ /camera/color/image_raw ─┐
                  │                                   │
                  ▼                                   ▼
    detection_marker_node                    icp_pose_refiner_node
-   → /perception/detection_markers          → mask ∩ pointcloud = scene cloud
-     (pose triads, labels, and an             → place CAD .ply at SAM-6D pose
-      oriented CAD wireframe box on            → point-to-plane ICP (pure NumPy)
-      the highest-scoring detection)           → /perception/icp/scene_cloud (white)
+   → /perception/detection_markers          Phase 1 (~/run_icp, once): SAM-6D
+     (pose triads, labels, and an             mask ∩ cloud → point-to-plane ICP
+      oriented CAD wireframe box on            → seed current_pose
+      the highest-scoring detection)         Phase 2 (timer, no SAM-6D): dynamic
+                                               CropBox around current_pose → Fast-
+                                               ICP (Anderson-accel. point-to-plane)
+                                               → update pose every frame
+                                               → /perception/icp/scene_cloud (white)
                                                → /perception/icp/model_cloud (green)
                                                → /perception/icp/refined_pose + TF
-                                               → ICP metrics printed to terminal
+                                               → /perception/icp/crop_box (Marker)
 ```
+
+The tracking loop is the [`notes/realtime_icp.md`](notes/realtime_icp.md)
+methodology: SAM-6D only *initializes* the pose, then a CropBox that follows
+`current_pose` replaces the mask and Fast-ICP re-aligns the CAD to the live
+cloud every tick. Move the object and the box (and pose) follow it; if ICP
+fitness drops below `lost_fitness` tracking pauses for a fresh SAM-6D re-seed.
 
 ---
 
@@ -180,7 +190,7 @@ camera ─▶ /camera/color/image_raw ─┐
 | `sam6d_bridge_node.py` | On `~/trigger`, captures a synced RGB‑D pair, POSTs it to the SAM‑6D server, parses the 6D‑pose reply (`R`, `t` mm→m), and republishes as `Detection3DArray`. Saves server artifacts to `sam6d_results/`. | in: color+depth; srv: `~/trigger`; out: `/perception/detections` (latched) |
 | `server.py` | The **SAM‑6D Flask server** (runs on the GPU machine, not the robot). `POST /predict_pose` with rgb/depth/camera → instance seg (FastSAM/SAM) + pose estimation against a fixed CAD model (`CAD_PATH`). Returns poses + artifacts. | HTTP `:5000/predict_pose` |
 | `detection_marker_node.py` | Converts `Detection3DArray` → RViz `MarkerArray` (RViz has no native `vision_msgs` display). Draws a pose triad + sphere + label per detection, and an **oriented CAD wireframe box** on the highest‑scoring detection. | in: `/perception/detections`; out: `/perception/detection_markers` |
-| `icp_pose_refiner_node.py` | On `~/run_icp`: uses the SAM‑6D mask (`detection_ism.npz`) to segment the object out of the point cloud, places the CAD `.ply` at the SAM‑6D pose, runs **point‑to‑plane ICP** (pure NumPy, `admittance_control/icp.py`), publishes both clouds + the refined pose, and **prints ICP metrics** (fitness, inlier RMSE, correspondences, refinement Δ). `scene_from` = `pointcloud` (live) or `depth_png` (the exact frame SAM‑6D saw). | in: `/camera/depth/color/points`; srv: `~/run_icp`; out: `/perception/icp/{scene_cloud,model_cloud,refined_pose}` (latched), TF `sam6d_object` |
+| `icp_pose_refiner_node.py` | **Real‑time object tracker** (`notes/realtime_icp.md`). *Phase 1* `~/run_icp`: uses the SAM‑6D mask (`detection_ism.npz`) to segment the object, places the CAD `.ply` at the SAM‑6D pose, runs ICP, and seeds `current_pose`. *Phase 2* (timer at `tracking_rate_hz`, no SAM‑6D): builds a **dynamic CropBox** (model AABB + `crop_margin_m`) around `current_pose` to isolate the object, runs **Fast‑ICP** (Anderson‑accelerated point‑to‑plane, `anderson_depth`) from `current_pose`, updates it, and publishes the CropBox as a Marker. Pauses if fitness < `lost_fitness`. `~/stop_tracking` / `~/start_tracking` gate the loop. `scene_from` (init only) = `pointcloud` or `depth_png`. With `use_open3d` (default), the per‑frame voxel downsample + normals run on the *cropped* cloud via Open3D (crop‑first is the key speedup); without Open3D it falls back to NumPy. | in: `/camera/depth/color/points`; srv: `~/run_icp`, `~/stop_tracking`, `~/start_tracking`; out: `/perception/icp/{scene_cloud,model_cloud,refined_pose,crop_box}`, TF `sam6d_object` |
 | `depth_image_proc::PointCloudXyzrgbNode` | Standard package node (launched, not in this repo). Fuses color + registered depth + `camera_info` into an organized `PointCloud2`. | out: `/camera/depth/color/points` |
 
 ---
@@ -194,7 +204,7 @@ Pure Python, no rclpy — unit‑testable without ROS.
 | `geometry.py` | `rotmat_to_quat`, `quat_to_rotmat` |
 | `kinematics.py` | UR5e FK/Jacobian, damped‑least‑squares `ik_solve`, `rrt_connect`, path smoothing (`bezier_smooth_path`, Catmull‑Rom), `plan_to_pose`. Used by the drawing action server. |
 | `sam6d_io.py` | Image/HTTP/JSON plumbing for the SAM‑6D bridge: `resolve_transfer_dir`, image normalization, PNG encode, multipart POST, `parse_pem_response`, `save_artifacts`. |
-| `icp.py` | Pure‑NumPy ICP stack: `load_ply_mesh`, `sample_mesh_surface`, `backproject_depth`, `estimate_normals_organized` (organized‑cloud normals, no KD‑tree), `voxel_downsample`, `nearest_neighbor`, `icp_point_to_plane`. |
+| `icp.py` | NumPy ICP stack: `load_ply_mesh`, `sample_mesh_surface`, `backproject_depth`, `estimate_normals_organized` (organized‑cloud normals, no KD‑tree), `voxel_downsample`, `crop_box_mask` (oriented CropBox for tracking), `nearest_neighbor` (uses `scipy.spatial.cKDTree` if SciPy is present — ~15× faster — else brute force), `icp_point_to_plane` (point‑to‑plane; `anderson_depth>0` enables **Fast‑ICP** — se(3)‑parameterized Anderson acceleration with a monotone‑energy safeguard). Runs pure‑NumPy on the robot side; SciPy/Open3D are optional accelerators. |
 
 ---
 
@@ -205,7 +215,8 @@ Pure Python, no rclpy — unit‑testable without ROS.
 | `execute_drawing` | action `ExecuteDrawing` | Goal: Cartesian `waypoints` + `orientation` (base_link). Feedback: `current_phase`, `drawing_progress`. Result: `success`, `message`. |
 | `compute_totg` | service `ComputeTOTG` | Request: flattened joint waypoints + per‑joint vel/accel limits + `path_tolerance` + `resample_dt`. Response: timed positions/velocities + timestamps. |
 | `~/trigger` (sam6d_bridge) | `std_srvs/Trigger` | Run one capture → SAM‑6D → publish cycle. |
-| `~/run_icp` (icp_pose_refiner) | `std_srvs/Trigger` | Segment + ICP‑refine the best detection. |
+| `~/run_icp` (icp_pose_refiner) | `std_srvs/Trigger` | Phase‑1 init: segment (mask) + ICP‑refine the best detection, seed the tracker, and (if `auto_track`) start Phase‑2 tracking. |
+| `~/stop_tracking` / `~/start_tracking` (icp_pose_refiner) | `std_srvs/Trigger` | Pause / resume the Phase‑2 tracking loop. |
 | `~/go` (move_to_object) | `std_srvs/Trigger` | Execute the standoff move (safety gate). |
 
 ### Key topics
@@ -218,6 +229,7 @@ Pure Python, no rclpy — unit‑testable without ROS.
 | `/perception/detections` | `vision_msgs/Detection3DArray` | sam6d_bridge → markers / ICP / move_to_object |
 | `/perception/detection_markers` | `visualization_msgs/MarkerArray` | detection_marker → RViz |
 | `/perception/icp/{scene_cloud,model_cloud}` | `PointCloud2` | icp_pose_refiner → RViz |
+| `/perception/icp/crop_box` | `visualization_msgs/Marker` | icp_pose_refiner → RViz (dynamic CropBox wireframe) |
 | `/perception/icp/refined_pose` | `PoseStamped` | icp_pose_refiner → RViz / downstream |
 | `/force_torque_sensor_broadcaster/wrench` | `WrenchStamped` | FT broadcaster → admittance controller |
 | `/servo_node/delta_twist_cmds` | `TwistStamped` | admittance controller → MoveIt Servo |
@@ -292,13 +304,26 @@ ros2 launch admittance_control digital_twin_pointcloud.launch.py \
 
 # In another terminal:
 ros2 service call /sam6d_bridge/trigger   std_srvs/srv/Trigger   # RGB-D → SAM-6D → detections
-ros2 service call /icp_pose_refiner/run_icp std_srvs/srv/Trigger # segment + ICP, prints metrics
+ros2 service call /icp_pose_refiner/run_icp std_srvs/srv/Trigger # Phase-1 seed + start tracking
+```
+
+Once `run_icp` returns, the **tracking loop is live**: **move the object in Isaac
+Sim** and the CropBox (`/perception/icp/crop_box`) and the green model cloud
+follow it, re-aligned by Fast-ICP every frame. Pause/resume or re-seed with:
+
+```bash
+ros2 service call /icp_pose_refiner/stop_tracking  std_srvs/srv/Trigger
+ros2 service call /icp_pose_refiner/start_tracking std_srvs/srv/Trigger
+# moved too fast and lost tracking? re-seed:
+ros2 service call /sam6d_bridge/trigger     std_srvs/srv/Trigger
+ros2 service call /icp_pose_refiner/run_icp std_srvs/srv/Trigger
 ```
 
 RViz displays to add (Fixed Frame `base_link`):
 `PointCloud2` on `/camera/depth/color/points`, `MarkerArray` on
-`/perception/detection_markers`, and `PointCloud2` on
-`/perception/icp/{scene_cloud,model_cloud}`.
+`/perception/detection_markers`, `PointCloud2` on
+`/perception/icp/{scene_cloud,model_cloud}`, and `Marker` on
+`/perception/icp/crop_box` (the CropBox that follows the object).
 
 ### Real robot drawing
 
@@ -327,9 +352,20 @@ ros2 launch admittance_control pointcloud.launch.py launch_rviz:=true
 - **New node script?** Put it in `scripts/`, `chmod +x`, and add it to the
   `install(PROGRAMS …)` list.
 - **Tune ICP?** Params on `icp_pose_refiner_node`: `voxel_size_m`, `max_corr_dist_m`,
-  `max_iter`, `n_model_points`, `max_target_points`, `detection_index`. Logic is in
+  `max_iter`, `n_model_points`, `max_target_points`, `detection_index`, and
+  `anderson_depth` (Fast-ICP acceleration; 0 = plain point-to-plane). Logic is in
   `admittance_control/icp.py` (pure NumPy — testable offline against
   `sam6d_results/` + a saved `depth.png`).
+- **Tune tracking?** Params on `icp_pose_refiner_node`: `crop_margin_m` (CropBox
+  slack around the model AABB — grow it if fast motion drops the object out of the
+  box), `tracking_rate_hz`, `lost_fitness` (re-seed threshold), `min_scene_points`,
+  `auto_track`, `use_open3d`. Launch args: `icp_anderson_depth`, `icp_use_open3d`,
+  `icp_crop_margin_m`, `icp_tracking_rate_hz`, `icp_auto_track`.
+- **Tracking too slow?** The tick cost is *crop → downsample+normals → ICP*. The
+  biggest levers: install **Open3D** and **SciPy** (`use_open3d` + KD‑tree NN take
+  a tick from ~190 ms to ~65 ms, ≈15 Hz); raise `voxel_size_m` (fewer scene points
+  → faster normals *and* ICP); lower `n_model_points`; lower `max_iter` (Fast‑ICP
+  converges in a few iterations). `pip install open3d` pulls in SciPy too.
 - **New drawing shape?** Extend the primitive generation in `drawing_dispatcher.py`;
   the action server + TOTG handle any waypoint list.
 - **Recalibrate the camera?** Regenerate `notebooks/T_tcp_to_cam.npy` (hand‑eye);

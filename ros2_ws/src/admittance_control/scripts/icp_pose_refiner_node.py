@@ -1,17 +1,32 @@
 #!/usr/bin/env python3
-"""ICP pose refinement of a SAM-6D detection against the segmented scene cloud.
+"""Real-time ICP object tracking, seeded by a SAM-6D detection.
 
-Idea: take the SAM-6D segmentation mask (detection_ism.npz) to cut the object
-region out of the camera pointcloud, place the CAD .ply at the SAM-6D 6D pose,
-and run point-to-plane ICP between the segmented scene cloud and the placed
-model. Publishes both clouds + the refined pose for RViz and logs ICP metrics.
+Two phases, following notes/realtime_icp.md:
 
-Trigger
--------
-    ros2 service call /icp_pose_refiner/run_icp std_srvs/srv/Trigger
+Phase 1 - Initialization (``~/run_icp``, runs once per object)
+    Take the SAM-6D segmentation mask (detection_ism.npz) to cut the object
+    region out of the camera pointcloud, place the CAD .ply at the SAM-6D 6D
+    pose, and run point-to-plane ICP to get the initial pose T0. This seeds the
+    tracker's ``current_pose`` and (if ``auto_track``) starts Phase 2.
 
-Inputs (all from the same SAM-6D capture, read fresh on each trigger)
---------------------------------------------------------------------
+Phase 2 - Tracking loop (timer at ``tracking_rate_hz``, no SAM-6D)
+    Each tick: grab the live organized cloud, build a **dynamic CropBox** around
+    ``current_pose`` (the model AABB + ``crop_margin_m``) to isolate the object
+    -- this replaces the SAM-6D mask -- then run **Fast-ICP** (Anderson-
+    accelerated point-to-plane, ``anderson_depth``) from ``current_pose`` and
+    update it. The crop box is published as an RViz Marker so you can watch it
+    follow the object as you move it. If ICP fitness drops below
+    ``lost_fitness`` (object escaped the box) tracking pauses; re-run SAM-6D and
+    call ``~/run_icp`` again to re-seed.
+
+Triggers
+--------
+    ros2 service call /icp_pose_refiner/run_icp        std_srvs/srv/Trigger
+    ros2 service call /icp_pose_refiner/stop_tracking  std_srvs/srv/Trigger
+    ros2 service call /icp_pose_refiner/start_tracking std_srvs/srv/Trigger
+
+Init inputs (from the SAM-6D capture, read fresh on run_icp)
+-----------------------------------------------------------
   <results_dir>/detection_pem.json   6D poses (R, t[mm], score, category)
   <results_dir>/detection_ism.npz    per-detection masks: segmentation (K,H,W)
   scene cloud, chosen by ``scene_from``:
@@ -21,14 +36,14 @@ Inputs (all from the same SAM-6D capture, read fresh on each trigger)
 
 Publishes
 ---------
-  <scene_cloud_topic>  sensor_msgs/PointCloud2  segmented scene (white)
+  <scene_cloud_topic>  sensor_msgs/PointCloud2  segmented/cropped scene (white)
   <model_cloud_topic>  sensor_msgs/PointCloud2  CAD model at the refined pose (green)
   <refined_pose_topic> geometry_msgs/PoseStamped
+  <crop_box_topic>     visualization_msgs/Marker  the dynamic CropBox wireframe
   TF: <camera_frame> -> <object_frame>          refined model->camera transform
 
-The point-to-plane ICP and geometry live in admittance_control/icp.py (pure
-NumPy). Metrics (fitness, inlier RMSE, correspondences, refinement delta) are
-logged to the terminal on every run.
+The point-to-plane / Fast-ICP solver and geometry live in
+admittance_control/icp.py (pure NumPy).
 """
 
 from __future__ import annotations
@@ -42,15 +57,17 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
-from geometry_msgs.msg import PoseStamped, TransformStamped
+from geometry_msgs.msg import Point, PoseStamped, TransformStamped
 from sensor_msgs.msg import PointCloud2, PointField
 from sensor_msgs_py import point_cloud2
 from std_srvs.srv import Trigger
 from tf2_ros import TransformBroadcaster
+from visualization_msgs.msg import Marker
 
 from admittance_control.geometry import rotmat_to_quat
 from admittance_control.icp import (
     backproject_depth,
+    crop_box_mask,
     estimate_normals_organized,
     icp_point_to_plane,
     load_ply_mesh,
@@ -58,6 +75,16 @@ from admittance_control.icp import (
     voxel_downsample,
 )
 from admittance_control.sam6d_io import resolve_transfer_dir
+
+# Open3D is optional: if present it does the per-frame voxel downsample + normal
+# estimation on the *cropped* cloud (fast C++/KD-tree). Without it we fall back
+# to the pure-NumPy path (organized normals + numpy voxel), which also keeps the
+# robot side dependency-free.
+try:
+    import open3d as o3d
+    _HAS_OPEN3D = True
+except Exception:  # noqa: BLE001 - any import failure -> numpy fallback
+    _HAS_OPEN3D = False
 
 
 def make_xyzrgb_cloud(header, pts: np.ndarray, colors: np.ndarray) -> PointCloud2:
@@ -103,6 +130,7 @@ class IcpPoseRefinerNode(Node):
         self.declare_parameter('scene_cloud_topic', '/perception/icp/scene_cloud')
         self.declare_parameter('model_cloud_topic', '/perception/icp/model_cloud')
         self.declare_parameter('refined_pose_topic', '/perception/icp/refined_pose')
+        self.declare_parameter('crop_box_topic', '/perception/icp/crop_box')
         self.declare_parameter('detection_index', -1)   # -1 = best PEM score
         # ICP / sampling knobs.
         self.declare_parameter('n_model_points', 2500)
@@ -110,6 +138,14 @@ class IcpPoseRefinerNode(Node):
         self.declare_parameter('max_target_points', 15000)
         self.declare_parameter('max_corr_dist_m', 0.02)
         self.declare_parameter('max_iter', 30)
+        self.declare_parameter('anderson_depth', 5)     # 0 = plain point-to-plane
+        self.declare_parameter('use_open3d', True)       # fast crop-cloud voxel+normals
+        # Real-time tracking loop (Phase 2).
+        self.declare_parameter('crop_margin_m', 0.03)
+        self.declare_parameter('tracking_rate_hz', 15.0)
+        self.declare_parameter('auto_track', True)
+        self.declare_parameter('lost_fitness', 0.1)
+        self.declare_parameter('min_scene_points', 50)
 
         self._camera_frame = str(self.get_parameter('camera_frame').value)
         self._object_frame = str(self.get_parameter('object_frame').value)
@@ -120,6 +156,21 @@ class IcpPoseRefinerNode(Node):
         self._max_target = int(self.get_parameter('max_target_points').value)
         self._max_corr = float(self.get_parameter('max_corr_dist_m').value)
         self._max_iter = int(self.get_parameter('max_iter').value)
+        self._anderson = int(self.get_parameter('anderson_depth').value)
+        self._use_o3d = bool(self.get_parameter('use_open3d').value) and _HAS_OPEN3D
+        if bool(self.get_parameter('use_open3d').value) and not _HAS_OPEN3D:
+            self.get_logger().warn(
+                'use_open3d=true but open3d is not importable; falling back to '
+                'the NumPy voxel/normals path (slower). pip install open3d.')
+        self._crop_margin = float(self.get_parameter('crop_margin_m').value)
+        self._track_hz = float(self.get_parameter('tracking_rate_hz').value)
+        self._auto_track = bool(self.get_parameter('auto_track').value)
+        self._lost_fitness = float(self.get_parameter('lost_fitness').value)
+        self._min_scene = int(self.get_parameter('min_scene_points').value)
+
+        # Tracking state (Phase 2).
+        self._current_pose: Optional[np.ndarray] = None
+        self._tracking = False
 
         results_dir = str(self.get_parameter('results_dir').value)
         self._results_dir = (Path(results_dir) if results_dir
@@ -134,9 +185,12 @@ class IcpPoseRefinerNode(Node):
         verts, faces = load_ply_mesh(Path(model_path).expanduser())
         self._rng = np.random.default_rng(0)
         self._model = sample_mesh_surface(verts, faces, self._n_model, self._rng) * scale
+        # Model-frame AABB -> dynamic CropBox extent (+ margin) for tracking.
+        self._model_lo = self._model.min(0)
+        self._model_hi = self._model.max(0)
         self.get_logger().info(
             f'model {Path(model_path).name}: {len(self._model)} pts, '
-            f'extent(m)={np.round(self._model.max(0) - self._model.min(0), 3)}')
+            f'extent(m)={np.round(self._model_hi - self._model_lo, 3)}')
 
         self._latest_cloud: Optional[PointCloud2] = None
         self.create_subscription(
@@ -152,28 +206,62 @@ class IcpPoseRefinerNode(Node):
             PointCloud2, str(self.get_parameter('model_cloud_topic').value), latched)
         self._pose_pub = self.create_publisher(
             PoseStamped, str(self.get_parameter('refined_pose_topic').value), latched)
+        self._box_pub = self.create_publisher(
+            Marker, str(self.get_parameter('crop_box_topic').value), latched)
         self._tf = TransformBroadcaster(self)
 
         self.create_service(Trigger, '~/run_icp', self._on_trigger)
+        self.create_service(Trigger, '~/stop_tracking', self._on_stop_tracking)
+        self.create_service(Trigger, '~/start_tracking', self._on_start_tracking)
+
+        # Tracking timer (Phase 2): always spinning, but a no-op until seeded.
+        period = 1.0 / self._track_hz if self._track_hz > 0 else 1.0 / 15.0
+        self._track_timer = self.create_timer(period, self._on_track_tick)
+
         self.get_logger().info(
             f'ICP refiner ready. scene_from={self._scene_from}, '
-            f'results_dir={self._results_dir}. Call ~/run_icp to refine.')
+            f'anderson_depth={self._anderson}, track@{self._track_hz:g}Hz, '
+            f'scene_prep={"open3d" if self._use_o3d else "numpy"}. '
+            f'results_dir={self._results_dir}. Call ~/run_icp to seed + track.')
 
     # ── Cloud cache ──────────────────────────────────────────────────────
     def _on_cloud(self, msg: PointCloud2) -> None:
         self._latest_cloud = msg
 
-    # ── Trigger ──────────────────────────────────────────────────────────
+    # ── Triggers ─────────────────────────────────────────────────────────
     def _on_trigger(self, request, response):
+        """Phase 1: SAM-6D-mask ICP init, then (auto_track) start tracking."""
         try:
             ok, message = self._run_once()
         except Exception as exc:  # noqa: BLE001 - report any failure to caller
-            self.get_logger().error(f'ICP failed: {exc}')
+            self.get_logger().error(f'ICP init failed: {exc}')
             response.success = False
-            response.message = f'ICP failed: {exc}'
+            response.message = f'ICP init failed: {exc}'
             return response
+        if ok and self._auto_track:
+            self._tracking = True
+            self.get_logger().info('tracking started (Phase 2).')
+            message += ' | tracking started'
         response.success = ok
         response.message = message
+        return response
+
+    def _on_stop_tracking(self, request, response):
+        self._tracking = False
+        response.success = True
+        response.message = 'tracking stopped'
+        self.get_logger().info('tracking stopped.')
+        return response
+
+    def _on_start_tracking(self, request, response):
+        if self._current_pose is None:
+            response.success = False
+            response.message = 'no pose to track yet; call ~/run_icp first'
+            return response
+        self._tracking = True
+        response.success = True
+        response.message = 'tracking started'
+        self.get_logger().info('tracking started (Phase 2).')
         return response
 
     # ── Detection selection ──────────────────────────────────────────────
@@ -234,12 +322,115 @@ class IcpPoseRefinerNode(Node):
 
         T, info = icp_point_to_plane(
             self._model, scene, scene_n, init=init,
-            max_corr_dist=self._max_corr, max_iter=self._max_iter)
+            max_corr_dist=self._max_corr, max_iter=self._max_iter,
+            anderson_depth=self._anderson)
 
+        self._current_pose = T                  # seed the tracker (Phase 2)
         self._publish(frame_id, scene, T)
         self._log_metrics(idx, det, init, T, info, len(scene))
         return True, (f'det #{idx} refined: fitness={info["fitness"]:.3f} '
                       f'rmse={info["inlier_rmse"]:.4f}m corr={info["correspondences"]}')
+
+    # ── Live raw cloud (organized xyz only; tracking uses the latest cloud) ─
+    def _live_xyz(self):
+        if self._latest_cloud is None:
+            raise RuntimeError('no PointCloud2 received yet on the camera topic')
+        msg = self._latest_cloud
+        if msg.height <= 1:
+            raise RuntimeError('cloud is not organized (height<=1)')
+        arr = point_cloud2.read_points_numpy(
+            msg, field_names=('x', 'y', 'z'), skip_nans=False)
+        xyz = arr.reshape(msg.height, msg.width, 3).astype(np.float64)
+        frame = msg.header.frame_id or self._camera_frame
+        return xyz, frame
+
+    # ── CropBox the live cloud around current_pose (the "macro-filter") ────
+    def _crop_live_scene(self):
+        """Return (scene_pts, scene_normals_or_None, frame_id, (lo, hi)).
+
+        Open3D path: crop the raw cloud (normals computed later on the small
+        cropped set). NumPy path: compute organized normals up-front, then crop
+        both points and normals together.
+        """
+        lo = self._model_lo - self._crop_margin
+        hi = self._model_hi + self._crop_margin
+        if self._use_o3d:
+            xyz, frame_id = self._live_xyz()
+            pts = xyz[np.isfinite(xyz).all(2)]
+            inside = crop_box_mask(pts, self._current_pose, lo, hi)
+            return pts[inside], None, frame_id, (lo, hi)
+
+        xyz, frame_id = self._live_xyz()
+        normals = estimate_normals_organized(xyz)
+        finite = np.isfinite(xyz).all(2) & np.isfinite(normals).all(2)
+        pts, nrm = xyz[finite], normals[finite]
+        inside = crop_box_mask(pts, self._current_pose, lo, hi)
+        return pts[inside], nrm[inside], frame_id, (lo, hi)
+
+    # ── Voxel downsample + normals of the cropped scene (Open3D fast path) ─
+    def _prep_scene_o3d(self, scene_pts):
+        pc = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(scene_pts))
+        if self._voxel > 0:
+            pc = pc.voxel_down_sample(self._voxel)
+        radius = max(self._voxel * 3.0, 0.01)
+        pc.estimate_normals(
+            o3d.geometry.KDTreeSearchParamHybrid(radius=radius, max_nn=30))
+        # optical-frame origin = camera centre; point-to-plane is sign-agnostic
+        # but a consistent orientation keeps the normals tidy for viz/debug.
+        pc.orient_normals_towards_camera_location(np.zeros(3))
+        return np.asarray(pc.points), np.asarray(pc.normals)
+
+    # ── Tracking loop tick (Phase 2) ─────────────────────────────────────
+    def _on_track_tick(self):
+        if not self._tracking or self._current_pose is None:
+            return
+        try:
+            scene, scene_n, frame_id, (lo, hi) = self._crop_live_scene()
+        except RuntimeError:
+            return                              # no live cloud yet; wait
+
+        # Keep the box visible (and its object frame fresh) every tick.
+        self._send_object_tf(frame_id, self._current_pose)
+        self._publish_cropbox(lo, hi)
+
+        if len(scene) < self._min_scene:
+            self.get_logger().warn(
+                f'only {len(scene)} pts in crop box; object may have escaped -- '
+                're-run SAM-6D + ~/run_icp to re-seed', throttle_duration_sec=2.0)
+            return
+
+        # Downsample + normals of the cropped set only (crop-first = the speedup).
+        if self._use_o3d:
+            scene, scene_n = self._prep_scene_o3d(scene)
+        else:
+            scene, scene_n = voxel_downsample(scene, self._voxel, scene_n)
+        if len(scene) > self._max_target:
+            sel = self._rng.choice(len(scene), self._max_target, replace=False)
+            scene, scene_n = scene[sel], scene_n[sel]
+        if len(scene) < 6:
+            self.get_logger().warn(
+                f'too few points after downsample ({len(scene)})',
+                throttle_duration_sec=2.0)
+            return
+
+        T, info = icp_point_to_plane(
+            self._model, scene, scene_n, init=self._current_pose,
+            max_corr_dist=self._max_corr, max_iter=self._max_iter,
+            anderson_depth=self._anderson)
+
+        if info['fitness'] < self._lost_fitness:
+            self._tracking = False
+            self.get_logger().warn(
+                f'tracking lost (fitness {info["fitness"]:.3f} < '
+                f'{self._lost_fitness}); paused. Re-run SAM-6D + ~/run_icp.')
+            return
+
+        self._current_pose = T
+        self._publish(frame_id, scene, T)
+        self.get_logger().info(
+            f'track: fitness={info["fitness"]:.3f} rmse={info["inlier_rmse"]:.4f}m '
+            f'iters={info["iterations"]} scene={len(scene)}',
+            throttle_duration_sec=1.0)
 
     # ── Publish clouds + pose + TF ───────────────────────────────────────
     def _publish(self, frame_id, scene, T):
@@ -262,14 +453,43 @@ class IcpPoseRefinerNode(Node):
         pose.pose.orientation.z, pose.pose.orientation.w = qz, qw
         self._pose_pub.publish(pose)
 
+        self._send_object_tf(frame_id, T, stamp)
+
+    # ── TF: <camera_frame> -> <object_frame> = refined model->camera pose ──
+    def _send_object_tf(self, frame_id, T, stamp=None):
+        stamp = stamp or self.get_clock().now().to_msg()
+        qx, qy, qz, qw = rotmat_to_quat(T[:3, :3])
         tf = TransformStamped()
-        tf.header = header
+        tf.header = self._make_header(frame_id, stamp)
         tf.child_frame_id = self._object_frame
         tf.transform.translation.x, tf.transform.translation.y, tf.transform.translation.z = \
             float(T[0, 3]), float(T[1, 3]), float(T[2, 3])
         tf.transform.rotation.x, tf.transform.rotation.y = qx, qy
         tf.transform.rotation.z, tf.transform.rotation.w = qz, qw
         self._tf.sendTransform(tf)
+
+    # ── Dynamic CropBox wireframe (drawn in the object frame; follows TF) ──
+    def _publish_cropbox(self, lo, hi):
+        # 8 corners of the AABB [lo, hi], expressed in the object frame.
+        corners = np.array([[x, y, z] for x in (lo[0], hi[0])
+                            for y in (lo[1], hi[1]) for z in (lo[2], hi[2])])
+        # 12 edges as index pairs into the corner list (bit-flip neighbours).
+        edges = [(i, i ^ b) for i in range(8) for b in (1, 2, 4) if i < (i ^ b)]
+
+        mk = Marker()
+        mk.header.frame_id = self._object_frame
+        mk.header.stamp = self.get_clock().now().to_msg()
+        mk.ns = 'icp_crop_box'
+        mk.id = 0
+        mk.type = Marker.LINE_LIST
+        mk.action = Marker.ADD
+        mk.scale.x = 0.002  # line width (m)
+        mk.color.r, mk.color.g, mk.color.b, mk.color.a = 1.0, 0.55, 0.0, 0.9
+        mk.pose.orientation.w = 1.0
+        for a, b in edges:
+            for c in (corners[a], corners[b]):
+                mk.points.append(Point(x=float(c[0]), y=float(c[1]), z=float(c[2])))
+        self._box_pub.publish(mk)
 
     def _make_header(self, frame_id, stamp):
         from std_msgs.msg import Header

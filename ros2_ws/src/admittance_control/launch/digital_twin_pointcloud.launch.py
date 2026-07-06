@@ -207,6 +207,11 @@ def launch_setup(context, *args, **kwargs):
                 "model_units": LaunchConfiguration("bbox_model_units").perform(context),
                 "scene_from": LaunchConfiguration("icp_scene_from").perform(context),
                 "camera_frame": CAMERA_FRAME,
+                "anderson_depth": int(LaunchConfiguration("icp_anderson_depth").perform(context)),
+                "use_open3d": LaunchConfiguration("icp_use_open3d").perform(context) == "true",
+                "crop_margin_m": float(LaunchConfiguration("icp_crop_margin_m").perform(context)),
+                "tracking_rate_hz": float(LaunchConfiguration("icp_tracking_rate_hz").perform(context)),
+                "auto_track": LaunchConfiguration("icp_auto_track").perform(context) == "true",
                 "use_sim_time": True,
             }],
         ))
@@ -261,7 +266,27 @@ def generate_launch_description():
             description="Start the ICP pose refiner (call its ~/run_icp service)."),
         DeclareLaunchArgument(
             "icp_scene_from", default_value="pointcloud",
-            description="ICP scene source: 'pointcloud' (live cloud) or "
-                        "'depth_png' (the saved frame SAM-6D processed)."),
+            description="ICP scene source for the Phase-1 init: 'pointcloud' "
+                        "(live cloud) or 'depth_png' (the saved SAM-6D frame). "
+                        "The Phase-2 tracking loop always uses the live cloud."),
+        DeclareLaunchArgument(
+            "icp_anderson_depth", default_value="5",
+            description="Fast-ICP Anderson acceleration history depth "
+                        "(0 = plain point-to-plane Gauss-Newton)."),
+        DeclareLaunchArgument(
+            "icp_use_open3d", default_value="true",
+            description="Use Open3D for per-frame voxel downsample + normals on "
+                        "the cropped cloud (faster). Falls back to NumPy if "
+                        "Open3D is not installed."),
+        DeclareLaunchArgument(
+            "icp_crop_margin_m", default_value="0.03",
+            description="Margin added to the model AABB for the dynamic "
+                        "CropBox in the tracking loop (metres)."),
+        DeclareLaunchArgument(
+            "icp_tracking_rate_hz", default_value="15.0",
+            description="Rate of the Phase-2 tracking loop (Hz)."),
+        DeclareLaunchArgument(
+            "icp_auto_track", default_value="true",
+            description="Start tracking automatically after the ~/run_icp seed."),
         OpaqueFunction(function=launch_setup),
     ])
