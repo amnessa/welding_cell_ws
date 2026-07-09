@@ -58,6 +58,11 @@ Publishes
 
 The point-to-plane / Fast-ICP solver and geometry live in
 admittance_control/icp.py (pure NumPy).
+
+
+Set object parametre
+
+ros2 param set /icp_pose_refiner model_path src/admittance_control/models/test_objv2.ply
 """
 
 from __future__ import annotations
@@ -72,6 +77,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
 from geometry_msgs.msg import Point, PoseStamped, TransformStamped
+from rcl_interfaces.msg import SetParametersResult
 from sensor_msgs.msg import PointCloud2, PointField
 from sensor_msgs_py import point_cloud2
 from std_srvs.srv import Trigger
@@ -187,6 +193,11 @@ class IcpPoseRefinerNode(Node):
         self.declare_parameter('bg_subtract_dist_m', 0.005)
         self.declare_parameter('sepc_topic', '/perception/icp/static_env')
         self.declare_parameter('save_dir', '')          # '' -> results_dir
+        # Ground/table removal: hard Z-truncation in static_frame. Anything at or
+        # below ground_z_m is deleted before ICP (sim floor and the real bench
+        # sit at different heights, so this is a knob to tune per setup).
+        self.declare_parameter('ground_removal', True)
+        self.declare_parameter('ground_z_m', -0.10)     # base_link Z of the floor
 
         self._camera_frame = str(self.get_parameter('camera_frame').value)
         self._object_frame = str(self.get_parameter('object_frame').value)
@@ -212,6 +223,8 @@ class IcpPoseRefinerNode(Node):
         self._static_frame = str(self.get_parameter('static_frame').value)
         self._bg_subtract = bool(self.get_parameter('bg_subtract').value)
         self._bg_dist = float(self.get_parameter('bg_subtract_dist_m').value)
+        self._ground_removal = bool(self.get_parameter('ground_removal').value)
+        self._ground_z = float(self.get_parameter('ground_z_m').value)
         save_dir = str(self.get_parameter('save_dir').value)
 
         # Tracking state (Phase 2).
@@ -263,6 +276,9 @@ class IcpPoseRefinerNode(Node):
         self.create_service(Trigger, '~/start_tracking', self._on_start_tracking)
         self.create_service(Trigger, '~/save_object', self._on_save_object)
 
+        # Live-tunable filter knobs (ros2 param set ... takes effect next frame).
+        self.add_on_set_parameters_callback(self._on_set_params)
+
         # Tracking timer (Phase 2): always spinning, but a no-op until seeded.
         period = 1.0 / self._track_hz if self._track_hz > 0 else 1.0 / 15.0
         self._track_timer = self.create_timer(period, self._on_track_tick)
@@ -272,7 +288,8 @@ class IcpPoseRefinerNode(Node):
             f'anderson_depth={self._anderson}, robust={self._robust}, '
             f'track@{self._track_hz:g}Hz, '
             f'scene_prep={"open3d" if self._use_o3d else "numpy"}, '
-            f'bg_subtract={self._bg_subtract}@{self._bg_dist * 1000:g}mm '
+            f'bg_subtract={self._bg_subtract}@{self._bg_dist * 1000:g}mm, '
+            f'ground_removal={self._ground_removal}@z>{self._ground_z:g}m '
             f'(static_frame={self._static_frame}). '
             f'results_dir={self._results_dir}. Call ~/run_icp to seed + track.')
 
@@ -341,6 +358,29 @@ class IcpPoseRefinerNode(Node):
         response.message = 'tracking started'
         self.get_logger().info('tracking started (Phase 2).')
         return response
+
+    def _on_set_params(self, params):
+        """Apply live changes to the filter knobs (ground / bg-subtract / lost).
+
+        Lets you sweep ground_z_m etc. with ``ros2 param set`` while tracking,
+        without relaunching -- handy since sim and real ground heights differ.
+        """
+        for p in params:
+            if p.name == 'ground_removal':
+                self._ground_removal = bool(p.value)
+            elif p.name == 'ground_z_m':
+                self._ground_z = float(p.value)
+            elif p.name == 'bg_subtract':
+                self._bg_subtract = bool(p.value)
+            elif p.name == 'bg_subtract_dist_m':
+                self._bg_dist = float(p.value)
+            elif p.name == 'lost_fitness':
+                self._lost_fitness = float(p.value)
+        self.get_logger().info(
+            f'params updated: ground_removal={self._ground_removal} '
+            f'ground_z_m={self._ground_z:g}m bg_subtract={self._bg_subtract} '
+            f'bg_dist={self._bg_dist:g}m lost_fitness={self._lost_fitness:g}')
+        return SetParametersResult(successful=True)
 
     def _on_save_object(self, request, response):
         """Freeze the current object into the SEPC (Model-Based Background Sub).
@@ -421,7 +461,7 @@ class IcpPoseRefinerNode(Node):
         # whose frame_id + stamp match the current TF; the stored depth_png frame
         # may predate arm motion, so skip it there).
         if self._scene_from == 'pointcloud':
-            keep = self._bg_keep_mask(scene, frame_id, stamp)
+            keep = self._static_keep_mask(scene, frame_id, stamp)
             if keep is not None:
                 scene, scene_n = scene[keep], scene_n[keep]
                 if len(scene) < 10:
@@ -474,7 +514,7 @@ class IcpPoseRefinerNode(Node):
             pts = xyz[np.isfinite(xyz).all(2)]
             inside = crop_box_mask(pts, self._current_pose, lo, hi)
             pts = pts[inside]
-            keep = self._bg_keep_mask(pts, frame_id, stamp)
+            keep = self._static_keep_mask(pts, frame_id, stamp)
             if keep is not None:
                 pts = pts[keep]
             return pts, None, frame_id, (lo, hi)
@@ -484,7 +524,7 @@ class IcpPoseRefinerNode(Node):
         pts, nrm = xyz[finite], normals[finite]
         inside = crop_box_mask(pts, self._current_pose, lo, hi)
         pts, nrm = pts[inside], nrm[inside]
-        keep = self._bg_keep_mask(pts, frame_id, stamp)
+        keep = self._static_keep_mask(pts, frame_id, stamp)
         if keep is not None:
             pts, nrm = pts[keep], nrm[keep]
         return pts, nrm, frame_id, (lo, hi)
@@ -635,28 +675,38 @@ class IcpPoseRefinerNode(Node):
             return T
         return None
 
-    def _bg_keep_mask(self, pts_cam, frame_id, stamp):
-        """Boolean 'keep' mask: drop live points near an already-assembled part.
+    def _static_keep_mask(self, pts_cam, frame_id, stamp):
+        """Boolean 'keep' mask built in the static frame: ground cut + SEPC sub.
 
-        Returns None when subtraction is off or impossible (caller keeps every
-        point). The SEPC lives in ``static_frame``; the (small) cropped live
-        cloud is transformed there via TF and any point within ``bg_dist`` of an
-        SEPC point is rejected -- so ICP never sees the previous object.
+        Both filters need the points in ``static_frame``, so the (small) cropped
+        live cloud is transformed there once via TF, then:
+          * ground removal -- drop anything at/below ``ground_z_m`` (floor/table);
+          * background subtraction -- drop points within ``bg_dist`` of the SEPC
+            (an already-assembled object), so ICP never sees the previous part.
+        Returns None when neither filter is active or TF is unavailable (caller
+        then keeps every point).
         """
-        if (not self._bg_subtract or self._sepc is None or len(pts_cam) == 0):
+        want_ground = self._ground_removal
+        want_sepc = self._bg_subtract and self._sepc is not None
+        if (not (want_ground or want_sepc)) or len(pts_cam) == 0:
             return None
         T = self._lookup_tf(self._static_frame, frame_id, stamp)
         if T is None:
             self.get_logger().warn(
-                f'bg-subtract: TF {self._static_frame}<-{frame_id} unavailable; '
+                f'static filter: TF {self._static_frame}<-{frame_id} unavailable; '
                 'keeping all points this frame', throttle_duration_sec=2.0)
             return None
         pts_static = pts_cam @ T[:3, :3].T + T[:3, 3]
-        if self._sepc_tree is not None:
-            dist, _ = self._sepc_tree.query(pts_static, workers=-1)
-        else:                                   # no scipy: brute-force fallback
-            _, dist = nearest_neighbor(pts_static, self._sepc)
-        return dist > self._bg_dist
+        keep = np.ones(len(pts_cam), dtype=bool)
+        if want_ground:
+            keep &= pts_static[:, 2] > self._ground_z        # delete the floor
+        if want_sepc:
+            if self._sepc_tree is not None:
+                dist, _ = self._sepc_tree.query(pts_static, workers=-1)
+            else:                               # no scipy: brute-force fallback
+                _, dist = nearest_neighbor(pts_static, self._sepc)
+            keep &= dist > self._bg_dist
+        return keep
 
     def _save_object(self):
         """Bake the current object's CAD into the SEPC; clear tracking state."""

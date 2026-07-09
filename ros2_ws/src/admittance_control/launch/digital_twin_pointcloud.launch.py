@@ -44,6 +44,12 @@ ros2 launch admittance_control digital_twin_pointcloud.launch.py \
   launch_rviz:=true \
   detection_min_score:=0.1
 
+  -------------------
+
+  to tune ground removal height in base_link (z) for ICP, use:
+
+  ros2 param set /icp_pose_refiner ground_z_m -0.10
+
 """
 
 import os
@@ -215,6 +221,8 @@ def launch_setup(context, *args, **kwargs):
                 "crop_margin_m": float(LaunchConfiguration("icp_crop_margin_m").perform(context)),
                 "tracking_rate_hz": float(LaunchConfiguration("icp_tracking_rate_hz").perform(context)),
                 "auto_track": LaunchConfiguration("icp_auto_track").perform(context) == "true",
+                "ground_removal": LaunchConfiguration("icp_ground_removal").perform(context) == "true",
+                "ground_z_m": float(LaunchConfiguration("icp_ground_z_m").perform(context)),
                 "use_sim_time": True,
             }],
         ))
@@ -299,5 +307,15 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "icp_auto_track", default_value="true",
             description="Start tracking automatically after the ~/run_icp seed."),
+        DeclareLaunchArgument(
+            "icp_ground_removal", default_value="true",
+            description="Delete the floor/table before ICP by hard Z-truncation "
+                        "in base_link (needs the base_link<-camera TF)."),
+        DeclareLaunchArgument(
+            "icp_ground_z_m", default_value="-0.10",
+            description="Ground plane height in base_link: points with z <= this "
+                        "are dropped. Sim floor and the real bench differ, so "
+                        "tune this per setup. Tune live with: ros2 param set "
+                        "/icp_pose_refiner ground_z_m <value>."),
         OpaqueFunction(function=launch_setup),
     ])
