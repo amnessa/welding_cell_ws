@@ -12,9 +12,10 @@ Phase 1 - Initialization (``~/run_icp``, runs once per object)
 Phase 2 - Tracking loop (timer at ``tracking_rate_hz``, no SAM-6D)
     Each tick: grab the live organized cloud, build a **dynamic CropBox** around
     ``current_pose`` (the model AABB + ``crop_margin_m``) to isolate the object
-    -- this replaces the SAM-6D mask -- then run **Fast-ICP** (Anderson-
-    accelerated point-to-plane, ``anderson_depth``) from ``current_pose`` and
-    update it. The crop box is published as an RViz Marker so you can watch it
+    -- this replaces the SAM-6D mask -- then run **Fast & Robust ICP**
+    (Welsch-reweighted, dynamic-nu, Anderson-accelerated point-to-plane;
+    ``robust`` + ``anderson_depth``) from ``current_pose`` and update it. The
+    Welsch kernel smoothly rejects a gripper/fixture that enters the crop box. The crop box is published as an RViz Marker so you can watch it
     follow the object as you move it. If ICP fitness drops below
     ``lost_fitness`` (object escaped the box) tracking pauses; re-run SAM-6D and
     call ``~/run_icp`` again to re-seed.
@@ -139,6 +140,7 @@ class IcpPoseRefinerNode(Node):
         self.declare_parameter('max_corr_dist_m', 0.02)
         self.declare_parameter('max_iter', 30)
         self.declare_parameter('anderson_depth', 5)     # 0 = plain point-to-plane
+        self.declare_parameter('robust', True)          # Welsch kernel + dynamic-nu (Robust-ICP)
         self.declare_parameter('use_open3d', True)       # fast crop-cloud voxel+normals
         # Real-time tracking loop (Phase 2).
         self.declare_parameter('crop_margin_m', 0.03)
@@ -157,6 +159,7 @@ class IcpPoseRefinerNode(Node):
         self._max_corr = float(self.get_parameter('max_corr_dist_m').value)
         self._max_iter = int(self.get_parameter('max_iter').value)
         self._anderson = int(self.get_parameter('anderson_depth').value)
+        self._robust = bool(self.get_parameter('robust').value)
         self._use_o3d = bool(self.get_parameter('use_open3d').value) and _HAS_OPEN3D
         if bool(self.get_parameter('use_open3d').value) and not _HAS_OPEN3D:
             self.get_logger().warn(
@@ -220,7 +223,8 @@ class IcpPoseRefinerNode(Node):
 
         self.get_logger().info(
             f'ICP refiner ready. scene_from={self._scene_from}, '
-            f'anderson_depth={self._anderson}, track@{self._track_hz:g}Hz, '
+            f'anderson_depth={self._anderson}, robust={self._robust}, '
+            f'track@{self._track_hz:g}Hz, '
             f'scene_prep={"open3d" if self._use_o3d else "numpy"}. '
             f'results_dir={self._results_dir}. Call ~/run_icp to seed + track.')
 
@@ -323,7 +327,7 @@ class IcpPoseRefinerNode(Node):
         T, info = icp_point_to_plane(
             self._model, scene, scene_n, init=init,
             max_corr_dist=self._max_corr, max_iter=self._max_iter,
-            anderson_depth=self._anderson)
+            anderson_depth=self._anderson, robust=self._robust)
 
         self._current_pose = T                  # seed the tracker (Phase 2)
         self._publish(frame_id, scene, T)
@@ -416,7 +420,7 @@ class IcpPoseRefinerNode(Node):
         T, info = icp_point_to_plane(
             self._model, scene, scene_n, init=self._current_pose,
             max_corr_dist=self._max_corr, max_iter=self._max_iter,
-            anderson_depth=self._anderson)
+            anderson_depth=self._anderson, robust=self._robust)
 
         if info['fitness'] < self._lost_fitness:
             self._tracking = False

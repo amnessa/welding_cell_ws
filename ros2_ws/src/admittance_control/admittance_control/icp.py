@@ -33,6 +33,15 @@ except Exception:  # noqa: BLE001 - no scipy -> brute-force fallback
     _cKDTree = None
 
 
+# Dynamic-Welsch schedule constants, matching the reference Fast-Robust-ICP
+# (Zhang et al.; yaoyx689/Fast-Robust-ICP, ICP::Parameters). nu is annealed from
+# nu_begin_k * median(residual) down to nu_end_k * (local surface noise), halving
+# each outer stage.
+NU_BEGIN_K = 3.0
+NU_END_K = 1.0 / (3.0 * np.sqrt(3.0))
+NU_ALPHA = 0.5
+
+
 # ─────────────────────────── PLY mesh loading ────────────────────────────
 def load_ply_mesh(path: Path) -> Tuple[np.ndarray, List[Tuple[int, ...]]]:
     """Read vertices (N,3 float64) and polygon faces from an ascii/binary PLY.
@@ -323,28 +332,206 @@ def _p2plane_gn_step(source, target, target_normals, T, max_corr_dist):
     return T_next, energy, n_inl, rmse, float(np.linalg.norm(x))
 
 
+# ───────────────────── Welsch robust kernel (Robust-ICP) ──────────────────
+def _welsch_weight(r_abs: np.ndarray, nu: float) -> np.ndarray:
+    """Welsch reweighting w_i = exp(-r_i^2 / (2 nu^2)) for |residual| r_abs."""
+    nu = max(float(nu), 1e-12)
+    return np.exp(-(r_abs * r_abs) / (2.0 * nu * nu))
+
+
+def _welsch_energy(r_abs: np.ndarray, nu: float) -> float:
+    """Welsch energy sum_i (1 - exp(-r_i^2 / (2 nu^2)))."""
+    nu = max(float(nu), 1e-12)
+    return float(np.sum(1.0 - np.exp(-(r_abs * r_abs) / (2.0 * nu * nu))))
+
+
+def welsch_nu_end(target: np.ndarray, target_normals: np.ndarray,
+                  k: int = 7) -> float:
+    """Local surface-noise scale used for the Welsch nu floor (nu_end).
+
+    Port of ``FindKnearestNormMed`` in the reference: for every target point,
+    take its ``k`` nearest neighbours and measure how far they lie *along the
+    point's own normal* (the point-to-plane thickness of the local surface),
+    reduce with the median, then take the median over all points. Multiplying
+    this by ``NU_END_K`` gives the smallest Welsch bandwidth we anneal down to --
+    it stops the kernel from shrinking below the sensor's own noise floor.
+    """
+    n = len(target)
+    if n < 2:
+        return 0.0
+    kk = min(int(k), n)
+    if _cKDTree is not None:
+        _, idx = _cKDTree(target).query(target, k=kk, workers=-1)
+        idx = np.atleast_2d(idx)
+        base = target[idx[:, 0]]                     # the point itself
+        nrm = target_normals[idx[:, 0]]
+        neigh = target[idx[:, 1:]]                    # (n, kk-1, 3)
+        d = np.abs(np.einsum('nkj,nj->nk', neigh - base[:, None, :], nrm))
+        per_point = np.median(d, axis=1)
+        return float(np.median(per_point))
+    # Brute-force fallback (subsample the target to bound the O(n^2) cost).
+    if n > 2000:
+        sel = np.random.default_rng(0).choice(n, 2000, replace=False)
+        sub, sub_n = target[sel], target_normals[sel]
+    else:
+        sub, sub_n = target, target_normals
+    per_point = np.empty(len(sub))
+    for i in range(len(sub)):
+        d2 = np.einsum('ij,ij->i', target - sub[i], target - sub[i])
+        nn = np.argsort(d2)[1:kk]
+        per_point[i] = np.median(np.abs((target[nn] - sub[i]) @ sub_n[i]))
+    return float(np.median(per_point))
+
+
+def _welsch_step(source, target, target_normals, T, nu):
+    """One reweighted (Welsch) point-to-plane Gauss-Newton iteration from ``T``.
+
+    Unlike the plain step there is **no hard correspondence cutoff**: every
+    source point contributes, weighted by ``exp(-r^2/2nu^2)`` so a gripper or
+    fixture that wanders into the crop box is smoothly ignored instead of
+    dragging the fit. The weighted normal-equation is the MM surrogate that
+    majorizes the Welsch energy, so minimizing it decreases that energy.
+
+    Returns (T_next, energy_at_T, r_signed) or None if the weighted system is
+    rank-deficient (too little effective support).
+    """
+    R, t = T[:3, :3], T[:3, 3]
+    src_t = source @ R.T + t
+    idx, _dist = nearest_neighbor(src_t, target)
+    q = target[idx]
+    nq = target_normals[idx]
+    r = np.einsum('ij,ij->i', src_t - q, nq)         # signed point-to-plane
+    r_abs = np.abs(r)
+    w = _welsch_weight(r_abs, nu)
+    if np.count_nonzero(w > 1e-6) < 6:
+        return None
+    energy = _welsch_energy(r_abs, nu)
+    sw = np.sqrt(w)
+    # Weighted GN: row_i = sqrt(w_i) [p_i x n_i, n_i], rhs_i = -sqrt(w_i) r_i
+    A = np.hstack((np.cross(src_t, nq), nq)) * sw[:, None]
+    b = -r * sw
+    x, *_ = np.linalg.lstsq(A, b, rcond=None)
+    Td = np.eye(4)
+    Td[:3, :3] = _rodrigues(x[:3])
+    Td[:3, 3] = x[3:]
+    return Td @ T, energy, r
+
+
+def _welsch_stage(source, target, target_normals, T_start, nu,
+                  max_iter, anderson_depth):
+    """Run reweighted point-to-plane at a *fixed* nu, Anderson-accelerated.
+
+    Same fixed-point-in-se(3)-increment scheme as the Fast path, but the step is
+    the Welsch-reweighted one and the safeguarded energy is the Welsch energy.
+    Returns (T, iterations).
+    """
+    T0inv = np.eye(4)
+    T0inv[:3, :3] = T_start[:3, :3].T
+    T0inv[:3, 3] = -T_start[:3, :3].T @ T_start[:3, 3]
+
+    def _fp(xi):
+        T = _se3_exp(xi) @ T_start
+        step = _welsch_step(source, target, target_normals, T, nu)
+        if step is None:
+            return None
+        T_next, energy, _r = step
+        return _se3_log(T_next @ T0inv), energy, T_next
+
+    # Plain reweighted iteration (no Anderson).
+    if anderson_depth <= 0:
+        T = T_start
+        for it in range(max_iter):
+            step = _welsch_step(source, target, target_normals, T, nu)
+            if step is None:
+                return T, it
+            T = step[0]
+        return T, max_iter
+
+    fp = _fp(np.zeros(6))
+    if fp is None:
+        return T_start, 0
+    g, best_E, best_T = fp
+    xs, gs = [np.zeros(6)], [g]
+    for it in range(1, max_iter):
+        m = min(len(xs), anderson_depth + 1)
+        if m >= 2:
+            F = np.array([gs[i] - xs[i] for i in range(len(xs) - m, len(xs))])
+            G = np.array(gs[len(xs) - m:])
+            dF = np.diff(F, axis=0).T
+            dG = np.diff(G, axis=0).T
+            theta, *_ = np.linalg.lstsq(dF, F[-1], rcond=None)
+            cand = gs[-1] - dG @ theta
+        else:
+            cand = gs[-1]
+
+        fp = _fp(cand)
+        if fp is None:
+            break
+        g_c, E_c, T_c = fp
+        if E_c <= best_E * (1.0 + 1e-9):             # accept extrapolated iterate
+            xs.append(cand)
+            gs.append(g_c)
+            best_E, best_T = E_c, T_c
+        else:                                        # reject: plain step, reset
+            plain = gs[-1]
+            fp2 = _fp(plain)
+            if fp2 is None:
+                break
+            g2, E2, T2 = fp2
+            xs, gs = [plain], [g2]
+            best_E, best_T = E2, T2
+        if len(xs) > anderson_depth + 1:
+            xs, gs = xs[-(anderson_depth + 1):], gs[-(anderson_depth + 1):]
+    return best_T, max_iter
+
+
+def _final_metrics(source, target, target_normals, T, max_corr_dist):
+    """Fitness / inlier-RMSE / correspondences of ``T`` (point-to-plane)."""
+    R, t = T[:3, :3], T[:3, 3]
+    src_t = source @ R.T + t
+    idx, dist = nearest_neighbor(src_t, target)
+    r = np.einsum('ij,ij->i', src_t - target[idx], target_normals[idx])
+    inl = dist < max_corr_dist
+    n_inl = int(inl.sum())
+    rmse = float(np.sqrt(np.mean(r[inl] ** 2))) if n_inl else float('nan')
+    return n_inl, rmse
+
+
 def icp_point_to_plane(source: np.ndarray, target: np.ndarray,
                        target_normals: np.ndarray,
                        init: Optional[np.ndarray] = None,
                        max_corr_dist: float = 0.01,
                        max_iter: int = 40,
                        tol: float = 1e-6,
-                       anderson_depth: int = 0) -> Tuple[np.ndarray, Dict]:
+                       anderson_depth: int = 0,
+                       robust: bool = False,
+                       nu_begin_k: float = NU_BEGIN_K,
+                       nu_end_k: float = NU_END_K,
+                       nu_alpha: float = NU_ALPHA) -> Tuple[np.ndarray, Dict]:
     """Refine a source->target rigid transform minimizing point-to-plane error.
 
     Minimizes sum_i (((R p_i + t) - q_i) . n_i)^2 over correspondences, where
     q_i,n_i are the nearest target point and its normal. Each iteration is a
     small-angle Gauss-Newton step solved with numpy.lstsq.
 
-    With ``anderson_depth > 0`` this becomes the **Fast-ICP** scheme
-    (Zhang et al., "Fast and Robust Iterative Closest Point"): ICP is treated as
-    a fixed-point iteration on the pose, parameterized in the Lie algebra se(3)
-    (as an increment relative to ``init``, kept near the origin so the log map
-    stays well-conditioned), and accelerated with Anderson Acceleration of the
-    given history depth. A monotone safeguard accepts the extrapolated iterate
-    only when the point-to-plane energy does not increase, otherwise it falls
-    back to a plain step and resets the history. This is the *Fast* variant only
-    -- it does not use the Welsch (Robust-ICP) kernel.
+    This is a NumPy port of Zhang et al., "Fast and Robust Iterative Closest
+    Point" (yaoyx689/Fast-Robust-ICP) with three selectable levels:
+
+    * **Plain** (``anderson_depth=0, robust=False``) -- baseline point-to-plane.
+    * **Fast** (``anderson_depth>0, robust=False``) -- ICP as a fixed-point
+      iteration on the pose, parameterized in se(3) (as an increment relative to
+      ``init``, kept near the origin so the log map stays well-conditioned) and
+      accelerated with Anderson Acceleration of the given history depth. A
+      monotone safeguard accepts the extrapolated iterate only when the
+      point-to-plane energy does not increase, else it falls back to a plain
+      step and resets the history.
+    * **Fast + Robust** (``robust=True``) -- the full method: every iteration is
+      **Welsch-reweighted** (w_i = exp(-r_i^2 / 2nu^2)), so outliers such as a
+      gripper/fixture entering the crop box are smoothly ignored. The bandwidth
+      ``nu`` is *dynamically annealed*: it starts at ``nu_begin_k * median(r)``,
+      is multiplied by ``nu_alpha`` after each stage, and stops at
+      ``nu_end_k * welsch_nu_end(target)`` (the local sensor noise floor).
+      Anderson acceleration is applied within each fixed-nu stage.
 
     Parameters
     ----------
@@ -353,6 +540,8 @@ def icp_point_to_plane(source: np.ndarray, target: np.ndarray,
     target_normals  : (N,3) unit normals aligned with ``target``
     init            : (4,4) initial source->target transform (e.g. SAM-6D pose)
     anderson_depth  : Anderson history size (0 = plain Gauss-Newton).
+    robust          : enable the Welsch kernel + dynamic-nu annealing.
+    nu_begin_k, nu_end_k, nu_alpha : Welsch schedule (see NU_* constants).
 
     Returns (T, info) with T the refined 4x4 and info holding fitness,
     inlier_rmse, iterations, correspondences and convergence flag.
@@ -366,7 +555,45 @@ def icp_point_to_plane(source: np.ndarray, target: np.ndarray,
         info['iterations'] = it
         info['correspondences'] = n_inl
         info['inlier_rmse'] = rmse
-        info['fitness'] = n_inl / len(source)
+        info['fitness'] = n_inl / len(source) if len(source) else 0.0
+
+    if len(source) == 0 or len(target) == 0:
+        return T0, info
+
+    # ---- Fast + Robust (Welsch, dynamic-nu annealing) ----
+    if robust:
+        # nu_begin from the spread of the initial residuals; nu_end from the
+        # target's own local surface noise. nu is clamped to start >= floor.
+        R, t = T0[:3, :3], T0[:3, 3]
+        src_t = source @ R.T + t
+        idx, _d = nearest_neighbor(src_t, target)
+        r0 = np.abs(np.einsum('ij,ij->i', src_t - target[idx],
+                              target_normals[idx]))
+        med = float(np.median(r0)) if len(r0) else 0.0
+        nu_end = nu_end_k * welsch_nu_end(target, target_normals)
+        nu_end = nu_end if nu_end > 1e-9 else max(med * 1e-2, 1e-4)
+        nu = max(nu_begin_k * med, nu_end)
+        if not np.isfinite(nu) or nu <= 0:
+            nu = nu_end
+
+        T = T0
+        total = 0
+        inner = 6                                    # reference ramps 6 -> 10
+        while total < max_iter:
+            budget = min(inner, max_iter - total)
+            T, iters = _welsch_stage(source, target, target_normals, T, nu,
+                                     budget, anderson_depth)
+            total += iters
+            if abs(nu - nu_end) < 1e-9:
+                info['converged'] = True
+                break
+            nu = max(nu * nu_alpha, nu_end)
+            inner = min(inner + 1, 10)
+
+        n_inl, rmse = _final_metrics(source, target, target_normals, T,
+                                     max_corr_dist)
+        _update(n_inl, rmse, total)
+        return T, info
 
     # ---- Plain Gauss-Newton (baseline / fallback) ----
     if anderson_depth <= 0:
