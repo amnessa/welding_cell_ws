@@ -14,8 +14,8 @@
                 double radius = 500
             }
             dictionary Perspective = {
-                double3 position = (0.20080356087390822, 1.4148180886069033, 0.33961352691081487)
-                double3 target = (-1.0084831088343593, -4.569466568034211, -3.9559413448808045)
+                double3 position = (-0.5618743487634712, 1.7761205623543384, 0.7922884865604539)
+                double3 target = (1.0272648022772, -4.277246616488755, -4.64858484518313)
             }
             dictionary Right = {
                 double3 position = (0, -1688400, -3.7490011095542286e-10)
@@ -25,7 +25,7 @@
                 double3 position = (0, 0, 1188305)
                 double radius = 500
             }
-            string boundCamera = "/Root/Robot_Mount_Point/ur5e/wrist_3_link/flange/Realsense/RSD455/Camera_Pseudo_Depth"
+            string boundCamera = "/Root/Robot_Mount_Point/ur5e/wrist_3_link/flange/Realsense/RSD455/Camera_OmniVision_OV9782_Color"
         }
         dictionary metricsAssembler = {
             dictionary "/Root/Power_Drill_ply" = {
@@ -47,6 +47,8 @@
             dictionary "/Root/test_objv1_base" = {
             }
             dictionary "/Root/test_objv1_ear" = {
+            }
+            dictionary "/Root/test_objv2" = {
             }
             dictionary "/Root/test_objv3" = {
             }
@@ -2274,8 +2276,8 @@ def Xform "Root" (
                 vector3f physics:angularVelocity = (0, 0, 0)
                 rel physics:simulationOwner
                 vector3f physics:velocity = (0, 0, 0)
-                quatd xformOp:orient = (-0.05424875582567114, 0.7051163506121386, -0.05301812160086323, 0.7050227537978491)
-                double3 xformOp:translate = (0.1326189752418514, 0.3903146996043443, 0.554681105169123)
+                quatd xformOp:orient = (-0.01295802982637577, 0.7070095533066044, -0.011723910613492278, 0.7069880698541817)
+                double3 xformOp:translate = (0.13264047013459196, 0.37796971908810933, 0.6903301380599196)
             }
 
             over "wrist_2_link"
@@ -2287,8 +2289,8 @@ def Xform "Root" (
                 vector3f physics:angularVelocity = (0, 0, 0)
                 rel physics:simulationOwner
                 vector3f physics:velocity = (0, 0, 0)
-                quatd xformOp:orient = (0.7573283422213128, -0.6503231422988207, 0.038066552307159884, 0.045656656188908344)
-                double3 xformOp:translate = (0.13244698185561254, 0.4888673840712583, 0.5697618402565177)
+                quatd xformOp:orient = (0.7180364304580337, -0.6934710457301368, 0.040592269865619486, 0.04328811495309792)
+                double3 xformOp:translate = (0.13246654853003376, 0.4776088123323766, 0.693809670957392)
             }
 
             over "wrist_3_link"
@@ -2300,8 +2302,8 @@ def Xform "Root" (
                 vector3f physics:angularVelocity = (0, 0, 0)
                 rel physics:simulationOwner
                 vector3f physics:velocity = (0, 0, 0)
-                quatd xformOp:orient = (-0.0804901533321873, 0.9911844892233127, 0.0912330070657846, -0.05245171075776451)
-                double3 xformOp:translate = (0.12062792025180873, 0.5038064504297781, 0.4720004402125533)
+                quatd xformOp:orient = (-0.022423424566536954, 0.9941995377212766, 0.08802037321879701, -0.05759238772557308)
+                double3 xformOp:translate = (0.12066753828940897, 0.481039860829103, 0.5949705630565341)
 
                 def "rsd455" (
                     active = false
@@ -2467,8 +2469,8 @@ def Xform "Root" (
                 vector3f physics:angularVelocity = (0, 0, 0)
                 rel physics:simulationOwner
                 vector3f physics:velocity = (0, 0, 0)
-                quatd xformOp:orient = (0.7064894276981223, -5.36084348426016e-9, -1.0027460350740728e-7, 0.7077235961523183)
-                double3 xformOp:translate = (2.013767860797877e-9, -4.660389352206806e-9, 0.16249998435623003)
+                quatd xformOp:orient = (0.7064893862744124, -5.360837049350052e-9, -1.0027460865162545e-7, 0.7077236375037887)
+                double3 xformOp:translate = (2.013767860797877e-9, -4.660389352206806e-9, 0.16249992475158526)
             }
 
             over "upper_arm_link"
@@ -2480,8 +2482,8 @@ def Xform "Root" (
                 vector3f physics:angularVelocity = (0, 0, 0)
                 rel physics:simulationOwner
                 vector3f physics:velocity = (0, 0, 0)
-                quatd xformOp:orient = (0.7071057856068208, -3.868466368456349e-8, 0.7071066997540683, 0.0012341492087615852)
-                double3 xformOp:translate = (2.013767860797877e-9, -4.660389352206806e-9, 0.16249998435623003)
+                quatd xformOp:orient = (0.7071057093032704, -9.847621894068599e-8, 0.7071067758430062, 0.0012342721003332459)
+                double3 xformOp:translate = (2.013767860797877e-9, -4.660389352206806e-9, 0.16249992475158526)
             }
 
             over "forearm_link"
@@ -2493,8 +2495,8 @@ def Xform "Root" (
                 vector3f physics:angularVelocity = (0, 0, 0)
                 rel physics:simulationOwner
                 vector3f physics:velocity = (0, 0, 0)
-                quatd xformOp:orient = (-0.47907775462219326, 0.5209166812834674, -0.47816917629193123, 0.5200812965595591)
-                double3 xformOp:translate = (0.000001279590113353879, -0.0007418392435637189, 0.5874994151318724)
+                quatd xformOp:orient = (0.5621107509749942, -0.42996951844011994, 0.5613609804970829, -0.4289890050176731)
+                double3 xformOp:translate = (0.000001311200249723421, -0.0007418076334273216, 0.5874992959225829)
             }
 
             over "base_link" (
@@ -2509,7 +2511,7 @@ def Xform "Root" (
                 bool physics:rigidBodyEnabled = 1
                 rel physics:simulationOwner
                 vector3f physics:velocity = (0, 0, 0)
-                quatd xformOp:orient = (0.999999999999996, 0, 0, 8.940696716308584e-8)
+                quatd xformOp:orient = (0.9999999999999958, 0, 0, 9.18569267238523e-8)
                 double3 xformOp:translate = (2.013767860797877e-9, -4.660389352206806e-9, 2.0119016896913422e-8)
             }
 
@@ -2527,7 +2529,7 @@ def Xform "Root" (
                     quatf physics:localRot0 = (-4.371139e-8, 0, 0, 1)
                     float physics:lowerLimit = -360
                     float physics:upperLimit = 360
-                    float state:angular:physics:position = -89.9
+                    float state:angular:physics:position = -89.90001
                     float state:angular:physics:velocity = 0
                 }
 
@@ -2541,13 +2543,13 @@ def Xform "Root" (
                     )
                     float physics:lowerLimit = -360
                     float physics:upperLimit = 360
-                    float state:angular:physics:position = -89.899994
+                    float state:angular:physics:position = -89.9
                     float state:angular:physics:velocity = 0
                 }
 
                 over "elbow_joint"
                 {
-                    float drive:angular:physics:targetPosition = -94.9
+                    float drive:angular:physics:targetPosition = -74.9
                     uniform token drive:angular:physics:type = "acceleration"
                     custom string isaac:nameOverride (
                         displayName = "Name Override"
@@ -2555,13 +2557,13 @@ def Xform "Root" (
                     )
                     float physics:lowerLimit = -180
                     float physics:upperLimit = 180
-                    float state:angular:physics:position = -94.90001
+                    float state:angular:physics:position = -74.9
                     float state:angular:physics:velocity = 0
                 }
 
                 over "wrist_1_joint"
                 {
-                    float drive:angular:physics:targetPosition = -76.5
+                    float drive:angular:physics:targetPosition = -103.200005
                     uniform token drive:angular:physics:type = "acceleration"
                     custom string isaac:nameOverride (
                         displayName = "Name Override"
@@ -2569,7 +2571,7 @@ def Xform "Root" (
                     )
                     float physics:lowerLimit = -360
                     float physics:upperLimit = 360
-                    float state:angular:physics:position = -76.49999
+                    float state:angular:physics:position = -103.2
                     float state:angular:physics:velocity = 0
                 }
 
@@ -2583,7 +2585,7 @@ def Xform "Root" (
                     )
                     float physics:lowerLimit = -360
                     float physics:upperLimit = 360
-                    float state:angular:physics:position = 96.79997
+                    float state:angular:physics:position = 96.79999
                     float state:angular:physics:velocity = 0
                 }
 
@@ -2597,7 +2599,7 @@ def Xform "Root" (
                     )
                     float physics:lowerLimit = -360
                     float physics:upperLimit = 360
-                    float state:angular:physics:position = -9.899998
+                    float state:angular:physics:position = -9.900004
                     float state:angular:physics:velocity = 0
                 }
 
@@ -3392,7 +3394,7 @@ def Xform "Root" (
         double xformOp:rotateX:unitsResolve = 90
         float3 xformOp:scale = (0.1, 0.1, 0.1)
         double3 xformOp:scale:unitsResolve = (0.01, 0.01, 0.01)
-        double3 xformOp:translate = (0.019651844464552964, 0.4076914954739628, -0.7524349238360691)
+        double3 xformOp:translate = (0.10554315327991234, 0.27067798160306045, -0.7524349238360507)
         uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale", "xformOp:rotateX:unitsResolve", "xformOp:scale:unitsResolve"]
 
         over "mesh_" (
@@ -3422,6 +3424,32 @@ def Xform "Root" (
             }
         }
     }
+
+    def "test_objv2" (
+        displayName = "test_objv2"
+        prepend payload = @../models/test_objv2.usda@
+    )
+    {
+        quatf xformOp:orient = (0.68625975, -0.72719526, 0.01284914, 0.008335168)
+        double xformOp:rotateX:unitsResolve = 90
+        float3 xformOp:scale = (0.1, 0.1, 0.1)
+        double3 xformOp:scale:unitsResolve = (0.01, 0.01, 0.01)
+        double3 xformOp:translate = (-0.08052540015121372, 0.5756628467752399, -0.7012290245747539)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale", "xformOp:rotateX:unitsResolve", "xformOp:scale:unitsResolve"]
+
+        over "mesh_" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </Root/Robot_Mount_Point/ur5e/wrist_3_link/flange/Realsense/RSD455/Looks/Aluminum_Anodized> (
+                bindMaterialAs = "weakerThanDescendants"
+            )
+            quatf xformOp:orient = (1, 0, 0, 0)
+            float3 xformOp:scale = (1, 1, 1)
+            double3 xformOp:translate = (-99.70081199007068, -409.6738074636699, 85.79133283592842)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+        }
+    }
 }
 
 def "Render" (
@@ -3442,7 +3470,7 @@ def "Render" (
                 no_delete = true
             )
             {
-                rel camera = </Root/Robot_Mount_Point/ur5e/wrist_3_link/flange/Realsense/RSD455/Camera_Pseudo_Depth>
+                rel camera = </Root/Robot_Mount_Point/ur5e/wrist_3_link/flange/Realsense/RSD455/Camera_OmniVision_OV9782_Color>
                 token omni:rtx:background:source:texture:textureMode = "repeatMirrored"
                 token omni:rtx:background:source:type = "domeLight"
                 bool omni:rtx:dlss:frameGeneration = 0
@@ -4258,6 +4286,46 @@ def "Render" (
                 custom bool overrideClipRange = 0
                 uniform int2 resolution = (1280, 720)
             }
+
+            def RenderProduct "Replicator_36" (
+                prepend apiSchemas = ["OmniRtxSettingsCommonAdvancedAPI_1", "OmniRtxSettingsRtAdvancedAPI_1", "OmniRtxSettingsPtAdvancedAPI_1", "OmniRtxPostColorGradingAPI_1", "OmniRtxPostChromaticAberrationAPI_1", "OmniRtxPostBloomPhysicalAPI_1", "OmniRtxPostMatteObjectAPI_1", "OmniRtxPostCompositingAPI_1", "OmniRtxPostDofAPI_1", "OmniRtxPostMotionBlurAPI_1", "OmniRtxPostTvNoiseAPI_1", "OmniRtxPostTonemapIrayReinhardAPI_1", "OmniRtxPostDebugSettingsAPI_1", "OmniRtxDebugSettingsAPI_1"]
+                hide_in_stage_window = true
+                no_delete = true
+            )
+            {
+                rel camera = </Root/Robot_Mount_Point/ur5e/wrist_3_link/flange/Realsense/RSD455/Camera_OmniVision_OV9782_Color>
+                custom string ogPostProcessPath = "/Render/OmniverseKit/HydraTextures/Replicator_36/PostRender"
+                bool omni:rtx:material:db:syncLoads = 1
+                token omni:rtx:post:aa:op = "taa"
+                bool omni:rtx:rt:ecoMode:enabled = 0
+                bool omni:rtx:scene:hydra:materialSyncLoads = 1
+                rel orderedVars = [
+                    </Render/Vars/LdrColorSD>,
+                    </Render/Vars/LdrColor>,
+                ]
+                custom bool overrideClipRange = 0
+                uniform int2 resolution = (1280, 720)
+            }
+
+            def RenderProduct "Replicator_37" (
+                prepend apiSchemas = ["OmniRtxSettingsCommonAdvancedAPI_1", "OmniRtxSettingsRtAdvancedAPI_1", "OmniRtxSettingsPtAdvancedAPI_1", "OmniRtxPostColorGradingAPI_1", "OmniRtxPostChromaticAberrationAPI_1", "OmniRtxPostBloomPhysicalAPI_1", "OmniRtxPostMatteObjectAPI_1", "OmniRtxPostCompositingAPI_1", "OmniRtxPostDofAPI_1", "OmniRtxPostMotionBlurAPI_1", "OmniRtxPostTvNoiseAPI_1", "OmniRtxPostTonemapIrayReinhardAPI_1", "OmniRtxPostDebugSettingsAPI_1", "OmniRtxDebugSettingsAPI_1"]
+                hide_in_stage_window = true
+                no_delete = true
+            )
+            {
+                rel camera = </Root/Robot_Mount_Point/ur5e/wrist_3_link/flange/Realsense/RSD455/Camera_Pseudo_Depth>
+                custom string ogPostProcessPath = "/Render/OmniverseKit/HydraTextures/Replicator_37/PostRender"
+                bool omni:rtx:material:db:syncLoads = 1
+                token omni:rtx:post:aa:op = "taa"
+                bool omni:rtx:rt:ecoMode:enabled = 0
+                bool omni:rtx:scene:hydra:materialSyncLoads = 1
+                rel orderedVars = [
+                    </Render/Vars/DistanceToImagePlaneSD>,
+                    </Render/Vars/LdrColor>,
+                ]
+                custom bool overrideClipRange = 0
+                uniform int2 resolution = (1280, 720)
+            }
         }
     }
 
@@ -4304,6 +4372,8 @@ def "Render" (
             </Render/OmniverseKit/HydraTextures/Replicator_33>,
             </Render/OmniverseKit/HydraTextures/Replicator_34>,
             </Render/OmniverseKit/HydraTextures/Replicator_35>,
+            </Render/OmniverseKit/HydraTextures/Replicator_36>,
+            </Render/OmniverseKit/HydraTextures/Replicator_37>,
         ]
     }
 

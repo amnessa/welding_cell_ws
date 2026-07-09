@@ -20,11 +20,23 @@ Phase 2 - Tracking loop (timer at ``tracking_rate_hz``, no SAM-6D)
     ``lost_fitness`` (object escaped the box) tracking pauses; re-run SAM-6D and
     call ``~/run_icp`` again to re-seed.
 
+Multi-object assembly (Model-Based Background Subtraction)
+---------------------------------------------------------
+    Once an object is placed, ``~/save_object`` bakes its CAD cloud (at the
+    refined pose) into a Static Environment Point Cloud (SEPC) held in
+    ``static_frame`` (default base_link -- the camera is eye-in-hand, so the SEPC
+    cannot live in the moving camera frame). Every subsequent tracking tick
+    transforms the live crop into ``static_frame`` and deletes points within
+    ``bg_subtract_dist_m`` of the SEPC, so ICP goes blind to already-assembled
+    parts and won't snap onto them when the new object is pushed flush. Workflow:
+    run_icp (obj A) -> ... -> save_object -> [set model_path] -> run_icp (obj B).
+
 Triggers
 --------
     ros2 service call /icp_pose_refiner/run_icp        std_srvs/srv/Trigger
     ros2 service call /icp_pose_refiner/stop_tracking  std_srvs/srv/Trigger
     ros2 service call /icp_pose_refiner/start_tracking std_srvs/srv/Trigger
+    ros2 service call /icp_pose_refiner/save_object    std_srvs/srv/Trigger
 
 Init inputs (from the SAM-6D capture, read fresh on run_icp)
 -----------------------------------------------------------
@@ -41,6 +53,7 @@ Publishes
   <model_cloud_topic>  sensor_msgs/PointCloud2  CAD model at the refined pose (green)
   <refined_pose_topic> geometry_msgs/PoseStamped
   <crop_box_topic>     visualization_msgs/Marker  the dynamic CropBox wireframe
+  <sepc_topic>         sensor_msgs/PointCloud2  frozen assembly cloud (orange, static_frame)
   TF: <camera_frame> -> <object_frame>          refined model->camera transform
 
 The point-to-plane / Fast-ICP solver and geometry live in
@@ -62,16 +75,17 @@ from geometry_msgs.msg import Point, PoseStamped, TransformStamped
 from sensor_msgs.msg import PointCloud2, PointField
 from sensor_msgs_py import point_cloud2
 from std_srvs.srv import Trigger
-from tf2_ros import TransformBroadcaster
+from tf2_ros import Buffer, TransformBroadcaster, TransformListener, TransformException
 from visualization_msgs.msg import Marker
 
-from admittance_control.geometry import rotmat_to_quat
+from admittance_control.geometry import quat_to_rotmat, rotmat_to_quat
 from admittance_control.icp import (
     backproject_depth,
     crop_box_mask,
     estimate_normals_organized,
     icp_point_to_plane,
     load_ply_mesh,
+    nearest_neighbor,
     sample_mesh_surface,
     voxel_downsample,
 )
@@ -86,6 +100,20 @@ try:
     _HAS_OPEN3D = True
 except Exception:  # noqa: BLE001 - any import failure -> numpy fallback
     _HAS_OPEN3D = False
+
+try:  # KD-tree for background subtraction against the static environment cloud
+    from scipy.spatial import cKDTree as _cKDTree
+except Exception:  # noqa: BLE001
+    _cKDTree = None
+
+
+def write_ply_points(path: Path, pts: np.ndarray) -> None:
+    """Write an ascii XYZ point cloud to a .ply (viewable / reloadable)."""
+    lines = ['ply', 'format ascii 1.0', f'element vertex {len(pts)}',
+             'property float x', 'property float y', 'property float z',
+             'end_header']
+    body = '\n'.join(f'{p[0]:.6f} {p[1]:.6f} {p[2]:.6f}' for p in pts)
+    path.write_text('\n'.join(lines) + '\n' + body + ('\n' if len(pts) else ''))
 
 
 def make_xyzrgb_cloud(header, pts: np.ndarray, colors: np.ndarray) -> PointCloud2:
@@ -148,6 +176,17 @@ class IcpPoseRefinerNode(Node):
         self.declare_parameter('auto_track', True)
         self.declare_parameter('lost_fitness', 0.1)
         self.declare_parameter('min_scene_points', 50)
+        # Model-based background subtraction (multi-object assembly).
+        # SEPC = Static Environment Point Cloud: the CAD clouds of already-placed
+        # objects, held in the *static* frame (the camera is eye-in-hand, so the
+        # camera frame moves; the SEPC must not). Each tick the live crop is
+        # transformed into static_frame and points within bg_subtract_dist_m of
+        # the SEPC are deleted, so ICP goes blind to previously assembled parts.
+        self.declare_parameter('static_frame', 'base_link')
+        self.declare_parameter('bg_subtract', True)
+        self.declare_parameter('bg_subtract_dist_m', 0.005)
+        self.declare_parameter('sepc_topic', '/perception/icp/static_env')
+        self.declare_parameter('save_dir', '')          # '' -> results_dir
 
         self._camera_frame = str(self.get_parameter('camera_frame').value)
         self._object_frame = str(self.get_parameter('object_frame').value)
@@ -170,30 +209,32 @@ class IcpPoseRefinerNode(Node):
         self._auto_track = bool(self.get_parameter('auto_track').value)
         self._lost_fitness = float(self.get_parameter('lost_fitness').value)
         self._min_scene = int(self.get_parameter('min_scene_points').value)
+        self._static_frame = str(self.get_parameter('static_frame').value)
+        self._bg_subtract = bool(self.get_parameter('bg_subtract').value)
+        self._bg_dist = float(self.get_parameter('bg_subtract_dist_m').value)
+        save_dir = str(self.get_parameter('save_dir').value)
 
         # Tracking state (Phase 2).
         self._current_pose: Optional[np.ndarray] = None
         self._tracking = False
 
+        # Assembly state: Static Environment Point Cloud (in static_frame) and
+        # its KD-tree, plus a record of every object frozen into it so far.
+        self._sepc: Optional[np.ndarray] = None
+        self._sepc_tree = None
+        self._saved: list = []
+
         results_dir = str(self.get_parameter('results_dir').value)
         self._results_dir = (Path(results_dir) if results_dir
                              else resolve_transfer_dir().parent / 'sam6d_results')
         self._transfer_dir = resolve_transfer_dir()
+        self._save_dir = Path(save_dir).expanduser() if save_dir else self._results_dir
 
-        # Load + sample the CAD model once (metres).
-        model_path = str(self.get_parameter('model_path').value)
-        if not model_path:
-            raise RuntimeError('model_path parameter is required (path to .ply).')
-        scale = 0.001 if str(self.get_parameter('model_units').value).lower() == 'mm' else 1.0
-        verts, faces = load_ply_mesh(Path(model_path).expanduser())
+        # Load + sample the CAD model (metres). Re-read on every run_icp so the
+        # next object in the assembly can point model_path at a different CAD.
         self._rng = np.random.default_rng(0)
-        self._model = sample_mesh_surface(verts, faces, self._n_model, self._rng) * scale
-        # Model-frame AABB -> dynamic CropBox extent (+ margin) for tracking.
-        self._model_lo = self._model.min(0)
-        self._model_hi = self._model.max(0)
-        self.get_logger().info(
-            f'model {Path(model_path).name}: {len(self._model)} pts, '
-            f'extent(m)={np.round(self._model_hi - self._model_lo, 3)}')
+        self._model_name = ''
+        self._load_model()
 
         self._latest_cloud: Optional[PointCloud2] = None
         self.create_subscription(
@@ -211,11 +252,16 @@ class IcpPoseRefinerNode(Node):
             PoseStamped, str(self.get_parameter('refined_pose_topic').value), latched)
         self._box_pub = self.create_publisher(
             Marker, str(self.get_parameter('crop_box_topic').value), latched)
+        self._sepc_pub = self.create_publisher(
+            PointCloud2, str(self.get_parameter('sepc_topic').value), latched)
         self._tf = TransformBroadcaster(self)
+        self._tf_buffer = Buffer()
+        self._tf_listener = TransformListener(self._tf_buffer, self)
 
         self.create_service(Trigger, '~/run_icp', self._on_trigger)
         self.create_service(Trigger, '~/stop_tracking', self._on_stop_tracking)
         self.create_service(Trigger, '~/start_tracking', self._on_start_tracking)
+        self.create_service(Trigger, '~/save_object', self._on_save_object)
 
         # Tracking timer (Phase 2): always spinning, but a no-op until seeded.
         period = 1.0 / self._track_hz if self._track_hz > 0 else 1.0 / 15.0
@@ -225,8 +271,35 @@ class IcpPoseRefinerNode(Node):
             f'ICP refiner ready. scene_from={self._scene_from}, '
             f'anderson_depth={self._anderson}, robust={self._robust}, '
             f'track@{self._track_hz:g}Hz, '
-            f'scene_prep={"open3d" if self._use_o3d else "numpy"}. '
+            f'scene_prep={"open3d" if self._use_o3d else "numpy"}, '
+            f'bg_subtract={self._bg_subtract}@{self._bg_dist * 1000:g}mm '
+            f'(static_frame={self._static_frame}). '
             f'results_dir={self._results_dir}. Call ~/run_icp to seed + track.')
+
+    # ── CAD model (re-read each run_icp so the next object can differ) ─────
+    def _load_model(self) -> None:
+        model_path = str(self.get_parameter('model_path').value)
+        if not model_path:
+            raise RuntimeError('model_path parameter is required (path to .ply).')
+        name = Path(model_path).name
+        # Skip the (fairly costly) mesh sample if nothing changed since last call.
+        n_model = int(self.get_parameter('n_model_points').value)
+        units = str(self.get_parameter('model_units').value).lower()
+        key = (model_path, n_model, units)
+        if getattr(self, '_model_key', None) == key:
+            return
+        scale = 0.001 if units == 'mm' else 1.0
+        verts, faces = load_ply_mesh(Path(model_path).expanduser())
+        self._n_model = n_model
+        self._model = sample_mesh_surface(verts, faces, n_model, self._rng) * scale
+        # Model-frame AABB -> dynamic CropBox extent (+ margin) for tracking.
+        self._model_lo = self._model.min(0)
+        self._model_hi = self._model.max(0)
+        self._model_name = name
+        self._model_key = key
+        self.get_logger().info(
+            f'model {name}: {len(self._model)} pts, '
+            f'extent(m)={np.round(self._model_hi - self._model_lo, 3)}')
 
     # ── Cloud cache ──────────────────────────────────────────────────────
     def _on_cloud(self, msg: PointCloud2) -> None:
@@ -236,6 +309,7 @@ class IcpPoseRefinerNode(Node):
     def _on_trigger(self, request, response):
         """Phase 1: SAM-6D-mask ICP init, then (auto_track) start tracking."""
         try:
+            self._load_model()                  # pick up a new model_path if set
             ok, message = self._run_once()
         except Exception as exc:  # noqa: BLE001 - report any failure to caller
             self.get_logger().error(f'ICP init failed: {exc}')
@@ -268,6 +342,29 @@ class IcpPoseRefinerNode(Node):
         self.get_logger().info('tracking started (Phase 2).')
         return response
 
+    def _on_save_object(self, request, response):
+        """Freeze the current object into the SEPC (Model-Based Background Sub).
+
+        Bakes the CAD model at its refined pose into the Static Environment
+        Point Cloud (held in static_frame), rebuilds the background KD-tree,
+        persists it, and clears the tracking state so the next object can be
+        introduced (set model_path if it differs, then call ~/run_icp).
+        """
+        if self._current_pose is None:
+            response.success = False
+            response.message = 'no refined pose to save; call ~/run_icp first'
+            return response
+        try:
+            ok, message = self._save_object()
+        except Exception as exc:  # noqa: BLE001
+            self.get_logger().error(f'save_object failed: {exc}')
+            response.success = False
+            response.message = f'save_object failed: {exc}'
+            return response
+        response.success = ok
+        response.message = message
+        return response
+
     # ── Detection selection ──────────────────────────────────────────────
     def _load_detection(self):
         pem = json.loads((self._results_dir / 'detection_pem.json').read_text())
@@ -291,7 +388,7 @@ class IcpPoseRefinerNode(Node):
             depth = np.array(Image.open(self._transfer_dir / 'depth.png'))
             depth_m = depth.astype(np.float64) * float(cam['depth_scale']) / 1000.0
             xyz = backproject_depth(depth_m, K)
-            return xyz, estimate_normals_organized(xyz), self._camera_frame
+            return xyz, estimate_normals_organized(xyz), self._camera_frame, None
 
         if self._latest_cloud is None:
             raise RuntimeError('no PointCloud2 received yet on the camera topic')
@@ -302,12 +399,13 @@ class IcpPoseRefinerNode(Node):
         arr = point_cloud2.read_points_numpy(
             msg, field_names=('x', 'y', 'z'), skip_nans=False)
         xyz = arr.reshape(msg.height, msg.width, 3).astype(np.float64)
-        return xyz, estimate_normals_organized(xyz), msg.header.frame_id or self._camera_frame
+        return (xyz, estimate_normals_organized(xyz),
+                msg.header.frame_id or self._camera_frame, msg.header.stamp)
 
     # ── One refinement ───────────────────────────────────────────────────
     def _run_once(self):
         idx, det, init, mask = self._load_detection()
-        xyz, normals, frame_id = self._scene_organized()
+        xyz, normals, frame_id, stamp = self._scene_organized()
 
         if mask.shape != xyz.shape[:2]:
             return False, (f'mask {mask.shape} does not match cloud '
@@ -318,6 +416,17 @@ class IcpPoseRefinerNode(Node):
         scene_n = normals[valid]
         if len(scene) < 10:
             return False, f'segmented scene has too few points ({len(scene)})'
+
+        # Subtract already-assembled objects (only meaningful for the live cloud,
+        # whose frame_id + stamp match the current TF; the stored depth_png frame
+        # may predate arm motion, so skip it there).
+        if self._scene_from == 'pointcloud':
+            keep = self._bg_keep_mask(scene, frame_id, stamp)
+            if keep is not None:
+                scene, scene_n = scene[keep], scene_n[keep]
+                if len(scene) < 10:
+                    return False, (f'only {len(scene)} points left after '
+                                   'background subtraction')
 
         scene, scene_n = voxel_downsample(scene, self._voxel, scene_n)
         if len(scene) > self._max_target:  # cap for brute-force NN speed
@@ -346,7 +455,7 @@ class IcpPoseRefinerNode(Node):
             msg, field_names=('x', 'y', 'z'), skip_nans=False)
         xyz = arr.reshape(msg.height, msg.width, 3).astype(np.float64)
         frame = msg.header.frame_id or self._camera_frame
-        return xyz, frame
+        return xyz, frame, msg.header.stamp
 
     # ── CropBox the live cloud around current_pose (the "macro-filter") ────
     def _crop_live_scene(self):
@@ -354,22 +463,31 @@ class IcpPoseRefinerNode(Node):
 
         Open3D path: crop the raw cloud (normals computed later on the small
         cropped set). NumPy path: compute organized normals up-front, then crop
-        both points and normals together.
+        both points and normals together. In both paths the cropped set then
+        goes through Model-Based Background Subtraction (removing points that
+        belong to already-assembled objects) before it is returned.
         """
         lo = self._model_lo - self._crop_margin
         hi = self._model_hi + self._crop_margin
+        xyz, frame_id, stamp = self._live_xyz()
         if self._use_o3d:
-            xyz, frame_id = self._live_xyz()
             pts = xyz[np.isfinite(xyz).all(2)]
             inside = crop_box_mask(pts, self._current_pose, lo, hi)
-            return pts[inside], None, frame_id, (lo, hi)
+            pts = pts[inside]
+            keep = self._bg_keep_mask(pts, frame_id, stamp)
+            if keep is not None:
+                pts = pts[keep]
+            return pts, None, frame_id, (lo, hi)
 
-        xyz, frame_id = self._live_xyz()
         normals = estimate_normals_organized(xyz)
         finite = np.isfinite(xyz).all(2) & np.isfinite(normals).all(2)
         pts, nrm = xyz[finite], normals[finite]
         inside = crop_box_mask(pts, self._current_pose, lo, hi)
-        return pts[inside], nrm[inside], frame_id, (lo, hi)
+        pts, nrm = pts[inside], nrm[inside]
+        keep = self._bg_keep_mask(pts, frame_id, stamp)
+        if keep is not None:
+            pts, nrm = pts[keep], nrm[keep]
+        return pts, nrm, frame_id, (lo, hi)
 
     # ── Voxel downsample + normals of the cropped scene (Open3D fast path) ─
     def _prep_scene_o3d(self, scene_pts):
@@ -494,6 +612,112 @@ class IcpPoseRefinerNode(Node):
             for c in (corners[a], corners[b]):
                 mk.points.append(Point(x=float(c[0]), y=float(c[1]), z=float(c[2])))
         self._box_pub.publish(mk)
+
+    # ── TF + Model-Based Background Subtraction (assembly) ────────────────
+    def _lookup_tf(self, target, source, stamp=None):
+        """4x4 mapping points in ``source`` frame into ``target`` frame, or None.
+
+        Tries the cloud's own stamp first (correct for the eye-in-hand camera at
+        capture time), then falls back to the latest available transform.
+        """
+        from rclpy.time import Time
+        whens = ([Time.from_msg(stamp)] if stamp is not None else []) + [Time()]
+        for when in whens:
+            try:
+                tf = self._tf_buffer.lookup_transform(target, source, when)
+            except TransformException:
+                continue
+            r = tf.transform.rotation
+            t = tf.transform.translation
+            T = np.eye(4)
+            T[:3, :3] = quat_to_rotmat([r.x, r.y, r.z, r.w])
+            T[:3, 3] = [t.x, t.y, t.z]
+            return T
+        return None
+
+    def _bg_keep_mask(self, pts_cam, frame_id, stamp):
+        """Boolean 'keep' mask: drop live points near an already-assembled part.
+
+        Returns None when subtraction is off or impossible (caller keeps every
+        point). The SEPC lives in ``static_frame``; the (small) cropped live
+        cloud is transformed there via TF and any point within ``bg_dist`` of an
+        SEPC point is rejected -- so ICP never sees the previous object.
+        """
+        if (not self._bg_subtract or self._sepc is None or len(pts_cam) == 0):
+            return None
+        T = self._lookup_tf(self._static_frame, frame_id, stamp)
+        if T is None:
+            self.get_logger().warn(
+                f'bg-subtract: TF {self._static_frame}<-{frame_id} unavailable; '
+                'keeping all points this frame', throttle_duration_sec=2.0)
+            return None
+        pts_static = pts_cam @ T[:3, :3].T + T[:3, 3]
+        if self._sepc_tree is not None:
+            dist, _ = self._sepc_tree.query(pts_static, workers=-1)
+        else:                                   # no scipy: brute-force fallback
+            _, dist = nearest_neighbor(pts_static, self._sepc)
+        return dist > self._bg_dist
+
+    def _save_object(self):
+        """Bake the current object's CAD into the SEPC; clear tracking state."""
+        frame_id = self._camera_frame
+        stamp = None
+        if self._latest_cloud is not None:
+            frame_id = self._latest_cloud.header.frame_id or self._camera_frame
+            stamp = self._latest_cloud.header.stamp
+        T_sc = self._lookup_tf(self._static_frame, frame_id, stamp)
+        if T_sc is None:
+            return False, (f'TF {self._static_frame}<-{frame_id} unavailable; '
+                           'cannot place the object in the static frame')
+
+        # CAD model at its refined pose: model -> camera -> static_frame.
+        T = self._current_pose
+        model_cam = self._model @ T[:3, :3].T + T[:3, 3]
+        model_static = model_cam @ T_sc[:3, :3].T + T_sc[:3, 3]
+        pose_static = T_sc @ T                  # final model->static 6D pose
+
+        self._sepc = (model_static if self._sepc is None
+                      else np.vstack([self._sepc, model_static]))
+        self._sepc_tree = _cKDTree(self._sepc) if _cKDTree is not None else None
+        self._saved.append({'model': self._model_name,
+                            'n_points': int(len(model_static)),
+                            'pose_static': pose_static.tolist()})
+
+        self._publish_sepc()
+        note = self._persist_sepc()
+
+        self._tracking = False                  # ready for the next object
+        self._current_pose = None
+        n = len(self._saved)
+        self.get_logger().info(
+            f'saved object #{n} ({self._model_name}) into SEPC: '
+            f'+{len(model_static)} pts -> {len(self._sepc)} total. {note} '
+            'Tracking cleared; set model_path if the next object differs, then '
+            'call ~/run_icp.')
+        return True, (f'object #{n} ({self._model_name}) saved into SEPC '
+                      f'({len(self._sepc)} pts total); tracking cleared')
+
+    def _publish_sepc(self):
+        if self._sepc is None:
+            return
+        header = self._make_header(self._static_frame,
+                                   self.get_clock().now().to_msg())
+        colors = np.tile(np.array([230, 120, 20], np.uint8),  # orange = frozen
+                         (len(self._sepc), 1))
+        self._sepc_pub.publish(make_xyzrgb_cloud(header, self._sepc, colors))
+
+    def _persist_sepc(self):
+        """Write the SEPC (.ply + .npy) and the assembly manifest (.json)."""
+        try:
+            self._save_dir.mkdir(parents=True, exist_ok=True)
+            np.save(self._save_dir / 'static_env.npy', self._sepc)
+            write_ply_points(self._save_dir / 'static_env.ply', self._sepc)
+            (self._save_dir / 'assembly.json').write_text(json.dumps(
+                {'static_frame': self._static_frame, 'objects': self._saved},
+                indent=2))
+        except Exception as exc:  # noqa: BLE001 - persistence is best-effort
+            return f'(warning: could not persist SEPC: {exc})'
+        return f'wrote static_env.ply/.npy + assembly.json to {self._save_dir}.'
 
     def _make_header(self, frame_id, stamp):
         from std_msgs.msg import Header

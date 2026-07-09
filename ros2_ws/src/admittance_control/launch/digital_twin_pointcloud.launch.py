@@ -196,6 +196,9 @@ def launch_setup(context, *args, **kwargs):
     ))
 
     # ---- ICP pose refiner (segmented scene cloud vs CAD model at SAM-6D pose) ----
+    # The ICP object is chosen with its own arg so it can differ from the bbox
+    # marker; it MUST match the CAD the SAM-6D server runs (server.py CAD_PATH).
+    icp_model = LaunchConfiguration("icp_model_path").perform(context) or bbox_model
     if LaunchConfiguration("launch_icp").perform(context) == "true":
         nodes.append(Node(
             package="admittance_control",
@@ -203,7 +206,7 @@ def launch_setup(context, *args, **kwargs):
             name="icp_pose_refiner",
             output="screen",
             parameters=[{
-                "model_path": bbox_model,
+                "model_path": icp_model,
                 "model_units": LaunchConfiguration("bbox_model_units").perform(context),
                 "scene_from": LaunchConfiguration("icp_scene_from").perform(context),
                 "camera_frame": CAMERA_FRAME,
@@ -264,6 +267,14 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "launch_icp", default_value="true",
             description="Start the ICP pose refiner (call its ~/run_icp service)."),
+        DeclareLaunchArgument(
+            "icp_model_path", default_value="",
+            description="CAD .ply the ICP node tracks/renders (the green model "
+                        "cloud). MUST be the same object the SAM-6D server "
+                        "detects (server.py CAD_PATH). Empty = fall back to "
+                        "bbox_model_path (models/test_objv3.ply). Switch objects "
+                        "at runtime instead with: ros2 param set "
+                        "/icp_pose_refiner model_path <file.ply> then ~/run_icp."),
         DeclareLaunchArgument(
             "icp_scene_from", default_value="pointcloud",
             description="ICP scene source for the Phase-1 init: 'pointcloud' "
