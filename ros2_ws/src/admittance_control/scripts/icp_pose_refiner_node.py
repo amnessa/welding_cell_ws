@@ -37,6 +37,18 @@ Triggers
     ros2 service call /icp_pose_refiner/stop_tracking  std_srvs/srv/Trigger
     ros2 service call /icp_pose_refiner/start_tracking std_srvs/srv/Trigger
     ros2 service call /icp_pose_refiner/save_object    std_srvs/srv/Trigger
+    ros2 service call /icp_pose_refiner/welding_points std_srvs/srv/Trigger
+
+Welding points
+--------------
+    Once the assembly is frozen into the SEPC, ``welding_points`` extracts the
+    seam where two near-orthogonal parts meet: a *radius* PCA neighbourhood
+    (weld_radius_m, which must exceed the gap between the parts) makes surface
+    variation spike on the edges bounding the gap, the threshold
+    (weld_curvature_thresh) keeps only those, and a voxel grid coarser than the
+    gap (weld_voxel_m) averages the two parallel edge lines into a single seam.
+    The result is published red on <weld_points_topic> and written to
+    <save_dir>/welding_points.ply/.npy.
 
 Init inputs (from the SAM-6D capture, read fresh on run_icp)
 -----------------------------------------------------------
@@ -54,6 +66,7 @@ Publishes
   <refined_pose_topic> geometry_msgs/PoseStamped
   <crop_box_topic>     visualization_msgs/Marker  the dynamic CropBox wireframe
   <sepc_topic>         sensor_msgs/PointCloud2  frozen assembly cloud (orange, static_frame)
+  <weld_points_topic>  sensor_msgs/PointCloud2  weld seam points (red, static_frame)
   TF: <camera_frame> -> <object_frame>          refined model->camera transform
 
 The point-to-plane / Fast-ICP solver and geometry live in
@@ -120,6 +133,42 @@ def write_ply_points(path: Path, pts: np.ndarray) -> None:
              'end_header']
     body = '\n'.join(f'{p[0]:.6f} {p[1]:.6f} {p[2]:.6f}' for p in pts)
     path.write_text('\n'.join(lines) + '\n' + body + ('\n' if len(pts) else ''))
+
+
+def surface_variation(pts: np.ndarray, radius: float, min_neighbors: int
+                      ) -> np.ndarray:
+    """Per-point PCA surface variation V = l3 / (l1+l2+l3) over a radius ball.
+
+    A *radius* neighbourhood (not kNN) is what lets the covariance straddle the
+    gap between two nearly-orthogonal parts: with R larger than the gap, a point
+    on the edge of part A pulls in points from part B, and V spikes exactly as
+    if the parts touched. Flat faces give V ~ 0; edges give V ~ 0.05-0.15.
+
+    Points with fewer than ``min_neighbors`` neighbours get V = 0 (isolated
+    specks would otherwise produce a degenerate, high-variation covariance).
+    """
+    n = len(pts)
+    var = np.zeros(n)
+    if n == 0:
+        return var
+
+    if _cKDTree is not None:
+        neighbor_ids = _cKDTree(pts).query_ball_point(pts, radius, workers=-1)
+    else:  # no scipy: O(N^2) distance matrix (SEPC clouds are small)
+        d2 = np.sum((pts[:, None, :] - pts[None, :, :]) ** 2, axis=-1)
+        r2 = radius * radius
+        neighbor_ids = [np.flatnonzero(row <= r2) for row in d2]
+
+    for i, ids in enumerate(neighbor_ids):
+        if len(ids) < min_neighbors:
+            continue
+        nb = pts[ids]
+        cov = np.cov((nb - nb.mean(0)).T, bias=True)
+        lam = np.linalg.eigvalsh(cov)          # ascending: l3 <= l2 <= l1
+        total = lam.sum()
+        if total > 1e-18:
+            var[i] = max(lam[0], 0.0) / total
+    return var
 
 
 def make_xyzrgb_cloud(header, pts: np.ndarray, colors: np.ndarray) -> PointCloud2:
@@ -198,6 +247,21 @@ class IcpPoseRefinerNode(Node):
         # sit at different heights, so this is a knob to tune per setup).
         self.declare_parameter('ground_removal', True)
         self.declare_parameter('ground_z_m', -0.10)     # base_link Z of the floor
+        # Welding-seam extraction from the SEPC (~/welding_points). All lengths
+        # are in metres and live in static_frame, like the SEPC itself.
+        self.declare_parameter('weld_points_topic', '/perception/icp/welding_points')
+        # radius must exceed (gap + SEPC point spacing) so the PCA ball bridges
+        # the gap, yet stay under the part thickness or it bridges a plate's own
+        # two faces and every point looks curved.
+        self.declare_parameter('weld_radius_m', 0.006)
+        self.declare_parameter('weld_curvature_thresh', 0.03)
+        self.declare_parameter('weld_min_neighbors', 5)
+        self.declare_parameter('weld_voxel_m', 0.004)       # > gap: merges the
+        #                                    two parallel edge lines into one seam
+        # A part's own outer border is a 90-degree fold too, so curvature alone
+        # also fires there. Keeping only edge points that see a *different*
+        # object within weld_radius_m leaves just the joint between the parts.
+        self.declare_parameter('weld_require_cross_object', True)
 
         self._camera_frame = str(self.get_parameter('camera_frame').value)
         self._object_frame = str(self.get_parameter('object_frame').value)
@@ -236,6 +300,7 @@ class IcpPoseRefinerNode(Node):
         self._sepc: Optional[np.ndarray] = None
         self._sepc_tree = None
         self._saved: list = []
+        self._weld: Optional[np.ndarray] = None
 
         results_dir = str(self.get_parameter('results_dir').value)
         self._results_dir = (Path(results_dir) if results_dir
@@ -267,6 +332,8 @@ class IcpPoseRefinerNode(Node):
             Marker, str(self.get_parameter('crop_box_topic').value), latched)
         self._sepc_pub = self.create_publisher(
             PointCloud2, str(self.get_parameter('sepc_topic').value), latched)
+        self._weld_pub = self.create_publisher(
+            PointCloud2, str(self.get_parameter('weld_points_topic').value), latched)
         self._tf = TransformBroadcaster(self)
         self._tf_buffer = Buffer()
         self._tf_listener = TransformListener(self._tf_buffer, self)
@@ -275,6 +342,7 @@ class IcpPoseRefinerNode(Node):
         self.create_service(Trigger, '~/stop_tracking', self._on_stop_tracking)
         self.create_service(Trigger, '~/start_tracking', self._on_start_tracking)
         self.create_service(Trigger, '~/save_object', self._on_save_object)
+        self.create_service(Trigger, '~/welding_points', self._on_welding_points)
 
         # Live-tunable filter knobs (ros2 param set ... takes effect next frame).
         self.add_on_set_parameters_callback(self._on_set_params)
@@ -404,6 +472,130 @@ class IcpPoseRefinerNode(Node):
         response.success = ok
         response.message = message
         return response
+
+    def _on_welding_points(self, request, response):
+        """Extract the weld seam from the SEPC and publish it (red) for RViz."""
+        try:
+            ok, message = self._welding_points()
+        except Exception as exc:  # noqa: BLE001 - report any failure to caller
+            self.get_logger().error(f'welding_points failed: {exc}')
+            response.success = False
+            response.message = f'welding_points failed: {exc}'
+            return response
+        response.success = ok
+        response.message = message
+        return response
+
+    # ── Weld seam: PCA curvature over a gap-bridging radius ───────────────
+    def _sepc_or_load(self) -> Optional[np.ndarray]:
+        """The in-memory SEPC, or the last persisted one (node may have restarted)."""
+        if self._sepc is not None:
+            return self._sepc
+        cached = self._save_dir / 'static_env.npy'
+        if not cached.exists():
+            return None
+        self._sepc = np.load(cached)
+        self._sepc_tree = _cKDTree(self._sepc) if _cKDTree is not None else None
+        manifest = self._save_dir / 'assembly.json'
+        if manifest.exists():   # restore _saved so object ids can be rebuilt
+            self._saved = json.loads(manifest.read_text()).get('objects', [])
+        self.get_logger().info(f'loaded SEPC from {cached} ({len(self._sepc)} pts)')
+        return self._sepc
+
+    def _sepc_object_ids(self) -> Optional[np.ndarray]:
+        """Per-point object index, from the order objects were stacked into the SEPC."""
+        counts = [int(o['n_points']) for o in self._saved]
+        if len(counts) < 2 or sum(counts) != len(self._sepc):
+            return None
+        return np.repeat(np.arange(len(counts)), counts)
+
+    def _welding_points(self):
+        """Find the seam where two near-orthogonal CAD clouds meet.
+
+        The SEPC holds the CAD clouds of the assembled parts, separated by a
+        physical gap. A radius (not kNN) PCA neighbourhood spans that gap, so
+        surface variation spikes on both edges bounding it; thresholding keeps
+        those. Each part's own outer border is a fold as well, so we additionally
+        require an edge point to see a *different* object inside the same radius
+        -- that condition is only true along the joint. A voxel grid coarser than
+        the gap then averages the two parallel edge lines into one seam.
+        """
+        sepc = self._sepc_or_load()
+        if sepc is None:
+            return False, ('no static environment cloud; call ~/save_object at '
+                           'least once (or point save_dir at a static_env.npy)')
+
+        radius = float(self.get_parameter('weld_radius_m').value)
+        thresh = float(self.get_parameter('weld_curvature_thresh').value)
+        min_nb = int(self.get_parameter('weld_min_neighbors').value)
+        voxel = float(self.get_parameter('weld_voxel_m').value)
+        want_cross = bool(self.get_parameter('weld_require_cross_object').value)
+
+        var = surface_variation(sepc, radius, min_nb)
+        keep = var >= thresh
+        if not keep.any():
+            return False, (f'no points above curvature {thresh:g} (max was '
+                           f'{var.max():.4f}); lower weld_curvature_thresh or '
+                           f'raise weld_radius_m (now {radius * 1000:g}mm, must '
+                           'exceed the gap)')
+
+        n_edges = int(keep.sum())
+        ids = self._sepc_object_ids() if want_cross else None
+        if want_cross and ids is None:
+            self.get_logger().warn(
+                'weld_require_cross_object=true but the SEPC holds fewer than '
+                'two objects (or assembly.json disagrees with static_env.npy); '
+                'keeping every high-curvature point, which will include each '
+                "part's outer borders, not just the joint.")
+        elif ids is not None:
+            keep &= self._cross_object_mask(sepc, ids, radius, keep)
+            if not keep.any():
+                return False, (f'{n_edges} high-curvature points, but none lie '
+                               f'within {radius * 1000:g}mm of another object; '
+                               'raise weld_radius_m or check the parts touch')
+
+        # Voxel coarser than the gap: averages the two parallel edge lines into
+        # a single line of points down the middle of the joint.
+        seam, _ = voxel_downsample(sepc[keep], voxel)
+
+        self._weld = seam
+        self._publish_weld(seam)
+        note = self._persist_weld(seam)
+        self.get_logger().info(
+            f'weld seam: {n_edges} edge pts (V>={thresh:g}, R={radius * 1000:g}mm) '
+            f'-> {int(keep.sum())} on the joint -> {len(seam)} seam pts after '
+            f'{voxel * 1000:g}mm voxel. {note}')
+        return True, (f'{len(seam)} welding points from {n_edges} edge points '
+                      f'(of {len(sepc)} SEPC points)')
+
+    def _cross_object_mask(self, sepc, ids, radius, candidates):
+        """True where a candidate point has a neighbour from another object within radius."""
+        mask = np.zeros(len(sepc), dtype=bool)
+        idx = np.flatnonzero(candidates)
+        if _cKDTree is not None:
+            tree = self._sepc_tree if self._sepc_tree is not None else _cKDTree(sepc)
+            neighbor_ids = tree.query_ball_point(sepc[idx], radius, workers=-1)
+        else:
+            d2 = np.sum((sepc[idx][:, None, :] - sepc[None, :, :]) ** 2, axis=-1)
+            neighbor_ids = [np.flatnonzero(row <= radius * radius) for row in d2]
+        for i, nb in zip(idx, neighbor_ids):
+            mask[i] = bool((ids[nb] != ids[i]).any())
+        return mask
+
+    def _publish_weld(self, seam):
+        header = self._make_header(self._static_frame,
+                                   self.get_clock().now().to_msg())
+        red = np.tile(np.array([255, 20, 20], np.uint8), (len(seam), 1))
+        self._weld_pub.publish(make_xyzrgb_cloud(header, seam, red))
+
+    def _persist_weld(self, seam):
+        try:
+            self._save_dir.mkdir(parents=True, exist_ok=True)
+            np.save(self._save_dir / 'welding_points.npy', seam)
+            write_ply_points(self._save_dir / 'welding_points.ply', seam)
+        except Exception as exc:  # noqa: BLE001 - persistence is best-effort
+            return f'(warning: could not persist weld seam: {exc})'
+        return f'wrote welding_points.ply/.npy to {self._save_dir}.'
 
     # ── Detection selection ──────────────────────────────────────────────
     def _load_detection(self):
