@@ -1,24 +1,29 @@
 #!/usr/bin/env python3
-"""Real-time ICP object tracking, seeded by a SAM-6D detection.
+"""Real-time ICP object tracking, seeded by a 6D pose detection.
+
+The seed comes from the pose bridge (``foundationpose_bridge_node.py``, which
+saves the server's artifacts into ``results_dir``). The file format is SAM-6D's
+-- the FoundationPose server re-emits its result in it deliberately -- so this
+node reads the same two files it always has, whichever backend produced them.
 
 Two phases, following notes/realtime_icp.md:
 
 Phase 1 - Initialization (``~/run_icp``, runs once per object)
-    Take the SAM-6D segmentation mask (detection_ism.npz) to cut the object
-    region out of the camera pointcloud, place the CAD .ply at the SAM-6D 6D
-    pose, and run point-to-plane ICP to get the initial pose T0. This seeds the
-    tracker's ``current_pose`` and (if ``auto_track``) starts Phase 2.
+    Take the segmentation mask (detection_ism.npz) to cut the object region out
+    of the camera pointcloud, place the CAD .ply at the detected 6D pose, and
+    run point-to-plane ICP to get the initial pose T0. This seeds the tracker's
+    ``current_pose`` and (if ``auto_track``) starts Phase 2.
 
-Phase 2 - Tracking loop (timer at ``tracking_rate_hz``, no SAM-6D)
+Phase 2 - Tracking loop (timer at ``tracking_rate_hz``, no pose server)
     Each tick: grab the live organized cloud, build a **dynamic CropBox** around
     ``current_pose`` (the model AABB + ``crop_margin_m``) to isolate the object
-    -- this replaces the SAM-6D mask -- then run **Fast & Robust ICP**
+    -- this replaces the detection mask -- then run **Fast & Robust ICP**
     (Welsch-reweighted, dynamic-nu, Anderson-accelerated point-to-plane;
     ``robust`` + ``anderson_depth``) from ``current_pose`` and update it. The
     Welsch kernel smoothly rejects a gripper/fixture that enters the crop box. The crop box is published as an RViz Marker so you can watch it
     follow the object as you move it. If ICP fitness drops below
-    ``lost_fitness`` (object escaped the box) tracking pauses; re-run SAM-6D and
-    call ``~/run_icp`` again to re-seed.
+    ``lost_fitness`` (object escaped the box) tracking pauses; re-trigger the
+    pose bridge and call ``~/run_icp`` again to re-seed.
 
 Multi-object assembly (Model-Based Background Subtraction)
 ---------------------------------------------------------
@@ -50,14 +55,18 @@ Welding points
     The result is published red on <weld_points_topic> and written to
     <save_dir>/welding_points.ply/.npy.
 
-Init inputs (from the SAM-6D capture, read fresh on run_icp)
------------------------------------------------------------
+Init inputs (from the pose-bridge capture, read fresh on run_icp)
+----------------------------------------------------------------
   <results_dir>/detection_pem.json   6D poses (R, t[mm], score, category)
   <results_dir>/detection_ism.npz    per-detection masks: segmentation (K,H,W)
+  ``results_dir`` defaults to the FoundationPose bridge's output directory
+  (``scripts/foundationpose_results``). Point it at ``scripts/sam6d_results`` to
+  replay an old SAM-6D capture -- but do not leave it there by accident, or the
+  ICP seeds off a stale mask while the bridge writes elsewhere.
   scene cloud, chosen by ``scene_from``:
     'pointcloud' : latest <pointcloud_topic> (organized sensor_msgs/PointCloud2)
-    'depth_png'  : <transfer_dir>/depth.png + camera.json (the exact frame SAM-6D
-                   saw -> guaranteed pixel alignment with the mask)
+    'depth_png'  : <transfer_dir>/depth.png + camera.json (the exact frame the
+                   pose server saw -> guaranteed pixel alignment with the mask)
 
 Publishes
 ---------
@@ -304,7 +313,7 @@ class IcpPoseRefinerNode(Node):
 
         results_dir = str(self.get_parameter('results_dir').value)
         self._results_dir = (Path(results_dir) if results_dir
-                             else resolve_transfer_dir().parent / 'sam6d_results')
+                             else resolve_transfer_dir().parent / 'foundationpose_results')
         self._transfer_dir = resolve_transfer_dir()
         self._save_dir = Path(save_dir).expanduser() if save_dir else self._results_dir
 

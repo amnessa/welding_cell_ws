@@ -92,6 +92,7 @@ install(
 install(PROGRAMS
   scripts/realsense_camera_node.py
   scripts/realsense_sim_camera_node.py
+  scripts/foundationpose_bridge_node.py
   scripts/sam6d_bridge_node.py
   scripts/detection_marker_node.py
   scripts/icp_pose_refiner_node.py

@@ -8,7 +8,7 @@ digital twin**. It bundles two cooperating pipelines:
    tool path on it, plan + execute the motion, and (optionally) follow the
    surface under force control.
 2. **Perception → 6D pose → ICP refinement → tracking** — capture RGB‑D, run
-   SAM‑6D to get an object 6D pose + mask, visualize it, refine that pose with
+   FoundationPose to get an object 6D pose + mask, visualize it, refine that pose with
    point‑to‑plane ICP against the segmented point cloud, then track it live.
 3. **Assembly → weld‑seam extraction** — freeze each located part's CAD cloud
    into a static assembly model, then find the joint between two near‑orthogonal
@@ -51,7 +51,7 @@ hardware; only the joint‑state source and the camera front‑end differ.
                           │        │                                  │
                           │        ├─ depth_image_proc ─▶ pointcloud  │
                           │        │                                  │
-                          │        └─ sam6d_bridge_node ──HTTP──▶ SAM-6D server (GPU)
+                          │        └─ foundationpose_bridge_node ──HTTP──▶ FoundationPose server (GPU)
                           │             → /perception/detections      │
                           │                  │            │           │
                           │   detection_marker_node   icp_pose_       │
@@ -83,8 +83,9 @@ can be commanded to.
 | `world/welding_world.usda` | Isaac Sim scene (robot + eye‑in‑hand RealSense) |
 | `notebooks/` | Hand‑eye calibration outputs (`T_tcp_to_cam.npy`), intrinsics, experiments |
 | `notes/*.md` | Design notes behind each algorithm (see [Algorithms](#algorithms-and-the-maths-behind-them)) |
-| `scripts/rgb_depth_to_send/` | Transfer dir: last `rgb.png` / `depth.png` / `camera.json` sent to SAM‑6D |
-| `scripts/sam6d_results/` | SAM‑6D outputs (`detection_pem.json`, `detection_ism.npz`) **and** assembly state (`static_env.ply/.npy`, `assembly.json`, `welding_points.ply/.npy`) |
+| `scripts/rgb_depth_to_send/` | Transfer dir: last `rgb.png` / `depth.png` / `camera.json` sent to the pose server |
+| `scripts/foundationpose_results/` | **Live** pose-server outputs (`detection_pem.json`, `detection_ism.npz`, `mask.png`, `vis_pose.png`) **and** assembly state (`static_env.ply/.npy`, `assembly.json`, `welding_points.ply/.npy`). The ICP node's `results_dir` default. |
+| `scripts/sam6d_results/` | Frozen SAM‑6D captures from before the FoundationPose swap. Kept for replay only — nothing writes here anymore. |
 | `helper/` | Calibration, GUIs, legacy tools (run directly, not installed) |
 | `generated_planes/` | Saved work‑surface plane JSONs |
 
@@ -137,17 +138,18 @@ camera ─▶ /camera/color/image_raw ─┐
          /camera/depth/image_rect_raw ─┼─▶ depth_image_proc ─▶ /camera/depth/color/points
          /camera/color/camera_info ─┘                             (organized XYZRGB)
                  │
-   trigger ▶ sam6d_bridge_node ──HTTP POST rgb+depth+camera──▶ SAM-6D Flask server (server.py, GPU)
-                 │  ◀── pose[] + artifacts (detection_pem.json, detection_ism.npz)
+   trigger ▶ foundationpose_bridge_node ──HTTP POST rgb+depth+camera──▶ FoundationPose server (fp_server.py, GPU)
+                 │        (operator clicks the object there; SAM2 turns the click into the mask)
+                 │  ◀── pose 4x4 [m] + artifacts (detection_pem.json, detection_ism.npz, mask.png, vis_pose.png)
                  ▼
         /perception/detections  (vision_msgs/Detection3DArray, camera frame)
                  │                                   │
                  ▼                                   ▼
    detection_marker_node                    icp_pose_refiner_node
-   → /perception/detection_markers          Phase 1 (~/run_icp, once): SAM-6D
+   → /perception/detection_markers          Phase 1 (~/run_icp, once): the
      (pose triads, labels, and an             mask ∩ cloud → point-to-plane ICP
       oriented CAD wireframe box on            → seed current_pose
-      the highest-scoring detection)         Phase 2 (timer, no SAM-6D): dynamic
+      the highest-scoring detection)         Phase 2 (timer, no pose server): dynamic
                                                CropBox around current_pose → Fast-
                                                ICP (Anderson-accel. point-to-plane)
                                                → update pose every frame
@@ -221,8 +223,10 @@ The same transform applies the **ground cut** (`z <= ground_z_m` is the bench;
 | `realsense_camera_node.py` | **Real** RealSense D435i front‑end. Streams color + depth (depth aligned to color), publishes matching `CameraInfo`, writes live intrinsics to `camera.json`. | out: `/camera/color/image_raw`, `/camera/depth/image_rect_raw` (16UC1 mm), `/camera/color/camera_info` |
 | `realsense_sim_camera_node.py` | **Sim** front‑end + digital‑twin fixups. Relays Isaac's `*_sim` RGB‑D, adds a realistic depth‑noise model, and (parameters, off by default) **rewrites the empty Isaac `frame_id`** to `camera_color_optical_frame` and **synthesizes `CameraInfo`** (Isaac's graph publishes none). Intrinsics default to the real camera's (the twin shares them). | in: `/camera/color/image_raw_sim`, `/camera/depth/image_rect_raw_sim`; out: same topics as the real node |
 | `camera_extrinsic_tf_publisher.py` | Broadcasts the static eye‑in‑hand extrinsic `tool0 → camera_color_optical_frame` from a 4×4 `.npy` (hand‑eye calibration, `notebooks/T_tcp_to_cam.npy`). **This is what puts perception in the robot frame.** | out: static `/tf` |
-| `sam6d_bridge_node.py` | On `~/trigger`, captures a synced RGB‑D pair, POSTs it to the SAM‑6D server, parses the 6D‑pose reply (`R`, `t` mm→m), and republishes as `Detection3DArray`. Saves server artifacts to `sam6d_results/`. | in: color+depth; srv: `~/trigger`; out: `/perception/detections` (latched) |
-| `server.py` | The **SAM‑6D Flask server** (runs on the GPU machine, not the robot). `POST /predict_pose` with rgb/depth/camera → instance seg (FastSAM/SAM) + pose estimation against a fixed CAD model (`CAD_PATH`). Returns poses + artifacts. | HTTP `:5000/predict_pose` |
+| `foundationpose_bridge_node.py` | **The pose bridge in use.** On `~/trigger`, captures a synced RGB‑D pair, POSTs it to `fp_server.py`, and republishes the reply as `Detection3DArray`. The pose comes back as a 4×4 **in metres** — no mm→m division, unlike SAM‑6D. Saves server artifacts to `foundationpose_results/`. A trigger **blocks until the operator clicks the object** in the window the server opens (hence `request_timeout_sec` = 300). | in: color+depth; srv: `~/trigger`; out: `/perception/detections` (latched) |
+| `fp_server.py` | The **FoundationPose Flask server** (GPU machine, not the robot). `POST /predict_pose` with rgb/depth/camera → SAM2 mask from a click → `register()` against a fixed CAD model (`MESH_PATH`). Has **no detector of its own**: send a `mask` file or a `click` field to skip the window. Re‑emits the result in SAM‑6D's on‑disk format so the ICP node needs no changes. | HTTP `:5000/predict_pose` |
+| `sam6d_bridge_node.py` | *Superseded by the FoundationPose bridge.* Same trigger→POST→publish cycle against `server.py`, parsing a list of detections (`R`, `t` mm→m). Still installed so an old SAM‑6D setup can be run for comparison. | in: color+depth; srv: `~/trigger`; out: `/perception/detections` (latched) |
+| `server.py` | *Superseded by `fp_server.py`.* The SAM‑6D Flask server: instance seg (FastSAM/SAM) + pose estimation against `CAD_PATH`, re‑running `demo.sh` per request. | HTTP `:5000/predict_pose` |
 | `detection_marker_node.py` | Converts `Detection3DArray` → RViz `MarkerArray` (RViz has no native `vision_msgs` display). Draws a pose triad + sphere + label per detection, and an **oriented CAD wireframe box** on the highest‑scoring detection. | in: `/perception/detections`; out: `/perception/detection_markers` |
 | `icp_pose_refiner_node.py` | **Real‑time object tracker + assembly/weld model** (`notes/realtime_icp.md`). *Phase 1* `~/run_icp`: uses the SAM‑6D mask (`detection_ism.npz`) to segment the object, places the CAD `.ply` at the SAM‑6D pose, runs ICP, and seeds `current_pose`. *Phase 2* (timer at `tracking_rate_hz`, no SAM‑6D): builds a **dynamic CropBox** (model AABB + `crop_margin_m`) around `current_pose` to isolate the object, applies **ground removal** + **model‑based background subtraction**, runs **Fast‑ICP** (Anderson‑accelerated, Welsch‑robust point‑to‑plane) from `current_pose`, updates it, and publishes the CropBox as a Marker. Pauses if fitness < `lost_fitness`. *Assembly* `~/save_object`: bakes the CAD at its refined pose into the **SEPC** in `static_frame`, persists it, clears tracking for the next part. *Weld* `~/welding_points`: extracts the joint between the SEPC's parts and publishes it red. `scene_from` (init only) = `pointcloud` or `depth_png`. With `use_open3d` (default), the per‑frame voxel downsample + normals run on the *cropped* cloud via Open3D (crop‑first is the key speedup); without Open3D it falls back to NumPy. | in: `/camera/depth/color/points`, TF; srv: `~/run_icp`, `~/stop_tracking`, `~/start_tracking`, `~/save_object`, `~/welding_points`; out: `/perception/icp/{scene_cloud,model_cloud,refined_pose,crop_box,static_env,welding_points}`, TF `sam6d_object` |
 | `depth_image_proc::PointCloudXyzrgbNode` | Standard package node (launched, not in this repo). Fuses color + registered depth + `camera_info` into an organized `PointCloud2`. | out: `/camera/depth/color/points` |
@@ -246,8 +250,11 @@ Pure Python, no rclpy — unit‑testable without ROS.
 
 Everything below is implemented in `admittance_control/icp.py` and
 `admittance_control/kinematics.py` (pure NumPy) or in the nodes that call them.
-Units are **metres and radians** unless stated; SAM‑6D is the one exception (it
-returns translations in **mm**, converted at the bridge).
+Units are **metres and radians** unless stated. FoundationPose returns metres
+directly (the server scales the CAD on load), so the bridge does **no** unit
+conversion. The one place mm survives is `detection_pem.json`, which keeps
+SAM‑6D's mm convention on purpose so the ICP node — which divides by 1000 — reads
+both backends' captures unchanged.
 
 ### 1. Frames: how a pixel becomes a robot target
 
@@ -544,7 +551,7 @@ thresholds transfer to hardware.
 |---|---|---|
 | `execute_drawing` | action `ExecuteDrawing` | Goal: Cartesian `waypoints` + `orientation` (base_link). Feedback: `current_phase`, `drawing_progress`. Result: `success`, `message`. |
 | `compute_totg` | service `ComputeTOTG` | Request: flattened joint waypoints + per‑joint vel/accel limits + `path_tolerance` + `resample_dt`. Response: timed positions/velocities + timestamps. |
-| `~/trigger` (sam6d_bridge) | `std_srvs/Trigger` | Run one capture → SAM‑6D → publish cycle. |
+| `~/trigger` (foundationpose_bridge) | `std_srvs/Trigger` | Run one capture → FoundationPose → publish cycle. Blocks until the object is clicked on the server host. |
 | `~/run_icp` (icp_pose_refiner) | `std_srvs/Trigger` | Phase‑1 init: segment (mask) + ICP‑refine the best detection, seed the tracker, and (if `auto_track`) start Phase‑2 tracking. |
 | `~/stop_tracking` / `~/start_tracking` (icp_pose_refiner) | `std_srvs/Trigger` | Pause / resume the Phase‑2 tracking loop. |
 | `~/save_object` (icp_pose_refiner) | `std_srvs/Trigger` | Freeze the tracked CAD at its refined pose into the SEPC; persist `static_env.*` + `assembly.json`; clear tracking for the next part. |
@@ -608,8 +615,8 @@ above differ. This is why the sim is a true digital twin.
 | File | Brings up |
 |---|---|
 | `admittance_control.launch.py` | The **drawing stack**: robot_state_publisher + drawing_action_server + TOTG + drawing_dispatcher. Args: `real_robot`, `use_sim_time`, `trajectory_key`, `continuous`, `plane_json`, `approach_height`, `surface_z_offset`, `orthogonal_tool_length_m`, `max_joint_speed_deg`, `max_joint_accel_deg`. |
-| `pointcloud.launch.py` | **Full real‑hardware perception stack**: robot_state_publisher (`/joint_states`) + camera extrinsic TF + `realsense_camera_node` + pointcloud + detection markers + (optional) SAM‑6D bridge + ICP refiner + (optional) RViz. Everything runs on the wall clock (`use_sim_time:=false`). Args: as the twin below, plus `launch_camera`, `camera_serial_no`, `camera_width`, `camera_height`, `camera_fps`. |
-| `digital_twin_pointcloud.launch.py` | **Full sim perception stack**: robot_state_publisher (`/isaac_joint_states`) + camera extrinsic TF + sim camera relay + pointcloud + detection markers + (optional) SAM‑6D bridge + ICP refiner + (optional) RViz, all with `use_sim_time:=true`. Args: `launch_robot_state`, `launch_rviz`, `extrinsic_parent`, `extrinsic_path`, `launch_sam6d`, `sam6d_server_url`, `detection_min_score`, `bbox_model_path`, `bbox_model_units`, `launch_icp`, `icp_model_path`, `icp_scene_from`, `icp_anderson_depth`, `icp_use_open3d`, `icp_crop_margin_m`, `icp_tracking_rate_hz`, `icp_auto_track`, `icp_ground_removal`, `icp_ground_z_m`. |
+| `pointcloud.launch.py` | **Full real‑hardware perception stack**: robot_state_publisher (`/joint_states`) + camera extrinsic TF + `realsense_camera_node` + pointcloud + detection markers + (optional) FoundationPose bridge + ICP refiner + (optional) RViz. Everything runs on the wall clock (`use_sim_time:=false`). Args: as the twin below, plus `launch_camera`, `camera_serial_no`, `camera_width`, `camera_height`, `camera_fps`. |
+| `digital_twin_pointcloud.launch.py` | **Full sim perception stack**: robot_state_publisher (`/isaac_joint_states`) + camera extrinsic TF + sim camera relay + pointcloud + detection markers + (optional) FoundationPose bridge + ICP refiner + (optional) RViz, all with `use_sim_time:=true`. Args: `launch_robot_state`, `launch_rviz`, `extrinsic_parent`, `extrinsic_path`, `launch_foundationpose`, `foundationpose_server_url`, `detection_min_score`, `bbox_model_path`, `bbox_model_units`, `launch_icp`, `icp_model_path`, `icp_scene_from`, `icp_anderson_depth`, `icp_use_open3d`, `icp_crop_margin_m`, `icp_tracking_rate_hz`, `icp_auto_track`, `icp_ground_removal`, `icp_ground_z_m`. |
 
 The two are **the same node graph on the same topics**, so an RViz config, a
 service call, or a downstream subscriber written against one works unchanged on
@@ -637,12 +644,12 @@ source install/setup.bash
 # Isaac Sim playing welding_world.usda (publishes *_sim topics + /isaac_joint_states)
 ros2 launch admittance_control digital_twin_pointcloud.launch.py \
   launch_rviz:=true \
-  launch_sam6d:=true \
-  sam6d_server_url:=http://<gpu-host>:5000/predict_pose \
+  launch_foundationpose:=true \
+  foundationpose_server_url:=http://<gpu-host>:5000/predict_pose \
   detection_min_score:=0.1
 
 # In another terminal:
-ros2 service call /sam6d_bridge/trigger   std_srvs/srv/Trigger   # RGB-D → SAM-6D → detections
+ros2 service call /foundationpose_bridge/trigger   std_srvs/srv/Trigger   # RGB-D → FoundationPose (click the object on the GPU host) → detections
 ros2 service call /icp_pose_refiner/run_icp std_srvs/srv/Trigger # Phase-1 seed + start tracking
 ```
 
@@ -654,7 +661,7 @@ follow it, re-aligned by Fast-ICP every frame. Pause/resume or re-seed with:
 ros2 service call /icp_pose_refiner/stop_tracking  std_srvs/srv/Trigger
 ros2 service call /icp_pose_refiner/start_tracking std_srvs/srv/Trigger
 # moved too fast and lost tracking? re-seed:
-ros2 service call /sam6d_bridge/trigger     std_srvs/srv/Trigger
+ros2 service call /foundationpose_bridge/trigger     std_srvs/srv/Trigger
 ros2 service call /icp_pose_refiner/run_icp std_srvs/srv/Trigger
 ```
 
@@ -671,8 +678,8 @@ red seam). All are latched, so adding a display after the fact still shows data.
 ```bash
 ros2 launch admittance_control pointcloud.launch.py \
   launch_rviz:=true \
-  launch_sam6d:=true \
-  sam6d_server_url:=http://<gpu-host>:5000/predict_pose
+  launch_foundationpose:=true \
+  foundationpose_server_url:=http://<gpu-host>:5000/predict_pose
 
 # the bench is not the sim floor — tune the ground cut live:
 ros2 param set /icp_pose_refiner ground_z_m -0.10
@@ -685,13 +692,13 @@ The service calls below are identical in sim and on hardware.
 ```bash
 # --- part A ---
 ros2 param set /icp_pose_refiner model_path <ws>/src/admittance_control/models/test_objv2_base.ply
-ros2 service call /sam6d_bridge/trigger        std_srvs/srv/Trigger
+ros2 service call /foundationpose_bridge/trigger        std_srvs/srv/Trigger
 ros2 service call /icp_pose_refiner/run_icp    std_srvs/srv/Trigger   # seed + track
 ros2 service call /icp_pose_refiner/save_object std_srvs/srv/Trigger  # freeze into the SEPC
 
 # --- part B (place it against A, then locate it) ---
 ros2 param set /icp_pose_refiner model_path <ws>/src/admittance_control/models/test_objv2_ear.ply
-ros2 service call /sam6d_bridge/trigger        std_srvs/srv/Trigger
+ros2 service call /foundationpose_bridge/trigger        std_srvs/srv/Trigger
 ros2 service call /icp_pose_refiner/run_icp    std_srvs/srv/Trigger
 ros2 service call /icp_pose_refiner/save_object std_srvs/srv/Trigger
 
@@ -700,8 +707,8 @@ ros2 service call /icp_pose_refiner/welding_points std_srvs/srv/Trigger
 # → "99 welding points from 314 edge points (of 5000 SEPC points)"
 ```
 
-`model_path` on the ROS side must name the **same CAD** the SAM‑6D server has as
-`CAD_PATH`, per part. The seam is written to `sam6d_results/welding_points.ply`
+`model_path` on the ROS side must name the **same CAD** the pose server has as
+`MESH_PATH`, per part. The seam is written to `foundationpose_results/welding_points.ply`
 and published on `/perception/icp/welding_points` in `base_link`.
 
 `welding_points` reloads `static_env.npy` + `assembly.json` from `save_dir` if

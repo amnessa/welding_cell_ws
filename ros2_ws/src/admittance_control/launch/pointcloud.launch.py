@@ -1,4 +1,4 @@
-"""Colored pointcloud + SAM-6D + ICP on the real UR5e and real RealSense.
+"""Colored pointcloud + FoundationPose + ICP on the real UR5e and real RealSense.
 
 Real-hardware twin of ``digital_twin_pointcloud.launch.py``. Same node graph and
 same topics, so RViz configs and the ``~/run_icp`` workflow carry over unchanged.
@@ -42,11 +42,11 @@ Usage
     # if your calibrated camera frame hangs off flange instead of tool0:
     ros2 launch admittance_control pointcloud.launch.py extrinsic_parent:=flange
 
-To run SAM-6D on another machine:
+To run FoundationPose on another machine:
 
     ros2 launch admittance_control pointcloud.launch.py \
-      launch_sam6d:=true \
-      sam6d_server_url:=http://ip_to_that_pc:5000/predict_pose \
+      launch_foundationpose:=true \
+      foundationpose_server_url:=http://ip_to_that_pc:5000/predict_pose \
       launch_rviz:=true \
       detection_min_score:=0.1
 
@@ -108,6 +108,11 @@ def launch_setup(context, *args, **kwargs):
     extrinsic_parent = LaunchConfiguration("extrinsic_parent").perform(context)
     extrinsic_path = LaunchConfiguration("extrinsic_path").perform(context) \
         or _default_extrinsic_path(pkg_share)
+
+    # One directory for the whole pose handoff: the bridge writes detection_pem.json
+    # / detection_ism.npz here, the ICP node seeds off them. Empty = let both nodes
+    # use their (matching) defaults.
+    pose_results_dir = LaunchConfiguration("pose_results_dir").perform(context)
 
     nodes = []
 
@@ -185,17 +190,27 @@ def launch_setup(context, *args, **kwargs):
         ],
     ))
 
-    # ---- SAM-6D bridge (optional; needs the Flask pose server reachable) ----
-    launch_sam6d = LaunchConfiguration("launch_sam6d").perform(context) == "true"
-    if launch_sam6d:
+    # ---- FoundationPose bridge (optional; needs the Flask pose server reachable) ----
+    # Triggering it blocks until the operator clicks the object in the window the
+    # server opens on the GPU host -- that click is what SAM2 turns into the mask.
+    launch_foundationpose = \
+        LaunchConfiguration("launch_foundationpose").perform(context) == "true"
+    if launch_foundationpose:
         nodes.append(Node(
             package="admittance_control",
-            executable="sam6d_bridge_node.py",
-            name="sam6d_bridge",
+            executable="foundationpose_bridge_node.py",
+            name="foundationpose_bridge",
             output="screen",
             parameters=[{
-                "server_url": LaunchConfiguration("sam6d_server_url").perform(context),
+                "server_url":
+                    LaunchConfiguration("foundationpose_server_url").perform(context),
                 "camera_frame": CAMERA_FRAME,
+                "request_timeout_sec":
+                    float(LaunchConfiguration("foundationpose_timeout_sec").perform(context)),
+                # Same value the ICP node gets below -- the bridge writes the
+                # artifacts there and the ICP node reads them back, so the two
+                # must never be set independently.
+                "results_dir": pose_results_dir,
                 "use_sim_time": False,
             }],
         ))
@@ -216,9 +231,9 @@ def launch_setup(context, *args, **kwargs):
         }],
     ))
 
-    # ---- ICP pose refiner (segmented scene cloud vs CAD model at SAM-6D pose) ----
+    # ---- ICP pose refiner (segmented scene cloud vs CAD model at the detected pose) ----
     # The ICP object is chosen with its own arg so it can differ from the bbox
-    # marker; it MUST match the CAD the SAM-6D server runs (server.py CAD_PATH).
+    # marker; it MUST match the CAD the pose server runs (fp_server.py MESH_PATH).
     icp_model = LaunchConfiguration("icp_model_path").perform(context) or bbox_model
     if LaunchConfiguration("launch_icp").perform(context) == "true":
         nodes.append(Node(
@@ -229,6 +244,7 @@ def launch_setup(context, *args, **kwargs):
             parameters=[{
                 "model_path": icp_model,
                 "model_units": LaunchConfiguration("bbox_model_units").perform(context),
+                "results_dir": pose_results_dir,
                 "scene_from": LaunchConfiguration("icp_scene_from").perform(context),
                 "camera_frame": CAMERA_FRAME,
                 "anderson_depth": int(LaunchConfiguration("icp_anderson_depth").perform(context)),
@@ -288,12 +304,24 @@ def generate_launch_description():
             description="Path to the 4x4 hand-eye transform (.npy). "
                         "Empty = notebooks/T_tcp_to_cam.npy."),
         DeclareLaunchArgument(
-            "launch_sam6d", default_value="false",
-            description="Also start the SAM-6D bridge (needs the Flask pose "
-                        "server reachable at sam6d_server_url)."),
+            "launch_foundationpose", default_value="false",
+            description="Also start the FoundationPose bridge (needs the Flask pose "
+                        "server reachable at foundationpose_server_url)."),
         DeclareLaunchArgument(
-            "sam6d_server_url", default_value="http://127.0.0.1:5000/predict_pose",
-            description="SAM-6D Flask /predict_pose endpoint."),
+            "foundationpose_server_url",
+            default_value="http://127.0.0.1:5000/predict_pose",
+            description="FoundationPose Flask /predict_pose endpoint (fp_server.py)."),
+        DeclareLaunchArgument(
+            "foundationpose_timeout_sec", default_value="300.0",
+            description="How long the bridge waits for the server's reply. The "
+                        "server blocks on an operator clicking the object, so this "
+                        "is a human-patience timeout, not a compute one."),
+        DeclareLaunchArgument(
+            "pose_results_dir", default_value="",
+            description="Where the bridge writes the server's artifacts and the ICP "
+                        "node reads them from -- one arg feeds both, so they cannot "
+                        "drift apart. Empty = scripts/foundationpose_results. Point "
+                        "it at scripts/sam6d_results to replay an old SAM-6D capture."),
         DeclareLaunchArgument(
             "detection_min_score", default_value="0.0",
             description="Drop detections below this score in the RViz markers."),
@@ -310,15 +338,15 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "icp_model_path", default_value="",
             description="CAD .ply the ICP node tracks/renders (the green model "
-                        "cloud). MUST be the same object the SAM-6D server "
-                        "detects (server.py CAD_PATH). Empty = fall back to "
+                        "cloud). MUST be the same object the pose server "
+                        "detects (fp_server.py MESH_PATH). Empty = fall back to "
                         "bbox_model_path (models/test_objv3.ply). Switch objects "
                         "at runtime instead with: ros2 param set "
                         "/icp_pose_refiner model_path <file.ply> then ~/run_icp."),
         DeclareLaunchArgument(
             "icp_scene_from", default_value="pointcloud",
             description="ICP scene source for the Phase-1 init: 'pointcloud' "
-                        "(live cloud) or 'depth_png' (the saved SAM-6D frame). "
+                        "(live cloud) or 'depth_png' (the frame the pose server saw). "
                         "The Phase-2 tracking loop always uses the live cloud."),
         DeclareLaunchArgument(
             "icp_anderson_depth", default_value="5",
