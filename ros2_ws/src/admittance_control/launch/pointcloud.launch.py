@@ -216,8 +216,12 @@ def launch_setup(context, *args, **kwargs):
         ))
 
     # ---- Detection3DArray -> RViz MarkerArray (pose triads + labels + CAD box) ----
+    # Must be the SAME CAD the pose server registers against (fp_server.py
+    # MESH_PATH -- check it with `curl <server>/health`). The returned pose is a
+    # transform into THAT mesh's local frame, so drawing a different mesh at it
+    # renders a box in the wrong orientation even when the pose is perfect.
     bbox_model = LaunchConfiguration("bbox_model_path").perform(context) \
-        or os.path.join(pkg_share, "models", "test_objv3.ply")
+        or os.path.join(pkg_share, "models", "test_objv2_base.ply")
     nodes.append(Node(
         package="admittance_control",
         executable="detection_marker_node.py",
@@ -328,7 +332,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "bbox_model_path", default_value="",
             description="CAD .ply for the oriented box on the best detection. "
-                        "Empty = models/test_objv3.ply (category_id 1)."),
+                        "MUST be the mesh the pose server registers against "
+                        "(fp_server.py MESH_PATH), or the box is drawn in the "
+                        "wrong orientation. Empty = models/test_objv2_base.ply."),
         DeclareLaunchArgument(
             "bbox_model_units", default_value="mm",
             description="Units of the CAD model vertices (mm or m)."),
@@ -340,9 +346,11 @@ def generate_launch_description():
             description="CAD .ply the ICP node tracks/renders (the green model "
                         "cloud). MUST be the same object the pose server "
                         "detects (fp_server.py MESH_PATH). Empty = fall back to "
-                        "bbox_model_path (models/test_objv3.ply). Switch objects "
-                        "at runtime instead with: ros2 param set "
-                        "/icp_pose_refiner model_path <file.ply> then ~/run_icp."),
+                        "bbox_model_path (models/test_objv2_base.ply). For the "
+                        "second part of the assembly, switch BOTH sides: set the "
+                        "server's MESH_PATH to the ear, then: ros2 param set "
+                        "/icp_pose_refiner model_path <...>/test_objv2_ear.ply "
+                        "and re-run ~/run_icp."),
         DeclareLaunchArgument(
             "icp_scene_from", default_value="pointcloud",
             description="ICP scene source for the Phase-1 init: 'pointcloud' "
