@@ -148,6 +148,16 @@ PLAUSIBLE_DIAMETER_M = (0.01, 1.5)
 
 def load_mesh(path: str, mesh_scale: float) -> trimesh.Trimesh:
     mesh = trimesh.load(path, force='mesh')
+    # A PLY with no faces (a point cloud -- e.g. a fused scene dump like
+    # static_env.ply) has no surface to sample, and sample_model_cloud() would
+    # crash deep in trimesh's face-area weighting. Say what is wrong here instead:
+    # PPF models must be triangulated CAD meshes, not point clouds.
+    if getattr(mesh, 'faces', None) is None or len(mesh.faces) == 0:
+        raise ValueError(
+            f"{os.path.basename(path)} has 0 faces -- it is a point cloud, not a "
+            "surface mesh. PPF builds each model by sampling the CAD surface, so it "
+            "needs a triangulated mesh (a FreeCAD/Blender .ply export of the part), "
+            "not a fused scene cloud such as static_env.ply.")
     if mesh_scale != 1.0:
         mesh.apply_scale(mesh_scale)
     return mesh

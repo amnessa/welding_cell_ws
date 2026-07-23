@@ -679,6 +679,11 @@ def add_model():
                                  if m.name != rec.name and rec.diameter > 0
                                  and abs(m.diameter - rec.diameter) / rec.diameter < 0.10],
         })
+    except ValueError as exc:
+        # A rejectable input (e.g. a point-cloud PLY with no faces): the client sent
+        # something unusable, so this is a 400, not a server fault.
+        logging.warning(f"rejected add_model upload: {exc}")
+        return jsonify({"status": "error", "message": str(exc)}), 400
     except Exception as exc:  # noqa: BLE001
         logging.exception("could not add the model")
         return jsonify({"status": "error", "message": str(exc)}), 500
