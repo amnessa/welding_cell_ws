@@ -34,7 +34,10 @@ Multi-object assembly (Model-Based Background Subtraction)
     transforms the live crop into ``static_frame`` and deletes points within
     ``bg_subtract_dist_m`` of the SEPC, so ICP goes blind to already-assembled
     parts and won't snap onto them when the new object is pushed flush. Workflow:
-    run_icp (obj A) -> ... -> save_object -> [set model_path] -> run_icp (obj B).
+    run_icp (obj A) -> ... -> save_object -> run_icp (obj B). The CAD for each
+    object is selected automatically from the server's PPF classification (the
+    detection's ``obj_name`` -> ``model_dir/<name>.ply``); ``model_path`` is only
+    the fallback/override for when classification is off or names an unknown part.
 
 Triggers
 --------
@@ -81,10 +84,17 @@ Publishes
 The point-to-plane / Fast-ICP solver and geometry live in
 admittance_control/icp.py (pure NumPy).
 
+Object CAD selection
+--------------------
+By default the CAD is chosen from the classifier: the detection's ``obj_name`` is
+resolved to ``model_dir/<obj_name>.ply``, and ``model_dir`` defaults to the folder
+``model_path`` points at. So a single ``model_path`` set to any file in the models
+folder is enough to make every classified part resolve:
 
-Set object parametre
+    ros2 param set /icp_pose_refiner model_path src/admittance_control/models/test_objv2.ply
 
-ros2 param set /icp_pose_refiner model_path src/admittance_control/models/test_objv2.ply
+To pin one CAD regardless of classification (classifier off, or replaying a
+capture), set ``model_path`` and the un-classified detections fall back to it.
 """
 
 from __future__ import annotations
@@ -214,7 +224,12 @@ class IcpPoseRefinerNode(Node):
         super().__init__('icp_pose_refiner')
 
         self.declare_parameter('results_dir', '')
+        # `model_path` is the explicit / fallback CAD. `model_dir` is the directory
+        # of CAD .ply files the PPF classifier's answer is resolved against
+        # (model_dir/<obj_name>.ply); left empty it defaults to model_path's own
+        # directory, so classification just works for the usual single-folder setup.
         self.declare_parameter('model_path', '')
+        self.declare_parameter('model_dir', '')
         self.declare_parameter('model_units', 'mm')
         self.declare_parameter('scene_from', 'pointcloud')  # or 'depth_png'
         self.declare_parameter('pointcloud_topic', '/camera/depth/color/points')
@@ -317,11 +332,15 @@ class IcpPoseRefinerNode(Node):
         self._transfer_dir = resolve_transfer_dir()
         self._save_dir = Path(save_dir).expanduser() if save_dir else self._results_dir
 
-        # Load + sample the CAD model (metres). Re-read on every run_icp so the
-        # next object in the assembly can point model_path at a different CAD.
+        # Load + sample the CAD model (metres). The model is re-resolved on every
+        # run_icp from the classifier's answer, so the next object in the assembly
+        # loads its own CAD automatically. Load eagerly here only if a static
+        # model_path is set; otherwise wait for the first classified detection.
         self._rng = np.random.default_rng(0)
         self._model_name = ''
-        self._load_model()
+        self._model = None
+        if str(self.get_parameter('model_path').value):
+            self._load_model()
 
         self._latest_cloud: Optional[PointCloud2] = None
         self.create_subscription(
@@ -370,20 +389,50 @@ class IcpPoseRefinerNode(Node):
             f'(static_frame={self._static_frame}). '
             f'results_dir={self._results_dir}. Call ~/run_icp to seed + track.')
 
-    # ── CAD model (re-read each run_icp so the next object can differ) ─────
-    def _load_model(self) -> None:
+    # ── CAD model (re-resolved each run_icp to the classified object) ─────
+    def _resolve_model_path(self, object_name: str) -> str:
+        """Which .ply to load: the classified object first, then model_path.
+
+        The PPF classifier on the server names the CAD it registered against and
+        puts that name in the detection (`obj_name`). Resolving it here to
+        ``model_dir/<name>.ply`` is what keeps ICP matching the *same* mesh the
+        server used -- without it, the second object in an assembly is refined
+        against the first object's CAD, which is exactly the "wrong point cloud"
+        symptom. `model_path` remains the fallback (classifier off, or an unknown
+        name) and the override (set it and leave the object un-classified).
+        """
         model_path = str(self.get_parameter('model_path').value)
-        if not model_path:
-            raise RuntimeError('model_path parameter is required (path to .ply).')
-        name = Path(model_path).name
+        model_dir = str(self.get_parameter('model_dir').value)
+        # Default the CAD directory to model_path's own folder, so an existing
+        # single-object setup resolves classified names with no extra config.
+        if not model_dir and model_path:
+            model_dir = str(Path(model_path).expanduser().parent)
+
+        if object_name and model_dir:
+            cand = Path(model_dir).expanduser() / f'{object_name}.ply'
+            if cand.is_file():
+                return str(cand)
+            self.get_logger().warn(
+                f"classifier named '{object_name}' but {cand} does not exist; "
+                f"falling back to model_path={model_path or '(unset)'}")
+        if model_path:
+            return model_path
+        raise RuntimeError(
+            f"no CAD to load: classification returned '{object_name or 'nothing'}' "
+            f"with no matching .ply in model_dir={model_dir or '(unset)'}, and "
+            'model_path is unset.')
+
+    def _load_model(self, object_name: str = '') -> None:
+        resolved = self._resolve_model_path(object_name)
+        name = Path(resolved).name
         # Skip the (fairly costly) mesh sample if nothing changed since last call.
         n_model = int(self.get_parameter('n_model_points').value)
         units = str(self.get_parameter('model_units').value).lower()
-        key = (model_path, n_model, units)
+        key = (resolved, n_model, units)
         if getattr(self, '_model_key', None) == key:
             return
         scale = 0.001 if units == 'mm' else 1.0
-        verts, faces = load_ply_mesh(Path(model_path).expanduser())
+        verts, faces = load_ply_mesh(Path(resolved).expanduser())
         self._n_model = n_model
         self._model = sample_mesh_surface(verts, faces, n_model, self._rng) * scale
         # Model-frame AABB -> dynamic CropBox extent (+ margin) for tracking.
@@ -392,7 +441,8 @@ class IcpPoseRefinerNode(Node):
         self._model_name = name
         self._model_key = key
         self.get_logger().info(
-            f'model {name}: {len(self._model)} pts, '
+            f'model {name}{f" (classified {object_name})" if object_name else ""}: '
+            f'{len(self._model)} pts, '
             f'extent(m)={np.round(self._model_hi - self._model_lo, 3)}')
 
     # ── Cloud cache ──────────────────────────────────────────────────────
@@ -403,7 +453,7 @@ class IcpPoseRefinerNode(Node):
     def _on_trigger(self, request, response):
         """Phase 1: SAM-6D-mask ICP init, then (auto_track) start tracking."""
         try:
-            self._load_model()                  # pick up a new model_path if set
+            # _run_once resolves the CAD from the classified detection itself.
             ok, message = self._run_once()
         except Exception as exc:  # noqa: BLE001 - report any failure to caller
             self.get_logger().error(f'ICP init failed: {exc}')
@@ -646,6 +696,9 @@ class IcpPoseRefinerNode(Node):
     # ── One refinement ───────────────────────────────────────────────────
     def _run_once(self):
         idx, det, init, mask = self._load_detection()
+        # Match the CAD to whatever the server classified this frame as, before
+        # ICP (and the tracker it seeds) touch self._model.
+        self._load_model(str(det.get('obj_name') or ''))
         xyz, normals, frame_id, stamp = self._scene_organized()
 
         if mask.shape != xyz.shape[:2]:
@@ -943,8 +996,8 @@ class IcpPoseRefinerNode(Node):
         self.get_logger().info(
             f'saved object #{n} ({self._model_name}) into SEPC: '
             f'+{len(model_static)} pts -> {len(self._sepc)} total. {note} '
-            'Tracking cleared; set model_path if the next object differs, then '
-            'call ~/run_icp.')
+            'Tracking cleared; trigger the next object and ~/run_icp -- its CAD is '
+            'selected from the classifier automatically.')
         return True, (f'object #{n} ({self._model_name}) saved into SEPC '
                       f'({len(self._sepc)} pts total); tracking cleared')
 
