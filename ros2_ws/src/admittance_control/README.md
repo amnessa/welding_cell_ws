@@ -7,12 +7,17 @@ digital twin**. It bundles two cooperating pipelines:
 1. **Surface drawing / admittance control** — detect a work surface, generate a
    tool path on it, plan + execute the motion, and (optionally) follow the
    surface under force control.
-2. **Perception → 6D pose → ICP refinement → tracking** — capture RGB‑D, run
-   FoundationPose to get an object 6D pose + mask, visualize it, refine that pose with
-   point‑to‑plane ICP against the segmented point cloud, then track it live.
-3. **Assembly → weld‑seam extraction** — freeze each located part's CAD cloud
-   into a static assembly model, then find the joint between two near‑orthogonal
-   parts by PCA curvature and publish it as a weld toolpath.
+2. **Perception → object ID → 6D pose → ICP refinement → tracking** — capture
+   RGB‑D, have the server **name the part** (a PPF classifier picks the CAD from a
+   library), run FoundationPose to get its 6D pose + mask, visualize it, refine that
+   pose with point‑to‑plane ICP against the segmented point cloud, then track it live.
+   The classified name drives which CAD the ICP node loads, so no part has to be
+   selected by hand.
+3. **Assembly → weld‑seam extraction → new-model export** — freeze each located
+   part's CAD cloud into a static assembly model, find the joint between two
+   near‑orthogonal parts by PCA curvature and publish it as a weld toolpath, and
+   **rebuild the assembled parts into a single watertight CAD mesh** that can be
+   uploaded back to the server as a new classifiable object for the next cycle.
 
 Everything is designed so the **same nodes and topics** work in sim and on
 hardware; only the joint‑state source and the camera front‑end differ.
@@ -79,12 +84,13 @@ can be commanded to.
 | `srv/`, `action/` | Custom interfaces (`ComputeTOTG.srv`, `ExecuteDrawing.action`) |
 | `config/` | UR5e description, controllers, kinematics, joint limits, SRDF |
 | `urdf/`, `meshes/` | UR5e robot description |
-| `models/*.ply` | CAD models for SAM‑6D / ICP (e.g. `test_objv3.ply`) |
+| `models/*.ply` | CAD models for FoundationPose / ICP / PPF (e.g. `test_objv3.ply`). The ICP node resolves the classifier's answer to `models/<obj_name>.ply`, so names here must match the server's CAD library. |
 | `world/welding_world.usda` | Isaac Sim scene (robot + eye‑in‑hand RealSense) |
 | `notebooks/` | Hand‑eye calibration outputs (`T_tcp_to_cam.npy`), intrinsics, experiments |
 | `notes/*.md` | Design notes behind each algorithm (see [Algorithms](#algorithms-and-the-maths-behind-them)) |
 | `scripts/rgb_depth_to_send/` | Transfer dir: last `rgb.png` / `depth.png` / `camera.json` sent to the pose server |
-| `scripts/foundationpose_results/` | **Live** pose-server outputs (`detection_pem.json`, `detection_ism.npz`, `mask.png`, `vis_pose.png`) **and** assembly state (`static_env.ply/.npy`, `assembly.json`, `welding_points.ply/.npy`). The ICP node's `results_dir` default. |
+| `scripts/foundationpose_results/` | **Live** pose-server outputs (`detection_pem.json` — now carries `obj_name`, `detection_ism.npz`, `mask.png`, `vis_pose.png`, `object_name.txt`) **and** assembly state (`static_env.ply/.npy`, `assembly.json`, `welding_points.ply/.npy`, `assembly_mesh.ply`). The ICP node's `results_dir` default. |
+| `scripts/{fp_server,ppf_classifier,build_ppf_library,ppf_selftest,server}.py` | **Reference copies** of the GPU-host code (the FoundationPose Flask server + its PPF classifier and library tools). These run on the pose-server machine, *not* in the ROS graph; they are tracked here so the client and server contracts stay in sync. Edit on the host, then mirror back. |
 | `scripts/sam6d_results/` | Frozen SAM‑6D captures from before the FoundationPose swap. Kept for replay only — nothing writes here anymore. |
 | `helper/` | Calibration, GUIs, legacy tools (run directly, not installed) |
 | `generated_planes/` | Saved work‑surface plane JSONs |
@@ -139,16 +145,18 @@ camera ─▶ /camera/color/image_raw ─┐
          /camera/color/camera_info ─┘                             (organized XYZRGB)
                  │
    trigger ▶ foundationpose_bridge_node ──HTTP POST rgb+depth+camera──▶ FoundationPose server (fp_server.py, GPU)
-                 │        (operator clicks the object there; SAM2 turns the click into the mask)
-                 │  ◀── pose 4x4 [m] + artifacts (detection_pem.json, detection_ism.npz, mask.png, vis_pose.png)
+                 │        (operator clicks the object → SAM2 mask → PPF classifies the CAD → register)
+                 │  ◀── pose 4x4 [m] + object_name + classification table
+                 │       + artifacts (detection_pem.json[obj_name], detection_ism.npz, mask.png, vis_pose.png, object_name.txt)
                  ▼
-        /perception/detections  (vision_msgs/Detection3DArray, camera frame)
+        /perception/detections   (Detection3DArray; class_id = classified CAD name)
+        /perception/object_name  (std_msgs/String, latched)
                  │                                   │
                  ▼                                   ▼
    detection_marker_node                    icp_pose_refiner_node
-   → /perception/detection_markers          Phase 1 (~/run_icp, once): the
-     (pose triads, labels, and an             mask ∩ cloud → point-to-plane ICP
-      oriented CAD wireframe box on            → seed current_pose
+   → /perception/detection_markers          Phase 1 (~/run_icp, once): read obj_name →
+     (pose triads, labels, and an             load models/<obj_name>.ply → mask ∩ cloud
+      oriented CAD wireframe box on            → point-to-plane ICP → seed current_pose
       the highest-scoring detection)         Phase 2 (timer, no pose server): dynamic
                                                CropBox around current_pose → Fast-
                                                ICP (Anderson-accel. point-to-plane)
@@ -158,6 +166,14 @@ camera ─▶ /camera/color/image_raw ─┐
                                                → /perception/icp/refined_pose + TF
                                                → /perception/icp/crop_box (Marker)
 ```
+
+The server no longer needs to be told which part is on the table: a **PPF
+classifier** (`ppf_classifier.py`) matches the masked depth cloud against a library
+built from every CAD in `CAD_DIR`, and the winning *name* selects the mesh
+FoundationPose registers against ([Algorithms §12](#12-ppf-object-classification)).
+The bridge republishes that name — as the detection's `class_id` and on the latched
+`/perception/object_name` — and the ICP node resolves it to `models/<obj_name>.ply`,
+so the whole chain follows the classified part automatically.
 
 The tracking loop is the [`notes/realtime_icp.md`](notes/realtime_icp.md)
 methodology: SAM-6D only *initializes* the pose, then a CropBox that follows
@@ -175,18 +191,32 @@ parts, and it *is* the geometry the weld seam is extracted from.
 
 ```
         ~/run_icp (part A) → track → ~/save_object ─┐
-        ~/run_icp (part B) → track → ~/save_object ─┤  (set model_path between parts)
+        ~/run_icp (part B) → track → ~/save_object ─┤  (CAD auto-selected per part
+                                                    │   from the classifier)
                                                     ▼
                     SEPC = CAD(A) ∪ CAD(B)  in base_link
                     → /perception/icp/static_env  (orange)
-                    → sam6d_results/static_env.ply + assembly.json
-                                                    │
-                                     ~/welding_points│
-                                                    ▼
-                    radius-PCA curvature → cross-object filter → voxel merge
-                    → /perception/icp/welding_points  (red)
-                    → sam6d_results/welding_points.ply
+                    → foundationpose_results/static_env.ply + assembly.json
+                          │                                 │
+           ~/welding_points│                   ~/export_mesh│
+                          ▼                                 ▼
+     radius-PCA curvature → cross-object       re-instantiate each part's CAD at its
+     filter → voxel merge                      stored pose_static → boolean-union
+     → /perception/icp/welding_points (red)    → watertight faced mesh (mm)
+     → foundationpose_results/welding_points.ply → foundationpose_results/assembly_mesh.ply
+                                                        │
+                                    set bridge model_ply_path + ~/add_model
+                                                        ▼
+                                    server indexes it as a new classifiable object
 ```
+
+`assembly.json` records each frozen part's CAD filename **and** its refined 4×4
+`pose_static`, which is what makes `~/export_mesh` possible: rather than
+reconstructing a mesh from the faceless SEPC points, it reloads the *original* CADs,
+places them at those poses, and boolean-unions them into a CAD-exact watertight mesh
+([Algorithms §13](#13-assembly-mesh-export)). That mesh is the one artifact the
+server's `/add_model` will accept — the raw `static_env.ply` is a point cloud with no
+faces and is rejected.
 
 Every tracking tick, the live crop is transformed into `base_link` and points
 within `bg_subtract_dist_m` of the SEPC are deleted, so part B's ICP cannot snap
@@ -223,12 +253,12 @@ The same transform applies the **ground cut** (`z <= ground_z_m` is the bench;
 | `realsense_camera_node.py` | **Real** RealSense D435i front‑end. Streams color + depth (depth aligned to color), publishes matching `CameraInfo`, writes live intrinsics to `camera.json`. | out: `/camera/color/image_raw`, `/camera/depth/image_rect_raw` (16UC1 mm), `/camera/color/camera_info` |
 | `realsense_sim_camera_node.py` | **Sim** front‑end + digital‑twin fixups. Relays Isaac's `*_sim` RGB‑D, adds a realistic depth‑noise model, and (parameters, off by default) **rewrites the empty Isaac `frame_id`** to `camera_color_optical_frame` and **synthesizes `CameraInfo`** (Isaac's graph publishes none). Intrinsics default to the real camera's (the twin shares them). | in: `/camera/color/image_raw_sim`, `/camera/depth/image_rect_raw_sim`; out: same topics as the real node |
 | `camera_extrinsic_tf_publisher.py` | Broadcasts the static eye‑in‑hand extrinsic `tool0 → camera_color_optical_frame` from a 4×4 `.npy` (hand‑eye calibration, `notebooks/T_tcp_to_cam.npy`). **This is what puts perception in the robot frame.** | out: static `/tf` |
-| `foundationpose_bridge_node.py` | **The pose bridge in use.** On `~/trigger`, captures a synced RGB‑D pair, POSTs it to `fp_server.py`, and republishes the reply as `Detection3DArray`. The pose comes back as a 4×4 **in metres** — no mm→m division, unlike SAM‑6D. Saves server artifacts to `foundationpose_results/`. A trigger **blocks until the operator clicks the object** in the window the server opens (hence `request_timeout_sec` = 300). | in: color+depth; srv: `~/trigger`; out: `/perception/detections` (latched) |
-| `fp_server.py` | The **FoundationPose Flask server** (GPU machine, not the robot). `POST /predict_pose` with rgb/depth/camera → SAM2 mask from a click → `register()` against a fixed CAD model (`MESH_PATH`). Has **no detector of its own**: send a `mask` file or a `click` field to skip the window. Re‑emits the result in SAM‑6D's on‑disk format so the ICP node needs no changes. | HTTP `:5000/predict_pose` |
+| `foundationpose_bridge_node.py` | **The pose bridge in use.** On `~/trigger`, captures a synced RGB‑D pair, POSTs it to `fp_server.py`, and republishes the reply as `Detection3DArray` **plus the classified object name** on latched `/perception/object_name`. The pose comes back as a 4×4 **in metres** — no mm→m division, unlike SAM‑6D. Saves server artifacts to `foundationpose_results/`. A trigger **blocks until the operator clicks the object** in the window the server opens (hence `request_timeout_sec` = 300). `~/add_model` uploads the `.ply` at `model_ply_path` to the server's `/add_model` so a newly-generated part becomes classifiable without a restart. | in: color+depth; srv: `~/trigger`, `~/add_model`; out: `/perception/detections`, `/perception/object_name` (latched) |
+| `fp_server.py` | The **FoundationPose Flask server** (GPU machine, not the robot). `POST /predict_pose` with rgb/depth/camera → SAM2 mask from a click → **PPF classifier names the CAD** → `reset_object()` to that mesh → `register()`. Has **no detector of its own**: send a `mask` file or a `click` field to skip the window. Also serves `POST /classify` (classification only, ~1 s, for bring-up) and `POST /add_model` (index a new `.ply` into the live library and persist it). Re‑emits the result in SAM‑6D's on‑disk format (now with `obj_name`) so the ICP node needs no changes. Set `PPF_ENABLE=0` to pin it to a single `MESH_PATH` like before. | HTTP `:5000/{predict_pose,classify,add_model,health}` |
 | `sam6d_bridge_node.py` | *Superseded by the FoundationPose bridge.* Same trigger→POST→publish cycle against `server.py`, parsing a list of detections (`R`, `t` mm→m). Still installed so an old SAM‑6D setup can be run for comparison. | in: color+depth; srv: `~/trigger`; out: `/perception/detections` (latched) |
 | `server.py` | *Superseded by `fp_server.py`.* The SAM‑6D Flask server: instance seg (FastSAM/SAM) + pose estimation against `CAD_PATH`, re‑running `demo.sh` per request. | HTTP `:5000/predict_pose` |
 | `detection_marker_node.py` | Converts `Detection3DArray` → RViz `MarkerArray` (RViz has no native `vision_msgs` display). Draws a pose triad + sphere + label per detection, and an **oriented CAD wireframe box** on the highest‑scoring detection. | in: `/perception/detections`; out: `/perception/detection_markers` |
-| `icp_pose_refiner_node.py` | **Real‑time object tracker + assembly/weld model** (`notes/realtime_icp.md`). *Phase 1* `~/run_icp`: uses the SAM‑6D mask (`detection_ism.npz`) to segment the object, places the CAD `.ply` at the SAM‑6D pose, runs ICP, and seeds `current_pose`. *Phase 2* (timer at `tracking_rate_hz`, no SAM‑6D): builds a **dynamic CropBox** (model AABB + `crop_margin_m`) around `current_pose` to isolate the object, applies **ground removal** + **model‑based background subtraction**, runs **Fast‑ICP** (Anderson‑accelerated, Welsch‑robust point‑to‑plane) from `current_pose`, updates it, and publishes the CropBox as a Marker. Pauses if fitness < `lost_fitness`. *Assembly* `~/save_object`: bakes the CAD at its refined pose into the **SEPC** in `static_frame`, persists it, clears tracking for the next part. *Weld* `~/welding_points`: extracts the joint between the SEPC's parts and publishes it red. `scene_from` (init only) = `pointcloud` or `depth_png`. With `use_open3d` (default), the per‑frame voxel downsample + normals run on the *cropped* cloud via Open3D (crop‑first is the key speedup); without Open3D it falls back to NumPy. | in: `/camera/depth/color/points`, TF; srv: `~/run_icp`, `~/stop_tracking`, `~/start_tracking`, `~/save_object`, `~/welding_points`; out: `/perception/icp/{scene_cloud,model_cloud,refined_pose,crop_box,static_env,welding_points}`, TF `sam6d_object` |
+| `icp_pose_refiner_node.py` | **Real‑time object tracker + assembly/weld model** (`notes/realtime_icp.md`). *Phase 1* `~/run_icp`: reads `obj_name` from the detection, loads `models/<obj_name>.ply` (falling back to `model_path`), uses the mask (`detection_ism.npz`) to segment the object, places the CAD at the FoundationPose pose, runs ICP, and seeds `current_pose`. *Phase 2* (timer at `tracking_rate_hz`, no pose server): builds a **dynamic CropBox** (model AABB + `crop_margin_m`) around `current_pose` to isolate the object, applies **ground removal** + **model‑based background subtraction**, runs **Fast‑ICP** (Anderson‑accelerated, Welsch‑robust point‑to‑plane) from `current_pose`, updates it, and publishes the CropBox as a Marker. Pauses if fitness < `lost_fitness`. *Assembly* `~/save_object`: bakes the CAD at its refined pose into the **SEPC** in `static_frame`, persists it (with each part's `pose_static`), clears tracking for the next part. *Weld* `~/welding_points`: extracts the joint between the SEPC's parts and publishes it red. *Export* `~/export_mesh`: boolean-unions the saved parts' CADs at their poses into a watertight `assembly_mesh.ply` for upload as a new model. `scene_from` (init only) = `pointcloud` or `depth_png`. With `use_open3d` (default), the per‑frame voxel downsample + normals run on the *cropped* cloud via Open3D (crop‑first is the key speedup); without Open3D it falls back to NumPy. | in: `/camera/depth/color/points`, TF; srv: `~/run_icp`, `~/stop_tracking`, `~/start_tracking`, `~/save_object`, `~/welding_points`, `~/export_mesh`; out: `/perception/icp/{scene_cloud,model_cloud,refined_pose,crop_box,static_env,welding_points}`, TF `sam6d_object` |
 | `depth_image_proc::PointCloudXyzrgbNode` | Standard package node (launched, not in this repo). Fuses color + registered depth + `camera_info` into an organized `PointCloud2`. | out: `/camera/depth/color/points` |
 
 ---
@@ -243,6 +273,7 @@ Pure Python, no rclpy — unit‑testable without ROS.
 | `kinematics.py` | UR5e FK/Jacobian, damped‑least‑squares `ik_solve`, `rrt_connect`, path smoothing (`bezier_smooth_path`, Catmull‑Rom), `plan_to_pose`. Used by the drawing action server. |
 | `sam6d_io.py` | Image/HTTP/JSON plumbing for the SAM‑6D bridge: `resolve_transfer_dir`, image normalization, PNG encode, multipart POST, `parse_pem_response`, `save_artifacts`. |
 | `icp.py` | NumPy ICP stack: `load_ply_mesh`, `sample_mesh_surface`, `backproject_depth`, `estimate_normals_organized` (organized‑cloud normals, no KD‑tree), `voxel_downsample`, `crop_box_mask` (oriented CropBox for tracking), `nearest_neighbor` (uses `scipy.spatial.cKDTree` if SciPy is present — ~15× faster — else brute force), `icp_point_to_plane` (point‑to‑plane; `anderson_depth>0` enables **Fast‑ICP** — se(3)‑parameterized Anderson acceleration with a monotone‑energy safeguard). Runs pure‑NumPy on the robot side; SciPy/Open3D are optional accelerators. |
+| `assembly_mesh.py` | Rebuilds a watertight CAD mesh of an assembled scene for `~/export_mesh`: `load_assembly` (read `assembly.json`), `build_assembly_mesh` (re-instantiate each CAD at its `pose_static`, scale to metres, **boolean-union**, re-centre, emit in mm), `build_and_write`. Needs `trimesh` + `manifold3d` (`pip install trimesh manifold3d`) — used only by that one service, so the rest of the stack has no new deps. |
 
 ---
 
@@ -543,6 +574,68 @@ Stereo triangulation error grows with the square of range (disparity resolution
 is constant in pixels), so this shape — not constant σ — is what makes sim
 thresholds transfer to hardware.
 
+### 12. PPF object classification
+
+The server is handed a masked object with no label. **Point Pair Features** (PPF,
+Drost et al. 2010, via OpenCV's `cv2.ppf_match_3d`) name it by matching the masked
+depth cloud against a library of CAD models. A PPF is the 4‑tuple of a point pair
+`(p₁, n₁), (p₂, n₂)`:
+
+```
+F(p₁, p₂) = ( ‖d‖,  ∠(n₁, d),  ∠(n₂, d),  ∠(n₁, n₂) ),   d = p₂ − p₁
+```
+
+It is invariant to rigid motion, so a model is summarised offline as a hash table
+over the quantised features of all its point pairs, and a scene is recognised by
+letting its pairs vote (a generalised Hough scheme) for a model + pose. Here the
+pose is a means, not the end: the classifier computes one *only* to score how well
+each CAD explains the cloud, then discards it — FoundationPose re‑estimates the pose
+from scratch on the chosen mesh.
+
+Two guards make the "which part" answer trustworthy:
+
+- **Extent pre‑filter.** A model whose physical diameter is far from the scene
+  cloud's is skipped before any matching, so a wrong FreeCAD export unit (a 1000×
+  mis‑scale) shows up as "unclassifiable" rather than a silent mismatch.
+- **Margin + verification.** Every candidate's inliers are counted at radius
+  `PPF_TAU` (your depth noise, ~8 mm), and the winner's lead over the runner‑up is
+  the **margin**. Two thin plates of similar size are genuinely indistinguishable
+  from one view; `PPF_MIN_MARGIN` (with `PPF_STRICT`) makes the server *refuse*
+  rather than guess when the margin is thin. The full score table always comes back
+  in the reply, and the bridge logs it — the margin is the number to watch during
+  bring‑up (`POST /classify` returns it in ~1 s without spending GPU on a pose).
+
+The library is built once (`build_ppf_library.py`) from every `.ply` in `CAD_DIR`;
+`POST /add_model` adds one incrementally (each model owns its own detector, so
+nothing else retrains) and persists it. Details live on the host in
+`ppf_classifier.py`; `ppf_selftest.py` scores each model against itself to find the
+per‑model sampling step a thin curved part needs.
+
+### 13. Assembly mesh export
+
+`~/export_mesh` turns an assembled scene back into a single CAD mesh — the input a
+*new* PPF model needs. The naive route is surface reconstruction from the fused SEPC
+points (Delaunay + graph‑cut + manifold repair; see `notes/triangulation_idea.md`),
+but that is lossy at ~2500 pts/part and needs a heavy stack. It is also
+unnecessary: every SEPC part was *sampled from a known CAD at a known pose*, both
+recorded in `assembly.json`. So instead we **re‑instantiate the originals**:
+
+```
+for each saved part:  M ← load CAD (faces intact)
+                      M ← (M · mesh_scale)     # mm → m, the frame pose_static expects
+                      M ← pose_static · M      # place in base_link
+mesh ← ⋃ boolean-union(parts)                  # manifold3d backend, via trimesh
+mesh ← recenter(mesh);  mesh ← mesh · 1000     # m → mm library convention
+```
+
+The result is CAD‑exact (no reconstruction error), watertight by construction (a
+union of watertight solids is watertight; disjoint parts return as multiple
+components in one mesh), and written in millimetres so the host's `MESH_SCALE=0.001`
+reads it at true size like any other library `.ply`. The build validates
+`is_watertight`/`volume` and warns if the union came back open. This is exactly the
+"boolean union of the original CAD B‑reps" that `notes/triangulation_idea.md` names
+as its own ground truth — available directly because the CADs and poses were kept.
+
 ---
 
 ## Interfaces
@@ -551,11 +644,13 @@ thresholds transfer to hardware.
 |---|---|---|
 | `execute_drawing` | action `ExecuteDrawing` | Goal: Cartesian `waypoints` + `orientation` (base_link). Feedback: `current_phase`, `drawing_progress`. Result: `success`, `message`. |
 | `compute_totg` | service `ComputeTOTG` | Request: flattened joint waypoints + per‑joint vel/accel limits + `path_tolerance` + `resample_dt`. Response: timed positions/velocities + timestamps. |
-| `~/trigger` (foundationpose_bridge) | `std_srvs/Trigger` | Run one capture → FoundationPose → publish cycle. Blocks until the object is clicked on the server host. |
+| `~/trigger` (foundationpose_bridge) | `std_srvs/Trigger` | Run one capture → FoundationPose → publish cycle. Blocks until the object is clicked on the server host. Reply names the part (PPF), republished on `/perception/object_name`. |
+| `~/add_model` (foundationpose_bridge) | `std_srvs/Trigger` | Upload the `.ply` at the `model_ply_path` param to the server's `/add_model`, indexing it into the live PPF library. Must be a **faced mesh** (a point cloud is rejected). |
 | `~/run_icp` (icp_pose_refiner) | `std_srvs/Trigger` | Phase‑1 init: segment (mask) + ICP‑refine the best detection, seed the tracker, and (if `auto_track`) start Phase‑2 tracking. |
 | `~/stop_tracking` / `~/start_tracking` (icp_pose_refiner) | `std_srvs/Trigger` | Pause / resume the Phase‑2 tracking loop. |
 | `~/save_object` (icp_pose_refiner) | `std_srvs/Trigger` | Freeze the tracked CAD at its refined pose into the SEPC; persist `static_env.*` + `assembly.json`; clear tracking for the next part. |
 | `~/welding_points` (icp_pose_refiner) | `std_srvs/Trigger` | Extract the weld seam from the SEPC, publish it red, persist `welding_points.*`. Needs ≥ 2 saved objects. |
+| `~/export_mesh` (icp_pose_refiner) | `std_srvs/Trigger` | Boolean-union the saved parts' CADs at their poses → watertight `assembly_mesh.ply` (mm), ready to feed the bridge's `~/add_model`. Needs `trimesh`+`manifold3d`. |
 | `~/go` (move_to_object) | `std_srvs/Trigger` | Execute the standoff move (safety gate). |
 
 ### Key topics
@@ -565,7 +660,8 @@ thresholds transfer to hardware.
 | `/joint_states` / `/isaac_joint_states` | `sensor_msgs/JointState` | robot/Isaac → robot_state_publisher |
 | `/camera/color/image_raw`, `/camera/depth/image_rect_raw`, `/camera/color/camera_info` | `Image`/`CameraInfo` | camera node → pointcloud + bridge |
 | `/camera/depth/color/points` | `PointCloud2` | depth_image_proc → ICP / RViz |
-| `/perception/detections` | `vision_msgs/Detection3DArray` | sam6d_bridge → markers / ICP / move_to_object |
+| `/perception/detections` | `vision_msgs/Detection3DArray` | foundationpose_bridge → markers / ICP / move_to_object (`class_id` = classified CAD name) |
+| `/perception/object_name` | `std_msgs/String` (latched) | foundationpose_bridge → ICP / trackers (which `.ply` the classifier picked) |
 | `/perception/detection_markers` | `visualization_msgs/MarkerArray` | detection_marker → RViz |
 | `/perception/icp/{scene_cloud,model_cloud}` | `PointCloud2` | icp_pose_refiner → RViz |
 | `/perception/icp/crop_box` | `visualization_msgs/Marker` | icp_pose_refiner → RViz (dynamic CropBox wireframe) |
@@ -690,14 +786,17 @@ The service calls below are identical in sim and on hardware.
 ### Assemble two parts, then extract the weld seam
 
 ```bash
-# --- part A ---
+# Point the ICP node at the CAD folder once; each part's CAD is then chosen
+# automatically from the classifier (models/<obj_name>.ply). model_path is only
+# a fallback for when classification is off.
 ros2 param set /icp_pose_refiner model_path <ws>/src/admittance_control/models/test_objv2_base.ply
-ros2 service call /foundationpose_bridge/trigger        std_srvs/srv/Trigger
-ros2 service call /icp_pose_refiner/run_icp    std_srvs/srv/Trigger   # seed + track
+
+# --- part A ---
+ros2 service call /foundationpose_bridge/trigger        std_srvs/srv/Trigger   # classify + pose
+ros2 service call /icp_pose_refiner/run_icp    std_srvs/srv/Trigger   # loads the classified CAD, seed + track
 ros2 service call /icp_pose_refiner/save_object std_srvs/srv/Trigger  # freeze into the SEPC
 
-# --- part B (place it against A, then locate it) ---
-ros2 param set /icp_pose_refiner model_path <ws>/src/admittance_control/models/test_objv2_ear.ply
+# --- part B (place it against A, then locate it) — no model_path change needed ---
 ros2 service call /foundationpose_bridge/trigger        std_srvs/srv/Trigger
 ros2 service call /icp_pose_refiner/run_icp    std_srvs/srv/Trigger
 ros2 service call /icp_pose_refiner/save_object std_srvs/srv/Trigger
@@ -705,11 +804,19 @@ ros2 service call /icp_pose_refiner/save_object std_srvs/srv/Trigger
 # --- the joint between them, in red ---
 ros2 service call /icp_pose_refiner/welding_points std_srvs/srv/Trigger
 # → "99 welding points from 314 edge points (of 5000 SEPC points)"
+
+# --- export the assembly as a new CAD model and teach the server ---
+ros2 service call /icp_pose_refiner/export_mesh std_srvs/srv/Trigger   # → foundationpose_results/assembly_mesh.ply
+ros2 param set /foundationpose_bridge model_ply_path \
+  <ws>/src/admittance_control/scripts/foundationpose_results/assembly_mesh.ply
+ros2 service call /foundationpose_bridge/add_model std_srvs/srv/Trigger # server indexes it; classifiable next cycle
 ```
 
-`model_path` on the ROS side must name the **same CAD** the pose server has as
-`MESH_PATH`, per part. The seam is written to `foundationpose_results/welding_points.ply`
-and published on `/perception/icp/welding_points` in `base_link`.
+The classified `obj_name` must resolve to `models/<obj_name>.ply` on the ROS side,
+which must be the **same CAD** the server holds in its library. The seam is written
+to `foundationpose_results/welding_points.ply` and published on
+`/perception/icp/welding_points` in `base_link`. `export_mesh` needs `trimesh` +
+`manifold3d` in the ROS‑side Python env (`pip install trimesh manifold3d`).
 
 `welding_points` reloads `static_env.npy` + `assembly.json` from `save_dir` if
 the node was restarted, so you can re‑run the extraction (with different `R` or
@@ -740,9 +847,14 @@ ros2 launch admittance_control pointcloud.launch.py launch_rviz:=true launch_icp
 - **New perception consumer?** Subscribe to `/perception/detections` (latched) or
   `/perception/icp/refined_pose`. Both are in `camera_color_optical_frame`; use TF
   to get `base_link`.
-- **Different object?** Put its CAD `.ply` in `models/`, set `CAD_PATH` on the
-  SAM‑6D server to match, and pass `bbox_model_path` / ICP `model_path`. The ROS‑side
-  model and the server's CAD model **must be the same object**.
+- **Different object?** Put its CAD `.ply` in `models/` (ROS side) **and** in the
+  server's `CAD_DIR` under the **same filename** — the classifier returns that stem
+  as `obj_name` and the ICP node loads `models/<obj_name>.ply`. Rebuild the PPF
+  library (`build_ppf_library.py`) or upload live via the bridge's `~/add_model`. To
+  bypass classification, set `PPF_ENABLE=0` on the server and use ICP `model_path`.
+- **Generated a new part (an assembly)?** `~/export_mesh` writes a watertight
+  `assembly_mesh.ply`; feed it to the bridge's `~/add_model`. Do **not** upload the
+  raw `static_env.ply` — it is a faceless point cloud and the server rejects it.
 - **New Python library code?** Add the file under `admittance_control/` **and** to the
   `install(FILES …)` list in `CMakeLists.txt`.
 - **New node script?** Put it in `scripts/`, `chmod +x`, and add it to the
@@ -805,3 +917,18 @@ ros2 launch admittance_control pointcloud.launch.py launch_rviz:=true launch_icp
 - **Sim thresholds don't transfer to hardware?** Check `ground_z_m` first (bench ≠
   sim floor), then remember real depth noise grows as `z²` (§11) — a threshold
   tuned at 0.4 m is ~4× tighter than the same threshold at 0.8 m.
+- **ICP still shows the previous object's CAD after the part changed?** The running
+  node loaded the old module at startup — a source edit (or `--symlink-install`)
+  doesn't hot‑reload it. **Restart `icp_pose_refiner`.** Then confirm the log line
+  `model <obj_name>.ply (classified <obj_name>)`; if it fell back to `model_path`,
+  `models/<obj_name>.ply` is missing or misnamed.
+- **`add_model` returns HTTP 500 `NoneType * NoneType` (or 400 "0 faces")?** You
+  uploaded a point cloud, not a mesh — almost always `static_env.ply`. Run
+  `~/export_mesh` and upload the resulting `assembly_mesh.ply` instead.
+- **`export_mesh` fails to import / "needs manifold3d"?** `pip install trimesh
+  manifold3d` into the **ROS‑side** Python env (not the server's).
+- **Classifier keeps confusing two parts?** Their diameters are within the extent
+  pre‑filter's tolerance, so it comes down to the verification margin. Watch the
+  score table the bridge logs; if the margin is genuinely thin from that viewpoint,
+  set `PPF_MIN_MARGIN` + `PPF_STRICT` on the server so it refuses rather than guesses
+  (§12).
