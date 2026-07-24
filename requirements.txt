@@ -15,4 +15,6 @@ sam3
 # Real-time ICP tracking accelerators (optional; icp.py falls back to pure NumPy
 # without them, but they take a tracking tick from ~190 ms to ~65 ms).
 open3d>=0.19          # per-frame voxel downsample + normals on the cropped cloud
-scipy                 # cKDTree nearest-neighbour in point-to-plane ICP (~15x)
+scipy
+trimesh
+manifold3d                 # cKDTree nearest-neighbour in point-to-plane ICP (~15x)

@@ -46,6 +46,7 @@ Triggers
     ros2 service call /icp_pose_refiner/start_tracking std_srvs/srv/Trigger
     ros2 service call /icp_pose_refiner/save_object    std_srvs/srv/Trigger
     ros2 service call /icp_pose_refiner/welding_points std_srvs/srv/Trigger
+    ros2 service call /icp_pose_refiner/export_mesh    std_srvs/srv/Trigger
 
 Welding points
 --------------
@@ -371,6 +372,7 @@ class IcpPoseRefinerNode(Node):
         self.create_service(Trigger, '~/start_tracking', self._on_start_tracking)
         self.create_service(Trigger, '~/save_object', self._on_save_object)
         self.create_service(Trigger, '~/welding_points', self._on_welding_points)
+        self.create_service(Trigger, '~/export_mesh', self._on_export_mesh)
 
         # Live-tunable filter knobs (ros2 param set ... takes effect next frame).
         self.add_on_set_parameters_callback(self._on_set_params)
@@ -530,6 +532,71 @@ class IcpPoseRefinerNode(Node):
             return response
         response.success = ok
         response.message = message
+        return response
+
+    def _on_export_mesh(self, request, response):
+        """Build a watertight CAD mesh of the assembled scene, ready to upload.
+
+        The SEPC (static_env.ply) is a point cloud with no faces, so the host's
+        /add_model rejects it. But each saved object's original CAD and its refined
+        ``pose_static`` are known, so we re-instantiate those CADs at their poses and
+        boolean-union them (admittance_control.assembly_mesh) into a faced, watertight
+        .ply in millimetres -- exactly what /add_model wants. Then:
+
+            ros2 param set /foundationpose_bridge model_ply_path <written path>
+            ros2 service call /foundationpose_bridge/add_model std_srvs/srv/Trigger
+        """
+        try:
+            from admittance_control.assembly_mesh import (
+                build_assembly_mesh, load_assembly)
+        except Exception as exc:  # noqa: BLE001 - missing trimesh/manifold3d etc.
+            response.success = False
+            response.message = (f'could not import assembly_mesh ({exc}); '
+                                'pip install trimesh manifold3d')
+            return response
+
+        # Prefer the fresh in-memory manifest; fall back to the persisted one so a
+        # restarted node can still export the last assembly.
+        objects = [(o['model'], np.asarray(o['pose_static'], dtype=np.float64).reshape(4, 4))
+                   for o in self._saved]
+        if not objects:
+            assembly_json = self._save_dir / 'assembly.json'
+            if not assembly_json.is_file():
+                response.success = False
+                response.message = ('no saved objects and no assembly.json; '
+                                    'call ~/save_object first')
+                return response
+            _, objects = load_assembly(assembly_json)
+
+        # Same CAD folder and unit convention the model loader uses.
+        model_dir = str(self.get_parameter('model_dir').value)
+        model_path = str(self.get_parameter('model_path').value)
+        if not model_dir and model_path:
+            model_dir = str(Path(model_path).expanduser().parent)
+        mesh_scale = 0.001 if str(self.get_parameter('model_units').value).lower() == 'mm' else 1.0
+        out_path = self._save_dir / 'assembly_mesh.ply'
+
+        try:
+            mesh, stats = build_assembly_mesh(objects, model_dir, mesh_scale=mesh_scale)
+            self._save_dir.mkdir(parents=True, exist_ok=True)
+            mesh.export(str(out_path))
+        except Exception as exc:  # noqa: BLE001 - report any build/export failure
+            self.get_logger().error(f'export_mesh failed: {exc}')
+            response.success = False
+            response.message = f'export_mesh failed: {exc}'
+            return response
+
+        if not stats['watertight']:
+            self.get_logger().warn(
+                'assembly mesh is NOT watertight; the union may have holes. It will '
+                'still upload, but check it before trusting the model.')
+        summary = (f"wrote {out_path} from {len(objects)} part(s): "
+                   f"{stats['vertices']}v/{stats['faces']}f, "
+                   f"watertight={stats['watertight']}, extents(mm)={stats['extents_mm']}. "
+                   f"Set /foundationpose_bridge model_ply_path to it, then ~/add_model.")
+        self.get_logger().info(summary)
+        response.success = True
+        response.message = summary
         return response
 
     def _on_welding_points(self, request, response):

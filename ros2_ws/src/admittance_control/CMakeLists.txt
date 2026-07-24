@@ -81,6 +81,7 @@ install(
     admittance_control/geometry.py
     admittance_control/sam6d_io.py
     admittance_control/icp.py
+    admittance_control/assembly_mesh.py
   DESTINATION ${PYTHON_INSTALL_DIR}/${PROJECT_NAME}
 )
 
