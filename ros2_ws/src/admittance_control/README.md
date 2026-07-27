@@ -376,7 +376,7 @@ or retrain the classifier head with MediaPipe Model Maker for your viewing angle
 | `sam6d_bridge_node.py` | *Superseded by the FoundationPose bridge.* Same trigger→POST→publish cycle against `server.py`, parsing a list of detections (`R`, `t` mm→m). Still installed so an old SAM‑6D setup can be run for comparison. | in: color+depth; srv: `~/trigger`; out: `/perception/detections` (latched) |
 | `server.py` | *Superseded by `fp_server.py`.* The SAM‑6D Flask server: instance seg (FastSAM/SAM) + pose estimation against `CAD_PATH`, re‑running `demo.sh` per request. | HTTP `:5000/predict_pose` |
 | `detection_marker_node.py` | Converts `Detection3DArray` → RViz `MarkerArray` (RViz has no native `vision_msgs` display). Draws a pose triad + sphere + label per detection, and an **oriented CAD wireframe box** on the highest‑scoring detection. | in: `/perception/detections`; out: `/perception/detection_markers` |
-| `icp_pose_refiner_node.py` | **Real‑time object tracker + assembly/weld model** (`notes/realtime_icp.md`). *Phase 1* `~/run_icp`: reads `obj_name` from the detection, loads `models/<obj_name>.ply` (falling back to `model_path`), uses the mask (`detection_ism.npz`) to segment the object, places the CAD at the FoundationPose pose, runs ICP, and seeds `current_pose`. *Phase 2* (timer at `tracking_rate_hz`, no pose server): builds a **dynamic CropBox** (model AABB + `crop_margin_m`) around `current_pose` to isolate the object, applies **ground removal** + **model‑based background subtraction**, runs **Fast‑ICP** (Anderson‑accelerated, Welsch‑robust point‑to‑plane) from `current_pose`, updates it, and publishes the CropBox as a Marker. Pauses if fitness < `lost_fitness`. *Assembly* `~/save_object`: bakes the CAD at its refined pose into the **SEPC** in `static_frame`, persists it (with each part's `pose_static`), clears tracking for the next part. *Weld* `~/welding_points`: extracts the joint between the SEPC's parts and publishes it red. *Export* `~/export_mesh`: boolean-unions the saved parts' CADs at their poses into a watertight `assembly_mesh.ply` for upload as a new model. *Reset* `~/reset_environment`: drops the SEPC, the saved-object list and the tracking state, blanks the latched clouds, and archives the on-disk assembly into `previous_assemblies/<timestamp>/` so the next cycle starts clean without a restart. `scene_from` (init only) = `pointcloud` or `depth_png`. With `use_open3d` (default), the per‑frame voxel downsample + normals run on the *cropped* cloud via Open3D (crop‑first is the key speedup); without Open3D it falls back to NumPy. | in: `/camera/depth/color/points`, TF; srv: `~/run_icp`, `~/stop_tracking`, `~/start_tracking`, `~/save_object`, `~/welding_points`, `~/export_mesh`, `~/reset_environment`; out: `/perception/icp/{scene_cloud,model_cloud,refined_pose,crop_box,static_env,welding_points}`, TF `sam6d_object` |
+| `icp_pose_refiner_node.py` | **Real‑time object tracker + assembly/weld model** (`notes/realtime_icp.md`). *Phase 1* `~/run_icp`: reads `obj_name` from the detection, loads `models/<obj_name>.ply` (falling back to `model_path`), uses the mask (`detection_ism.npz`) to segment the object, places the CAD at the FoundationPose pose, runs ICP, and seeds `current_pose`. *Phase 2* (timer at `tracking_rate_hz`, no pose server): builds a **dynamic CropBox** (model AABB + `crop_margin_m`) around `current_pose` to isolate the object, applies **ground removal** + **model‑based background subtraction**, runs **Fast‑ICP** (Anderson‑accelerated, Welsch‑robust point‑to‑plane) from `current_pose`, updates it, and publishes the CropBox as a Marker. Pauses if fitness < `lost_fitness`. *Assembly* `~/save_object`: bakes the CAD at its refined pose into the **SEPC** in `static_frame`, persists it (with each part's `pose_static`), clears tracking for the next part. *Weld* `~/welding_points`: extracts the joint between the SEPC's parts and publishes it red. *Export* `~/export_mesh`: boolean-unions the saved parts' CADs at their poses into a watertight `assembly_mesh.ply` for upload as a new model. *Reset* `~/reset_environment`: drops the SEPC, the saved-object list and the tracking state, blanks the latched clouds, and archives the on-disk assembly into `previous_assemblies/<timestamp>/` so the next cycle starts clean without a restart. `scene_from` (init only) = `pointcloud` or `depth_png`. With `use_open3d` (default), the per‑frame voxel downsample + normals run on the *cropped* cloud via Open3D (crop‑first is the key speedup); without Open3D it falls back to NumPy. The tick is further cut by `roi_crop` (slice the organized cloud to the crop box's *image* rectangle before any per‑point maths) and `noise_floor_refresh` (re‑measure the Welsch ν floor every N ticks, not every frame) — ~74 ms → ~23 ms on a 640×480 cloud, with bit‑identical output. Runs on a `MultiThreadedExecutor` so the tick cannot block the incoming cloud. | in: `/camera/depth/color/points`, TF; srv: `~/run_icp`, `~/stop_tracking`, `~/start_tracking`, `~/save_object`, `~/welding_points`, `~/export_mesh`, `~/reset_environment`; out: `/perception/icp/{scene_cloud,model_cloud,refined_pose,crop_box,static_env,welding_points}`, TF `sam6d_object` |
 | `depth_image_proc::PointCloudXyzrgbNode` | Standard package node (launched, not in this repo). Fuses color + registered depth + `camera_info` into an organized `PointCloud2`. | out: `/camera/depth/color/points` |
 
 ---
@@ -390,7 +390,7 @@ Pure Python, no rclpy — unit‑testable without ROS.
 | `geometry.py` | `rotmat_to_quat`, `quat_to_rotmat` |
 | `kinematics.py` | UR5e FK/Jacobian, damped‑least‑squares `ik_solve`, `rrt_connect`, path smoothing (`bezier_smooth_path`, Catmull‑Rom), `plan_to_pose`. Used by the drawing action server. |
 | `sam6d_io.py` | Image/HTTP/JSON plumbing for the SAM‑6D bridge: `resolve_transfer_dir`, image normalization, PNG encode, multipart POST, `parse_pem_response`, `save_artifacts`. |
-| `icp.py` | NumPy ICP stack: `load_ply_mesh`, `sample_mesh_surface`, `backproject_depth`, `estimate_normals_organized` (organized‑cloud normals, no KD‑tree), `voxel_downsample`, `crop_box_mask` (oriented CropBox for tracking), `nearest_neighbor` (uses `scipy.spatial.cKDTree` if SciPy is present — ~15× faster — else brute force), `icp_point_to_plane` (point‑to‑plane; `anderson_depth>0` enables **Fast‑ICP** — se(3)‑parameterized Anderson acceleration with a monotone‑energy safeguard). Runs pure‑NumPy on the robot side; SciPy/Open3D are optional accelerators. |
+| `icp.py` | NumPy ICP stack: `load_ply_mesh`, `sample_mesh_surface`, `backproject_depth`, `estimate_normals_organized` (organized‑cloud normals, no KD‑tree), `voxel_downsample`, `crop_box_mask` (oriented CropBox for tracking), `infer_pinhole_from_organized` + `box_image_roi` (project the crop box into the image so only its pixel rectangle is unpacked — see [Algorithms §7](#7-tracking-three-filters-replace-the-mask)), `NNIndex` (nearest‑neighbour structure built **once** over a fixed target; picks Open3D `core.nns` → `scipy.spatial.cKDTree` → brute force), `nearest_neighbor` (one‑shot wrapper over it), `icp_point_to_plane` (point‑to‑plane; `anderson_depth>0` enables **Fast‑ICP** — se(3)‑parameterized Anderson acceleration with a monotone‑energy safeguard; accepts a prebuilt `index` and a cached `noise_floor`). Runs pure‑NumPy on the robot side; SciPy/Open3D are optional accelerators. |
 | `assembly_mesh.py` | Rebuilds a watertight CAD mesh of an assembled scene for `~/export_mesh`: `load_assembly` (read `assembly.json`), `build_assembly_mesh` (re-instantiate each CAD at its `pose_static`, scale to metres, **boolean-union**, re-centre, emit in mm), `build_and_write`. Needs `trimesh` + `manifold3d` (`pip install trimesh manifold3d`) — used only by that one service, so the rest of the stack has no new deps. |
 
 ---
@@ -575,6 +575,42 @@ The survivors get voxel‑downsampled, normals estimated (Open3D on the *cropped
 cloud — cropping first is the whole speedup), and fed to Fast‑ICP seeded from
 the previous pose. If `fitness < lost_fitness` the object is presumed lost and
 tracking pauses for a fresh SAM‑6D seed.
+
+**Making the tick fit its period.** At `tracking_rate_hz` the whole tick has one
+period to run in, and profiling a 640×480 cloud put it at ~74 ms — over budget
+even at 15 Hz. Three changes bring it to ~23 ms *without changing what comes
+out* (each was checked for a bit‑identical result, not just a similar one):
+
+1. **Crop in image space first** (`roi_crop`, on by default). Filter 1 above is
+   a bounded 3‑D box, so a pinhole camera sees it inside a bounded **rectangle**.
+   Projecting the box's 8 corners gives that rectangle, and slicing the organized
+   cloud to it means the float64 cast, the finiteness test and the oriented‑box
+   test only ever touch pixels that *could* be inside the box — instead of all
+   307k. The intrinsics come from the cloud itself (`infer_pinhole_from_organized`:
+   an organized cloud is a back‑projection, so `u = fx·(x/z) + cx` is a straight
+   line and two least‑squares fits recover K), so no `CameraInfo` subscription can
+   drift out of sync with the frame being processed. When the box straddles the
+   image plane the projection is unbounded and the ROI is `None`, which falls back
+   to the full‑frame scan. **38 ms → 5 ms.**
+2. **One `NNIndex` per tick.** ICP is ~80% of the tick and ICP is almost entirely
+   nearest‑neighbour lookup — ~43 queries against the *same* target — yet the
+   structure used to be rebuilt inside every one. Building it once and sharing it
+   also lets Open3D's `core.nns` back it, which is ~3× faster than `cKDTree` at
+   these sizes (0.31 ms vs 1.02 ms per query) for identical indices. Note
+   `cKDTree`'s `workers=-1` is *slower* than a small fixed worker count here —
+   thread dispatch costs more than the parallelism returns.
+3. **Cache the Welsch ν floor** (`noise_floor_refresh`, default 60 ticks).
+   `welsch_nu_end` measures the depth sensor's noise, which does not change as the
+   object moves, but re‑deriving it cost ~2.5 ms every frame. It is re‑measured
+   periodically and whenever the tracker is re‑seeded.
+
+**Threading.** The tick is tens of milliseconds, and on the default
+single‑threaded executor it blocks the pointcloud subscription for that whole
+time — so every tick refined against a frame at least one tick stale, which is a
+latency bug in a *tracker*. The node now puts the cloud subscription, the timer
+and the services in three callback groups behind a `MultiThreadedExecutor`, so
+the newest cloud keeps landing while ICP runs. Shared pose/SEPC state is guarded
+by a lock, since the services now genuinely run concurrently with the tick.
 
 ### 8. Weld‑seam extraction (`~/welding_points`)
 
@@ -1049,13 +1085,21 @@ ros2 launch admittance_control pointcloud.launch.py launch_rviz:=true launch_icp
 - **Tune tracking?** Params on `icp_pose_refiner_node`: `crop_margin_m` (CropBox
   slack around the model AABB — grow it if fast motion drops the object out of the
   box), `tracking_rate_hz`, `lost_fitness` (re-seed threshold), `min_scene_points`,
-  `auto_track`, `use_open3d`. Launch args: `icp_anderson_depth`, `icp_use_open3d`,
-  `icp_crop_margin_m`, `icp_tracking_rate_hz`, `icp_auto_track`.
-- **Tracking too slow?** The tick cost is *crop → downsample+normals → ICP*. The
-  biggest levers: install **Open3D** and **SciPy** (`use_open3d` + KD‑tree NN take
-  a tick from ~190 ms to ~65 ms, ≈15 Hz); raise `voxel_size_m` (fewer scene points
-  → faster normals *and* ICP); lower `n_model_points`; lower `max_iter` (Fast‑ICP
-  converges in a few iterations). `pip install open3d` pulls in SciPy too.
+  `auto_track`, `use_open3d`, `roi_crop` / `roi_pad_px`, `noise_floor_refresh`.
+  Launch args: `icp_anderson_depth`, `icp_use_open3d`, `icp_crop_margin_m`,
+  `icp_tracking_rate_hz`, `icp_auto_track`.
+- **Tracking too slow?** The tick cost is *crop → downsample+normals → ICP*, and
+  ICP is ~80% of it — almost entirely nearest‑neighbour lookup. The structural
+  wins are already in ([Algorithms §7](#7-tracking-three-filters-replace-the-mask)):
+  image‑space ROI cropping, one shared `NNIndex` per tick, and a cached ν floor
+  take a 640×480 tick from ~74 ms to ~23 ms without changing the result. So first
+  check they are actually on — the startup log prints `roi_crop=` and `nn=`, and
+  you want `nn=open3d` (`pip install open3d`, which pulls in SciPy too). After
+  that the remaining levers all trade accuracy for speed and should be tuned
+  against *your* data, watching the per‑tick `fitness` and `iters` in the log:
+  lower `max_iter` (from a warm start, ICP re‑anneals ν from scratch every frame,
+  so the default 30 is generous), lower `n_model_points` (query cost is linear in
+  it), raise `voxel_size_m` (fewer scene points → faster normals *and* ICP).
 - **Tune the weld seam?** `weld_radius_m` first — it must satisfy `gap +
   spacing < R < part_thickness` (§8), and nothing else matters until it does.
   Then `weld_curvature_thresh` (lower ⇒ longer but noisier seam),

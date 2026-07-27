@@ -240,10 +240,10 @@ class GestureControlNode(Node):
         # pose it last acted on, so this only has to absorb recognizer jitter --
         # and a long cooldown would swallow the thumbs-up that follows a dwell,
         # which arrives about a second after the point that started it.
-        self.declare_parameter('cooldown_sec', 0.4)
-        self.declare_parameter('dwell_sec', 0.8)
+        self.declare_parameter('cooldown_sec', 1.0)
+        self.declare_parameter('dwell_sec', 1.0)
         self.declare_parameter('move_tol_px', 18)
-        self.declare_parameter('min_hand_confidence', 0.5)
+        self.declare_parameter('min_hand_confidence', 0.6)
         # The window is only a viewport; picked coordinates are always full-res
         # camera pixels, so scaling it down cannot move a click.
         self.declare_parameter('display_scale', 1.0)
