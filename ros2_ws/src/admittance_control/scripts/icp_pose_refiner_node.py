@@ -47,6 +47,22 @@ Triggers
     ros2 service call /icp_pose_refiner/save_object    std_srvs/srv/Trigger
     ros2 service call /icp_pose_refiner/welding_points std_srvs/srv/Trigger
     ros2 service call /icp_pose_refiner/export_mesh    std_srvs/srv/Trigger
+    ros2 service call /icp_pose_refiner/reset_environment std_srvs/srv/Trigger
+
+Starting the next assembly
+--------------------------
+    ``export_mesh`` + the bridge's ``~/add_model`` turn the finished assembly
+    into one classifiable part, at which point every object in the SEPC is
+    stale -- and a stale SEPC keeps subtracting itself out of the live crop, so
+    ICP goes blind exactly where the next part gets placed. ``~/reset_environment``
+    drops the SEPC, the saved-object list and the tracking state, blanks the
+    latched RViz clouds, and moves ``static_env.*`` / ``assembly.json`` into
+    ``<save_dir>/previous_assemblies/<timestamp>/``. The files are archived
+    rather than deleted, and they have to move: ``_sepc_or_load()`` reloads them
+    from disk whenever the in-memory SEPC is None, so leaving them would
+    resurrect the old assembly on the next ``welding_points`` call.
+
+        export_mesh -> (bridge) add_model -> reset_environment -> next assembly
 
 Welding points
 --------------
@@ -101,7 +117,9 @@ capture), set ``model_path`` and the un-classified detections fall back to it.
 from __future__ import annotations
 
 import json
+import shutil
 import struct
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -373,6 +391,7 @@ class IcpPoseRefinerNode(Node):
         self.create_service(Trigger, '~/save_object', self._on_save_object)
         self.create_service(Trigger, '~/welding_points', self._on_welding_points)
         self.create_service(Trigger, '~/export_mesh', self._on_export_mesh)
+        self.create_service(Trigger, '~/reset_environment', self._on_reset_environment)
 
         # Live-tunable filter knobs (ros2 param set ... takes effect next frame).
         self.add_on_set_parameters_callback(self._on_set_params)
@@ -598,6 +617,78 @@ class IcpPoseRefinerNode(Node):
         response.success = True
         response.message = summary
         return response
+
+    # ── Start a new assembly ─────────────────────────────────────────────
+    def _on_reset_environment(self, request, response):
+        """Forget the current assembly so the next one starts from an empty scene.
+
+        Needed once the exported mesh has been uploaded with ~/add_model: from
+        that point the assembly is a single classifiable part, and every object
+        baked into the SEPC is stale. Left in place it keeps subtracting itself
+        out of the live crop, so ICP goes blind to the very region the next part
+        is placed in.
+
+        Clearing memory alone is not enough. `_sepc_or_load()` lazily reloads
+        `static_env.npy` (and `assembly.json`) from `save_dir` whenever `_sepc`
+        is None, so an in-memory-only reset would look clean until the next
+        ~/welding_points or ~/export_mesh silently resurrected the old assembly.
+        The files are moved aside, not deleted -- you have usually just exported a
+        mesh from them, and losing that provenance to a reset would be its own
+        bug.
+        """
+        archived = self._archive_assembly()
+
+        had = len(self._saved)
+        n_points = 0 if self._sepc is None else len(self._sepc)
+        self._sepc = None
+        self._sepc_tree = None
+        self._saved = []
+        self._weld = None
+        self._tracking = False
+        self._current_pose = None
+
+        # The SEPC and weld topics are latched, so RViz holds the last cloud it
+        # was sent until something replaces it. Publish empties, or the orange
+        # assembly stays on screen after the state behind it is gone -- exactly
+        # the confusion this service exists to end.
+        self._publish_empty_cloud(self._sepc_pub)
+        self._publish_empty_cloud(self._weld_pub)
+
+        message = (f'environment reset: dropped {had} saved object(s) '
+                   f'({n_points} SEPC points) and cleared tracking. {archived}')
+        self.get_logger().info(message)
+        response.success = True
+        response.message = message
+        return response
+
+    def _archive_assembly(self) -> str:
+        """Move the on-disk assembly artifacts into a timestamped subdirectory."""
+        names = ('static_env.npy', 'static_env.ply', 'assembly.json',
+                 'assembly_mesh.ply', 'welding_points.npy', 'welding_points.ply')
+        present = [n for n in names if (self._save_dir / n).is_file()]
+        if not present:
+            return 'nothing on disk to archive.'
+        dest = self._save_dir / 'previous_assemblies' / time.strftime('%Y%m%d-%H%M%S')
+        try:
+            dest.mkdir(parents=True, exist_ok=True)
+            for name in present:
+                shutil.move(str(self._save_dir / name), str(dest / name))
+        except Exception as exc:  # noqa: BLE001
+            # A half-moved directory would leave a stale static_env.npy behind and
+            # silently reload it later, so say so loudly rather than report success.
+            self.get_logger().error(
+                f'could not archive the old assembly ({exc}); files may remain in '
+                f'{self._save_dir} and will be reloaded on the next welding_points '
+                f'or export_mesh call. Move them aside by hand.')
+            return f'(warning: archiving failed: {exc})'
+        return f'moved {len(present)} file(s) to {dest}.'
+
+    def _publish_empty_cloud(self, publisher) -> None:
+        header = self._make_header(self._static_frame,
+                                   self.get_clock().now().to_msg())
+        empty = np.zeros((0, 3), dtype=np.float32)
+        publisher.publish(make_xyzrgb_cloud(header, empty,
+                                            np.zeros((0, 3), dtype=np.uint8)))
 
     def _on_welding_points(self, request, response):
         """Extract the weld seam from the SEPC and publish it (red) for RViz."""

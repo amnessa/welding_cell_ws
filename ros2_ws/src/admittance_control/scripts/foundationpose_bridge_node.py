@@ -7,11 +7,11 @@ frame, POST it to the pose server, republish the result as a
 directory, same camera.json, same multipart request. What changed is on the far
 side of the wire:
 
-- The server no longer detects anything by itself. It opens the frame in a
-  window on the *server* host, an operator clicks the object, and SAM2 turns
-  that click into the mask FoundationPose registers against. So a trigger now
-  blocks until someone clicks -- budget for that in ``request_timeout_sec``
-  (default 300s, up from 120s).
+- The server no longer detects anything by itself. Something has to tell it
+  which pixels are the object, and SAM2 turns that into the mask FoundationPose
+  registers against. Either the client sends the click points (see below), or
+  the server opens the frame in a window on the *server* host and blocks until
+  an operator clicks it.
 - The reply carries one ``pose`` as a 4x4 matrix **in metres**, not a list of
   detections with millimetre translations. The /1000 conversion the SAM-6D
   bridge did is gone; re-introducing it would put the object 1000x too close.
@@ -25,6 +25,33 @@ side of the wire:
 Trigger
 -------
     ros2 service call /foundationpose_bridge/trigger std_srvs/srv/Trigger
+
+Freeze, then point, then segment
+--------------------------------
+A click pixel only means something against the exact image it was chosen on. If
+the operator points at a live stream while this node grabs whatever frame
+arrived afterwards, the click silently drifts -- invisible on a static scene,
+wrong the moment the arm (and with it the wrist camera) moves. So the capture is
+split in two:
+
+    ros2 service call /foundationpose_bridge/capture std_srvs/srv/Trigger
+
+latches one synced RGB-D pair, writes it to the transfer directory, and
+republishes the colour image on ``<frozen_rgb_topic>`` (latched). Nothing is
+sent yet. The operator picks points against *that* image -- see
+``gesture_control_node.py`` -- and publishes them on ``<click_topic>``:
+
+    {"stamp_ns": <frozen frame stamp>, "points": [[u,v], ...], "labels": [1,0,...]}
+
+``stamp_ns`` must match the frozen frame, which is what makes "did the operator
+point at the picture we are about to send?" an assertion rather than a hope.
+``~/trigger`` then POSTs the frozen frame together with those points and the
+server runs SAM2 headlessly. ``~/clear_click`` drops the points and the frozen
+frame.
+
+Called without a prior ``~/capture``, ``~/trigger`` still grabs the latest pair
+and sends it with no click field -- i.e. the original behaviour, with the
+operator clicking on the server host. Nothing that worked before stops working.
 
 Adding a CAD model at runtime
 -----------------------------
@@ -45,10 +72,13 @@ Subscribes
   <rgb_topic>    sensor_msgs/Image   (default /camera/color/image_raw)
   <depth_topic>  sensor_msgs/Image   (default /camera/depth/image_rect_raw)
 
+  <click_topic>  std_msgs/String (JSON, see above)   (default /perception/sam2_click)
+
 Publishes
 ---------
   <detections_topic>   vision_msgs/Detection3DArray  (default /perception/detections)
   <object_name_topic>  std_msgs/String, latched       (default /perception/object_name)
+  <frozen_rgb_topic>   sensor_msgs/Image bgr8, latched (default /perception/frozen_rgb)
 
   run from laptop: ros2 run admittance_control foundationpose_bridge_node.py \
       --ros-args -p server_url:=http://ip_to_home_desktop:5000/predict_pose
@@ -89,6 +119,58 @@ from admittance_control.sam6d_io import (
 
 def stamp_to_nanoseconds(msg: Image) -> int:
     return int(msg.header.stamp.sec) * 1_000_000_000 + int(msg.header.stamp.nanosec)
+
+
+class FrozenFrame(NamedTuple):
+    """One RGB-D pair, captured and held still so points can be picked on it.
+
+    ``bgr`` is kept alongside the encoded PNGs purely so the frame can be
+    republished for the operator to look at; ``rgb_png`` is the authority on what
+    the server actually receives, and the two are the same pixels.
+    """
+    rgb_png: bytes
+    depth_png: bytes
+    camera_json: str
+    bgr: np.ndarray
+    frame_id: str
+    stamp: Any          # builtin_interfaces/Time, from the source RGB message
+    stamp_ns: int
+
+
+class ClickSpec(NamedTuple):
+    """Points the operator picked, and the frame they picked them on."""
+    points: List[List[int]]
+    labels: List[int]
+    stamp_ns: int
+    received_ns: int
+
+
+def parse_click_message(text: str) -> ClickSpec:
+    """``<click_topic>`` JSON -> ClickSpec. Raises ValueError on anything unusable.
+
+    Validation is deliberately strict and happens here, on arrival, rather than
+    at trigger time: a malformed click that is only noticed once the operator
+    has already thumbed-up reads as "the pipeline is broken", while one rejected
+    the instant it is published reads as "that gesture did not take".
+    """
+    payload = json.loads(text)
+    if not isinstance(payload, dict):
+        raise ValueError('click message must be a JSON object')
+
+    raw_points = payload.get('points') or []
+    points = [[int(round(float(u))), int(round(float(v)))] for u, v in raw_points]
+    if not points:
+        raise ValueError('click message carries no points')
+
+    labels = [int(v) for v in (payload.get('labels') or [1] * len(points))]
+    if len(labels) != len(points):
+        raise ValueError(f'{len(points)} point(s) but {len(labels)} label(s)')
+    if set(labels) - {0, 1}:
+        raise ValueError('labels must be 1 (object) or 0 (not-object)')
+    if 1 not in labels:
+        raise ValueError('at least one positive point is needed; negatives only carve')
+
+    return ClickSpec(points, labels, int(payload.get('stamp_ns', 0)), 0)
 
 
 class PoseReply(NamedTuple):
@@ -163,6 +245,16 @@ class FoundationPoseBridgeNode(Node):
         self.declare_parameter('depth_topic', '/camera/depth/image_rect_raw')
         self.declare_parameter('detections_topic', '/perception/detections')
         self.declare_parameter('object_name_topic', '/perception/object_name')
+        # The frozen frame the operator picks points on, and the points that come
+        # back. Both exist so the click and the image it refers to can be tied
+        # together by timestamp instead of by assumption.
+        self.declare_parameter('frozen_rgb_topic', '/perception/frozen_rgb')
+        self.declare_parameter('click_topic', '/perception/sam2_click')
+        # A click older than this is treated as stale even if its stamp matches.
+        # Guards the case where a capture sits latched for minutes while the cell
+        # is worked on and then a forgotten click fires against a scene that has
+        # since changed under a camera that has since moved.
+        self.declare_parameter('click_max_age_sec', 120.0)
         self.declare_parameter('camera_frame', 'camera_color_optical_frame')
         self.declare_parameter('object_id', '1')
         # The PPF classifier's answer is the name of a CAD file, which is far more
@@ -211,9 +303,13 @@ class FoundationPoseBridgeNode(Node):
         self._results_dir = (Path(results_dir) if results_dir
                              else self._transfer_dir.parent / 'foundationpose_results')
 
+        self._click_max_age_sec = float(self.get_parameter('click_max_age_sec').value)
+
         self._latest_rgb: Optional[Image] = None
         self._latest_depth: Optional[Image] = None
         self._auto_done = False
+        self._frozen: Optional[FrozenFrame] = None
+        self._click: Optional[ClickSpec] = None
 
         rgb_topic = self.get_parameter('rgb_topic').value
         depth_topic = self.get_parameter('depth_topic').value
@@ -228,15 +324,26 @@ class FoundationPoseBridgeNode(Node):
         # the trigger still needs to know which .ply to load.
         self._name_pub = self.create_publisher(
             String, self.get_parameter('object_name_topic').value, latched)
+        # Latched too: the gesture client is started and restarted by hand, and it
+        # must be able to join after a capture and still see the frame to point at.
+        self._frozen_pub = self.create_publisher(
+            Image, self.get_parameter('frozen_rgb_topic').value, latched)
+
+        self.create_subscription(
+            String, self.get_parameter('click_topic').value, self._on_click, 10)
 
         self._trigger_srv = self.create_service(Trigger, '~/trigger', self._on_trigger)
+        self._capture_srv = self.create_service(Trigger, '~/capture', self._on_capture)
+        self._clear_click_srv = self.create_service(
+            Trigger, '~/clear_click', self._on_clear_click)
         self._add_model_srv = self.create_service(Trigger, '~/add_model', self._on_add_model)
 
         self.get_logger().info(
             f'FoundationPose bridge ready. RGB={rgb_topic} depth={depth_topic} '
             f'server={self._server_url} transfer_dir={self._transfer_dir} '
             f'results_dir={self._results_dir} '
-            f'object_name_topic={self._name_pub.topic_name}')
+            f'object_name_topic={self._name_pub.topic_name} '
+            f'frozen_rgb_topic={self._frozen_pub.topic_name}')
         if self._auto_trigger:
             self.get_logger().info('auto_trigger=true: will run once on first synced pair.')
 
@@ -262,6 +369,78 @@ class FoundationPoseBridgeNode(Node):
         response.success = ok
         response.message = message
         return response
+
+    # ── Freeze a frame for the operator to point at ──────────────────────
+    def _on_capture(self, request, response):
+        """Latch one RGB-D pair and republish its colour image. Nothing is sent.
+
+        Re-capturing is the escape hatch for a bad freeze -- a hand across the
+        part, a half-finished fixture -- so this always replaces whatever was
+        held, and drops the points that were picked on the old image with it.
+        Keeping them would silently reinterpret coordinates against a new scene.
+        """
+        try:
+            frozen = self._capture()
+        except Exception as exc:  # noqa: BLE001 - surface any capture error
+            response.success = False
+            response.message = f'capture failed: {exc}'
+            return response
+        if frozen is None:
+            response.success = False
+            response.message = ('no time-synchronized RGB-D pair available yet'
+                                if self._latest_rgb is not None
+                                else 'no RGB-D frames received yet')
+            return response
+
+        if self._click is not None:
+            self.get_logger().info('new capture; dropping the points picked on the '
+                                   'previous frame')
+        self._frozen = frozen
+        self._click = None
+        self._publish_frozen(frozen)
+
+        height, width = frozen.bgr.shape[:2]
+        message = (f'frozen {width}x{height} frame on {self._frozen_pub.topic_name}; '
+                   f'pick points, then call ~/trigger')
+        self.get_logger().info(message)
+        response.success = True
+        response.message = message
+        return response
+
+    def _on_clear_click(self, request, response):
+        had = self._click is not None or self._frozen is not None
+        self._frozen = None
+        self._click = None
+        response.success = True
+        response.message = ('dropped the frozen frame and its points' if had
+                            else 'nothing was held')
+        self.get_logger().info(response.message)
+        return response
+
+    # ── Points picked on the frozen frame ────────────────────────────────
+    def _on_click(self, msg: String) -> None:
+        try:
+            spec = parse_click_message(msg.data)
+        except (ValueError, TypeError, KeyError) as exc:
+            self.get_logger().warn(f'ignoring click message: {exc}')
+            return
+        if self._frozen is None:
+            self.get_logger().warn('ignoring click: no frame is frozen -- call '
+                                   '~/capture first')
+            return
+        if spec.stamp_ns != self._frozen.stamp_ns:
+            # The client picked points on some other image. Sending them anyway
+            # would segment a pixel the operator never looked at.
+            self.get_logger().warn(
+                f'ignoring click stamped {spec.stamp_ns} -- the frozen frame is '
+                f'{self._frozen.stamp_ns}; the client is pointing at a stale image')
+            return
+
+        self._click = spec._replace(received_ns=self.get_clock().now().nanoseconds)
+        n_neg = spec.labels.count(0)
+        self.get_logger().info(
+            f'click: {len(spec.labels) - n_neg} positive, {n_neg} negative '
+            f'-> {spec.points}')
 
     # ── Upload a new CAD model to the server ─────────────────────────────
     def _on_add_model(self, request, response):
@@ -334,43 +513,127 @@ class FoundationPoseBridgeNode(Node):
                     - stamp_to_nanoseconds(self._latest_depth)) / 1e9
         return delta <= self._max_sync_delta_sec
 
+    # ── Capture ──────────────────────────────────────────────────────────
+    def _capture(self) -> Optional[FrozenFrame]:
+        """Encode the latest synced pair, and write it to the transfer directory.
+
+        Returns None when there is nothing synchronized to capture; anything that
+        goes wrong while encoding raises.
+        """
+        if not self._pair_is_synced():
+            return None
+        rgb_msg, depth_msg = self._latest_rgb, self._latest_depth
+
+        camera_payload = load_camera_payload(self._camera_path)
+        rgb_image = normalize_color_image(image_msg_to_numpy(rgb_msg), rgb_msg.encoding)
+        depth_image, resolved_camera = normalize_depth_image(
+            image_msg_to_numpy(depth_msg), depth_msg.encoding, camera_payload)
+
+        rgb_png = encode_png(rgb_image, 'rgb image')
+        depth_png = encode_png(depth_image, 'depth image')
+        camera_json = json.dumps(resolved_camera, separators=(',', ':'))
+
+        self._transfer_dir.mkdir(parents=True, exist_ok=True)
+        (self._transfer_dir / 'rgb.png').write_bytes(rgb_png)
+        (self._transfer_dir / 'depth.png').write_bytes(depth_png)
+        self._camera_path.write_text(camera_json, encoding='utf-8')
+
+        return FrozenFrame(
+            rgb_png=rgb_png,
+            depth_png=depth_png,
+            camera_json=camera_json,
+            bgr=rgb_image,
+            frame_id=rgb_msg.header.frame_id or self._camera_frame,
+            stamp=rgb_msg.header.stamp,
+            stamp_ns=stamp_to_nanoseconds(rgb_msg),
+        )
+
+    def _publish_frozen(self, frozen: FrozenFrame) -> None:
+        """Republish the held frame, carrying its original stamp.
+
+        The stamp is the whole point: it is the handle the client quotes back in
+        its click message, and the only thing tying a picked pixel to the image it
+        was picked on.
+        """
+        height, width = frozen.bgr.shape[:2]
+        msg = Image()
+        msg.header.stamp = frozen.stamp
+        msg.header.frame_id = frozen.frame_id
+        msg.height = height
+        msg.width = width
+        msg.encoding = 'bgr8'
+        msg.is_bigendian = 0
+        msg.step = width * 3
+        msg.data = np.ascontiguousarray(frozen.bgr).tobytes()
+        self._frozen_pub.publish(msg)
+
+    def _click_fields(self, frozen: FrozenFrame) -> Dict[str, str]:
+        """The form fields that let the server segment without a human at its end.
+
+        Empty when there is nothing usable to send, which is not an error: the
+        server falls back to its own click window, exactly as before.
+        """
+        click = self._click
+        if click is None:
+            return {}
+        if click.stamp_ns != frozen.stamp_ns:
+            self.get_logger().warn('the held points belong to a different frame; '
+                                   'sending without them')
+            return {}
+        age_sec = (self.get_clock().now().nanoseconds - click.received_ns) / 1e9
+        if self._click_max_age_sec > 0 and age_sec > self._click_max_age_sec:
+            self.get_logger().warn(
+                f'the held points are {age_sec:.0f}s old (click_max_age_sec='
+                f'{self._click_max_age_sec:.0f}); sending without them')
+            return {}
+        return {
+            'click': json.dumps(click.points, separators=(',', ':')),
+            'click_labels': json.dumps(click.labels, separators=(',', ':')),
+        }
+
     # ── One capture → POST → publish cycle ───────────────────────────────
     def _run_once(self):
-        if self._latest_rgb is None or self._latest_depth is None:
-            return False, 'no RGB-D frames received yet', 0
-        if not self._pair_is_synced():
-            return False, 'latest RGB and depth are not time-synchronized', 0
+        # Prefer the frame the operator actually pointed at. With no capture
+        # held this falls back to grabbing one now and letting the server ask a
+        # human, which is what this node did before points could be sent.
+        frozen = self._frozen
+        if frozen is None:
+            if self._latest_rgb is None or self._latest_depth is None:
+                return False, 'no RGB-D frames received yet', 0
+            try:
+                frozen = self._capture()
+            except Exception as exc:  # noqa: BLE001 - surface any capture error
+                return False, f'capture failed: {exc}', 0
+            if frozen is None:
+                return False, 'latest RGB and depth are not time-synchronized', 0
 
-        rgb_msg, depth_msg = self._latest_rgb, self._latest_depth
+        fields = self._click_fields(frozen)
         try:
-            camera_payload = load_camera_payload(self._camera_path)
-            rgb_image = normalize_color_image(image_msg_to_numpy(rgb_msg), rgb_msg.encoding)
-            depth_image, resolved_camera = normalize_depth_image(
-                image_msg_to_numpy(depth_msg), depth_msg.encoding, camera_payload)
-
-            rgb_png = encode_png(rgb_image, 'rgb image')
-            depth_png = encode_png(depth_image, 'depth image')
-            camera_json = json.dumps(resolved_camera, separators=(',', ':'))
-
-            self._transfer_dir.mkdir(parents=True, exist_ok=True)
-            (self._transfer_dir / 'rgb.png').write_bytes(rgb_png)
-            (self._transfer_dir / 'depth.png').write_bytes(depth_png)
-            self._camera_path.write_text(camera_json, encoding='utf-8')
-
             files = {
-                'rgb': ('rgb.png', rgb_png, 'image/png'),
-                'depth': ('depth.png', depth_png, 'image/png'),
-                'camera': ('camera.json', camera_json.encode('utf-8'), 'application/json'),
+                'rgb': ('rgb.png', frozen.rgb_png, 'image/png'),
+                'depth': ('depth.png', frozen.depth_png, 'image/png'),
+                'camera': ('camera.json', frozen.camera_json.encode('utf-8'),
+                           'application/json'),
             }
-            self.get_logger().info(
-                'Sent frame to the FoundationPose server; waiting for the operator '
-                'to click the object there...')
-            status_code, body = post_files(self._server_url, files, self._request_timeout_sec)
+            if fields:
+                self.get_logger().info(
+                    f'Sent frame to the FoundationPose server with '
+                    f'{len(json.loads(fields["click_labels"]))} click point(s); '
+                    f'SAM2 runs there without an operator.')
+            else:
+                self.get_logger().info(
+                    'Sent frame to the FoundationPose server; waiting for the operator '
+                    'to click the object there...')
+            status_code, body = post_files(self._server_url, files,
+                                           self._request_timeout_sec, fields=fields)
         except Exception as exc:  # noqa: BLE001 - surface any capture/HTTP error
             return False, f'capture/POST failed: {exc}', 0
 
         reply = parse_pose_response(status_code, body)
         if not reply.ok:
+            # Keep the frozen frame and its points: a rejected mask is usually
+            # fixed by adding one more point, and re-capturing would move the
+            # scene out from under the operator.
             return False, reply.message, 0
 
         if reply.artifacts:
@@ -384,11 +647,20 @@ class FoundationPoseBridgeNode(Node):
         self._log_classification(reply)
 
         if reply.score < self._min_score:
+            # A rejected pose is a failed attempt, so the frozen frame stays: the
+            # operator retries with better points on the same image. Every path
+            # that reports failure must leave the frame held, or the client stays
+            # in segmentation mode against a frame this node no longer has.
             return False, (f'pose score {reply.score:.3f} below min_score '
                            f'{self._min_score:.3f}'), 0
 
-        frame_id = rgb_msg.header.frame_id or self._camera_frame
-        msg = self._build_detection_array(reply, frame_id)
+        # Accepted and about to be published, so this frame is spent. Dropping it
+        # here returns the operator to "capture a new frame for the next part"
+        # instead of silently re-registering the old one.
+        self._frozen = None
+        self._click = None
+
+        msg = self._build_detection_array(reply, frozen.frame_id)
         self._det_pub.publish(msg)
         # Published before the log line so a subscriber that reacts to the name is
         # not racing the pose it belongs to.

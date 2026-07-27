@@ -12,7 +12,7 @@ import base64
 import json
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
@@ -145,10 +145,24 @@ def encode_png(image: np.ndarray, label: str) -> bytes:
 
 # ── HTTP multipart POST ──────────────────────────────────────────────────
 
-def encode_multipart_formdata(files: Dict[str, Tuple[str, bytes, str]]
+def encode_multipart_formdata(files: Dict[str, Tuple[str, bytes, str]],
+                              fields: Optional[Dict[str, str]] = None
                               ) -> Tuple[bytes, str]:
+    """Encode file parts, and optionally plain-text parts.
+
+    ``fields`` become parts with no ``filename=``, which is what makes Flask put
+    them in ``request.form`` rather than ``request.files`` -- the difference the
+    server's ``click`` / ``click_labels`` handling depends on.
+    """
     boundary = f'----Sam6DBridge{uuid.uuid4().hex}'
     parts: List[bytes] = []
+    for field_name, value in (fields or {}).items():
+        parts.extend([
+            f'--{boundary}\r\n'.encode('utf-8'),
+            f'Content-Disposition: form-data; name="{field_name}"\r\n\r\n'.encode('utf-8'),
+            str(value).encode('utf-8'),
+            b'\r\n',
+        ])
     for field_name, (filename, payload, content_type) in files.items():
         parts.extend([
             f'--{boundary}\r\n'.encode('utf-8'),
@@ -163,8 +177,9 @@ def encode_multipart_formdata(files: Dict[str, Tuple[str, bytes, str]]
 
 
 def post_files(url: str, files: Dict[str, Tuple[str, bytes, str]],
-               timeout_sec: float) -> Tuple[int, bytes]:
-    body, boundary = encode_multipart_formdata(files)
+               timeout_sec: float,
+               fields: Optional[Dict[str, str]] = None) -> Tuple[int, bytes]:
+    body, boundary = encode_multipart_formdata(files, fields)
     request = urllib_request.Request(url, data=body, method='POST')
     request.add_header('Content-Type', f'multipart/form-data; boundary={boundary}')
     request.add_header('Content-Length', str(len(body)))

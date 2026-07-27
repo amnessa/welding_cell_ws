@@ -2,7 +2,7 @@
 
 A ROS 2 (Jazzy) package for a **UR5e welding/manipulation cell** that runs
 identically against a **real robot + RealSense camera** and an **Isaac Sim
-digital twin**. It bundles two cooperating pipelines:
+digital twin**. It bundles these cooperating pipelines:
 
 1. **Surface drawing / admittance control** — detect a work surface, generate a
    tool path on it, plan + execute the motion, and (optionally) follow the
@@ -18,6 +18,9 @@ digital twin**. It bundles two cooperating pipelines:
    near‑orthogonal parts by PCA curvature and publish it as a weld toolpath, and
    **rebuild the assembled parts into a single watertight CAD mesh** that can be
    uploaded back to the server as a new classifiable object for the next cycle.
+4. **Hands‑free operation** — drive the whole perception cycle from hand gestures
+   seen by the same RealSense, including *pointing at the part* to place the SAM2
+   click. The operator never touches a keyboard on either machine.
 
 Everything is designed so the **same nodes and topics** work in sim and on
 hardware; only the joint‑state source and the camera front‑end differ.
@@ -56,13 +59,17 @@ hardware; only the joint‑state source and the camera front‑end differ.
                           │        │                                  │
                           │        ├─ depth_image_proc ─▶ pointcloud  │
                           │        │                                  │
-                          │        └─ foundationpose_bridge_node ──HTTP──▶ FoundationPose server (GPU)
-                          │             → /perception/detections      │
-                          │                  │            │           │
-                          │   detection_marker_node   icp_pose_       │
-                          │   (RViz markers + box)    refiner_node     │
-                          │                           (segmented cloud │
-                          │                            + ICP metrics)  │
+                          │        ├─ foundationpose_bridge_node ──HTTP──▶ FoundationPose server (GPU)
+                          │        │    → /perception/detections      │
+                          │        │         │            │           │
+                          │        │  detection_marker_node   icp_pose_│
+                          │        │  (RViz markers + box)    refiner_ │
+                          │        │                          node     │
+                          │        │                    (segmented cloud
+                          │        │                     + ICP metrics)│
+                          │        └─ gesture_control_node             │
+                          │             hand gestures → ~/capture,     │
+                          │             SAM2 click, run/stop/save ICP  │
                           └──────────────────────────────────────────┘
 ```
 
@@ -81,12 +88,13 @@ can be commanded to.
 | `admittance_control/*.py` | Importable pure‑Python library modules (no rclpy) |
 | `src/*.cpp` | C++ nodes (`totg_service_node`, `admittance_control_jacobian_node`) |
 | `launch/*.py` | Launch files (see [Launch files](#launch-files)) |
+| `launch/point_cloud_config.rviz` | Saved RViz layout, opened by default by both pointcloud launches (`rviz_config` arg) |
 | `srv/`, `action/` | Custom interfaces (`ComputeTOTG.srv`, `ExecuteDrawing.action`) |
 | `config/` | UR5e description, controllers, kinematics, joint limits, SRDF |
 | `urdf/`, `meshes/` | UR5e robot description |
 | `models/*.ply` | CAD models for FoundationPose / ICP / PPF (e.g. `test_objv3.ply`). The ICP node resolves the classifier's answer to `models/<obj_name>.ply`, so names here must match the server's CAD library. |
 | `world/welding_world.usda` | Isaac Sim scene (robot + eye‑in‑hand RealSense) |
-| `notebooks/` | Hand‑eye calibration outputs (`T_tcp_to_cam.npy`), intrinsics, experiments |
+| `notebooks/` | Hand‑eye calibration outputs (`T_tcp_to_cam.npy`), intrinsics, experiments, and the gesture sandbox (`gesture_control_sandbox.ipynb` + `gesture_recognizer.task`) |
 | `notes/*.md` | Design notes behind each algorithm (see [Algorithms](#algorithms-and-the-maths-behind-them)) |
 | `scripts/rgb_depth_to_send/` | Transfer dir: last `rgb.png` / `depth.png` / `camera.json` sent to the pose server |
 | `scripts/foundationpose_results/` | **Live** pose-server outputs (`detection_pem.json` — now carries `obj_name`, `detection_ism.npz`, `mask.png`, `vis_pose.png`, `object_name.txt`) **and** assembly state (`static_env.ply/.npy`, `assembly.json`, `welding_points.ply/.npy`, `assembly_mesh.ply`). The ICP node's `results_dir` default. |
@@ -144,8 +152,8 @@ camera ─▶ /camera/color/image_raw ─┐
          /camera/depth/image_rect_raw ─┼─▶ depth_image_proc ─▶ /camera/depth/color/points
          /camera/color/camera_info ─┘                             (organized XYZRGB)
                  │
-   trigger ▶ foundationpose_bridge_node ──HTTP POST rgb+depth+camera──▶ FoundationPose server (fp_server.py, GPU)
-                 │        (operator clicks the object → SAM2 mask → PPF classifies the CAD → register)
+   trigger ▶ foundationpose_bridge_node ──HTTP POST rgb+depth+camera+click──▶ FoundationPose server (fp_server.py, GPU)
+                 │        (click → SAM2 mask → PPF classifies the CAD → register)
                  │  ◀── pose 4x4 [m] + object_name + classification table
                  │       + artifacts (detection_pem.json[obj_name], detection_ism.npz, mask.png, vis_pose.png, object_name.txt)
                  ▼
@@ -174,6 +182,39 @@ FoundationPose registers against ([Algorithms §12](#12-ppf-object-classificatio
 The bridge republishes that name — as the detection's `class_id` and on the latched
 `/perception/object_name` — and the ICP node resolves it to `models/<obj_name>.ply`,
 so the whole chain follows the classified part automatically.
+
+**Who supplies the click.** FoundationPose has no detector, so something must say
+which pixels are the object. Either the client sends the points, or the server
+opens a window on the GPU host and blocks until an operator clicks it. Sending
+them from the client is the normal path (and lets the server container run
+without X11 forwarding); the window is the fallback and still works untouched.
+
+A click only means something against the exact image it was picked on, so the
+capture is split in two ([Gesture control](#e-gesture-control) drives both):
+
+```
+~/capture ─▶ bridge freezes one synced RGB-D pair, writes it to the transfer dir,
+             republishes the colour image on /perception/frozen_rgb (latched)
+                 │
+                 ▼   operator picks points on THAT image
+             /perception/sam2_click  (std_msgs/String, JSON)
+                 {"stamp_ns": <frozen frame stamp>, "points": [[u,v], …],
+                  "labels": [1,0,…]}       1 = object, 0 = not-object
+                 │
+                 ▼
+~/trigger  ─▶ POSTs the frozen frame + click + click_labels; SAM2 runs headless
+```
+
+`stamp_ns` must match the frame the bridge is holding — that check is what makes
+"did the operator point at the picture we are about to send?" an assertion rather
+than a hope. Without it the click silently drifts onto a later frame, which is
+invisible on a static scene and wrong the moment the arm (and with it the
+eye‑in‑hand camera) moves. `~/clear_click` drops both the points and the frame;
+`~/trigger` with nothing frozen falls back to grab‑and‑ask‑the‑host.
+
+Negative points let SAM2 be told what *not* to grab, which is how you stop it
+swallowing a neighbouring part pushed flush against the target. At least one
+positive point is required — negatives only carve, they cannot start a mask.
 
 The tracking loop is the [`notes/realtime_icp.md`](notes/realtime_icp.md)
 methodology: SAM-6D only *initializes* the pose, then a CropBox that follows
@@ -208,7 +249,25 @@ parts, and it *is* the geometry the weld seam is extracted from.
                                     set bridge model_ply_path + ~/add_model
                                                         ▼
                                     server indexes it as a new classifiable object
+                                                        │
+                                          ~/reset_environment
+                                                        ▼
+                                    SEPC dropped, assembly archived, next cycle starts clean
 ```
+
+**Starting the next assembly.** Once the exported mesh is uploaded, the assembly
+*is* one classifiable part and every object in the SEPC is stale — and a stale
+SEPC keeps subtracting itself out of the live crop, so ICP goes blind exactly
+where the next part gets placed. `~/reset_environment` drops the SEPC, the
+saved‑object list and the tracking state, blanks the latched RViz clouds, and
+moves `static_env.*` / `assembly.json` / `welding_points.*` / `assembly_mesh.ply`
+into `<save_dir>/previous_assemblies/<timestamp>/`.
+
+The files have to *move*, not just be forgotten: `welding_points` and
+`export_mesh` reload them from disk whenever the in‑memory SEPC is empty (that
+lazy reload is a feature — it survives a node restart), so leaving them in place
+would resurrect the old assembly at the next call. They are archived rather than
+deleted because you have usually just exported a mesh from them.
 
 `assembly.json` records each frozen part's CAD filename **and** its refined 4×4
 `pose_static`, which is what makes `~/export_mesh` possible: rather than
@@ -223,6 +282,64 @@ within `bg_subtract_dist_m` of the SEPC are deleted, so part B's ICP cannot snap
 onto part A when the two are pushed flush ([`notes/model_based_background.md`](notes/model_based_background.md)).
 The same transform applies the **ground cut** (`z <= ground_z_m` is the bench;
 [`notes/ground_removal.md`](notes/ground_removal.md)).
+
+### E. Gesture control
+
+`gesture_control_node.py` runs MediaPipe's gesture recognizer on the **RealSense
+colour stream** — not a separate webcam — and turns one‑shot gestures into the
+service calls above.
+
+Using the same camera is what makes pointing work at all. The hand and the
+workpiece are then in one image, so the index fingertip lands on a RealSense
+pixel *directly*: no calibration between two cameras, no coordinate mapping, no
+mirroring. The cursor appears where the finger physically is, over the thing
+being pointed at.
+
+```
+/camera/color/image_raw ─▶ GestureRecognizer ─▶ GestureLatch ─▶ Trigger clients
+                        └▶ index fingertip ──▶ DwellCursor ──▶ /perception/sam2_click
+/perception/frozen_rgb  ─▶ the image drawn on and picked against
+```
+
+| Gesture | Idle | Segmenting (a frame is frozen) |
+|---|---|---|
+| `ILoveYou` | `~/capture` — freeze a frame | re‑capture (replaces a bad freeze) |
+| `Pointing_Up` | — | move the cursor; hold still `dwell_sec` → *pending* point |
+| `Thumb_Down` | `~/clear_click` | commit pending as **negative** — "not this one" |
+| `Thumb_Up` | — | commit pending as **positive**, publish, `~/trigger` |
+| `Closed_Fist` | `~/run_icp` | `~/run_icp` |
+| `Open_Palm` | `~/stop_tracking` | `~/stop_tracking` |
+| `Victory` | `~/save_object` | `~/save_object` |
+
+`Thumb_Down` is the one gesture that means different things in the two modes,
+because a negative click is only meaningful while points are being picked. The
+current mode is drawn in the window so it is never ambiguous.
+
+**Two details worth knowing before tuning it.**
+
+*Debouncing.* Raw per‑frame gestures flicker during transitions and a held pose
+repeats at frame rate, so `GestureLatch` requires `stable_frames` consecutive
+identical frames and fires once on the rising edge. What re‑arms it matters more
+than it looks: passing through neutral does, but neutral cannot be *required* —
+`Pointing_Up → Thumb_Up` are two poses one finger apart and the recognizer
+frequently slides straight between them without ever reporting `None`. A
+neutral‑only latch swallows every thumbs‑up that follows a point, which is the
+one gesture the segmentation flow depends on. So a stable run of a *different*
+gesture re‑arms it too, and `cooldown_sec` stays short (0.4 s) because repeats
+are already blocked by tracking which pose last fired.
+
+*Occlusion.* The gesture that triggers the capture needs the hand in view, so the
+hand is in the frozen frame. Keep it to the side of the part when signing
+`ILoveYou`. The window shows the frozen frame itself, so a hand across the
+workpiece is visible immediately — sign `ILoveYou` again to re‑freeze.
+
+**Orientation sensitivity.** MediaPipe's landmark stage tolerates rotation well,
+but the *gesture classifier* is deliberately orientation‑dependent: `Thumb_Up`
+and `Thumb_Down` have identical hand geometry and differ only by orientation in
+the image, so a rotation‑invariant classifier could not separate them at all. It
+was trained on roughly upright, camera‑facing hands. On a wrist‑mounted camera
+"upright" moves with the arm, so present the hand upright relative to the image,
+or retrain the classifier head with MediaPipe Model Maker for your viewing angle.
 
 ---
 
@@ -253,12 +370,13 @@ The same transform applies the **ground cut** (`z <= ground_z_m` is the bench;
 | `realsense_camera_node.py` | **Real** RealSense D435i front‑end. Streams color + depth (depth aligned to color), publishes matching `CameraInfo`, writes live intrinsics to `camera.json`. | out: `/camera/color/image_raw`, `/camera/depth/image_rect_raw` (16UC1 mm), `/camera/color/camera_info` |
 | `realsense_sim_camera_node.py` | **Sim** front‑end + digital‑twin fixups. Relays Isaac's `*_sim` RGB‑D, adds a realistic depth‑noise model, and (parameters, off by default) **rewrites the empty Isaac `frame_id`** to `camera_color_optical_frame` and **synthesizes `CameraInfo`** (Isaac's graph publishes none). Intrinsics default to the real camera's (the twin shares them). | in: `/camera/color/image_raw_sim`, `/camera/depth/image_rect_raw_sim`; out: same topics as the real node |
 | `camera_extrinsic_tf_publisher.py` | Broadcasts the static eye‑in‑hand extrinsic `tool0 → camera_color_optical_frame` from a 4×4 `.npy` (hand‑eye calibration, `notebooks/T_tcp_to_cam.npy`). **This is what puts perception in the robot frame.** | out: static `/tf` |
-| `foundationpose_bridge_node.py` | **The pose bridge in use.** On `~/trigger`, captures a synced RGB‑D pair, POSTs it to `fp_server.py`, and republishes the reply as `Detection3DArray` **plus the classified object name** on latched `/perception/object_name`. The pose comes back as a 4×4 **in metres** — no mm→m division, unlike SAM‑6D. Saves server artifacts to `foundationpose_results/`. A trigger **blocks until the operator clicks the object** in the window the server opens (hence `request_timeout_sec` = 300). `~/add_model` uploads the `.ply` at `model_ply_path` to the server's `/add_model` so a newly-generated part becomes classifiable without a restart. | in: color+depth; srv: `~/trigger`, `~/add_model`; out: `/perception/detections`, `/perception/object_name` (latched) |
-| `fp_server.py` | The **FoundationPose Flask server** (GPU machine, not the robot). `POST /predict_pose` with rgb/depth/camera → SAM2 mask from a click → **PPF classifier names the CAD** → `reset_object()` to that mesh → `register()`. Has **no detector of its own**: send a `mask` file or a `click` field to skip the window. Also serves `POST /classify` (classification only, ~1 s, for bring-up) and `POST /add_model` (index a new `.ply` into the live library and persist it). Re‑emits the result in SAM‑6D's on‑disk format (now with `obj_name`) so the ICP node needs no changes. Set `PPF_ENABLE=0` to pin it to a single `MESH_PATH` like before. | HTTP `:5000/{predict_pose,classify,add_model,health}` |
+| `foundationpose_bridge_node.py` | **The pose bridge in use.** `~/capture` freezes one synced RGB‑D pair and republishes its colour image on latched `/perception/frozen_rgb` for the operator to pick points on; `~/trigger` POSTs that frozen frame — plus any click points received on `/perception/sam2_click` — to `fp_server.py`, and republishes the reply as `Detection3DArray` **plus the classified object name** on latched `/perception/object_name`. A click whose `stamp_ns` does not match the held frame is refused, so a pixel picked on one image can never be segmented on another. `~/trigger` with nothing frozen grabs the latest pair and sends no click, leaving the server to ask a human (hence `request_timeout_sec` = 300). The pose comes back as a 4×4 **in metres** — no mm→m division, unlike SAM‑6D. Saves server artifacts to `foundationpose_results/`. `~/add_model` uploads the `.ply` at `model_ply_path` to the server's `/add_model` so a newly-generated part becomes classifiable without a restart. | in: color+depth, `/perception/sam2_click`; srv: `~/capture`, `~/trigger`, `~/clear_click`, `~/add_model`; out: `/perception/detections`, `/perception/object_name`, `/perception/frozen_rgb` (all latched) |
+| `gesture_control_node.py` | **Hands‑free operator console.** Runs MediaPipe's gesture recognizer on the RealSense colour stream, turns the 7 built‑in gestures into `Trigger` calls on the bridge and the ICP node, and turns the index fingertip into a SAM2 click via dwell‑to‑latch. Draws the frozen frame with the cursor and picked points so what the server will see is exactly what the operator sees. Needs `gesture_recognizer.task` (`model_path`). See [Data flow §E](#e-gesture-control). | in: `/camera/color/image_raw`, `/perception/frozen_rgb`; out: `/perception/sam2_click`; calls: bridge `~/capture`/`~/trigger`/`~/clear_click`, ICP `~/run_icp`/`~/stop_tracking`/`~/save_object` |
+| `fp_server.py` | The **FoundationPose Flask server** (GPU machine, not the robot). `POST /predict_pose` with rgb/depth/camera → SAM2 mask from a click → **PPF classifier names the CAD** → `reset_object()` to that mesh → `register()`. Has **no detector of its own**: send a `mask` file, or `click` (`{"u":…,"v":…}` or `[[u,v],…]`) with optional parallel `click_labels` (1 = object, 0 = not‑object), to skip the window entirely — with a click it never needs `DISPLAY`, so the container can run without X11 forwarding. Click points are validated against the frame they arrived with, so a client that latched a pixel on a differently‑sized image is rejected (400) rather than quietly segmenting the wrong thing. Also serves `POST /classify` (classification only, ~1 s, for bring-up) and `POST /add_model` (index a new `.ply` into the live library and persist it). Re‑emits the result in SAM‑6D's on‑disk format (now with `obj_name`) so the ICP node needs no changes. Set `PPF_ENABLE=0` to pin it to a single `MESH_PATH` like before. | HTTP `:5000/{predict_pose,classify,add_model,health}` |
 | `sam6d_bridge_node.py` | *Superseded by the FoundationPose bridge.* Same trigger→POST→publish cycle against `server.py`, parsing a list of detections (`R`, `t` mm→m). Still installed so an old SAM‑6D setup can be run for comparison. | in: color+depth; srv: `~/trigger`; out: `/perception/detections` (latched) |
 | `server.py` | *Superseded by `fp_server.py`.* The SAM‑6D Flask server: instance seg (FastSAM/SAM) + pose estimation against `CAD_PATH`, re‑running `demo.sh` per request. | HTTP `:5000/predict_pose` |
 | `detection_marker_node.py` | Converts `Detection3DArray` → RViz `MarkerArray` (RViz has no native `vision_msgs` display). Draws a pose triad + sphere + label per detection, and an **oriented CAD wireframe box** on the highest‑scoring detection. | in: `/perception/detections`; out: `/perception/detection_markers` |
-| `icp_pose_refiner_node.py` | **Real‑time object tracker + assembly/weld model** (`notes/realtime_icp.md`). *Phase 1* `~/run_icp`: reads `obj_name` from the detection, loads `models/<obj_name>.ply` (falling back to `model_path`), uses the mask (`detection_ism.npz`) to segment the object, places the CAD at the FoundationPose pose, runs ICP, and seeds `current_pose`. *Phase 2* (timer at `tracking_rate_hz`, no pose server): builds a **dynamic CropBox** (model AABB + `crop_margin_m`) around `current_pose` to isolate the object, applies **ground removal** + **model‑based background subtraction**, runs **Fast‑ICP** (Anderson‑accelerated, Welsch‑robust point‑to‑plane) from `current_pose`, updates it, and publishes the CropBox as a Marker. Pauses if fitness < `lost_fitness`. *Assembly* `~/save_object`: bakes the CAD at its refined pose into the **SEPC** in `static_frame`, persists it (with each part's `pose_static`), clears tracking for the next part. *Weld* `~/welding_points`: extracts the joint between the SEPC's parts and publishes it red. *Export* `~/export_mesh`: boolean-unions the saved parts' CADs at their poses into a watertight `assembly_mesh.ply` for upload as a new model. `scene_from` (init only) = `pointcloud` or `depth_png`. With `use_open3d` (default), the per‑frame voxel downsample + normals run on the *cropped* cloud via Open3D (crop‑first is the key speedup); without Open3D it falls back to NumPy. | in: `/camera/depth/color/points`, TF; srv: `~/run_icp`, `~/stop_tracking`, `~/start_tracking`, `~/save_object`, `~/welding_points`, `~/export_mesh`; out: `/perception/icp/{scene_cloud,model_cloud,refined_pose,crop_box,static_env,welding_points}`, TF `sam6d_object` |
+| `icp_pose_refiner_node.py` | **Real‑time object tracker + assembly/weld model** (`notes/realtime_icp.md`). *Phase 1* `~/run_icp`: reads `obj_name` from the detection, loads `models/<obj_name>.ply` (falling back to `model_path`), uses the mask (`detection_ism.npz`) to segment the object, places the CAD at the FoundationPose pose, runs ICP, and seeds `current_pose`. *Phase 2* (timer at `tracking_rate_hz`, no pose server): builds a **dynamic CropBox** (model AABB + `crop_margin_m`) around `current_pose` to isolate the object, applies **ground removal** + **model‑based background subtraction**, runs **Fast‑ICP** (Anderson‑accelerated, Welsch‑robust point‑to‑plane) from `current_pose`, updates it, and publishes the CropBox as a Marker. Pauses if fitness < `lost_fitness`. *Assembly* `~/save_object`: bakes the CAD at its refined pose into the **SEPC** in `static_frame`, persists it (with each part's `pose_static`), clears tracking for the next part. *Weld* `~/welding_points`: extracts the joint between the SEPC's parts and publishes it red. *Export* `~/export_mesh`: boolean-unions the saved parts' CADs at their poses into a watertight `assembly_mesh.ply` for upload as a new model. *Reset* `~/reset_environment`: drops the SEPC, the saved-object list and the tracking state, blanks the latched clouds, and archives the on-disk assembly into `previous_assemblies/<timestamp>/` so the next cycle starts clean without a restart. `scene_from` (init only) = `pointcloud` or `depth_png`. With `use_open3d` (default), the per‑frame voxel downsample + normals run on the *cropped* cloud via Open3D (crop‑first is the key speedup); without Open3D it falls back to NumPy. | in: `/camera/depth/color/points`, TF; srv: `~/run_icp`, `~/stop_tracking`, `~/start_tracking`, `~/save_object`, `~/welding_points`, `~/export_mesh`, `~/reset_environment`; out: `/perception/icp/{scene_cloud,model_cloud,refined_pose,crop_box,static_env,welding_points}`, TF `sam6d_object` |
 | `depth_image_proc::PointCloudXyzrgbNode` | Standard package node (launched, not in this repo). Fuses color + registered depth + `camera_info` into an organized `PointCloud2`. | out: `/camera/depth/color/points` |
 
 ---
@@ -644,13 +762,16 @@ as its own ground truth — available directly because the CADs and poses were k
 |---|---|---|
 | `execute_drawing` | action `ExecuteDrawing` | Goal: Cartesian `waypoints` + `orientation` (base_link). Feedback: `current_phase`, `drawing_progress`. Result: `success`, `message`. |
 | `compute_totg` | service `ComputeTOTG` | Request: flattened joint waypoints + per‑joint vel/accel limits + `path_tolerance` + `resample_dt`. Response: timed positions/velocities + timestamps. |
-| `~/trigger` (foundationpose_bridge) | `std_srvs/Trigger` | Run one capture → FoundationPose → publish cycle. Blocks until the object is clicked on the server host. Reply names the part (PPF), republished on `/perception/object_name`. |
+| `~/capture` (foundationpose_bridge) | `std_srvs/Trigger` | Freeze one synced RGB‑D pair and republish its colour image on `/perception/frozen_rgb`. Nothing is sent. Re‑capturing replaces a bad freeze and drops the points picked on the old image. |
+| `~/trigger` (foundationpose_bridge) | `std_srvs/Trigger` | POST the frozen frame (+ any matching click) → FoundationPose → publish. With no frame frozen and no click, grabs the latest pair and blocks until the object is clicked on the server host. Reply names the part (PPF), republished on `/perception/object_name`. |
+| `~/clear_click` (foundationpose_bridge) | `std_srvs/Trigger` | Drop the frozen frame and the points picked on it. |
 | `~/add_model` (foundationpose_bridge) | `std_srvs/Trigger` | Upload the `.ply` at the `model_ply_path` param to the server's `/add_model`, indexing it into the live PPF library. Must be a **faced mesh** (a point cloud is rejected). |
 | `~/run_icp` (icp_pose_refiner) | `std_srvs/Trigger` | Phase‑1 init: segment (mask) + ICP‑refine the best detection, seed the tracker, and (if `auto_track`) start Phase‑2 tracking. |
 | `~/stop_tracking` / `~/start_tracking` (icp_pose_refiner) | `std_srvs/Trigger` | Pause / resume the Phase‑2 tracking loop. |
 | `~/save_object` (icp_pose_refiner) | `std_srvs/Trigger` | Freeze the tracked CAD at its refined pose into the SEPC; persist `static_env.*` + `assembly.json`; clear tracking for the next part. |
 | `~/welding_points` (icp_pose_refiner) | `std_srvs/Trigger` | Extract the weld seam from the SEPC, publish it red, persist `welding_points.*`. Needs ≥ 2 saved objects. |
 | `~/export_mesh` (icp_pose_refiner) | `std_srvs/Trigger` | Boolean-union the saved parts' CADs at their poses → watertight `assembly_mesh.ply` (mm), ready to feed the bridge's `~/add_model`. Needs `trimesh`+`manifold3d`. |
+| `~/reset_environment` (icp_pose_refiner) | `std_srvs/Trigger` | Start a new assembly: drop the SEPC + saved objects + tracking state, blank the latched SEPC/weld clouds, and archive the on-disk assembly into `previous_assemblies/<timestamp>/`. Call it after `add_model`, or the stale SEPC keeps subtracting itself out of the live crop. |
 | `~/go` (move_to_object) | `std_srvs/Trigger` | Execute the standoff move (safety gate). |
 
 ### Key topics
@@ -662,6 +783,8 @@ as its own ground truth — available directly because the CADs and poses were k
 | `/camera/depth/color/points` | `PointCloud2` | depth_image_proc → ICP / RViz |
 | `/perception/detections` | `vision_msgs/Detection3DArray` | foundationpose_bridge → markers / ICP / move_to_object (`class_id` = classified CAD name) |
 | `/perception/object_name` | `std_msgs/String` (latched) | foundationpose_bridge → ICP / trackers (which `.ply` the classifier picked) |
+| `/perception/frozen_rgb` | `sensor_msgs/Image` bgr8 (latched) | foundationpose_bridge → gesture_control / RViz (the held frame points are picked on; its `header.stamp` is the handle the click quotes back) |
+| `/perception/sam2_click` | `std_msgs/String` (JSON) | gesture_control → foundationpose_bridge (`{"stamp_ns":…, "points":[[u,v],…], "labels":[1,0,…]}`) |
 | `/perception/detection_markers` | `visualization_msgs/MarkerArray` | detection_marker → RViz |
 | `/perception/icp/{scene_cloud,model_cloud}` | `PointCloud2` | icp_pose_refiner → RViz |
 | `/perception/icp/crop_box` | `visualization_msgs/Marker` | icp_pose_refiner → RViz (dynamic CropBox wireframe) |
@@ -718,6 +841,20 @@ The two are **the same node graph on the same topics**, so an RViz config, a
 service call, or a downstream subscriber written against one works unchanged on
 the other. The only differences are the joint‑state topic, the camera front‑end,
 and the clock.
+
+**RViz layout.** Both launches open RViz with `-d launch/point_cloud_config.rviz`
+(robot model, the point cloud, the ICP scene/model clouds, the orange SEPC, the
+red weld seam, detection markers, and the live + frozen colour images). Override
+with `rviz_config:=/path/to/other.rviz`, or `rviz_config:=''` for a bare RViz. A
+missing file logs a warning and falls back to RViz's default layout rather than
+failing the launch.
+
+The file is installed by the existing `install(DIRECTORY launch …)` rule, so it
+resolves under `install/`, not `src/`. This workspace is built with
+`--symlink-install`, so re‑saving the layout over
+`src/admittance_control/launch/point_cloud_config.rviz` takes effect on the next
+launch — just make sure RViz's *Save Config As* points at the `src/` path.
+Without `--symlink-install` you need a `colcon build` after each save.
 
 Requires `ros-jazzy-depth-image-proc` for the point‑cloud node:
 `sudo apt install ros-jazzy-depth-image-proc`.
@@ -810,7 +947,18 @@ ros2 service call /icp_pose_refiner/export_mesh std_srvs/srv/Trigger   # → fou
 ros2 param set /foundationpose_bridge model_ply_path \
   <ws>/src/admittance_control/scripts/foundationpose_results/assembly_mesh.ply
 ros2 service call /foundationpose_bridge/add_model std_srvs/srv/Trigger # server indexes it; classifiable next cycle
+
+# --- start the next assembly with a clean environment (no restart needed) ---
+ros2 service call /icp_pose_refiner/reset_environment std_srvs/srv/Trigger
 ```
+
+**Do not skip the reset.** The assembly is now a single classifiable part, so the
+individual objects in the SEPC are stale — and a stale SEPC keeps subtracting
+itself out of the live crop, so ICP goes blind exactly where the next part gets
+placed. Restarting the node is *not* an equivalent workaround: it clears the
+in‑memory SEPC (so background subtraction does stop), but `welding_points` and
+`export_mesh` reload `static_env.npy` + `assembly.json` from disk, so the first
+call after a restart quietly resurrects the previous assembly.
 
 The classified `obj_name` must resolve to `models/<obj_name>.ply` on the ROS side,
 which must be the **same CAD** the server holds in its library. The seam is written
@@ -827,6 +975,40 @@ ros2 param set /icp_pose_refiner weld_radius_m 0.006          # must exceed the 
 ros2 param set /icp_pose_refiner weld_curvature_thresh 0.03   # ...and stay under part thickness
 ros2 service call /icp_pose_refiner/welding_points std_srvs/srv/Trigger
 ```
+
+### Run the cycle by hand gestures
+
+One‑time: fetch MediaPipe's recognizer bundle.
+
+```bash
+wget -O notebooks/gesture_recognizer.task \
+  https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task
+pip install mediapipe
+```
+
+With the perception stack already up:
+
+```bash
+ros2 run admittance_control gesture_control_node.py --ros-args \
+  -p model_path:=<ws>/src/admittance_control/notebooks/gesture_recognizer.task
+```
+
+A window opens on the RealSense stream. Then, entirely by hand:
+
+```
+ILoveYou                     freeze a frame  (keep the hand clear of the part)
+Pointing_Up + hold still     cursor → pending point (hollow yellow)
+  Thumb_Down                 → mark it "not this one" (red), repeat as needed
+  Pointing_Up + hold still   → move to the real target
+Thumb_Up                     → positive point (green) + segment: SAM2 → PPF → FoundationPose
+Closed_Fist                  run ICP        Open_Palm   stop tracking
+Victory                      save object into the SEPC
+```
+
+The status line at the bottom of the window echoes every service reply, so a
+failed call is visible without watching the logs. `welding_points`,
+`export_mesh` and `reset_environment` stay service calls — there are only 7
+built‑in gestures and they are spent. See [Data flow §E](#e-gesture-control).
 
 ### Real robot drawing
 
@@ -932,3 +1114,28 @@ ros2 launch admittance_control pointcloud.launch.py launch_rviz:=true launch_icp
   score table the bridge logs; if the margin is genuinely thin from that viewpoint,
   set `PPF_MIN_MARGIN` + `PPF_STRICT` on the server so it refuses rather than guesses
   (§12).
+- **Second assembly's ICP goes blind where you put the part?** The previous
+  assembly is still in the SEPC, subtracting itself out of the live crop. Call
+  `~/reset_environment` after `add_model`. Restarting the node is not equivalent —
+  it clears memory but `welding_points`/`export_mesh` reload the old
+  `static_env.npy` from disk.
+- **Bridge logs "ignoring click … the client is pointing at a stale image"?** The
+  click's `stamp_ns` does not match the frozen frame — usually a `~/capture` landed
+  between picking the points and triggering. Re‑capture and pick again. This is the
+  check working: the alternative is segmenting a pixel nobody looked at.
+- **Server returns 400 "click … is outside the WxH frame"?** The client latched a
+  pixel on a differently‑sized image than it sent. In the gesture node that means
+  the live and frozen streams disagree on resolution (someone reconfigured the
+  camera mid‑run); it logs an error and suppresses the cursor when it detects this.
+- **Gestures only recognized in one hand orientation?** Expected. MediaPipe's
+  gesture classifier is deliberately orientation‑dependent — `Thumb_Up` and
+  `Thumb_Down` are the same hand geometry and differ *only* by orientation, so it
+  cannot be rotation‑invariant. Present the hand upright relative to the image, or
+  retrain the head with Model Maker for your camera angle ([§E](#e-gesture-control)).
+- **A gesture fires but the next one is swallowed?** `cooldown_sec` is longer than
+  the gap between them. The `Pointing_Up → dwell → Thumb_Up` sequence puts ~1 s
+  between two fires, so anything above that eats the thumbs‑up. Repeats are already
+  blocked by the latch tracking which pose last fired; the cooldown only has to
+  absorb recognizer jitter.
+- **`QFontDatabase: Cannot find font directory` from the gesture node?** Cosmetic.
+  cv2's bundled Qt ships no fonts; `cv2.putText` doesn't use them. Ignore it.

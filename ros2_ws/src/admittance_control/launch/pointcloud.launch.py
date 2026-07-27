@@ -98,6 +98,32 @@ def _default_extrinsic_path(pkg_share: str) -> str:
     return os.path.join(pkg_share, "notebooks", "T_tcp_to_cam.npy")
 
 
+def _default_rviz_config() -> str:
+    """The saved RViz layout, as installed into share/.
+
+    Note this resolves under ``install/``, not ``src/``: ``install(DIRECTORY
+    launch ...)`` copies the file at build time. Re-saving the layout from RViz
+    writes wherever you point the save dialog, so a config edited in ``src/``
+    does not take effect until the next ``colcon build`` -- unless the workspace
+    was built with ``--symlink-install``, in which case it does immediately.
+    """
+    return os.path.join(get_package_share_directory("admittance_control"),
+                        "launch", "point_cloud_config.rviz")
+
+
+def _rviz_arguments(context) -> list:
+    """``-d <config>``, or nothing if the config was cleared or is missing."""
+    config = LaunchConfiguration("rviz_config").perform(context)
+    if not config:
+        return []
+    if not os.path.exists(config):
+        print(f"[pointcloud.launch.py] rviz_config {config} does not exist; "
+              f"starting RViz with its default layout. If you just edited the "
+              f"config under src/, rebuild the package.")
+        return []
+    return ["-d", config]
+
+
 def launch_setup(context, *args, **kwargs):
     pkg_share = get_package_share_directory("admittance_control")
     urdf_file = os.path.join(pkg_share, "urdf", "ur5e.urdf.xacro")
@@ -267,6 +293,7 @@ def launch_setup(context, *args, **kwargs):
         executable="rviz2",
         name="rviz2",
         output="screen",
+        arguments=_rviz_arguments(context),
         parameters=[{"use_sim_time": False}],
         condition=IfCondition(launch_rviz),
     ))
@@ -288,6 +315,11 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "launch_rviz", default_value="false",
             description="Open RViz alongside the pointcloud pipeline."),
+        DeclareLaunchArgument(
+            "rviz_config", default_value=_default_rviz_config(),
+            description="RViz layout to open with (-d). Defaults to the saved "
+                        "point_cloud_config.rviz shipped in the package. Pass a "
+                        "path to use your own, or rviz_config:='' for a bare RViz."),
         DeclareLaunchArgument(
             "camera_serial_no", default_value="",
             description="RealSense serial number. Empty = first device found."),
