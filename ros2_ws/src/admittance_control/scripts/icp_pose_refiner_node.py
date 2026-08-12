@@ -66,8 +66,16 @@ Triggers
 Starting the next assembly
 --------------------------
     ``export_mesh`` + the bridge's ``~/add_model`` turn the finished assembly
-    into one classifiable part, at which point every object in the SEPC is
-    stale -- and a stale SEPC keeps subtracting itself out of the live crop, so
+    into one classifiable part. ``export_mesh`` writes the mesh twice on purpose:
+    once into ``save_dir`` (what ``add_model`` uploads, and what the archive keeps)
+    and once into ``model_dir`` (the local CAD library), because the server and
+    this node each resolve the classified name against their *own* copy. Skip the
+    second and the next detection comes back named 'assembly_mesh', finds no such
+    .ply here, and quietly falls back to ``model_path`` -- RViz shows the right
+    label while ICP fits an old single part.
+
+    Once uploaded, every object in the SEPC is stale
+    -- and a stale SEPC keeps subtracting itself out of the live crop, so
     ICP goes blind exactly where the next part gets placed. ``~/reset_environment``
     drops the SEPC, the saved-object list and the tracking state, blanks the
     latched RViz clouds, and moves ``static_env.*`` / ``assembly.json`` into
@@ -633,10 +641,15 @@ class IcpPoseRefinerNode(Node):
         /add_model rejects it. But each saved object's original CAD and its refined
         ``pose_static`` are known, so we re-instantiate those CADs at their poses and
         boolean-union them (admittance_control.assembly_mesh) into a faced, watertight
-        .ply in millimetres -- exactly what /add_model wants. Then:
+        .ply in millimetres -- exactly what /add_model wants. It is written to
+        ``<save_dir>/assembly_mesh.ply``, which is where the bridge looks by
+        default, so uploading it takes no parameter:
 
-            ros2 param set /foundationpose_bridge model_ply_path <written path>
             ros2 service call /foundationpose_bridge/add_model std_srvs/srv/Trigger
+
+        A second copy goes into ``model_dir``, because the upload only teaches the
+        *server*: the detection then comes back classified 'assembly_mesh' and this
+        node has to be able to resolve that name to a local .ply. See below.
         """
         try:
             from admittance_control.assembly_mesh import (
@@ -681,14 +694,44 @@ class IcpPoseRefinerNode(Node):
             response.message = f'export_mesh failed: {exc}'
             return response
 
+        # The upload teaches the *server* this part, under the name of the file it
+        # was sent as ('assembly_mesh'). From the next trigger on, detections come
+        # back classified as that -- and _resolve_model_path turns the name into
+        # model_dir/<name>.ply on THIS side. Without a copy there the lookup misses,
+        # falls back to model_path, and ICP silently refines the finished assembly
+        # against a single old part while RViz shows the right label. So the export
+        # lands in the CAD library too: same file, same mm units, both sides agree.
+        # (Deliberately not in save_dir's archive path -- reset_environment retires
+        # the assembly artifacts, but this is a library part now and must persist.)
+        library_copy = ''
+        if model_dir:
+            try:
+                dest = Path(model_dir).expanduser() / out_path.name
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(out_path, dest)
+                library_copy = str(dest)
+            except Exception as exc:  # noqa: BLE001 - the upload copy is still good
+                self.get_logger().error(
+                    f'could not copy the assembly into model_dir ({exc}); ICP will '
+                    f'fall back to model_path when the server classifies '
+                    f'{out_path.stem}. Copy {out_path} to {model_dir} by hand.')
+        else:
+            self.get_logger().warn(
+                'model_dir and model_path are both unset, so the assembly could not '
+                f'be added to the local CAD library; copy {out_path} next to your '
+                'other .ply models or ICP will not find it when it is classified.')
+
         if not stats['watertight']:
             self.get_logger().warn(
                 'assembly mesh is NOT watertight; the union may have holes. It will '
                 'still upload, but check it before trusting the model.')
         summary = (f"wrote {out_path} from {len(objects)} part(s): "
                    f"{stats['vertices']}v/{stats['faces']}f, "
-                   f"watertight={stats['watertight']}, extents(mm)={stats['extents_mm']}. "
-                   f"Set /foundationpose_bridge model_ply_path to it, then ~/add_model.")
+                   f"watertight={stats['watertight']}, extents(mm)={stats['extents_mm']}"
+                   + (f"; copied into the CAD library at {library_copy}"
+                      if library_copy else '')
+                   + f". Upload it with: ros2 service call "
+                   f"/foundationpose_bridge/add_model std_srvs/srv/Trigger")
         self.get_logger().info(summary)
         response.success = True
         response.message = summary

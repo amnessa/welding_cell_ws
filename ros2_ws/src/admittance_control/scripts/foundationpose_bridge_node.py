@@ -56,12 +56,17 @@ operator clicking on the server host. Nothing that worked before stops working.
 Adding a CAD model at runtime
 -----------------------------
 When you compose a new part from existing models and export a .ply, the server
-has to learn it before it can ever be classified. Point the node at the file and
-call the upload service; the server indexes it, persists it into the library, and
-it is classifiable from the next trigger onward -- no restart:
+has to learn it before it can ever be classified. Call the upload service; the
+server indexes it, persists it into the library, and it is classifiable from the
+next trigger onward -- no restart:
+
+    ros2 service call /foundationpose_bridge/add_model std_srvs/srv/Trigger
+
+With ``model_ply_path`` unset that uploads ``<results_dir>/assembly_mesh.ply``,
+i.e. whatever ``/icp_pose_refiner/export_mesh`` last wrote, so the assembly goes
+back to the server in one call. Set the parameter to upload any other file:
 
     ros2 param set /foundationpose_bridge model_ply_path /path/to/new_part.ply
-    ros2 service call /foundationpose_bridge/add_model std_srvs/srv/Trigger
 
 (A parameter plus ``Trigger`` rather than a custom service type, so that this
 needs no additions to the package's CMakeLists and no rebuild of message
@@ -444,23 +449,33 @@ class FoundationPoseBridgeNode(Node):
 
     # ── Upload a new CAD model to the server ─────────────────────────────
     def _on_add_model(self, request, response):
-        """Send the .ply at ``model_ply_path`` to the server's /add_model.
+        """Send a .ply to the server's /add_model.
 
         For the case where a part is composed from existing models and exported as
         a new mesh: the server has to index it before it can ever be classified.
-        The parameter is read fresh on every call, so one `ros2 param set` plus one
-        service call adds a model without restarting anything.
+        Defaults to the ICP node's exported assembly (see below), so the usual
+        export -> upload handoff is a single service call. ``model_ply_path`` is
+        read fresh on every call, so pointing it at some other file plus one
+        service call adds that model without restarting anything.
         """
-        path = Path(str(self.get_parameter('model_ply_path').value))
-        if not str(path):
-            response.success = False
-            response.message = ('set the model_ply_path parameter first, e.g. '
-                                'ros2 param set /foundationpose_bridge model_ply_path '
-                                '/path/to/new_part.ply')
-            return response
+        configured = str(self.get_parameter('model_ply_path').value).strip()
+        # Unset means "the assembly the ICP node just exported": ~/export_mesh
+        # writes assembly_mesh.ply into its save_dir, which defaults to this
+        # node's results_dir. So the common case -- export then upload -- needs
+        # no parameter at all, and model_ply_path stays the override for any
+        # other .ply.
+        path = (Path(configured).expanduser() if configured
+                else self._results_dir / 'assembly_mesh.ply')
         if not path.is_file():
-            response.success = False
-            response.message = f'no such file: {path}'
+            if configured:
+                response.success = False
+                response.message = f'no such file: {path}'
+            else:
+                response.success = False
+                response.message = (
+                    f'no exported assembly at {path}; call '
+                    '/icp_pose_refiner/export_mesh first, or set model_ply_path '
+                    'to upload a different .ply')
             return response
 
         try:
