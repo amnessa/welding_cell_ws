@@ -1,0 +1,350 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/amnessa/weld_generator/schema/scene-1.1.0.json",
+  "title": "Weld seam dataset — scene",
+  "description": "Machine-checkable form of docs/SCHEMA.md v1.1.0. Prose wins on intent; this file wins on shape.",
+  "type": "object",
+  "required": [
+    "schema_version", "generator_version", "scene_id", "config_id", "seed", "tier",
+    "twin_key", "units", "joint", "objects", "faces", "fit", "T_world_joint", "seams",
+    "camera", "noise_model", "cloud", "provenance"
+  ],
+  "additionalProperties": false,
+
+  "$defs": {
+    "mat4": {
+      "type": "array", "minItems": 4, "maxItems": 4,
+      "items": { "type": "array", "minItems": 4, "maxItems": 4,
+                 "items": { "type": "number" } }
+    },
+    "vec3": {
+      "type": "array", "minItems": 3, "maxItems": 3, "items": { "type": "number" }
+    },
+    "faceRef": {
+      "type": "string",
+      "pattern": "^[A-Z]:([+-][uvw]|lateral[+-]|(chamfer|edge_fillet|through_hole|slot|notch|stiffener)\\d+(\\.[a-z+_-]+)?)$",
+      "description": "<object_id>:<face_name>, per SCHEMA.md 2.2 and 2.2.1. Feature faces are <kind><index>[.<sub>]; the feature vocabulary is PROVISIONAL until frozen before Phase 2."
+    },
+    "feature": {
+      "type": "object",
+      "required": ["kind", "index", "params"],
+      "properties": {
+        "kind": {
+          "enum": ["chamfer", "edge_fillet", "through_hole", "slot", "notch", "stiffener"],
+          "description": "PROVISIONAL (D17). Freeze before Phase 2 — feeds part_geometry_id, the D11 split key."
+        },
+        "index": { "type": "integer", "minimum": 0 },
+        "params": { "type": "object" }
+      }
+    }
+  },
+
+  "properties": {
+    "schema_version": { "const": "1.1.0" },
+    "generator_version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "scene_id": { "type": "string", "pattern": "^[0-9a-f]{8}-\\d{10}$" },
+    "config_id": { "type": "string", "pattern": "^[0-9a-f]{8}$" },
+    "seed": { "type": "integer", "minimum": 0 },
+    "tier": { "type": "integer", "enum": [1, 2] },
+    "twin_key": {
+      "type": "string", "pattern": "^[0-9a-f]{16}$",
+      "description": "SCHEMA.md 6.3 — identical across ablation arms sharing workpiece geometry and seam truth."
+    },
+
+    "units": {
+      "type": "object", "additionalProperties": false,
+      "required": ["length", "angle"],
+      "properties": {
+        "length": { "const": "mm" },
+        "angle": { "const": "deg" }
+      }
+    },
+
+    "joint": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "seam_shape", "quality_level", "contact_mode"],
+      "properties": {
+        "type": { "enum": ["T", "corner", "butt", "lap", "edge"] },
+        "seam_shape": { "enum": ["line", "arc", "spline", "closed"] },
+        "quality_level": { "enum": ["B", "C", "D", "below_D"] },
+        "contact_mode": {
+          "enum": ["free", "flat", "on_edge", "propped"],
+          "description": "\"free\" iff no fixture object is present (D12) — enforced by the root allOf."
+        }
+      }
+    },
+
+    "objects": {
+      "type": "array", "minItems": 2,
+      "minContains": 0, "maxContains": 1,
+      "contains": {
+        "type": "object",
+        "required": ["role"],
+        "properties": { "role": { "const": "fixture" } },
+        "description": "At most one fixture per scene."
+      },
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "role", "object_id", "primitive", "dims_mm",
+                     "thickness_mm", "features", "part_geometry_id", "mesh", "T_world_part"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[A-Z]$" },
+          "role": { "enum": ["workpiece", "fixture"] },
+          "object_id": { "type": "integer", "minimum": 0, "maximum": 255 },
+          "primitive": { "enum": ["slab", "swept_slab", "cylinder", "tube"] },
+          "dims_mm": { "type": "array", "minItems": 1, "items": { "type": "number", "exclusiveMinimum": 0 } },
+          "thickness_mm": { "type": "number", "exclusiveMinimum": 0 },
+          "features": { "type": "array", "items": { "$ref": "#/$defs/feature" } },
+          "part_geometry_id": {
+            "type": "string",
+            "pattern": "^([a-z_]+_[0-9.x]+(_f[0-9a-f]{8})?|mesh_[0-9a-f]{8,})$",
+            "description": "SCHEMA.md 5.4 — MUST include the feature hash when features are present, or the D11 split key is wrong."
+          },
+          "mesh": { "type": ["string", "null"] },
+          "T_world_part": { "$ref": "#/$defs/mat4" }
+        },
+        "allOf": [
+          {
+            "$comment": "D17: a part with features MUST carry the feature hash in its part_geometry_id, or the D11 split key is wrong.",
+            "if": {
+              "properties": { "features": { "minItems": 1 } },
+              "required": ["features"]
+            },
+            "then": {
+              "properties": {
+                "part_geometry_id": { "pattern": "(_f[0-9a-f]{8}$)|(^mesh_)" }
+              }
+            }
+          }
+        ]
+      }
+    },
+
+    "faces": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["face_id", "ref", "object", "name", "plane", "surface", "area_mm2"],
+        "properties": {
+          "face_id": { "type": "integer", "minimum": 0, "maximum": 255 },
+          "ref": { "$ref": "#/$defs/faceRef" },
+          "object": { "type": "string", "pattern": "^[A-Z]$" },
+          "name": { "type": "string" },
+          "plane": {
+            "oneOf": [
+              { "type": "null" },
+              { "type": "object", "additionalProperties": false,
+                "required": ["n", "d"],
+                "properties": { "n": { "$ref": "#/$defs/vec3" }, "d": { "type": "number" } } }
+            ]
+          },
+          "surface": { "type": ["object", "null"] },
+          "area_mm2": { "type": "number", "minimum": 0 }
+        }
+      }
+    },
+
+    "fit": {
+      "type": "object", "additionalProperties": false,
+      "required": ["root_gap_mm", "linear_misalignment_mm",
+                   "angular_misalignment_deg", "throat_thickness_mm"],
+      "properties": {
+        "root_gap_mm": { "type": "number", "minimum": 0 },
+        "linear_misalignment_mm": { "type": "number", "minimum": 0 },
+        "angular_misalignment_deg": { "type": "number", "minimum": 0 },
+        "throat_thickness_mm": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+
+    "T_world_joint": { "$ref": "#/$defs/mat4" },
+
+    "seams": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "weldable", "reject_reason", "face_pair",
+                     "parametric", "length_mm", "dihedral_deg", "sampled"],
+        "properties": {
+          "id": { "type": "integer", "minimum": 0 },
+          "weldable": { "type": "boolean" },
+          "reject_reason": {
+            "enum": [null, "fixture_contact", "interior_face", "bisector_blocked",
+                     "degenerate_dihedral", "no_contact", "too_short"]
+          },
+          "face_pair": {
+            "type": "array", "minItems": 2, "maxItems": 2,
+            "items": { "$ref": "#/$defs/faceRef" }
+          },
+          "parametric": {
+            "type": "object",
+            "required": ["kind"],
+            "properties": { "kind": { "enum": ["line", "arc", "bspline"] } }
+          },
+          "length_mm": { "type": "number", "exclusiveMinimum": 0 },
+          "dihedral_deg": { "type": "number", "minimum": 0, "maximum": 180 },
+          "sampled": {
+            "type": "object", "additionalProperties": false,
+            "required": ["array", "density_per_mm", "n"],
+            "properties": {
+              "array": { "type": "string", "pattern": "^seam_\\d+$" },
+              "density_per_mm": { "type": "number", "exclusiveMinimum": 0 },
+              "n": { "type": "integer", "minimum": 2 }
+            }
+          },
+          "occluded_fraction": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "weldable": { "const": true } } },
+            "then": { "properties": { "reject_reason": { "const": null } } }
+          },
+          {
+            "if": { "properties": { "weldable": { "const": false } } },
+            "then": { "properties": { "reject_reason": { "type": "string" } } }
+          }
+        ]
+      }
+    },
+
+    "tacks": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["rule_version", "params", "points_mm", "seam_id", "arclength_mm"],
+          "properties": {
+            "rule_version": { "type": "string" },
+            "params": { "type": "object" },
+            "points_mm": { "type": "array", "items": { "$ref": "#/$defs/vec3" } },
+            "seam_id": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
+            "arclength_mm": { "type": "array", "items": { "type": "number", "minimum": 0 } }
+          }
+        }
+      ]
+    },
+
+    "camera": {
+      "type": "object", "additionalProperties": false,
+      "required": ["model", "K", "width", "height", "T_world_cam",
+                   "standoff_mm", "elevation_deg"],
+      "properties": {
+        "model": { "const": "pinhole" },
+        "K": { "type": "array", "minItems": 3, "maxItems": 3,
+               "items": { "type": "array", "minItems": 3, "maxItems": 3,
+                          "items": { "type": "number" } } },
+        "width": { "type": "integer", "exclusiveMinimum": 0 },
+        "height": { "type": "integer", "exclusiveMinimum": 0 },
+        "T_world_cam": { "$ref": "#/$defs/mat4" },
+        "standoff_mm": {
+          "type": "number", "exclusiveMinimum": 0,
+          "description": "Lower bound is the sensor profile's min-Z, not a schema constant (D16) — enforced by the root allOf."
+        },
+        "elevation_deg": { "type": "number", "minimum": 0, "maximum": 90 }
+      }
+    },
+
+    "noise_model": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "profile", "subpixel_px", "baseline_mm", "focal_px",
+                   "min_z_mm", "lateral_sigma_px", "grazing_dropout_deg", "seed"],
+      "properties": {
+        "kind": { "const": "stereo_z2" },
+        "profile": {
+          "enum": ["d435i", "stereo_good", "stereo_poor"],
+          "description": "D16 — named sensor profile; the physical params below must agree with PARAMETERS.md 4.0."
+        },
+        "subpixel_px": { "type": "number", "exclusiveMinimum": 0 },
+        "baseline_mm": { "type": "number", "exclusiveMinimum": 0 },
+        "focal_px": { "type": "number", "exclusiveMinimum": 0 },
+        "min_z_mm": { "type": "number", "exclusiveMinimum": 0 },
+        "lateral_sigma_px": { "type": "number", "minimum": 0 },
+        "grazing_dropout_deg": { "type": "number", "minimum": 0, "maximum": 90 },
+        "seed": { "type": "integer", "minimum": 0 }
+      }
+    },
+
+    "cloud": {
+      "type": "object", "additionalProperties": false,
+      "required": ["file", "frame", "sampling_mode", "density_per_mm2", "n_points"],
+      "properties": {
+        "file": { "const": "cloud.npz" },
+        "frame": { "const": "world" },
+        "sampling_mode": { "enum": ["area_uniform", "camera_raster"] },
+        "density_per_mm2": { "type": "number", "exclusiveMinimum": 0 },
+        "n_points": { "type": "integer", "minimum": 1 }
+      }
+    },
+
+    "rgb": { "type": ["string", "null"] },
+    "depth": { "type": ["string", "null"] },
+
+    "provenance": {
+      "type": "object",
+      "description": "EXCLUDED from the content hash (SCHEMA.md 6.2).",
+      "required": ["created_utc", "git_commit"],
+      "properties": {
+        "created_utc": { "type": "string" },
+        "git_commit": { "type": "string" }
+      }
+    }
+  },
+
+  "allOf": [
+    {
+      "$comment": "D12: contact_mode is 'free' if and only if the scene has no fixture object.",
+      "if": {
+        "properties": {
+          "objects": {
+            "contains": {
+              "type": "object", "required": ["role"],
+              "properties": { "role": { "const": "fixture" } }
+            }
+          }
+        },
+        "required": ["objects"]
+      },
+      "then": {
+        "properties": { "joint": { "properties": {
+          "contact_mode": { "not": { "const": "free" } } } } }
+      },
+      "else": {
+        "properties": { "joint": { "properties": {
+          "contact_mode": { "const": "free" } } } }
+      }
+    },
+    {
+      "$comment": "D16: standoff must clear the profile's min-Z. PARAMETERS.md 4.0.",
+      "if": {
+        "properties": { "noise_model": { "properties": {
+          "profile": { "const": "d435i" } }, "required": ["profile"] } },
+        "required": ["noise_model"]
+      },
+      "then": {
+        "properties": { "camera": { "properties": {
+          "standoff_mm": { "minimum": 280 } } } }
+      }
+    },
+    {
+      "if": {
+        "properties": { "noise_model": { "properties": {
+          "profile": { "const": "stereo_good" } }, "required": ["profile"] } },
+        "required": ["noise_model"]
+      },
+      "then": {
+        "properties": { "camera": { "properties": {
+          "standoff_mm": { "minimum": 200 } } } }
+      }
+    },
+    {
+      "if": {
+        "properties": { "noise_model": { "properties": {
+          "profile": { "const": "stereo_poor" } }, "required": ["profile"] } },
+        "required": ["noise_model"]
+      },
+      "then": {
+        "properties": { "camera": { "properties": {
+          "standoff_mm": { "minimum": 400 } } } }
+      }
+    }
+  ]
+}

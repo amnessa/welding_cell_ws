@@ -42,6 +42,34 @@ Recorded so they are not re-litigated. Each was argued through; if one is reopen
 | D9 | Tier 1 core has **no simulator import**. Renderers are pluggable backends | If the generator needs Isaac Sim + an RTX card, it is as inaccessible as the "available on reasonable request" datasets being criticized |
 | D10 | RGB is rendered and stored, but **not benchmarked on** | Handoff §3. Storing is cheap; not storing forecloses the 2D→3D line without full regeneration |
 | D11 | Splits hold out **part geometries and joint configurations**, not random frames | Random-frame splits across near-duplicate camera poses inflate every reported number |
+| D12 | Fixture (`role: "fixture"`, `object_id 255`) is **sampled, not always present** — ~50/50, with **paired seeds** so on/off twins are exact, and **pose-varied** (tilt ±10°, working surface not pinned to `z = 0`) | Revised 2026-08-13, see below |
+| D13 | D4 requires **both faces on `role: "workpiece"` objects**; part–fixture contact is rejected as `fixture_contact` | A plate standing on the fixture has two exterior faces, a 90° dihedral and an escaping bisector — it passes D4 on pure geometry and is *not* weldable. The rejection is not derivable from geometry, which makes it the most interesting class in the weldable-vs-interior metric (§7) |
+| D14 | Cloud stores the **noiseless** sample + noise params; the realization comes from a released `apply_noise()` | Same epistemic move as D8: the exact thing is truth, the corruption is a versioned convention. Frozen Zenodo release additionally materialises `xyz_noisy` for bit-comparability |
+| D15 | Determinism gate is a **content hash**, not byte-identical files | `np.savez` embeds zip timestamps, so byte-identity is unachievable; hashing canonical JSON + raw array bytes is the stronger property anyway |
+| D16 | The depth model is a **stereo-depth model with named sensor profiles**, not a D435i model | Parameterised by `(baseline, focal, subpixel)`, which the schema already does. `d435i` is one profile alongside `stereo_good` / `stereo_poor`. Makes sensor quality a benchmark axis and demotes the datasheet-verification item off the critical path |
+| D17 | Part geometry diversity comes from **procedural features** (chamfers, holes, slots, notches, stiffeners), not authored CAD | With slabs only, the D11 "held-out geometry" split is really a held-out *dimensions* split. Features keep parametric control, keep the `part_geometry_id` split key, and add hard negatives for free |
+
+Phase 0 froze D1–D11 in [`../docs/SCHEMA.md`](../docs/SCHEMA.md) and
+[`../docs/PARAMETERS.md`](../docs/PARAMETERS.md). D12–D17 were settled 2026-08-13.
+
+### Why D12 is *sampled* rather than *always*
+
+An earlier draft had the fixture always present. Three reasons that was too strong:
+
+1. **It kills the ablation.** The point of modelling the fixture is to measure *how much of
+   published seam-extraction performance is an artifact of pre-isolated workpieces*. That
+   needs paired on/off scenes. Uniform presence makes the dataset harder without making it
+   informative.
+2. **A pinned fixture is identifiable by pose alone.** If the working surface is always the
+   world `z = 0` plane with only yaw varying, any learned model discovers "contacts with the
+   `z = 0` plane are never weldable" almost immediately, and that rule transfers to nothing.
+   `fixture_contact` stops being a hard negative. This leaks through geometry even though
+   `object_id` is evaluation-only.
+3. **It front-loads complexity into Phase 1**, where `contact_mode`, resting-consistency
+   placement and the drop-to-plane step all arrive before the determinism gate is proven.
+
+The fix is config, not schema: fixture **off** in Phase 1, **on and sampled** from Phase 2.
+`contact_mode` needs a `"free"` member for the fixture-absent case.
 
 ### What tier 1 is for (asked and answered)
 
@@ -216,8 +244,19 @@ defect axes directly.
 | 0,5 – 3 | h ≤ 0,1aA + 0,5 mm | h ≤ 0,1aA + 0,3 mm | h ≤ 0,1aA + 0,2 mm |
 | > 3 | h ≤ 0,3aA + 1 mm, max 4 mm | h ≤ 0,2aA + 0,5 mm, max 3 mm | h ≤ 0,1aA + 0,5 mm, max 2 mm |
 
-**Angular misalignment (508)**, from the fatigue-classified table: β ≤ 2° at level C, β ≤ 1° at
-level B.
+**Angular misalignment (508) — this plan previously miscited it. Corrected.**
+
+Table 1 does **not** set a D/C/B limit on β. The β ≤ 2° / 1° / 1° values come from Annex B
+(informative), Table B.1, whose columns are the **fatigue classes C 63 / B 90 / B 125**, not
+quality levels. `PARAMETERS.md` §2.3 carries the corrected reading and the **[ours]** mapping
+`D → 4°`, `C → 2°`, `B → 1°`. Writing "β ≤ 2° at quality level C" as if it were Table 1 is a
+miscitation a welding reviewer will catch.
+
+While in the PDF, confirm whether Table 1 has a 3.3 / 508 row at all or whether 508 appears only
+in Annex B — the claim is now an *absence*, and the referent of footnote `b` should be pinned.
+
+Note Annex B also gives fatigue-class 5071 limits that are **stricter** than the Table 1 values
+above. Sampling is against Table 1. Always say which table.
 
 **Linear misalignment between tubes (5072)** — for the pipe-on-plate curved cases: h ≤ 0,5t with a
 max of 4 / 3 / 2 mm for D / C / B.
@@ -234,9 +273,31 @@ That is a stratification axis reviewers recognize, and it costs nothing.
 | Plate width | 50 – 250 mm | |
 | Root gap `g` | 0 – 3 mm | Must include `g` > thickness/2 cases to break radius-PCA deliberately |
 | Seam curvature radius | 30 mm – ∞ | Phase 6 |
-| Camera standoff | 0.3 – 1.2 m | RealSense valid range; check the **minimum** too |
+| Camera standoff | per sensor profile (D16) | The min-Z bound belongs to the profile, not the schema — see §5.1 |
 | Camera elevation | 15° – 85° | Below ~20° the vertical plate blocks everything — that is the point |
 | Point density | 0.25 – 4 pts/mm² | Sweep it; density is a benchmark axis, not a constant |
+| Fixture present | ~50%, paired seeds (D12) | The on/off pair is the ablation |
+| Fixture pose | tilt ±10°, surface `z` not pinned | Otherwise the fixture is identifiable by pose alone |
+| Part features | none (Ph. 1), sampled from Ph. 2 (D17) | Chamfers, holes, slots, notches, stiffeners |
+
+### 5.1 Sensor profiles (D16)
+
+Parameterise by physics, name the profiles. The schema's `noise_model` block already does this;
+only the prose was bound to one product.
+
+| Profile | `b` | `f_px` | subpixel | min-Z | Role |
+|---|---|---|---|---|---|
+| `d435i` | 50 mm | 674 | 0,08 px | 280 mm | matches lab hardware; ties tier 1 to the Phase 9 real subset |
+| `stereo_good` | 120 mm | 1100 | 0,05 px | ~200 mm | a better sensor than yours |
+| `stereo_poor` | 35 mm | 450 | 0,15 px | ~400 mm | a worse one |
+
+Two consequences. **Sensor quality becomes a benchmark axis**, and the `PARAMETERS.md` §5
+validity-window prediction sharpens: `spacing` and `σ_z` now move together as a function of a
+sensor rather than being swept independently, so "radius-PCA has no valid radius on 1–2 mm sheet"
+becomes "…for any sensor in this class" — a stronger claim from the same experiment.
+
+And the datasheet-confirmation item stops gating the release. It now gates only the `d435i`
+profile's claim to match your camera.
 
 **Deliberately include parameter combinations that break the baselines.** The `gap + spacing < R <
 thickness` window closing for thin sheet is a *finding*, and you can only report it if the generator
@@ -279,9 +340,14 @@ Simulator-free. `trimesh` + NumPy only. No renderer, no ROS, no Isaac.
 - [ ] **Analytic seam label** emitted at requested density, with `weldable` flags
 - [ ] **Writer** conforming to the Phase 0 schema, fully seeded
 - [ ] **Seed→scene determinism test**
+- [ ] Validate every emitted `scene.json` against `scene.schema.json` in CI
 
-**Gate:** regenerate a scene from its seed alone → bit-identical file. If this fails, everything
-downstream is unreproducible and the release argument collapses.
+**Fixture off** in this phase (D12) — `contact_mode: "free"`, `objects[]` is the two workpieces.
+Keeps the placement step trivial until the determinism gate is proven.
+
+**Gate (D15):** `generate(config, seed)` twice, in separate processes, on different machines →
+identical **content hash**. Not byte-identity: `np.savez` embeds zip timestamps. If this fails,
+everything downstream is unreproducible and the release-as-a-program argument collapses.
 
 **Effort:** 3–4 days.
 
@@ -294,6 +360,15 @@ downstream is unreproducible and the release argument collapses.
       test bisector escape — it should independently rediscover the seams you constructed
 - [ ] Emit rejected interior candidates as `weldable: false` entries
 - [ ] Multi-seam emission (T → 2 fillets, lap → 2 toes)
+- [ ] **Fixture on, sampled** (D12): presence ~50% with paired seeds, tilt ±10°, surface `z` free.
+      Add the `role == "workpiece"` precondition to D4 → `fixture_contact` (D13)
+- [ ] **Procedural features** (D17): chamfers, fillet radii on free edges, through-holes, slots,
+      notched corners. `objects[].features: []`, empty by default; `part_geometry_id` hashes the
+      feature spec, not just dims. Extend the §2.2 face registry with feature face names and check
+      the `w`-is-thickness invariant survives them (it does for holes and chamfers — say so)
+
+Do features **here**, not later. They touch `part_geometry_id`, which is the D11 split key, and
+adding them after Phase 4 is exactly the schema churn §8 names as a risk.
 
 **Gate:** for every joint type, constructed seams and rediscovered seams agree to numerical
 tolerance, **and** the lap/edge interior candidates are correctly rejected with
@@ -346,6 +421,12 @@ Now the PCA fix happens, **with a number in front of you** instead of RViz eyeba
    have no notion of hidden truth
 4. Error vs. joint type — expect lap and edge to be where naive methods die
 5. Error vs. point density
+6. **Fixture on vs. off, paired seeds (D12).** This is the plot that quantifies how much of
+   published seam-extraction performance is an artifact of pre-isolated workpieces. Report the
+   `fixture_contact` false-positive rate separately — expect Baseline A to emit a phantom candidate
+   along every part–fixture contact, since the fixture is a large clean plane and plane pairing has
+   no notion of `role`
+7. **Error vs. sensor profile (D16)** — `d435i` / `stereo_good` / `stereo_poor`, same seeds
 
 **Effort:** ~1 week.
 
@@ -469,7 +550,30 @@ small, defensible contribution on its own.
 - [ ] Second annotator for Phase 5 — who?
 - [ ] BlenderProc vs Isaac Sim for Phase 8 — decide before Phase 8, not during
 - [ ] Whether tacks ship in paper 1 or are held for paper 2 (depends on whether Phase 6 lands)
-- [ ] Point-cloud file format for the release: `.npy` pair vs `.ply` vs `.parquet` — matters for
-      download size and for whether people can load it without your code
+- [x] ~~Point-cloud file format for the release~~ → **resolved Phase 0**: `cloud.npz` per scene
+      (one file, numpy-native, no dependency), plus a `--emit-meshes` PLY exporter that Phase 5
+      needs for CloudCompare anyway
 - [ ] Written confirmation from the advisor on the no-physical-welding scope (handoff §6.6 — still
       outstanding)
+
+Opened by Phase 0, all deferred (details in `PARAMETERS.md` §7):
+
+- [ ] Butt/edge root gap currently has no ISO citation — clause 617 governs *fillet* welds only.
+      ISO 9692-1 would make it citable. Before submission, not before Phase 1
+- [ ] Confirm the `d435i` profile's baseline / subpixel / min-Z against the real camera. Under D16
+      this no longer gates the release — only the claim that `d435i` matches your hardware. One
+      afternoon with a flat target at three ranges
+- [ ] **Resolve the 10× sim-noise discrepancy**: the twin's `realsense_sim_camera_node.py` defaults
+      give σ(1 m) ≈ 25 mm; the derived model gives ≈ 2,4 mm. Deliberate pessimism for ICP threshold
+      tuning, or a stale default? Worth knowing which
+- [ ] Confirm whether ISO 5817 Table 1 has a 3.3 / 508 row at all, and pin the referent of footnote
+      `b` — `PARAMETERS.md` §2.3 now rests on an *absence*, which needs to be verifiable
+- [ ] Measure the real fixture plate. Under D12 the exact dims matter less (pose and presence both
+      vary), but the `lab_fixture` preset should still be real
+
+Opened by this revision:
+
+- [ ] Pick the feature vocabulary for D17 and freeze it before Phase 2 — `{chamfer, edge_fillet,
+      through_hole, slot, notch, stiffener}` is the proposed set
+- [ ] Decide whether `stereo_good` / `stereo_poor` are shipped in the release or only used for the
+      §7 sensor-profile plot
