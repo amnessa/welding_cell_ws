@@ -47,10 +47,14 @@ Recorded so they are not re-litigated. Each was argued through; if one is reopen
 | D14 | Cloud stores the **noiseless** sample + noise params; the realization comes from a released `apply_noise()` | Same epistemic move as D8: the exact thing is truth, the corruption is a versioned convention. Frozen Zenodo release additionally materialises `xyz_noisy` for bit-comparability |
 | D15 | Determinism gate is a **content hash**, not byte-identical files | `np.savez` embeds zip timestamps, so byte-identity is unachievable; hashing canonical JSON + raw array bytes is the stronger property anyway |
 | D16 | The depth model is a **stereo-depth model with named sensor profiles**, not a D435i model | Parameterised by `(baseline, focal, subpixel)`, which the schema already does. `d435i` is one profile alongside `stereo_good` / `stereo_poor`. Makes sensor quality a benchmark axis and demotes the datasheet-verification item off the critical path |
-| D17 | Part geometry diversity comes from **procedural features** (chamfers, holes, slots, notches, stiffeners), not authored CAD | With slabs only, the D11 "held-out geometry" split is really a held-out *dimensions* split. Features keep parametric control, keep the `part_geometry_id` split key, and add hard negatives for free |
+| ~~D17~~ | ~~Procedural features (chamfers, holes, slots, notches, stiffeners)~~ — **WITHDRAWN 2026-08-15**. Parts are plain slabs through Phase 5; real geometric diversity arrives in **Phase 6** (curved parts, pipe-on-plate) and **Phase 9** (scanned workpieces) | Procedural features were decoration dressed as diversity — they would have let the D11 split *claim* held-out geometry while really holding out dimensions with cosmetic variation. Phase 6 and 9 are where varied geometry is the actual point. Recorded rather than erased so it is not re-proposed. **Consequence, stated honestly: through Phase 5 the D11 split is a held-out _dimensions_ split, and the docs say so** |
+| D18 | `joint.included_angle_deg` is a **sampled design parameter**, independent of `fit.angular_misalignment_deg` | A 70° T-joint is not a 90° T-joint with a 20° defect. β is a deviation from nominal with ISO 5817 tolerance limits; the included angle is the nominal itself, and ISO 9692-1 Tables 3–4 give it a citable range |
+| D19 | With `root_gap > 0` the seam is stored as the **nominal zero-gap intersection** of the extended faces; the root line is a derived field | At `g = 1,1 mm` the faces do not intersect, so "the seam" is a *choice* among root line / gap midline / nominal intersection. The ambiguity (~1 mm) is larger than the ~0,6 mm RMSE the literature reports. Nominal is chosen because it is continuous as `g → 0` and independent of which part is called A. **Publish the conversion between the three** — a systematic offset that may explain part of the disagreement across papers |
+| D20 | Under `camera_raster`, hidden surface is sampled **separately at matched density** and flagged `visible_from_cam: false` | The mask formulation (D6) assumes the single-view cloud is a subset of the full cloud. That holds for `area_uniform` and breaks for a raster, which has no natural sample of invisible surface |
+| D21 | Every object must be **watertight and winding-consistent**; the *union* is not and must not be | Ray-cast visibility, `bisector_blocked` and any `contains` query need a defined interior. The union is genuinely disjoint at `g > 0` — that is the physical truth, and D3 means no boolean union is ever computed |
 
 Phase 0 froze D1–D11 in [`../docs/SCHEMA.md`](../docs/SCHEMA.md) and
-[`../docs/PARAMETERS.md`](../docs/PARAMETERS.md). D12–D17 were settled 2026-08-13.
+[`../docs/PARAMETERS.md`](../docs/PARAMETERS.md). D12–D16 were settled 2026-08-13; D17 was withdrawn 2026-08-15; D18–D21 settled 2026-08-15.
 
 ### Why D12 is *sampled* rather than *always*
 
@@ -264,6 +268,56 @@ max of 4 / 3 / 2 mm for D / C / B.
 Sample defects to span D through B and **label each scene with the quality level it satisfies**.
 That is a stratification axis reviewers recognize, and it costs nothing.
 
+### Joint design geometry — ISO 9692-1:2013
+
+This is **preparation** geometry, a different standard from the **imperfection** limits above.
+Keep the two vocabularies separate in the prose or a welding reviewer will conflate them.
+
+**Included angle for fillet welds (T, corner).** Table 3 (welded from one side) ref 3.1.1 and
+Table 4 (both sides) ref 4.1.1 give `70° ≤ α ≤ 100°` for square preparation with `t₁, t₂ > 2`
+(Table 4 requires `t > 3`). Refs 3.1.3 and 4.1.2 widen this to `60° ≤ α ≤ 120°`. Both tables cap
+the fillet gap at `b ≤ 2 mm`.
+
+So **60–120° is [ISO], not [ours]** — sample it, and record which sub-clause a given scene falls
+under. Note the footnote on both tables: the ISO 2553 fillet symbol is *only applicable at
+α = 90°*, which is itself worth a sentence — the standard drawing convention silently assumes the
+right angle that your generator is about to stop assuming.
+
+**Root gap for square-preparation butt joints.** This closes the standing open item. Table 1 ref
+1.2.1 (`t ≤ 4`, one side) gives `b ≈ t`; Table 2 ref 2.1 (`t ≤ 8`, both sides) gives `b ≈ t/2`.
+The gap **scales with thickness** rather than being a flat 0–3 mm range, which changes the sampler.
+
+**Edge joints.** Table 1 ref 1.1, "raised edges", applies at `t ≤ 2 mm` and specifies no dimensions.
+That is a citable constraint and a convenient one: edge joints are a **thin-sheet** preparation, and
+1–2 mm is exactly the stainless in your lab and exactly where §5 predicts radius-PCA has no valid
+radius. Restrict edge-joint scenes to `t ≤ 2 mm` and the joint type stops being an arbitrary
+inclusion.
+
+**Table 2 footnote b: "Dimensions given apply to the tacked condition."** Carry this into Phase 7.
+The gaps the standard specifies are gaps *after tacking*, which means the tack rule and the fit-up
+parameters are coupled, not independent — worth one line in the tack-rule documentation.
+
+**Lap overlap has no ISO citation.** Neither 9692-1 nor 2553 gives an overlap length; ISO 2553
+Table 5 no. 7.1 lists "lap" only as an edge-weld symbol with `s` = weld metal thickness. Overlap
+stays **[ours]**.
+
+### Lap and edge are the same topology at different offsets
+
+Both have **parallel** parts — included angle 0°, not 90°. They differ only in whether the edges
+coincide:
+
+| | `included_angle_deg` | `stack_offset_mm` | Seams | Seam `dihedral_deg` |
+|---|---|---|---|---|
+| **lap** | 0 | `0 < offset < L` | 2 toes | 90° |
+| **edge** | 0 | 0 (flush) | 1 along the free edge | ~180° (degenerate) |
+
+Two consequences worth stating in the paper. **`included_angle_deg` and `dihedral_deg` are not the
+same quantity** — a lap joint has parallel parts and a 90° seam dihedral, so the schema must carry
+both. And **lap and edge fail the nearest-point rule for the same reason**: face-to-face contact
+over an area rather than a line. Unifying them under one `stack_offset_mm` parameter, with edge as
+the `offset = 0` degenerate case, makes that shared failure mode a *derivation* rather than two
+anecdotes.
+
 ### Geometry ranges (set these yourself, record the reasoning)
 
 | Parameter | Range | Note |
@@ -271,14 +325,16 @@ That is a stratification axis reviewers recognize, and it costs nothing.
 | Plate thickness `t` | 1 – 12 mm | Covers your 1–2 mm stainless and 8 mm MDF; spans the ISO t≤3 / t>3 boundary |
 | Plate length | 80 – 400 mm | 232 mm reference seam sits mid-range |
 | Plate width | 50 – 250 mm | |
-| Root gap `g` | 0 – 3 mm | Must include `g` > thickness/2 cases to break radius-PCA deliberately |
-| Seam curvature radius | 30 mm – ∞ | Phase 6 |
+| Root gap `g` | butt: `≈t` (1-side) / `≈t/2` (2-side) **[ISO]**; fillet: `≤ 2 mm` **[ISO]**; over-range tail to 3 mm **[ours]** | The over-range tail is what generates `below_D` and breaks radius-PCA on purpose |
+| `included_angle_deg` | T, corner: 60 – 120° **[ISO]**; butt: 180°; lap, edge: 0° | ISO 9692-1 Tables 3–4 |
+| `stack_offset_mm` | lap: `0 < offset < L`; edge: 0 | Lap overlap **[ours]** — no ISO citation found |
+| Seam curvature radius | 30 mm – ∞ | **[ours]** Phase 6 |
 | Camera standoff | per sensor profile (D16) | The min-Z bound belongs to the profile, not the schema — see §5.1 |
 | Camera elevation | 15° – 85° | Below ~20° the vertical plate blocks everything — that is the point |
 | Point density | 0.25 – 4 pts/mm² | Sweep it; density is a benchmark axis, not a constant |
 | Fixture present | ~50%, paired seeds (D12) | The on/off pair is the ablation |
 | Fixture pose | tilt ±10°, surface `z` not pinned | Otherwise the fixture is identifiable by pose alone |
-| Part features | none (Ph. 1), sampled from Ph. 2 (D17) | Chamfers, holes, slots, notches, stiffeners |
+| Part geometry | plain slabs through Ph. 5; curved / pipe-on-plate from Ph. 6 | ~~D17~~ withdrawn — no procedural features. Diversity comes from Phase 6 primitives and Phase 9 scans |
 
 ### 5.1 Sensor profiles (D16)
 
@@ -362,13 +418,22 @@ everything downstream is unreproducible and the release-as-a-program argument co
 - [ ] Multi-seam emission (T → 2 fillets, lap → 2 toes)
 - [ ] **Fixture on, sampled** (D12): presence ~50% with paired seeds, tilt ±10°, surface `z` free.
       Add the `role == "workpiece"` precondition to D4 → `fixture_contact` (D13)
-- [ ] **Procedural features** (D17): chamfers, fillet radii on free edges, through-holes, slots,
-      notched corners. `objects[].features: []`, empty by default; `part_geometry_id` hashes the
-      feature spec, not just dims. Extend the §2.2 face registry with feature face names and check
-      the `w`-is-thickness invariant survives them (it does for holes and chamfers — say so)
+- [ ] **Watertightness assertion (D21):** per object, `mesh.is_watertight and
+      mesh.is_winding_consistent`; fail the scene rather than emit it. On plain slabs this is
+      trivially satisfied and costs nothing — put it in now anyway, because it is the assertion
+      that catches Phase 6's swept and revolved primitives, where degenerate caps and seam
+      duplication genuinely do produce non-manifold meshes
 
-Do features **here**, not later. They touch `part_geometry_id`, which is the D11 split key, and
-adding them after Phase 4 is exactly the schema churn §8 names as a risk.
+**Parts are plain slabs in this phase** (~~D17~~ withdrawn). `objects[]` carries no feature list
+and `part_geometry_id` is `<primitive>_<dims>`. The D11 split is therefore a held-out
+**dimensions** split until Phase 6 — say so in the paper rather than letting "held-out geometry"
+imply more than it delivers.
+- [ ] **`included_angle_deg` sampling (D18)** and the lap/edge `stack_offset_mm` unification
+- [ ] **`torch_clearance` becomes a cone**, `{half_angle_deg, standoff_mm}`, not a scalar distance.
+      At 90° the bisector test is nearly free; at 60° it is not, because a real nozzle has finite
+      width. Acute-angle joints then generate `bisector_blocked` rejections from physical
+      reachability instead of an arbitrary threshold, which gives the §7 weldable-vs-interior metric
+      a second interesting class alongside `fixture_contact`
 
 **Gate:** for every joint type, constructed seams and rediscovered seams agree to numerical
 tolerance, **and** the lap/edge interior candidates are correctly rejected with
@@ -390,6 +455,11 @@ This function is reused by the baselines in Phase 4 — building it here is not 
       grazing-incidence dropout
 - [ ] **Per-seam `occluded_fraction`**
 - [ ] **HPR exteriority** utility (shared with Phase 4 baseline B)
+- [ ] **Pin `camera_raster` mask semantics (D20)** — raster-sample the visible surface as the camera
+      would, then additionally sample the hidden surface at density matched to the mean visible
+      density and flag it `visible_from_cam: false`. Cheap to implement either way now; expensive to
+      change once numbers are plotted. Move it out of `SCHEMA.md` §7 from "reserved slot" to
+      "pinned answer"
 
 **Gate:** `occluded_fraction` spans roughly 0 → 0.8 across the camera sampler. If it is always near
 zero, the sampler is too polite and the dataset has no difficulty axis — fix the sampler, not the
@@ -421,12 +491,18 @@ Now the PCA fix happens, **with a number in front of you** instead of RViz eyeba
    have no notion of hidden truth
 4. Error vs. joint type — expect lap and edge to be where naive methods die
 5. Error vs. point density
-6. **Fixture on vs. off, paired seeds (D12).** This is the plot that quantifies how much of
+6. **Error vs. `included_angle_deg` (D18).** Radius-PCA's eigenvalue signature is a function of
+   the dihedral, so the §5 validity window is really a *surface* over `(t, g, ρ, θ)`, not a curve.
+   The plan currently predicts where it closes in three of those four
+7. **Fixture on vs. off, paired seeds (D12).** This is the plot that quantifies how much of
    published seam-extraction performance is an artifact of pre-isolated workpieces. Report the
    `fixture_contact` false-positive rate separately — expect Baseline A to emit a phantom candidate
    along every part–fixture contact, since the fixture is a large clean plane and plane pairing has
    no notion of `role`
-7. **Error vs. sensor profile (D16)** — `d435i` / `stereo_good` / `stereo_poor`, same seeds
+8. **Error vs. sensor profile (D16)** — `d435i` / `stereo_good` / `stereo_poor`, same seeds
+9. **The D19 conversion table** — seam error under the root-line, gap-midline and nominal
+   definitions, as a function of `g`. Small, cheap, and it sits in a definitional crack nobody has
+   looked into
 
 **Effort:** ~1 week.
 
@@ -447,7 +523,7 @@ Cheap now that the infrastructure exists. Potentially the figure that carries th
 
 ---
 
-### Phase 6 — Curved seams
+### Phase 6 — Curved seams *and* the first real part-geometry diversity
 
 The five joint categories still apply — a circular fillet around a pipe stub on a plate is a T-joint
 with a closed curved seam.
@@ -455,10 +531,20 @@ with a closed curved seam.
 - [ ] Seam sampler: arcs, C-shapes, S-shapes (splines), closed curves
 - [ ] Part constructor: swept / curved plates, pipe-on-plate, cylinder-on-cylinder
 - [ ] Surface-pair intersection for the verification function (plane ∩ cylinder, quadric ∩ plane)
+- [ ] `surface` block on non-planar faces; `bspline` parametric form pinned before starting
+- [ ] Watertightness (D21) genuinely bites here — swept and revolved primitives produce degenerate
+      caps and duplicated seam vertices where slabs never could
 - [ ] Re-run Phase 4 baselines → **report where the plane-intersection baseline stops working**
 
-This phase is what defuses the trivial-label risk in `thesis_direction_handoff.md §3`. Straight-seam
-tack labels are arithmetic; curved-seam tack labels are not.
+**This phase now carries two loads, not one.** It defuses the trivial-label risk in
+`thesis_direction_handoff.md §3` — straight-seam tack labels are arithmetic, curved-seam ones are
+not — *and*, since ~~D17~~ was withdrawn, it is the first point at which `part_geometry_id` varies
+by anything other than dimensions. The D11 "held-out geometry" split only becomes a genuine
+geometry split here.
+
+That concentration is a scheduling risk worth naming: if Phase 6 slips, the paper ships with a
+held-out-dimensions split and straight seams only. Both are defensible if stated plainly; neither
+is defensible if described as something more.
 
 **Effort:** ~1 week.
 
@@ -505,10 +591,15 @@ the schema is shared.
 
 ### Phase 9 — Real subset + release
 
-- [ ] Scan MDF workpieces at known poses via the existing ICP pipeline → the reality-check subset
+- [ ] Scan MDF workpieces at known poses via the existing ICP pipeline → the reality-check subset.
+      **This is the other half of the geometry diversity story** (~~D17~~ withdrawn): scanned parts
+      carry saw kerf, edge break, warp and paint texture that no procedural feature vocabulary would
+      have reproduced honestly
 - [ ] Document the pose-uncertainty of the real subset honestly — it is *not* exact truth, and
       saying so protects the synthetic claim
-- [ ] Splits by held-out part geometry and joint configuration (D11)
+- [ ] Splits by held-out part geometry and joint configuration (D11). **State the scope**: a genuine
+      held-out *geometry* split exists only over Phase 6 primitives and the real subset; over
+      Phases 1–5 it is a held-out *dimensions* split
 - [ ] Generator on GitHub with all seeds; `make dataset` reproduces the release
 - [ ] Frozen release on Zenodo with a DOI
 - [ ] README with the schema, the parameter ranges, and the baseline numbers
@@ -558,8 +649,10 @@ small, defensible contribution on its own.
 
 Opened by Phase 0, all deferred (details in `PARAMETERS.md` §7):
 
-- [ ] Butt/edge root gap currently has no ISO citation — clause 617 governs *fillet* welds only.
-      ISO 9692-1 would make it citable. Before submission, not before Phase 1
+- [x] ~~Butt/edge root gap has no ISO citation~~ → **resolved**: ISO 9692-1:2013 Table 1 ref 1.2.1
+      (`b ≈ t`, one side) and Table 2 ref 2.1 (`b ≈ t/2`, both sides) for square preparation; edge
+      joints are ref 1.1 "raised edges" at `t ≤ 2 mm`. Gap **scales with thickness** — update the
+      sampler, it is not a flat range
 - [ ] Confirm the `d435i` profile's baseline / subpixel / min-Z against the real camera. Under D16
       this no longer gates the release — only the claim that `d435i` matches your hardware. One
       afternoon with a flat target at three ranges
@@ -573,7 +666,12 @@ Opened by Phase 0, all deferred (details in `PARAMETERS.md` §7):
 
 Opened by this revision:
 
-- [ ] Pick the feature vocabulary for D17 and freeze it before Phase 2 — `{chamfer, edge_fillet,
-      through_hole, slot, notch, stiffener}` is the proposed set
+- [x] ~~Pick the feature vocabulary for D17~~ → **withdrawn 2026-08-15**, D17 dropped entirely.
+      Parts are plain slabs through Phase 5; diversity comes from Phase 6 primitives and Phase 9
+      scans. No feature vocabulary to freeze
 - [ ] Decide whether `stereo_good` / `stereo_poor` are shipped in the release or only used for the
       §7 sensor-profile plot
+- [ ] Lap overlap length has no ISO citation and stays **[ours]**. AWS D1.1 or a fabrication text
+      may give a minimum (commonly quoted as some multiple of `t`) — worth one lookup before
+      submission, not before Phase 2
+- [ ] Pin the three D19 seam definitions precisely in `SCHEMA.md` §1 and name the stored one

@@ -1,6 +1,6 @@
 # Weld Seam Dataset — Parameter Ranges
 
-**params_version: 1.1.0** — frozen 2026-08-13, revised for D12/D16/D17.
+**params_version: 2.0.0** — tracks `SCHEMA.md`. 2.0.0 (2026-08-15) drops procedural features (D17 withdrawn); 1.2.0 added D18–D21 + ISO 9692-1.
 Phase 0 deliverable of [`../notes/dataset_plan.md`](../notes/dataset_plan.md) §5.
 Companion: [`SCHEMA.md`](SCHEMA.md).
 
@@ -16,7 +16,7 @@ Provenance tags used below:
 
 | Tag | Meaning |
 |---|---|
-| **[ISO]** | read out of `../notes/ISO 5817_Ed_4_2023.pdf`, page cited, verified against the PDF |
+| **[ISO]** | read out of a standard PDF in `../notes/`, page cited, **verified against the PDF**. ISO 5817:2023 = imperfection limits; ISO 9692-1:2013 = joint preparation |
 | **[repo]** | measured in this workspace, source file cited |
 | **[ds]** | vendor datasheet value, **not yet verified against hardware** — see §4.2 |
 | **[ours]** | our convention, with reasoning |
@@ -94,8 +94,81 @@ leg length `z` taken equal to the thinner plate. Recorded per scene in
 
 **Scope caveat.** Clause 617 is *"incorrect root gap for **fillet** welds"*. It governs
 `T`, `corner`, and `lap`. It does **not** apply to `butt` or `edge` joints, where the root
-gap is a joint-**preparation** dimension (ISO 9692-1), not an imperfection. For those two
-joint types the gap range in §3 is **[ours]** and is *not* ISO-limited — see §7.
+gap is a joint-**preparation** dimension — which is ISO 9692-1's subject, now in §2.6.
+
+### 2.6 Joint preparation — ISO 9692-1:2013 (D18)
+
+**A different standard for a different thing.** ISO 5817 above sets *imperfection* limits —
+how far the realized joint may deviate. ISO 9692-1 sets *preparation* geometry — what the
+joint is nominally supposed to be. **Keep the two vocabularies apart in the prose**, or a
+welding reviewer will read a design angle as a defect. That distinction is exactly D18:
+`joint.included_angle_deg` is the nominal, `fit.angular_misalignment_deg` is the deviation
+from it. A 70° T-joint is not a 90° T-joint with a 20° defect.
+
+**Fillet included angle (T, corner).** All values verified. **[ISO]**
+
+| Table | Ref | Thickness | Included angle `α` | Gap `b` |
+|---|---|---|---|---|
+| 3 — one side, p. 11 | 3.1.1 | `t₁ > 2`, `t₂ > 2` | `70° ≤ α ≤ 100°` | `≤ 2 mm` |
+| 3 — one side, p. 11 | 3.1.3 | `t₁ > 2`, `t₂ > 2` | `60° ≤ α ≤ 120°` | `≤ 2 mm` |
+| 4 — both sides, p. 12 | 4.1.1 | `t₁ > 3`, `t₂ > 3` | `70° ≤ α ≤ 100°` | `≤ 2 mm` |
+| 4 — both sides, p. 12 | 4.1.2 | `t₁ > 2`, **`t₂ > 5`** | `60° ≤ α ≤ 120°` | **not specified** |
+| 4 — both sides, p. 12 | 4.1.3 | `2 ≤ t₁ ≤ 4`, `2 ≤ t₂ ≤ 4` | not specified | `≤ 2 mm` |
+
+So **60–120° is [ISO], not [ours]**. Two details the summary reading loses: ref 4.1.2 has an
+**asymmetric** thickness condition (`t₂ > 5`, not `> 2`), and it is the one fillet ref with
+**no** gap limit — so "both tables cap the gap at 2 mm" is true of every fillet ref *except*
+4.1.2. Record which sub-clause each scene satisfies.
+
+**Footnote `b` on both Tables 3 and 4: *"Symbol is only applicable for α = 90°."*** Worth a
+sentence in the paper — the ISO 2553 fillet symbol, the standard drawing convention itself,
+silently assumes the right angle the generator is about to stop assuming.
+
+**Butt root gap, square preparation.** This closes the standing open item. **[ISO]**
+
+| Table | Ref | Thickness | Gap `b` |
+|---|---|---|---|
+| 1 — one side, p. 3 | 1.2.1 | `t ≤ 4` | `≈ t` |
+| 2 — both sides, p. 7 | 2.1 | `t ≤ 8` | `≈ t/2` (process-dependent variants: `≤ t/2` for 13; `≤ 15`, `c = 0` for 52) |
+
+**The gap scales with thickness.** It is not a flat 0–3 mm range, and the sampler must change
+accordingly — a 1 mm sheet gets a ~1 mm gap, an 8 mm plate a ~4 mm gap. This interacts
+directly with the §5 validity window, where `g` enters as a subtracted term.
+
+**Edge joints.** Table 1 ref 1.1, *"raised edges"*, applies at **`t ≤ 2 mm`** with no
+dimensions specified, remarked *"usually without filler metal"*. **[ISO]** A citable
+constraint and a convenient one: edge joints are a **thin-sheet** preparation, `t ≤ 2 mm` is
+exactly the stainless in the lab, and it is exactly where §5 predicts radius-PCA has no valid
+radius. Restricting edge scenes to `t ≤ 2 mm` makes the joint type a consequence of the
+standard rather than an arbitrary inclusion.
+
+**Table 2 footnote `b`, p. 10: *"Dimensions given apply to the tacked condition."*** **[ISO]**
+Carry this into Phase 7: the gaps the standard specifies are gaps *after tacking*, so the tack
+rule and the fit-up parameters are coupled, not independent. One line in the tack-rule docs.
+
+**Lap overlap has no ISO citation.** Neither 9692-1 nor ISO 2553 gives an overlap length;
+ISO 2553 Table 5 no. 7.1 lists "lap" only as an edge-weld symbol with `s` = weld metal
+thickness. Overlap stays **[ours]** — see §7.
+
+### 2.7 Lap and edge are the same topology at different offsets
+
+Both have **parallel** parts — included angle `0°`, not 90°. They differ only in whether the
+free edges coincide:
+
+| | `included_angle_deg` | `stack_offset_mm` | Seams | Seam `dihedral_deg` |
+|---|---|---|---|---|
+| **lap** | 0 | `0 < offset < L` | 2 toes | 90° |
+| **edge** | 0 | 0 (flush) | 1 along the free edge | ~180° (degenerate) |
+
+Two consequences worth stating in the paper:
+
+1. **`included_angle_deg` and `dihedral_deg` are different quantities.** A lap joint has
+   parallel parts (0° included) and a 90° seam dihedral. The schema carries both, and
+   conflating them is easy enough that `SCHEMA.md` §4 annotates the distinction inline.
+2. **Lap and edge fail the nearest-point rule for the same reason** — face-to-face contact
+   over an *area* rather than a line. Unifying them under one `stack_offset_mm`, with edge as
+   the `offset = 0` degenerate case, turns that shared failure mode into a *derivation*
+   rather than two anecdotes.
 
 ### 2.5 Quality level assignment
 
@@ -127,13 +200,16 @@ recomputable from `fit` + thicknesses + these tables.
 | Dissimilar thickness | `t_A ≠ t_B` in 30% of scenes | **[ours]** ISO defines `t` as the *smaller* thickness, which is only exercised if they differ. Free coverage of a real case |
 | Plate length `L` | 80 – 400 mm | **[ours]** the 232 mm reference seam **[repo]** sits mid-range |
 | Plate width `W` | 50 – 250 mm | **[ours]** |
-| Root gap `g` | 0 – 3 mm | **[ours]** deliberately exceeds the ISO limits at the top end (see §2.5 `below_D`) and, more importantly, exceeds the radius-PCA validity window for thin sheet — §5 |
+| Root gap `g` | butt: `≈ t` (1-side) / `≈ t/2` (2-side) **[ISO]**; fillet: `≤ 2 mm` **[ISO]**; plus an over-range tail to 3 mm **[ours]** | §2.6 — **gap scales with thickness**, it is not a flat range. The over-range tail is what generates `below_D` and breaks radius-PCA on purpose |
+| `included_angle_deg` | T, corner: 60 – 120° **[ISO]**; butt: 180°; lap, edge: 0° | §2.6, ISO 9692-1 Tables 3–4. **[ours]** for the butt/lap/edge degenerate values, which the standard states as topology rather than as an angle |
+| `stack_offset_mm` | lap: `0 < offset < L`; edge: 0; `null` otherwise | §2.7. Lap overlap **[ours]** — no ISO citation found |
+| Edge-joint thickness | `t ≤ 2 mm` **[ISO]** | §2.6, Table 1 ref 1.1. Not an arbitrary restriction — it is what the preparation is defined for |
 | Linear misalignment `h` | per §2.1, by target level | **[ISO]** |
 | Angular misalignment `β` | per §2.3, by target level | **[ours]** mapping over **[ISO]** values |
 | Seam curvature radius | 30 mm – ∞ | **[ours]** Phase 6 |
 | `contact_mode` | `free` when no fixture; else `flat 0.6 / on_edge 0.3 / propped 0.1` | **[ours]** how the assembly rests on the fixture; `flat` dominates because it is what magnets on a plate actually give |
 | Fixture present | ~50%, **paired** (D12) | see §3.1 |
-| Part features | none in Phase 1, sampled from Phase 2 (D17) | see §3.2 |
+| Part geometry | plain slabs (Phases 1–5); `swept_slab` / `cylinder` / `tube` from Phase 6 | see §3.2 |
 | Sensor profile | `d435i / stereo_good / stereo_poor` (D16) | see §4 |
 
 ### 3.1 Fixture — sampled and pose-varied (D12, revised 2026-08-13)
@@ -152,7 +228,7 @@ Models the steel plate the magnets hold against.
 
 **Pairing is a generation strategy, not a sampling rate.** Drawing presence independently
 at p = 0.5 gives random on/off with no guaranteed partner. Instead each geometry seed emits
-**both** arms — one fixture-on, one fixture-off — joined by `twin_key` (`SCHEMA.md` §6.3).
+**both** arms — one fixture-on, one fixture-off — joined by `twin_key` (`SCHEMA.md` §6.4).
 The marginal is 50% and every scene has an exact twin.
 
 **Why tilt and free height matter more than they look.** With the working surface pinned to
@@ -171,26 +247,25 @@ large clean planar patch, so **Baseline A (plane segmentation + pairwise interse
 extra plane pairs** and will emit a phantom candidate along every part–fixture contact —
 plane pairing has no notion of `role`. That is a result about the baseline, not a bug.
 
-### 3.2 Procedural part features (D17)
+### 3.2 Part geometry — plain slabs through Phase 5
 
-Empty in Phase 1, sampled from Phase 2. Vocabulary is **provisional** — freeze before
-Phase 2, because it feeds `part_geometry_id` and therefore the D11 split key
-(`SCHEMA.md` §2.2.1, §5.4).
+**No procedural features.** D17 proposed generating chamfers, holes, slots, notches and
+stiffeners on the slabs; it was **withdrawn 2026-08-15** as decoration dressed as diversity.
 
-| Feature | Proposed range | Note |
+| Phase | Primitives generated | What varies |
 |---|---|---|
-| `chamfer` | 1 – 5 mm, on free edges | subtractive; `w`-invariant holds |
-| `edge_fillet` | r = 1 – 6 mm, on free edges | subtractive; `w`-invariant holds |
-| `through_hole` | d = 4 – 20 mm, 0 – 4 per part, ≥ 2d from any edge | subtractive; adds a `lateral` bore face |
-| `slot` | 6 – 20 mm wide, 20 – 80 mm long | subtractive |
-| `notch` | corner cut-outs, 10 – 40 mm | subtractive; creates extra concave edges — expect these to fire in radius-PCA and be rejected by D4 |
-| `stiffener` | 3 – 10 mm thick, 20 – 60 mm tall | **additive — the awkward one, see `SCHEMA.md` §2.2.1** |
+| 1 – 5 | `slab` only | dimensions: `L`, `W`, `t` |
+| 6 | `+ swept_slab`, `cylinder`, `tube` | genuine shape — curved plates, pipe-on-plate, cylinder-on-cylinder |
+| 9 | scanned MDF workpieces | genuine shape, plus saw kerf, edge break, warp and paint texture |
 
-Features per part: 0 with p = 0.4, then 1 – 3 **[ours]**. Rate kept moderate so the
-featureless case stays well-represented as its own control.
+The consequence to state rather than hide: **over Phases 1–5 the D11 split holds out
+_dimensions_, not geometry.** Both are legitimate held-out axes; only one of them is what
+"held-out geometry" sounds like. `SCHEMA.md` §5.4 carries the same caveat at the point where
+`part_geometry_id` is defined, so a reader meets it wherever they enter.
 
-**Why they belong in Phase 2 and not later:** they change `part_geometry_id`, which is the
-D11 split key. Adding them after Phase 4 is precisely the schema churn named as a risk.
+Real irregularity is what the Phase 9 scans are for, and it is not something a feature
+vocabulary reproduces honestly — a modelled chamfer is a clean bevel; a real edge break is
+not.
 
 ---
 
@@ -209,7 +284,7 @@ and adds `min_z_mm`, because the blind zone is a sensor property, not a schema c
 | `stereo_poor` | 35 mm | 450 | 0,15 px | 400 mm | **[ours]** a worse one |
 
 Two consequences. **Sensor quality becomes a benchmark axis** (Phase 4 plot 7), generated
-in exact twins via `twin_key` (`SCHEMA.md` §6.3). And the datasheet-confirmation item stops
+in exact twins via `twin_key` (`SCHEMA.md` §6.4). And the datasheet-confirmation item stops
 gating the release — it now gates only `d435i`'s claim to match the lab camera.
 
 ### 4.1 Pose sampling
@@ -318,6 +393,42 @@ set as the Phase 5 annotation-error experiment.
 
 Sampling must therefore deliberately cover the closed region. It is not a region to avoid.
 
+### 5.0 What the ISO-scaled gap does to the prediction (D18 / §2.6)
+
+The tables above sweep `g` as a free parameter. Once §2.6 fixes `g` as a **function of `t`**,
+the window condition `g + spacing < t` collapses to something much sharper. Scoped to
+**square preparation**, which is all Phases 1–6 generate (`joint.prep = "square"`):
+
+| Joint | ISO gap | Window condition | Consequence |
+|---|---|---|---|
+| **butt, welded one side** (Table 1 ref 1.2.1, `t ≤ 4`) | `b ≈ t` | `t + spacing < t` | **Never satisfiable.** `spacing > 0` always |
+| butt, welded both sides (Table 2 ref 2.1, `t ≤ 8`) | `b ≈ t/2` | `spacing < t/2` | `t > 2 · spacing` |
+| fillet — T, corner (Tables 3–4) | `b ≤ 2 mm` | `2 + spacing < t` | `t > 2 + spacing` |
+
+| Sampling | spacing | butt 2-side needs | fillet needs |
+|---|---|---|---|
+| `ρ = 0,25` pts/mm² | 2,00 mm | `t > 4,0` | `t > 4,0` |
+| `ρ = 1` | 1,00 mm | `t > 2,0` | `t > 3,0` |
+| `ρ = 4` | 0,50 mm | `t > 1,0` | `t > 2,5` |
+| `d435i` raster @ 500 mm | 0,74 mm | `t > 1,5` | `t > 2,7` |
+| `d435i` raster @ 1000 mm | 1,48 mm | `t > 3,0` | `t > 3,5` |
+| `stereo_poor` raster @ 500 mm | 1,11 mm | `t > 2,2` | `t > 3,1` |
+
+**The first row is the striking one:** for a square-preparation butt joint welded from one
+side, ISO specifies a root gap equal to the plate thickness — so the radius-PCA validity
+window is empty **at every thickness, every density, and every sensor**. Not "closes for thin
+sheet"; closed outright, by the standard's own preparation geometry.
+
+Three caveats that must travel with that claim, or it is overstated:
+
+- It is scoped to **square preparation**. Ref 1.3 (single-V, `3 < t ≤ 10`) has `b ≤ 4 mm` and
+  a bevel, so it is a different geometry — and out of scope until a `prep` beyond `"square"`
+  is generated.
+- `b ≈ t` is a *recommended* preparation dimension, not a tolerance. Real fit-up varies, and
+  Table 2's footnote says the dimensions apply to the **tacked** condition (§2.6).
+- It says radius-PCA has no valid *radius*, not that no method works. A plane-pair baseline is
+  unaffected by this bound — which is itself the comparison the table is for.
+
 ### 5.1 The sharper form under D16 — and what it costs
 
 Under `camera_raster` sampling (`SCHEMA.md` §5.1) density is **not** free: it follows from
@@ -350,7 +461,28 @@ independently, so the failure is a property of the sensor class, not of a sampli
 currently a reserved schema slot implemented in Phase 3. Under `area_uniform` only the
 weaker density-swept table above is supportable. If the headline figure is to be the table
 in this section, `camera_raster` is **not optional** — plan it into Phase 3 rather than
-discovering the dependency while writing the paper.
+discovering the dependency while writing the paper. Note also D20: under a raster the hidden
+surface is sampled separately, so density is not uniform across the visibility boundary and
+any density-sensitive metric must be computed within a mask class (`SCHEMA.md` §5.1).
+
+### 5.2 The fourth axis — included angle (D18)
+
+Everything above treats the window as a function of `(t, g, ρ)`. It is really a **surface over
+`(t, g, ρ, α)`**, because radius-PCA's `V = λ₃/(λ₁+λ₂+λ₃)` signature is a function of the fold
+the neighbourhood spans, and D18 makes that fold a sampled parameter rather than a constant 90°.
+
+The two limits are worth stating even before measuring:
+
+- **`α → 180°`** (flush, the `edge`-joint degenerate case, §2.7) — there is no fold. `λ₃ → 0`,
+  `V → 0`, and the seam is invisible to a curvature feature *no matter how good the sensor is*.
+- **`α → 0°`** (parallel, the `lap` case) — the neighbourhood spans two parallel surfaces `g`
+  apart. `V` is driven by the separation rather than by a fold, so the feature fires on a
+  quantity that has nothing to do with the seam being where it is.
+
+That is the mechanism behind "lap and edge are where naive methods die" (Phase 4 plot 4) —
+and §2.7's unification means it is **one** mechanism at two ends of one parameter, not two
+separate anecdotes. **No closed form is asserted here**; Phase 4 plot 6 measures the surface.
+The prediction on offer is only the sign and the limits, which is enough to be falsifiable.
 
 ---
 
@@ -361,7 +493,7 @@ Shipped in `configs/`, hashed into `config_id` (`SCHEMA.md` §3.2).
 | Preset | Purpose |
 |---|---|
 | `default.yaml` | the full sweep over §2–§4 |
-| `phase1.yaml` | T-joint only, straight seams, **fixture off** (`contact_mode: "free"`), no features. The Phase 1 working config |
+| `phase1.yaml` | T-joint only, straight seams, **fixture off** (`contact_mode: "free"`). The Phase 1 working config |
 | `thin_sheet.yaml` | `t ∈ [1,3]`, `g ∈ [0,3]`, `ρ ∈ [0.25,4]`, all three sensor profiles — dense coverage of the §5 / §5.1 closure boundary |
 | `reference_tjoint.yaml` | pins the repo's measured T-joint: `t = 8,4 mm`, `g = 1,1 mm`, seam 232 mm, spacing 2,7 mm, profile `d435i` **[repo]**. A regression fixture, and the one scene that ties the generator to a real measurement |
 | `lab_fixture.yaml` | the measured steel plate, fixture forced on — the closest synthetic analogue of the Phase 9 real scans |
@@ -370,7 +502,7 @@ Shipped in `configs/`, hashed into `config_id` (`SCHEMA.md` §3.2).
 
 Ablation presets emit **paired arms**, never independent draws — `fixture_ablation.yaml`
 (on/off) and `sensor_ablation.yaml` (three profiles) both hold substreams 0–2 fixed and vary
-one axis, so every scene has an exact `twin_key` partner (`SCHEMA.md` §6.3).
+one axis, so every scene has an exact `twin_key` partner (`SCHEMA.md` §6.4).
 
 ---
 
@@ -379,9 +511,10 @@ one axis, so every scene has an exact `twin_key` partner (`SCHEMA.md` §6.3).
 | Item | Why it matters | When |
 |---|---|---|
 | ~~Confirm ISO 5817 Table 1 has no 508 row~~ | **RESOLVED** — verified two ways, §2.3. Table 1 numbering skips `3.3`, and "508" is absent from pp. 11–24 | done 2026-08-13 |
-| **Freeze the D17 feature vocabulary** (§3.2) | it feeds `part_geometry_id` = the D11 split key. The `stiffener` case is genuinely undecided: additive features break the `w`-is-thickness invariant, so it is either a namespaced sub-body with its own frame or a separate workpiece object | **before Phase 2** |
 | `camera_raster` sampling mode (§5.1) | the sharp per-sensor form of the window prediction depends on it. Under `area_uniform` only the weaker density-swept claim holds | **plan into Phase 3** |
-| Butt/edge root-gap range has no ISO citation (§2.4) | currently **[ours]**; ISO 9692-1 would make it **[ISO]** | before submission, not before Phase 1 |
+| ~~Butt/edge root-gap range has no ISO citation~~ | **RESOLVED** — ISO 9692-1:2013 Table 1 ref 1.2.1 (`b ≈ t`), Table 2 ref 2.1 (`b ≈ t/2`), edge = ref 1.1 at `t ≤ 2 mm`. All verified, §2.6. **The sampler must change**: gap scales with thickness | done 2026-08-15 |
+| **Lap overlap length** stays **[ours]** (§2.6) | neither ISO 9692-1 nor ISO 2553 gives a minimum. AWS D1.1 or a fabrication text may quote one as a multiple of `t` | one lookup before submission, not before Phase 2 |
+| Non-square preparations (single-V, backing, centering lip) | §5.0's "never satisfiable" result is scoped to square prep. Widening `joint.prep` beyond `"square"` is a real extension of the joint space, and Table 1 refs 1.2.2–1.3 give the dimensions | after Phase 6, if at all |
 | Confirm `d435i` baseline / subpixel / min-Z against hardware (§4.0, §4.2) | **[ds]**; under D16 this gates only that profile's fidelity claim, not the release | before the release is frozen |
 | Resolve the 10× sim-noise discrepancy (§4.2) | either a stale default in the twin or deliberate pessimism — worth knowing which. Note it lands near `stereo_poor` | Phase 3 |
 | Measure the real fixture plate (§3.1) | under D12 the exact dims matter less — presence and pose both vary — but `lab_fixture.yaml` should be real | Phase 3 |

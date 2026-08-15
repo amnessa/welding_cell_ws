@@ -1,13 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/amnessa/weld_generator/schema/scene-1.1.0.json",
+  "$id": "https://github.com/amnessa/weld_generator/schema/scene-2.0.0.json",
   "title": "Weld seam dataset — scene",
-  "description": "Machine-checkable form of docs/SCHEMA.md v1.1.0. Prose wins on intent; this file wins on shape.",
+  "description": "Machine-checkable form of docs/SCHEMA.md v2.0.0. Prose wins on intent; this file wins on shape.",
   "type": "object",
   "required": [
     "schema_version", "generator_version", "scene_id", "config_id", "seed", "tier",
-    "twin_key", "units", "joint", "objects", "faces", "fit", "T_world_joint", "seams",
-    "camera", "noise_model", "cloud", "provenance"
+    "twin_key", "units", "joint", "seam_definition", "accessibility", "objects", "faces",
+    "fit", "T_world_joint", "seams", "camera", "noise_model", "cloud", "provenance"
   ],
   "additionalProperties": false,
 
@@ -22,25 +22,13 @@
     },
     "faceRef": {
       "type": "string",
-      "pattern": "^[A-Z]:([+-][uvw]|lateral[+-]|(chamfer|edge_fillet|through_hole|slot|notch|stiffener)\\d+(\\.[a-z+_-]+)?)$",
-      "description": "<object_id>:<face_name>, per SCHEMA.md 2.2 and 2.2.1. Feature faces are <kind><index>[.<sub>]; the feature vocabulary is PROVISIONAL until frozen before Phase 2."
-    },
-    "feature": {
-      "type": "object",
-      "required": ["kind", "index", "params"],
-      "properties": {
-        "kind": {
-          "enum": ["chamfer", "edge_fillet", "through_hole", "slot", "notch", "stiffener"],
-          "description": "PROVISIONAL (D17). Freeze before Phase 2 — feeds part_geometry_id, the D11 split key."
-        },
-        "index": { "type": "integer", "minimum": 0 },
-        "params": { "type": "object" }
-      }
+      "pattern": "^[A-Z]:([+-][uvw]|lateral[+-])$",
+      "description": "<object_id>:<face_name>, per SCHEMA.md 2.2. Primitive face registry only - D17 procedural features were withdrawn 2026-08-15."
     }
   },
 
   "properties": {
-    "schema_version": { "const": "1.1.0" },
+    "schema_version": { "const": "2.0.0" },
     "generator_version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
     "scene_id": { "type": "string", "pattern": "^[0-9a-f]{8}-\\d{10}$" },
     "config_id": { "type": "string", "pattern": "^[0-9a-f]{8}$" },
@@ -48,7 +36,7 @@
     "tier": { "type": "integer", "enum": [1, 2] },
     "twin_key": {
       "type": "string", "pattern": "^[0-9a-f]{16}$",
-      "description": "SCHEMA.md 6.3 — identical across ablation arms sharing workpiece geometry and seam truth."
+      "description": "SCHEMA.md 6.4 — identical across ablation arms sharing workpiece geometry and seam truth."
     },
 
     "units": {
@@ -62,7 +50,6 @@
 
     "joint": {
       "type": "object", "additionalProperties": false,
-      "required": ["type", "seam_shape", "quality_level", "contact_mode"],
       "properties": {
         "type": { "enum": ["T", "corner", "butt", "lap", "edge"] },
         "seam_shape": { "enum": ["line", "arc", "spline", "closed"] },
@@ -70,7 +57,48 @@
         "contact_mode": {
           "enum": ["free", "flat", "on_edge", "propped"],
           "description": "\"free\" iff no fixture object is present (D12) — enforced by the root allOf."
+        },
+        "included_angle_deg": {
+          "type": "number", "minimum": 0, "maximum": 180,
+          "description": "D18 — DESIGN nominal (ISO 9692-1), NOT fit.angular_misalignment_deg and NOT seams[].dihedral_deg. Per-type ranges enforced by the root allOf."
+        },
+        "stack_offset_mm": {
+          "type": ["number", "null"], "minimum": 0,
+          "description": "D18/PARAMETERS 2.7 — lap: 0 < offset < L; edge: 0; null for T/corner/butt."
+        },
+        "prep": {
+          "enum": ["square"],
+          "description": "ISO 9692-1 preparation class. Only square preparation is generated in Phases 1-6; PARAMETERS 5.0's result is scoped to it."
         }
+      },
+      "required": ["type", "seam_shape", "quality_level", "contact_mode",
+                   "included_angle_deg", "stack_offset_mm", "prep"]
+    },
+
+    "seam_definition": {
+      "const": "nominal",
+      "description": "D19 / SCHEMA.md 1.3 — which of {nominal, root, gap_mid} seams[] stores. Stored is always nominal; the other two are derived arrays in seams.npz."
+    },
+
+    "accessibility": {
+      "type": "object", "additionalProperties": false,
+      "required": ["torch_clearance", "dihedral_min_deg", "dihedral_max_deg",
+                   "contact_tol_mm", "min_seam_length_mm"],
+      "description": "The parameters that decide reject_reason. Recorded so every rejection is reproducible without rerunning the generator.",
+      "properties": {
+        "torch_clearance": {
+          "type": "object", "additionalProperties": false,
+          "required": ["half_angle_deg", "standoff_mm"],
+          "description": "A cone, not a scalar — a real nozzle has finite width, so acute-angle joints yield bisector_blocked from physical reachability rather than an arbitrary threshold.",
+          "properties": {
+            "half_angle_deg": { "type": "number", "exclusiveMinimum": 0, "maximum": 90 },
+            "standoff_mm": { "type": "number", "exclusiveMinimum": 0 }
+          }
+        },
+        "dihedral_min_deg": { "type": "number", "minimum": 0, "maximum": 180 },
+        "dihedral_max_deg": { "type": "number", "minimum": 0, "maximum": 180 },
+        "contact_tol_mm": { "type": "number", "minimum": 0 },
+        "min_seam_length_mm": { "type": "number", "exclusiveMinimum": 0 }
       }
     },
 
@@ -86,7 +114,7 @@
       "items": {
         "type": "object", "additionalProperties": false,
         "required": ["id", "role", "object_id", "primitive", "dims_mm",
-                     "thickness_mm", "features", "part_geometry_id", "mesh", "T_world_part"],
+                     "thickness_mm", "part_geometry_id", "mesh", "T_world_part"],
         "properties": {
           "id": { "type": "string", "pattern": "^[A-Z]$" },
           "role": { "enum": ["workpiece", "fixture"] },
@@ -94,29 +122,14 @@
           "primitive": { "enum": ["slab", "swept_slab", "cylinder", "tube"] },
           "dims_mm": { "type": "array", "minItems": 1, "items": { "type": "number", "exclusiveMinimum": 0 } },
           "thickness_mm": { "type": "number", "exclusiveMinimum": 0 },
-          "features": { "type": "array", "items": { "$ref": "#/$defs/feature" } },
           "part_geometry_id": {
             "type": "string",
-            "pattern": "^([a-z_]+_[0-9.x]+(_f[0-9a-f]{8})?|mesh_[0-9a-f]{8,})$",
-            "description": "SCHEMA.md 5.4 — MUST include the feature hash when features are present, or the D11 split key is wrong."
+            "pattern": "^([a-z_]+_[0-9.x]+|mesh_[0-9a-f]{8,})$",
+            "description": "SCHEMA.md 5.4 - <primitive>_<dims> for Phases 1-6 primitives, mesh_<hash> for Phase 6 assets. Over Phases 1-5 this varies only by DIMENSIONS, so the D11 split is a held-out-dimensions split."
           },
           "mesh": { "type": ["string", "null"] },
           "T_world_part": { "$ref": "#/$defs/mat4" }
-        },
-        "allOf": [
-          {
-            "$comment": "D17: a part with features MUST carry the feature hash in its part_geometry_id, or the D11 split key is wrong.",
-            "if": {
-              "properties": { "features": { "minItems": 1 } },
-              "required": ["features"]
-            },
-            "then": {
-              "properties": {
-                "part_geometry_id": { "pattern": "(_f[0-9a-f]{8}$)|(^mesh_)" }
-              }
-            }
-          }
-        ]
+        }
       }
     },
 
@@ -310,6 +323,57 @@
       "else": {
         "properties": { "joint": { "properties": {
           "contact_mode": { "const": "free" } } } }
+      }
+    },
+    {
+      "$comment": "D18: fillet joints carry an ISO 9692-1 included angle. PARAMETERS.md 2.6.",
+      "if": {
+        "properties": { "joint": { "properties": {
+          "type": { "enum": ["T", "corner"] } }, "required": ["type"] } },
+        "required": ["joint"]
+      },
+      "then": {
+        "properties": { "joint": { "properties": {
+          "included_angle_deg": { "minimum": 60, "maximum": 120 },
+          "stack_offset_mm": { "type": "null" } } } }
+      }
+    },
+    {
+      "$comment": "D18: butt joints are coplanar - 180 deg included, no stack offset.",
+      "if": {
+        "properties": { "joint": { "properties": {
+          "type": { "const": "butt" } }, "required": ["type"] } },
+        "required": ["joint"]
+      },
+      "then": {
+        "properties": { "joint": { "properties": {
+          "included_angle_deg": { "const": 180 },
+          "stack_offset_mm": { "type": "null" } } } }
+      }
+    },
+    {
+      "$comment": "D18/PARAMETERS 2.7: lap and edge are one topology - parallel parts, 0 deg included, differing only in stack_offset_mm.",
+      "if": {
+        "properties": { "joint": { "properties": {
+          "type": { "enum": ["lap", "edge"] } }, "required": ["type"] } },
+        "required": ["joint"]
+      },
+      "then": {
+        "properties": { "joint": { "properties": {
+          "included_angle_deg": { "const": 0 },
+          "stack_offset_mm": { "type": "number", "minimum": 0 } } } }
+      }
+    },
+    {
+      "$comment": "PARAMETERS 2.7: edge is the flush degenerate case of lap.",
+      "if": {
+        "properties": { "joint": { "properties": {
+          "type": { "const": "edge" } }, "required": ["type"] } },
+        "required": ["joint"]
+      },
+      "then": {
+        "properties": { "joint": { "properties": {
+          "stack_offset_mm": { "const": 0 } } } }
       }
     },
     {

@@ -1,6 +1,6 @@
 # Weld Seam Dataset — Scene Schema
 
-**schema_version: 1.1.0** — frozen 2026-08-13, minor bump 2026-08-13 for D12/D16/D17.
+**schema_version: 2.0.0** — 1.0.0 frozen 2026-08-13; 1.1.0 D12/D16; 1.2.0 D18–D21; **2.0.0 (2026-08-15) removes `objects[].features`** — D17 withdrawn.
 Phase 0 deliverable of [`../notes/dataset_plan.md`](../notes/dataset_plan.md) §4.
 Companion: [`PARAMETERS.md`](PARAMETERS.md).
 
@@ -22,6 +22,12 @@ Change policy, semver on `schema_version`:
 `schema_version` is the *format*. `generator_version` is the *code that filled it in*.
 They move independently: a generator bugfix that changes geometry bumps
 `generator_version` and forces regeneration without touching `schema_version`.
+
+**2.0.0 is a major bump because `objects[].features` — a required field — was removed** when
+D17 was withdrawn (§2.2.1). The policy above says that costs a full regeneration and a new
+DOI. It costs neither here, because **no scenes have been generated yet**; Phase 1 has not
+started. Recorded anyway, because the policy is only worth having if it is applied when it is
+free as well as when it hurts.
 
 ---
 
@@ -89,6 +95,44 @@ Both cited constructions are the same geometry with opposite sign conventions �
 Yi et al. write `v₀ = v₁ + v₂`, Wang et al. write `Z_W = −(n_b + n_m)`. We store
 `approach_dir` (torch-ward) and say so here so nobody has to guess.
 
+### 1.3 What "the seam" means when the root gap is non-zero (D19)
+
+**This is a definition, not a measurement, and the dataset must state which one it stores.**
+
+At `g > 0` the two joint faces do not touch, so there is no single curve that is obviously
+"the seam". Three candidates exist, they are **not** the same curve, and the spread between
+them is `O(g)` — at the reference gap of 1,1 mm **[repo]** that is larger than the ~0,6 mm
+RMSE the literature reports. A paper comparing against a dataset that never says which one
+it used is comparing against an unknown systematic offset.
+
+Let `F_A ⊂ Π_A` and `F_B ⊂ Π_B` be the two joint faces, separated by root gap `g`.
+
+| Name | Definition | Symmetric in A↔B? | Moves with `g`? |
+|---|---|---|---|
+| **`nominal`** ← **STORED** | `Π_A ∩ Π_B`, the intersection of the two **extended supporting planes**, clipped to where both faces have support. The line the seam would occupy at `g = 0`. | yes — plane intersection is commutative | **no** |
+| `root` | The boundary edge of the **terminating** face — the edge at which one face stops because the part ends there. For a T-fillet, the bottom edge of the standing plate's side face. | **no** — swapping which part terminates changes the curve | yes |
+| `gap_mid` | Midpoints of the closest-point pairs between `F_A` and `F_B`. | yes | yes |
+
+**`nominal` is the stored definition.** `seams[].parametric` and `seams[].sampled` are always
+`nominal`. Three reasons, in order of weight:
+
+1. It is a property of the **design**, not of the realized fit-up, so it does not move when
+   `g` is resampled. That makes it the stable reference against which the other two are
+   measured, rather than one moving target among three.
+2. It is symmetric under A↔B relabelling. `root` is not, and an asymmetric ground truth
+   silently encodes part ordering into the label.
+3. It is continuous as `g → 0`, where all three converge — so the zero-gap and non-zero-gap
+   scenes lie on one curve instead of two.
+
+For a 90° fillet with the standing plate lifted by `g`, the three are collinear and offset by
+`0`, `g/2`, `g` respectively. **That closed form does not survive D18** — once the included
+angle is sampled over 60–120°, the offsets depend on `α`. So the generator does not publish a
+formula; it emits `root` and `gap_mid` as **derived arrays** alongside `nominal` (§5.2), and
+the conversion is read off numerically per scene.
+
+That is what makes the Phase 4 D19 conversion table cheap: it is a subtraction over arrays
+that already exist, not a re-derivation.
+
 ---
 
 ## 2. Naming registries
@@ -105,7 +149,8 @@ Objects are listed in `objects[]`. Each has:
 - `object_id` — the `uint8` written per-point in `cloud.npz`. Workpieces are `0,1,2,…`
   in `objects[]` order; **the fixture is always `255`**, so workpiece ids stay
   contiguous from 0 no matter how many parts a scene has.
-- `features` — D17, see §2.2.1. Empty list when the part is a bare primitive.
+- `primitive` — the shape family, from the §2.2 registry. Parts are **plain slabs through
+  Phase 5**; `swept_slab`, `cylinder` and `tube` arrive in Phase 6.
 
 **The fixture is optional (D12).** A scene contains at most one `role: "fixture"` object.
 When absent, `joint.contact_mode` is `"free"` and no `object_id` 255 appears in the cloud.
@@ -136,38 +181,23 @@ special case.
 
 **Face reference string:** `"<object_id>:<face_name>"` → `"A:+w"`, `"F:+w"`, `"B:-v"`.
 
-#### 2.2.1 Procedural feature faces (D17)
+#### 2.2.1 Where part-geometry diversity comes from
 
-Parts carry `features: []` — chamfers, hole, slots and so on, applied to the base
-primitive. This exists because with bare slabs the D11 "held-out geometry" split is really
-a held-out *dimensions* split, which is a much weaker claim than it sounds.
+Not from procedural features. An earlier revision (D17) proposed generating chamfers, holes,
+slots, notches and stiffeners on the slabs; **it was withdrawn 2026-08-15**. Those features
+were decoration dressed as diversity — they would have let the D11 "held-out geometry" split
+*claim* held-out geometry while really holding out dimensions with cosmetic variation on top.
 
-Proposed vocabulary (**provisional** — freeze before Phase 2; adding a member afterwards is
-a minor bump, §0):
+The honest position, which the rest of these docs now state plainly:
 
-```
-chamfer | edge_fillet | through_hole | slot | notch | stiffener
-```
+| Phase | Part geometry | What the D11 split actually holds out |
+|---|---|---|
+| 1 – 5 | plain slabs | **dimensions** |
+| 6 | `swept_slab`, `cylinder`, `tube` — curved plates, pipe-on-plate | genuine geometry |
+| 9 | scanned MDF workpieces | genuine geometry, with real saw kerf, edge break, warp and paint |
 
-Faces a feature introduces are named `<kind><index>`, optionally `.<sub>` where the feature
-contributes several faces:
-
-```
-A:through_hole0        A:chamfer2        A:slot1.wall+u        A:stiffener0.+w
-```
-
-**The `w`-is-thickness invariant survives — with one exception, and it is worth naming
-before the vocabulary is frozen.** `chamfer`, `edge_fillet`, `through_hole`, `slot` and
-`notch` are *subtractive*: they remove material from the slab without touching its local
-`(u, v, w)` frame, so `±w` remain the broad faces and the Phase 7 edge-margin rule is
-unaffected. **`stiffener` is additive** — it is a second slab with its own thickness axis,
-which is generally *not* the parent's `w`. Two honest options: model it as a sub-body whose
-faces are namespaced `stiffener<i>.<face>` **and** carry their own local frame, or promote
-it to a separate `role: "workpiece"` object. The second is cleaner but changes the joint's
-semantics (a stiffener welded to a plate *is* a T-joint), so it is not free. This is the
-item to settle when picking the vocabulary.
-
-Features change `part_geometry_id` — see §5.4. They must, or the split key is wrong.
+Phase 6 and Phase 9 are where varied geometry is the *point* rather than the garnish, and
+scanned parts carry the kind of irregularity no feature vocabulary reproduces honestly.
 
 ### 2.3 The scene face registry
 
@@ -222,7 +252,7 @@ in the scene.
 fixture-free control to compare it against — that pairing is the Phase 4 plot quantifying
 how much published seam-extraction performance is an artifact of pre-isolated workpieces.
 Uniform presence makes the dataset harder without making it informative. See `twin_key`
-(§6.3) for how the on/off arms are joined.
+(§6.4) for how the on/off arms are joined.
 
 ### 2.6 `reject_reason` vocabulary — frozen
 
@@ -307,7 +337,7 @@ regenerable — you can reproduce any single scene from its id alone.
   "config_id": "3f9a21c4",
   "seed": 8412337,
   "tier": 1,
-  "twin_key": "a91cf3e2b7d40518",  // §6.3 — joins ablation arms with identical geometry
+  "twin_key": "a91cf3e2b7d40518",  // §6.4 — joins ablation arms with identical geometry
 
   "units": { "length": "mm", "angle": "deg" },
 
@@ -315,31 +345,41 @@ regenerable — you can reproduce any single scene from its id alone.
     "type": "T",                  // T | corner | butt | lap | edge
     "seam_shape": "line",         // line | arc | spline | closed
     "quality_level": "C",         // ISO 5817 level the sampled defects satisfy — PARAMETERS.md §3
-    "contact_mode": "flat"        // free | flat | on_edge | propped;  "free" ⟺ no fixture (D12)
+    "contact_mode": "flat",       // free | flat | on_edge | propped;  "free" ⟺ no fixture (D12)
+    "included_angle_deg": 90.0,   // D18 — DESIGN nominal, ISO 9692-1. NOT a defect, NOT dihedral_deg
+    "stack_offset_mm": null,      // D18 — lap/edge only; lap: 0 < offset < L, edge: 0. null otherwise
+    "prep": "square"              // ISO 9692-1 preparation class; "square" for all of Phases 1–6
+  },
+
+  "seam_definition": "nominal",   // D19 §1.3 — which of the three curves seams[] stores
+
+  "accessibility": {              // the parameters that decide `bisector_blocked` — recorded so
+    "torch_clearance": {          // every reject_reason is reproducible without rerunning
+      "half_angle_deg": 30.0,     // a real nozzle is a cone, not a ray
+      "standoff_mm": 15.0
+    },
+    "dihedral_min_deg": 30.0,
+    "dihedral_max_deg": 170.0,
+    "contact_tol_mm": 3.0,
+    "min_seam_length_mm": 10.0
   },
 
   "objects": [
     { "id": "A", "role": "workpiece", "object_id": 0,
       "primitive": "slab", "dims_mm": [200.0, 120.0, 8.0], "thickness_mm": 8.0,
-      "features": [],
       "part_geometry_id": "slab_200.0x120.0x8.0",
       "mesh": null,
       "T_world_part": [[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]] },
 
     { "id": "B", "role": "workpiece", "object_id": 1,
       "primitive": "slab", "dims_mm": [200.0, 90.0, 8.0], "thickness_mm": 8.0,
-      "features": [                                    // D17, §2.2.1
-        { "kind": "through_hole", "index": 0, "params": { "d_mm": 12.0, "at_uv_mm": [60.0, 0.0] } },
-        { "kind": "chamfer", "index": 0, "params": { "edge": "+u/+w", "size_mm": 2.0 } }
-      ],
-      "part_geometry_id": "slab_200.0x90.0x8.0_f3e91a0c7",
+      "part_geometry_id": "slab_200.0x90.0x8.0",
       "mesh": null,
       "T_world_part": [[...]] },
 
     // present in ~50% of scenes from Phase 2 (D12); absent ⟺ contact_mode "free"
     { "id": "F", "role": "fixture", "object_id": 255,
       "primitive": "slab", "dims_mm": [600.0, 400.0, 10.0], "thickness_mm": 10.0,
-      "features": [],
       "part_geometry_id": "slab_600.0x400.0x10.0",
       "mesh": null,
       "T_world_part": [[...]] }        // tilted ±10°, working surface NOT pinned to z = 0
@@ -373,7 +413,8 @@ regenerable — you can reproduce any single scene from its id alone.
         "p1_mm": [232.0, 0.0, 0.0]
       },
       "length_mm": 232.0,
-      "dihedral_deg": 90.0,
+      "dihedral_deg": 90.0,          // the SEAM's dihedral — a lap joint has 0° included
+                                     // angle and a 90° seam dihedral. Not the same quantity (D18)
       "sampled": { "array": "seam_0", "density_per_mm": 10.0, "n": 2321 },
       "occluded_fraction": 0.34
     },
@@ -495,13 +536,37 @@ pixel raster whose surface density falls off with range and incidence angle. Bot
 are in the schema from day one so the single-view benchmark condition can be made
 genuinely camera-like without a schema bump.
 
+**D20 — the raster mode breaks D6's subset assumption, and the fix is in the sampler.**
+D6 stores one cloud plus a `visible_from_cam` mask, which presumes the single-view cloud is
+a *subset* of the full cloud. That holds for `area_uniform`. It fails for `camera_raster`,
+because a raster only produces points where a ray hit — there is no natural sample of the
+surface the camera cannot see, so the mask would be all-`true` and `occluded_fraction`
+would collapse to zero exactly when the scene is hardest.
+
+So under `camera_raster` the hidden surface is sampled **separately, at matched density**,
+and flagged `visible_from_cam: false`:
+
+```
+visible   points ← ray hits from the camera        (raster density z/f_px)
+invisible points ← area-uniform sample of the remaining surface,
+                   rate-matched to the local raster density
+```
+
+The union is stored as one cloud, so D6's file layout is untouched and every consumer that
+filters on the mask keeps working. What changes is that **point density is no longer
+uniform across the mask boundary** — `density_per_mm2` is then a nominal figure, not a
+guarantee. Any density-sensitive metric (Chamfer against a fixed-density reference) must be
+computed within a mask class, not across it.
+
 ### 5.2 `seams.npz`
 
 One group of arrays per seam, named by `sampled.array` (`seam_0`, `seam_1`, …):
 
 | Array | dtype | shape | Meaning |
 |---|---|---|---|
-| `seam_<i>` | float32 | (M,3) | sampled polyline, world, mm |
+| `seam_<i>` | float32 | (M,3) | sampled polyline, world, mm — **`nominal`** (D19, §1.3) |
+| `seam_<i>_root` | float32 | (M,3) | derived: the `root` curve (D19) |
+| `seam_<i>_gapmid` | float32 | (M,3) | derived: the `gap_mid` curve (D19) |
 | `seam_<i>_s` | float32 | (M,) | arc length from start, mm |
 | `seam_<i>_tangent` | float32 | (M,3) | unit tangent |
 | `seam_<i>_approach` | float32 | (M,3) | unit `approach_dir`, torch-ward (§1.2) |
@@ -512,6 +577,10 @@ The frames are strictly regenerable from `parametric` + `faces[]`, but storing t
 the file self-contained — the difference between a dataset someone can use and one that
 requires your code. They vary along the curve for every Phase 6 seam.
 
+`seam_<i>_root` and `seam_<i>_gapmid` are stored for the same reason, plus one more: they
+make the D19 conversion table a subtraction over existing arrays rather than a
+re-derivation. They are `null`-equivalent (identical to `seam_<i>`) when `g = 0`.
+
 ### 5.3 `index.jsonl`
 
 One flat JSON object per line, one line per scene. Purely denormalised — this is the file
@@ -521,13 +590,13 @@ people load into pandas to make the Phase 4 plots without touching 10k scene fil
 {"scene_id":"3f9a21c4-0008412337","config_id":"3f9a21c4","seed":8412337,"tier":1,
  "twin_key":"a91cf3e2b7d40518",
  "joint_type":"T","seam_shape":"line","quality_level":"C","contact_mode":"flat",
- "fixture_present":true,"n_features":2,
+ "fixture_present":true,
  "t_min_mm":8.0,"t_max_mm":8.0,"root_gap_mm":1.1,
  "linear_misalignment_mm":0.4,"angular_misalignment_deg":0.8,
  "n_seams":4,"n_weldable":2,"n_fixture_contact":1,"total_seam_length_mm":432.0,
  "mean_occluded_fraction":0.34,"n_points":184203,"density_per_mm2":1.0,
  "sensor_profile":"d435i","standoff_mm":750.0,"elevation_deg":55.0,
- "part_geometry_ids":["slab_200.0x120.0x8.0","slab_200.0x90.0x8.0_f3e91a0c7"],
+ "part_geometry_ids":["slab_200.0x120.0x8.0","slab_200.0x90.0x8.0"],
  "content_hash":"9c1f…"}
 ```
 
@@ -559,14 +628,17 @@ D11: hold out **part geometries and joint configurations**, never random frames.
 
 | Case | Form | Example |
 |---|---|---|
-| Bare primitive | `"<primitive>_<dims joined by x>"` | `slab_200.0x90.0x8.0` |
-| With features (D17) | `… + "_f" + sha256(canonical(features))[:8]` | `slab_200.0x90.0x8.0_f3e91a0c7` |
+| Primitive (all of Phases 1–5) | `"<primitive>_<dims joined by x>"` | `slab_200.0x90.0x8.0` |
 | Phase 6 asset mesh | content hash of the `.ply` | `mesh_3e91a0c7…` |
 
-**Features must enter this id.** With bare slabs the D11 "held-out geometry" split is really
-a held-out *dimensions* split — a much weaker claim than it reads as. Hashing the feature
-spec is what makes "held-out geometry" mean what it says. It is also the second reason
-parts are parametric and shared rather than baked per scene (§3.1).
+**Say what this split actually holds out.** Through Phase 5 every part is a plain slab, so
+distinct `part_geometry_id`s differ only in *dimensions* — the D11 split is a held-out
+**dimensions** split, and describing it as "held-out geometry" would overstate it. It becomes
+a genuine geometry split at Phase 6, when `swept_slab` / `cylinder` / `tube` enter, and again
+at Phase 9 with the scanned subset (§2.2.1).
+
+This is also the second reason parts are parametric and shared rather than baked per scene
+(§3.1).
 
 ---
 
@@ -590,7 +662,7 @@ order:
 
 The split between 0–2 and 3–6 is not arbitrary: **substreams 0–2 determine the workpiece
 geometry and the seam truth, 3–6 determine everything that is an ablation axis.** That is
-exactly what makes `twin_key` (§6.3) well-defined, and it is why fixture presence lives in
+exactly what makes `twin_key` (§6.4) well-defined, and it is why fixture presence lives in
 3 rather than 0.
 
 **Substreams are appended, never reordered. Within a substream, draws are appended, never
@@ -627,7 +699,24 @@ otherwise re-running next month would "fail" a gate it actually passes.
 machines → identical `content_hash`. If this fails, the release-as-a-program argument
 collapses, and nothing downstream is worth measuring.
 
-### 6.3 `twin_key` — how paired-ablation arms are joined
+### 6.3 Geometric invariants — asserted, not stored (D21)
+
+These have no JSON field. They are preconditions the generator asserts before writing a
+scene; a violation **fails the scene** rather than emitting it.
+
+| Invariant | Assertion | Why |
+|---|---|---|
+| Each object is watertight | `mesh.is_watertight` | Ray-cast visibility, `bisector_blocked` and every `contains` query need a defined interior. Without it they return garbage silently rather than erroring |
+| Each object has consistent winding | `mesh.is_winding_consistent` | Outward normals are what `approach_dir` and the exteriority test are built on |
+| The **union is not** watertight, and must not be | no assertion — never compute it | At `g > 0` the parts are genuinely disjoint. That is the physical truth, and D3 means no boolean union is ever needed |
+
+On plain slabs (Phases 1–5) these assertions are trivially satisfied and cost nothing. Put
+them in anyway: they are what catches **Phase 6**, where swept and revolved primitives produce
+degenerate caps and duplicated seam vertices that a box never could. An unchecked generator
+ships those silently, and the failure surfaces much later as inexplicable visibility
+artifacts. Assert at construction.
+
+### 6.4 `twin_key` — how paired-ablation arms are joined
 
 D12 needs fixture-on and fixture-off scenes with *identical* geometry; D16 needs the same
 scene across three sensor profiles; Phase 8 needs a tier-2 scene and its tier-1 twin. All
@@ -664,5 +753,4 @@ because a twin pair split across train and test leaks geometry perfectly.
 | `surface` block for non-planar faces | schema slot reserved; fill in Phase 6 |
 | Phase 6 `bspline` parametric form (knots, degree, control points) | slot reserved, exact encoding to be pinned before Phase 6 starts |
 | `tacks` block | `null` until Phase 7; shape frozen here so adding it is a patch bump |
-| **D17 feature vocabulary** | provisional (§2.2.1). **Freeze before Phase 2** — it feeds `part_geometry_id`, which is the D11 split key. The `stiffener` question is the one to settle |
 | Confirm the `d435i` profile against the real camera | `PARAMETERS.md` §4. Under D16 this gates only that profile's claim to match the lab hardware, not the release |

@@ -1,7 +1,7 @@
-"""Contract test for docs/scene.schema.json (schema_version 1.1.0).
+"""Contract test for docs/scene.schema.json (schema_version 2.0.0).
 
 Proves the frozen schema accepts the documented example and rejects the
-invariants that D12 / D16 / D17 depend on. Run standalone:
+invariants that D12 / D16 / D18 / D19 (D17 withdrawn) depend on. Run standalone:
 
     python weld_generator/tests/schema_contract.py
 
@@ -16,9 +16,9 @@ S = json.load(open(SCHEMA_PATH))
 Draft202012Validator.check_schema(S); print("schema itself: OK")
 I4 = [[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]]
 
-def obj(oid, role, obj_id, L,W,t, feats=None, pgid=None):
+def obj(oid, role, obj_id, L,W,t, pgid=None):
     return {"id":oid,"role":role,"object_id":obj_id,"primitive":"slab",
-            "dims_mm":[L,W,t],"thickness_mm":t,"features":feats or [],
+            "dims_mm":[L,W,t],"thickness_mm":t,
             "part_geometry_id":pgid or f"slab_{L}x{W}x{t}","mesh":None,"T_world_part":I4}
 
 def faces_for(oid, start, extra=()):
@@ -30,19 +30,21 @@ def faces_for(oid, start, extra=()):
                     "plane":None,"surface":{"kind":"cylinder"},"area_mm2":50.0})
     return out
 
-FEATS=[{"kind":"through_hole","index":0,"params":{"d_mm":12.0}},
-       {"kind":"chamfer","index":0,"params":{"size_mm":2.0}}]
-
 scene={
- "schema_version":"1.1.0","generator_version":"0.1.0",
+ "schema_version":"2.0.0","generator_version":"0.1.0",
  "scene_id":"3f9a21c4-0008412337","config_id":"3f9a21c4","seed":8412337,"tier":1,
  "twin_key":"a91cf3e2b7d40518",
  "units":{"length":"mm","angle":"deg"},
- "joint":{"type":"T","seam_shape":"line","quality_level":"C","contact_mode":"flat"},
+ "joint":{"type":"T","seam_shape":"line","quality_level":"C","contact_mode":"flat",
+          "included_angle_deg":90.0,"stack_offset_mm":None,"prep":"square"},
+ "seam_definition":"nominal",
+ "accessibility":{"torch_clearance":{"half_angle_deg":30.0,"standoff_mm":15.0},
+                  "dihedral_min_deg":30.0,"dihedral_max_deg":170.0,
+                  "contact_tol_mm":3.0,"min_seam_length_mm":10.0},
  "objects":[obj("A","workpiece",0,200.0,120.0,8.0),
-            obj("B","workpiece",1,200.0,90.0,8.0,FEATS,"slab_200.0x90.0x8.0_f3e91a0c7"),
+            obj("B","workpiece",1,200.0,90.0,8.0),
             obj("F","fixture",255,600.0,400.0,10.0)],
- "faces":faces_for("A",0)+faces_for("B",6,("through_hole0","chamfer0"))+faces_for("F",14),
+ "faces":faces_for("A",0)+faces_for("B",6)+faces_for("F",12),
  "fit":{"root_gap_mm":1.1,"linear_misalignment_mm":0.4,
         "angular_misalignment_deg":0.8,"throat_thickness_mm":5.6},
  "T_world_joint":I4,
@@ -78,9 +80,9 @@ def report(name, s, want_valid):
     return good
 
 print("\npositive cases (must VALIDATE):")
-allgood=[report("fixture-present scene, features, d435i", scene, True)]
+allgood=[report("fixture-present scene, plain slabs, d435i", scene, True)]
 
-# Phase 1 style: no fixture, contact_mode free, no features
+# Phase 1 style: no fixture, contact_mode free
 p1=json.loads(json.dumps(scene))
 p1["objects"]=[o for o in p1["objects"] if o["role"]!="fixture"]
 p1["faces"]=[f for f in p1["faces"] if f["object"]!="F"]
@@ -92,6 +94,14 @@ sg=json.loads(json.dumps(scene))
 sg["noise_model"].update(profile="stereo_good",baseline_mm=120.0,focal_px=1100.0,subpixel_px=0.05,min_z_mm=200.0)
 sg["camera"]["standoff_mm"]=220.0
 allgood.append(report("stereo_good at 220 mm (above its 200 min-Z)", sg, True))
+
+lap=json.loads(json.dumps(scene))
+lap["joint"].update(type="lap", included_angle_deg=0, stack_offset_mm=40.0)
+allgood.append(report("lap: 0 deg included, stack_offset > 0 (D18)", lap, True))
+
+edge=json.loads(json.dumps(scene))
+edge["joint"].update(type="edge", included_angle_deg=0, stack_offset_mm=0)
+allgood.append(report("edge: lap at stack_offset = 0 (PARAMETERS 2.7)", edge, True))
 
 print("\nnegative controls (must be REJECTED):")
 def neg(name, mut):
@@ -108,22 +118,48 @@ allgood += [
      lambda s: s["noise_model"].pop("profile")),
  neg("unknown sensor profile",
      lambda s: s["noise_model"].__setitem__("profile","kinect")),
- neg("object missing features[] (D17)",
-     lambda s: s["objects"][0].pop("features")),
- neg("unknown feature kind",
-     lambda s: s["objects"][1]["features"].__setitem__(0,{"kind":"embossing","index":0,"params":{}})),
- neg("featured part whose part_geometry_id lacks the feature hash (D17)",
-     lambda s: s["objects"][1].__setitem__("part_geometry_id","slab_200.0x90.0x8.0")),
+ neg("a features[] list at all (D17 withdrawn - parts are plain slabs)",
+     lambda s: s["objects"][0].__setitem__("features",[])),
+ neg("a part_geometry_id carrying a feature hash (D17 withdrawn)",
+     lambda s: s["objects"][1].__setitem__("part_geometry_id","slab_200.0x90.0x8.0_f3e91a0c7")),
+ neg("a feature face ref (D17 withdrawn - primitive registry only)",
+     lambda s: s["seams"][0].__setitem__("face_pair",["A:+w","B:through_hole0"])),
  neg("missing twin_key",
      lambda s: s.pop("twin_key")),
  neg("malformed twin_key",
      lambda s: s.__setitem__("twin_key","NOTHEX")),
- neg("stale schema_version 1.0.0",
-     lambda s: s.__setitem__("schema_version","1.0.0")),
+ neg("stale schema_version 1.2.0",
+     lambda s: s.__setitem__("schema_version","1.2.0")),
 ]
 
 # no-fixture scene with a non-free contact_mode must also fail
 s=json.loads(json.dumps(p1)); s["joint"]["contact_mode"]="flat"
 allgood.append(report("no fixture but contact_mode 'flat' (D12)", s, False))
+
+allgood += [
+ neg("T-joint included_angle outside ISO 9692-1 60-120 (D18)",
+     lambda s: s["joint"].__setitem__("included_angle_deg",45.0)),
+ neg("T-joint carrying a stack_offset (D18)",
+     lambda s: s["joint"].__setitem__("stack_offset_mm",40.0)),
+ neg("missing included_angle_deg (D18)",
+     lambda s: s["joint"].pop("included_angle_deg")),
+ neg("seam_definition other than 'nominal' (D19)",
+     lambda s: s.__setitem__("seam_definition","root")),
+ neg("missing seam_definition (D19)",
+     lambda s: s.pop("seam_definition")),
+ neg("missing accessibility block",
+     lambda s: s.pop("accessibility")),
+ neg("torch_clearance as a scalar rather than a cone",
+     lambda s: s["accessibility"].__setitem__("torch_clearance",15.0)),
+ neg("non-square preparation (out of scope, PARAMETERS 5.0)",
+     lambda s: s["joint"].__setitem__("prep","single_V")),
+]
+
+allgood += [
+ neg("butt joint with a 90 deg included angle (D18: butt is coplanar, 180)",
+     lambda s: s["joint"].update(type="butt", included_angle_deg=90.0)),
+ neg("edge joint with a non-zero stack_offset (PARAMETERS 2.7: edge is flush)",
+     lambda s: s["joint"].update(type="edge", included_angle_deg=0, stack_offset_mm=25.0)),
+]
 
 print("\nALL PASS" if all(allgood) else "\nSOME CHECKS FAILED")
