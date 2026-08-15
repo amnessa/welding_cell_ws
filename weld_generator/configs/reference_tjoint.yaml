@@ -1,0 +1,22 @@
+# Pins the repo's one measured T-joint (admittance_control README §8):
+# t = 8.4 mm, g = 1.1 mm, seam 232 mm, SEPC spacing 2.7 mm ~= 0.14 pts/mm^2.
+# A regression fixture, and the single scene tying the generator to a real measurement.
+name: reference_tjoint
+joint_type: T
+seam_shape: line
+prep: square
+fixture_present: false
+plate_length_mm: [232.0, 232.0]
+plate_width_mm: [90.0, 120.0]
+thickness_mm: [8.4, 8.4]
+dissimilar_thickness_p: 0.0
+included_angle_deg: [90.0, 90.0]
+root_gap_mm: [1.1, 1.1]
+quality_mix: {C: 1.0}
+density_per_mm2: [0.14, 0.14]
+sensor_profiles: [d435i]
+# Pin the defects too: the README measurement reports a square 90-degree joint, so
+# misalignments are zero. Without these the sampler would still draw beta from the
+# quality level and the fixture would not reproduce the measured geometry.
+linear_misalignment_mm: [0.0, 0.0]
+angular_misalignment_deg: [0.0, 0.0]

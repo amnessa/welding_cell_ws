@@ -256,8 +256,12 @@ quality levels. `PARAMETERS.md` §2.3 carries the corrected reading and the **[o
 `D → 4°`, `C → 2°`, `B → 1°`. Writing "β ≤ 2° at quality level C" as if it were Table 1 is a
 miscitation a welding reviewer will catch.
 
-While in the PDF, confirm whether Table 1 has a 3.3 / 508 row at all or whether 508 appears only
-in Annex B — the claim is now an *absence*, and the referent of footnote `b` should be pinned.
+**Confirmed 2026-08-15.** Table 1 has **no 3.3 / 508 row** — its clause numbering runs 3.1 (507 /
+5071 / 5072) → 3.2 (617) → 4.1, and the string "508" is absent from every Table 1 page (pp. 11–24).
+508 appears only in Annex B Table B.1 (p. 24) and in the p. 9 symbol list defining β. Footnote `b`
+("Not specified") hangs on the Table B.1 *designation*, marking that Table 1 says nothing — read
+against footnote `a` ("same values as … in Table 1"), the pair distinguishes "defer to Table 1"
+from "Table 1 is silent". `PARAMETERS.md` §2.3 carries the verification.
 
 Note Annex B also gives fatigue-class 5071 limits that are **stricter** than the Table 1 values
 above. Sampling is against Table 1. Always say which table.
@@ -386,26 +390,46 @@ every plotted number.
 
 ### Phase 1 — Tier 1 geometry core, straight seams, T-joint only
 
+**Status: DONE, 2026-08-15.** Code in [`../weldgen/`](../weldgen/), tests in
+[`../tests/`](../tests/), presets in [`../configs/`](../configs/).
+
 Simulator-free. `trimesh` + NumPy only. No renderer, no ROS, no Isaac.
 
-- [ ] **Seam sampler:** straight segment — length, position, orientation in world
-- [ ] **Part constructor (T):** given seam curve + `(t_A, t_B, g, h, β)`, emit two box meshes
-      positioned to realize exactly that seam
-- [ ] **Surface sampler:** Poisson-disk or uniform, configurable density, per-point normals and
-      `object_id`
-- [ ] **Analytic seam label** emitted at requested density, with `weldable` flags
-- [ ] **Writer** conforming to the Phase 0 schema, fully seeded
-- [ ] **Seed→scene determinism test**
-- [ ] Validate every emitted `scene.json` against `scene.schema.json` in CI
+- [x] **Seam sampler:** straight segment — length, position, orientation in world
+- [x] **Part constructor (T):** given `(t_A, t_B, g, h, β, α)`, emit two box meshes
+      positioned to realize the joint; both fillets derived in closed form from the
+      placement transforms (D1) — `weldgen/joints.py`
+- [x] **Surface sampler:** area-uniform per face, configurable density, exact per-point
+      normals, `object_id` **and** `face_id` — `weldgen/sampling.py`
+- [x] **Analytic seam label** at requested density, with `weldable` flags, plus the D19
+      `root` and `gap_mid` derived curves
+- [x] **Writer** conforming to the Phase 0 schema, fully seeded — `weldgen/writer.py`
+- [x] **Seed→scene determinism test** — `tests/test_determinism.py`
+- [x] Validate every emitted `scene.json` against `scene.schema.json`
+      — `tests/test_schema_conformance.py`
+- [x] **Watertightness assertion (D21)**, asserted at construction
 
-**Fixture off** in this phase (D12) — `contact_mode: "free"`, `objects[]` is the two workpieces.
-Keeps the placement step trivial until the determinism gate is proven.
+**Fixture off** in this phase (D12) — `contact_mode: "free"`, `objects[]` is the two
+workpieces. Keeps the placement step trivial until the determinism gate is proven.
 
-**Gate (D15):** `generate(config, seed)` twice, in separate processes, on different machines →
-identical **content hash**. Not byte-identity: `np.savez` embeds zip timestamps. If this fails,
-everything downstream is unreproducible and the release-as-a-program argument collapses.
+**Gate (D15): PASSED.** `generate(config, seed)` in two separate processes → identical
+content hash, across three seeds. Also verified: the hash survives the `.npz` zip
+round-trip, is insensitive to `provenance`, and *is* sensitive to a 1e-3 mm perturbation
+and to a float32→float64 widening.
 
-**Effort:** 3–4 days.
+**67 tests pass.** Two findings worth carrying forward:
+
+1. **The root gap answers to two standards that disagree on thin sheet.** ISO 9692-1
+   allows `b ≤ 2 mm` for fillets regardless of thickness; ISO 5817 clause 617 scales with
+   the throat, so on 2 mm sheet level B allows only 0,34 mm. Drawing the gap from the
+   preparation range alone pushed ~37% of scenes to `below_D` and wrecked the §2.5
+   stratification balance. The sampler now draws against the 617 limit for the target
+   level with the 9692-1 cap as a ceiling.
+2. **`quality_level` is now derived, not assumed.** Sampling picks a target and draws
+   inside it, but the stored level is recomputed from the realised defects, per
+   `PARAMETERS.md` §2.5. A pinned regression fixture can therefore never be mislabelled.
+
+**Effort:** 3–4 days (estimate held).
 
 ---
 
@@ -659,8 +683,9 @@ Opened by Phase 0, all deferred (details in `PARAMETERS.md` §7):
 - [ ] **Resolve the 10× sim-noise discrepancy**: the twin's `realsense_sim_camera_node.py` defaults
       give σ(1 m) ≈ 25 mm; the derived model gives ≈ 2,4 mm. Deliberate pessimism for ICP threshold
       tuning, or a stale default? Worth knowing which
-- [ ] Confirm whether ISO 5817 Table 1 has a 3.3 / 508 row at all, and pin the referent of footnote
-      `b` — `PARAMETERS.md` §2.3 now rests on an *absence*, which needs to be verifiable
+- [x] ~~Confirm whether ISO 5817 Table 1 has a 3.3 / 508 row~~ → **resolved 2026-08-15**: it does
+      not. Numbering skips 3.3 (3.1 → 3.2 → 4.1) and "508" is absent from pp. 11–24. Footnote `b`
+      attaches to the Annex B Table B.1 designation. Verified in `PARAMETERS.md` §2.3
 - [ ] Measure the real fixture plate. Under D12 the exact dims matter less (pose and presence both
       vary), but the `lab_fixture` preset should still be real
 
@@ -669,8 +694,12 @@ Opened by this revision:
 - [x] ~~Pick the feature vocabulary for D17~~ → **withdrawn 2026-08-15**, D17 dropped entirely.
       Parts are plain slabs through Phase 5; diversity comes from Phase 6 primitives and Phase 9
       scans. No feature vocabulary to freeze
-- [ ] Decide whether `stereo_good` / `stereo_poor` are shipped in the release or only used for the
-      §7 sensor-profile plot
+- [x] ~~Ship `stereo_good` / `stereo_poor`, or use them only for the plot?~~ → **decided
+      2026-08-15: shipped in the release.** All three profiles are first-class. The sensor-quality
+      axis is only reproducible by others if the scenes behind it are downloadable, and D16's point
+      is that sensor quality *is* a benchmark axis rather than a private ablation. Cost is bounded:
+      profiles differ only in substreams 5–6, so the three arms share geometry and are joined by
+      `twin_key`
 - [ ] Lap overlap length has no ISO citation and stays **[ours]**. AWS D1.1 or a fabrication text
       may give a minimum (commonly quoted as some multiple of `t`) — worth one lookup before
       submission, not before Phase 2

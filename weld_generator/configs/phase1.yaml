@@ -1,0 +1,7 @@
+# Phase 1 working config — T-joint, straight seams, fixture off (D12).
+# Ranges trace to docs/PARAMETERS.md; see §3 for geometry and §2 for defect limits.
+name: phase1
+joint_type: T
+seam_shape: line
+prep: square
+fixture_present: false

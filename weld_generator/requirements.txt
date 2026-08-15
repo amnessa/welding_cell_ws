@@ -1,0 +1,14 @@
+# Tier 1 core (D9): no simulator, no GPU, no ROS. Must install on a clean machine.
+numpy>=1.24
+trimesh>=4.0
+PyYAML>=6.0
+
+# Validation and tests
+jsonschema>=4.20
+pytest>=7.0
+
+# Notebooks / inspection only
+matplotlib>=3.7
+
+# Used by Phase 3 (ray-cast visibility, HPR exteriority); not imported by Phase 1.
+# open3d>=0.18

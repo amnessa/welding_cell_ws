@@ -1,0 +1,9 @@
+# 8 fast scenes for CI and the determinism gate. Low density keeps it quick.
+name: smoke
+joint_type: T
+seam_shape: line
+prep: square
+fixture_present: false
+plate_length_mm: [100.0, 240.0]
+plate_width_mm: [60.0, 120.0]
+density_per_mm2: [0.05, 0.15]

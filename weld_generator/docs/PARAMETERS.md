@@ -518,5 +518,5 @@ one axis, so every scene has an exact `twin_key` partner (`SCHEMA.md` §6.4).
 | Confirm `d435i` baseline / subpixel / min-Z against hardware (§4.0, §4.2) | **[ds]**; under D16 this gates only that profile's fidelity claim, not the release | before the release is frozen |
 | Resolve the 10× sim-noise discrepancy (§4.2) | either a stale default in the twin or deliberate pessimism — worth knowing which. Note it lands near `stereo_poor` | Phase 3 |
 | Measure the real fixture plate (§3.1) | under D12 the exact dims matter less — presence and pose both vary — but `lab_fixture.yaml` should be real | Phase 3 |
-| Ship `stereo_good` / `stereo_poor` in the release, or use them only for the ablation? | affects release size and how the D16 axis is presented | before Phase 9 |
+| ~~Ship `stereo_good` / `stereo_poor` in the release?~~ | **RESOLVED — yes, all three profiles ship.** The D16 sensor-quality axis is only reproducible by others if the scenes behind it are downloadable. Cost is bounded: profiles differ only in substreams 5–6, so the three arms share geometry and join on `twin_key` | done 2026-08-15 |
 | `d_min` / `d_max` / edge-margin constants from Tomków and the JRM literature | Phase 7 tack rule; deliberately absent here so they ship as a *separate versioned rule*, per D8 | Phase 7 |
