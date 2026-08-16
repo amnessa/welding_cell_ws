@@ -10,10 +10,11 @@ from typing import Any
 import numpy as np
 
 from . import GENERATOR_VERSION, SCHEMA_VERSION
+from .accessibility import d19_curves, enumerate_candidates
 from .config import SENSOR_PROFILES, geometry_config, sample_joint
-from .geom import SLAB_FACES, Slab, rot_z, translate
+from .geom import SLAB_FACES, Slab, approach_dir, rot_x, rot_y, rot_z, translate
 from .hashing import config_id, twin_key
-from .joints import build_t_joint
+from .layouts import build as build_layout
 from .rng import Streams
 from .sampling import sample_polyline, sample_scene_surface
 
@@ -67,18 +68,51 @@ def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict
     `arrays` is keyed as the content hash expects: ``"cloud.npz:xyz"``, ``"seams.npz:seam_0"``.
     """
     streams = Streams(seed)
-    spec, quality_level = sample_joint(cfg, streams)
+    spec, quality_level, joint_type = sample_joint(cfg, streams)
 
     # --- placement, substream 3 -------------------------------------------------
+    # Fixture presence, pose and dims live here (not in substream 0) so that turning the
+    # fixture on or off leaves workpiece geometry bit-identical - SCHEMA.md §6.1/§6.4.
     g3 = streams["placement"]
     span = float(cfg["assembly_translation_mm"])
+    fixture_on = bool(cfg.get("fixture_present", False))
+    tilt = float(cfg["fixture_tilt_deg"]) if fixture_on else 0.0
+
     T_world_joint = (
         translate(*(g3.uniform(-span, span, size=3) * np.array([1.0, 1.0, 0.0])))
+        @ translate(0.0, 0.0, float(g3.uniform(*cfg["fixture_height_mm"])) if fixture_on else 0.0)
         @ rot_z(float(g3.uniform(0.0, 360.0)))
+        @ rot_x(float(g3.uniform(-tilt, tilt)))
+        @ rot_y(float(g3.uniform(-tilt, tilt)))
     )
 
-    slabs, seams = build_t_joint(spec, T_world_joint)
+    slabs = build_layout(spec, joint_type, T_world_joint)
+
+    contact_mode = "free"
+    if fixture_on:
+        # The fixture and the assembly share T_world_joint, so they tilt together and
+        # stay physically consistent: A rests flat on the working surface.
+        fw, fl, ft = (float(g3.uniform(*cfg["fixture_dims_mm"][k]))
+                      for k in ("length", "width", "thickness"))
+        drop = float(np.min([np.min((s_.mesh().vertices - T_world_joint[:3, 3])
+                                    @ T_world_joint[:3, 2]) for s_ in slabs]))
+        slabs.append(Slab("F", "fixture", 255, (fw, fl, ft),
+                          T_world_joint @ translate(0.0, 0.0, drop - ft / 2.0)))
+        contact_mode = "flat"
+
     _assert_watertight(slabs)
+
+    # --- seams: derived by the D4 rule, not declared by the constructor -----------
+    # `contact_tol_mm` decides whether two faces are adjacent at all. A fixed constant
+    # cannot serve both a 1 mm gap on 12 mm plate and a 5 mm gap on 2 mm sheet: too tight
+    # and the below_D scenes lose their seams, too loose and a 2 mm edge joint admits
+    # every face pair within 8 mm. So it tracks the gap it has to accommodate, and is
+    # stored per scene so every rejection stays reproducible.
+    access = {k: (v.copy() if isinstance(v, dict) else v)
+              for k, v in cfg["accessibility"].items()}
+    access["contact_tol_mm"] = float(
+        np.clip(2.0 * spec.root_gap_mm + 1.0, 2.0, 12.0))
+    cands = enumerate_candidates(slabs, access)
 
     # --- surface sampling, substream 4 ------------------------------------------
     g4 = streams["surface_sample"]
@@ -99,41 +133,44 @@ def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict
     density_per_mm = 10.0
     arrays: dict[str, np.ndarray] = {}
     seam_blocks = []
-    # Seam ids follow the documented sort (SCHEMA.md §2.7) so they are stable.
-    ordered = sorted(
-        seams,
-        key=lambda s: (not s.weldable, s.face_pair[0], s.face_pair[1],
-                       tuple(np.round(s.p0, 6)), tuple(np.round(s.p1, 6))),
-    )
-    for i, s in enumerate(ordered):
-        pts = sample_polyline(s.p0, s.p1, density_per_mm)
+    by_id = {s_.id: s_ for s_ in slabs}
+    # Facing pairs carry no line (p0 is None) and cannot be sampled; degenerate
+    # zero-length runs are numerical debris. Neither belongs in `seams[]`.
+    ordered = [c for c in cands
+               if c.p0 is not None and c.length_mm > 1e-6]   # SCHEMA.md §2.7 order
+
+    for i, c in enumerate(ordered):
+        pts = sample_polyline(c.p0, c.p1, density_per_mm)
         n = len(pts)
+        ida, fa = c.face_pair[0].split(":")
+        idb, fb = c.face_pair[1].split(":")
+        root, gapmid = d19_curves(by_id[ida], fa, by_id[idb], fb, c.p0, c.p1, n)
+
         arrays[f"seams.npz:seam_{i}"] = pts.astype(np.float32)
-        arrays[f"seams.npz:seam_{i}_root"] = sample_polyline(
-            s.root_p0, s.root_p1, density_per_mm).astype(np.float32)
-        arrays[f"seams.npz:seam_{i}_gapmid"] = sample_polyline(
-            s.gapmid_p0, s.gapmid_p1, density_per_mm).astype(np.float32)
+        arrays[f"seams.npz:seam_{i}_root"] = root.astype(np.float32)
+        arrays[f"seams.npz:seam_{i}_gapmid"] = gapmid.astype(np.float32)
         arrays[f"seams.npz:seam_{i}_s"] = np.linspace(
-            0.0, s.length_mm, n).astype(np.float32)
-        tangent = (s.p1 - s.p0) / max(s.length_mm, 1e-12)
+            0.0, c.length_mm, n).astype(np.float32)
+        tangent = (c.p1 - c.p0) / max(c.length_mm, 1e-12)
+        appr = approach_dir(c.n_a, c.n_b)
         arrays[f"seams.npz:seam_{i}_tangent"] = np.tile(tangent, (n, 1)).astype(np.float32)
-        arrays[f"seams.npz:seam_{i}_approach"] = np.tile(s.approach, (n, 1)).astype(np.float32)
-        arrays[f"seams.npz:seam_{i}_nA"] = np.tile(s.n_a, (n, 1)).astype(np.float32)
-        arrays[f"seams.npz:seam_{i}_nB"] = np.tile(s.n_b, (n, 1)).astype(np.float32)
+        arrays[f"seams.npz:seam_{i}_approach"] = np.tile(appr, (n, 1)).astype(np.float32)
+        arrays[f"seams.npz:seam_{i}_nA"] = np.tile(c.n_a, (n, 1)).astype(np.float32)
+        arrays[f"seams.npz:seam_{i}_nB"] = np.tile(c.n_b, (n, 1)).astype(np.float32)
         arrays[f"seams.npz:seam_{i}_visible"] = np.ones(n, dtype=bool)
 
         seam_blocks.append({
             "id": i,
-            "weldable": bool(s.weldable),
-            "reject_reason": s.reject_reason,
-            "face_pair": list(s.face_pair),
+            "weldable": bool(c.weldable),
+            "reject_reason": c.reject_reason,
+            "face_pair": list(c.face_pair),
             "parametric": {"kind": "line",
-                           "p0_mm": [float(v) for v in s.p0],
-                           "p1_mm": [float(v) for v in s.p1]},
-            "length_mm": float(s.length_mm),
-            "dihedral_deg": float(s.dihedral_deg),
+                           "p0_mm": [float(v) for v in c.p0],
+                           "p1_mm": [float(v) for v in c.p1]},
+            "length_mm": float(c.length_mm),
+            "dihedral_deg": float(c.dihedral_deg),
             "sampled": {"array": f"seam_{i}", "density_per_mm": density_per_mm, "n": n},
-            "occluded_fraction": 0.0,   # no camera in Phase 1; Phase 3 fills this in
+            "occluded_fraction": 0.0,   # no camera yet; Phase 3 fills this in
         })
 
     for k, v in cloud.items():
@@ -142,7 +179,7 @@ def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict
     # --- joint frame: from seam 0 (SCHEMA.md §1.1) --------------------------------
     s0 = ordered[0]
     x_axis = (s0.p1 - s0.p0) / max(s0.length_mm, 1e-12)
-    z_axis = s0.approach
+    z_axis = approach_dir(s0.n_a, s0.n_b)
     y_axis = np.cross(z_axis, x_axis)
     y_axis /= np.linalg.norm(y_axis)
     z_axis = np.cross(x_axis, y_axis)
@@ -161,16 +198,16 @@ def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict
         "twin_key": twin_key(geometry_config(cfg), seed),
         "units": {"length": "mm", "angle": "deg"},
         "joint": {
-            "type": cfg["joint_type"],
+            "type": joint_type,
             "seam_shape": cfg["seam_shape"],
             "quality_level": quality_level,
-            "contact_mode": "free",          # D12: Phase 1 is fixture-free
+            "contact_mode": contact_mode,    # D12: "free" iff no fixture
             "included_angle_deg": spec.included_angle_deg,
-            "stack_offset_mm": None,         # T-joints carry no stack offset (D18)
+            "stack_offset_mm": spec.stack_offset_mm,
             "prep": cfg["prep"],
         },
         "seam_definition": "nominal",        # D19
-        "accessibility": cfg["accessibility"],
+        "accessibility": access,
         "objects": [
             {
                 "id": s.id, "role": s.role, "object_id": s.object_id,

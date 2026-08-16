@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/amnessa/weld_generator/schema/scene-2.0.0.json",
+  "$id": "https://github.com/amnessa/weld_generator/schema/scene-2.1.0.json",
   "title": "Weld seam dataset — scene",
-  "description": "Machine-checkable form of docs/SCHEMA.md v2.0.0. Prose wins on intent; this file wins on shape.",
+  "description": "Machine-checkable form of docs/SCHEMA.md v2.1.0. Prose wins on intent; this file wins on shape.",
   "type": "object",
   "required": [
     "schema_version", "generator_version", "scene_id", "config_id", "seed", "tier",
@@ -28,7 +28,7 @@
   },
 
   "properties": {
-    "schema_version": { "const": "2.0.0" },
+    "schema_version": { "const": "2.1.0" },
     "generator_version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
     "scene_id": { "type": "string", "pattern": "^[0-9a-f]{8}-\\d{10}$" },
     "config_id": { "type": "string", "pattern": "^[0-9a-f]{8}$" },
@@ -182,7 +182,8 @@
           "weldable": { "type": "boolean" },
           "reject_reason": {
             "enum": [null, "fixture_contact", "interior_face", "bisector_blocked",
-                     "degenerate_dihedral", "no_contact", "too_short"]
+                     "degenerate_dihedral", "no_contact", "too_short",
+                     "toe_of_centreline"]
           },
           "face_pair": {
             "type": "array", "minItems": 2, "maxItems": 2,

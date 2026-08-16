@@ -25,7 +25,8 @@ SENSOR_PROFILES: dict[str, dict[str, float]] = {
 DEFAULT_CONFIG: dict[str, Any] = {
     "name": "phase1",
     # --- geometry, substream 0 (PARAMETERS.md §3) --------------------------------
-    "joint_type": "T",
+    # Joint type is sampled (Phase 2). A single string still works as a fixed choice.
+    "joint_type": ["T", "corner", "butt", "lap", "edge"],
     "seam_shape": "line",
     "prep": "square",
     "plate_length_mm": [80.0, 400.0],
@@ -34,6 +35,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "dissimilar_thickness_p": 0.30,
     # ISO 9692-1 Tables 3-4: 60 <= alpha <= 120 for square-preparation fillets.
     "included_angle_deg": [60.0, 120.0],
+    # lap overlap, as a fraction of part B's width. [ours] - no ISO citation exists
+    # (PARAMETERS.md §2.6); AWS D1.1 may give a minimum as a multiple of t.
+    "stack_offset_frac": [0.15, 0.60],
+    # ISO 9692-1 Table 1 ref 1.1 "raised edges" applies at t <= 2 mm, so edge joints are
+    # a thin-sheet preparation by the standard's own scope, not by our choice.
+    "edge_max_thickness_mm": 2.0,
     # --- defects, substream 1 (PARAMETERS.md §2) ---------------------------------
     "quality_mix": {"B": 0.25, "C": 0.25, "D": 0.25, "below_D": 0.25},
     # ISO 9692-1 Tables 3-4 cap the fillet gap at b <= 2 mm; the over-range tail to
@@ -41,7 +48,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "root_gap_mm": [0.0, 2.0],
     "root_gap_over_range_mm": 3.0,
     # --- placement, substream 3 --------------------------------------------------
-    "fixture_present": False,        # Phase 1 is fixture-free (D12)
+    # D12: off in Phase 1, sampled ~50/50 in exact pairs from Phase 2. Pose-varied so
+    # the fixture is not identifiable by pose alone - a working surface pinned to z = 0
+    # teaches "contacts with z = 0 are never weldable", which transfers to nothing.
+    "fixture_present": False,
+    "fixture_tilt_deg": 10.0,
+    "fixture_height_mm": [-50.0, 50.0],
+    "fixture_dims_mm": {"length": [480.0, 720.0],
+                        "width": [320.0, 480.0],
+                        "thickness": [8.0, 12.0]},
     "assembly_translation_mm": 150.0,
     # --- sampling, substream 4 ---------------------------------------------------
     "density_per_mm2": [0.25, 4.0],
@@ -54,7 +69,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "torch_clearance": {"half_angle_deg": 30.0, "standoff_mm": 15.0},
         "dihedral_min_deg": 30.0,
         "dihedral_max_deg": 170.0,
-        "contact_tol_mm": 3.0,
+        "contact_tol_mm": 4.0,   # scene.py widens this per scene to track the root gap
         "min_seam_length_mm": 10.0,
     },
 }
@@ -64,6 +79,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
 GEOMETRY_KEYS = (
     "joint_type", "seam_shape", "prep", "plate_length_mm", "plate_width_mm",
     "thickness_mm", "dissimilar_thickness_p", "included_angle_deg",
+    "stack_offset_frac", "edge_max_thickness_mm",
     "quality_mix", "root_gap_mm", "root_gap_over_range_mm",
 )
 
@@ -157,13 +173,35 @@ def _draw(g: np.random.Generator, spec_or_range: Any, fallback: float) -> float:
     return float(g.uniform(float(lo), float(hi)))
 
 
-def sample_joint(cfg: dict[str, Any], streams: Streams) -> tuple[JointSpec, str]:
-    """Draw one joint specification. Returns `(spec, quality_level)`.
+def assert_accessibility_covers_gap(cfg: dict[str, Any]) -> None:
+    """`contact_tol_mm` must exceed every root gap the sampler can draw.
+
+    Otherwise the D4 rule rejects the fillets of an out-of-tolerance joint as
+    `no_contact`, and the below_D scenes - the ones generated specifically to break the
+    baselines - ship with no ground truth at all. Silent, and invisible until someone
+    plots error against root gap and finds the top of the range empty.
+    """
+    max_gap = max(float(cfg["root_gap_mm"][1]), float(cfg["root_gap_over_range_mm"]))
+    # below_D draws up to 1.5x the level-D limit, which for thick plate reaches the cap.
+    max_gap = max(max_gap, 1.5 * 4.0)
+    tol = float(cfg["accessibility"]["contact_tol_mm"])
+    if tol < max_gap:
+        raise ValueError(
+            f"accessibility.contact_tol_mm={tol} is below the maximum root gap "
+            f"{max_gap}; below_D scenes would lose their seams")
+
+
+def sample_joint(cfg: dict[str, Any], streams: Streams
+                 ) -> tuple[JointSpec, str, str]:
+    """Draw one joint specification. Returns `(spec, quality_level, joint_type)`.
 
     Draw order within each substream is fixed: appending is safe, reordering is not.
     """
     g0 = streams["joint_config"]
     g1 = streams["defects"]
+
+    choices = cfg["joint_type"]
+    joint_type = str(choices) if isinstance(choices, str) else str(g0.choice(choices))
 
     lo, hi = cfg["plate_length_mm"]
     L = float(g0.uniform(lo, hi))
@@ -171,10 +209,29 @@ def sample_joint(cfg: dict[str, Any], streams: Streams) -> tuple[JointSpec, str]
     W_A = float(g0.uniform(lo, hi))
     H_B = float(g0.uniform(lo, hi))
     lo, hi = cfg["thickness_mm"]
+    if joint_type == "edge":
+        # ISO 9692-1 Table 1 ref 1.1: raised edges apply at t <= 2 mm. Restricting edge
+        # scenes makes the joint type a consequence of the standard, not an arbitrary
+        # inclusion - and it lands exactly where §5 predicts radius-PCA has no valid R.
+        hi = min(hi, float(cfg["edge_max_thickness_mm"]))
     t_A = float(g0.uniform(lo, hi))
     t_B = float(g0.uniform(lo, hi)) if g0.random() < cfg["dissimilar_thickness_p"] else t_A
-    lo, hi = cfg["included_angle_deg"]
-    alpha = float(g0.uniform(lo, hi))
+
+    # D18: the included angle is sampled about the joint type's OWN nominal. Only fillet
+    # joints have a free angle; butt is coplanar (180) and lap/edge parallel (0).
+    nominal = JointSpec.NOMINAL_INCLUDED_DEG[joint_type]
+    if joint_type in ("T", "corner"):
+        alpha = float(g0.uniform(*cfg["included_angle_deg"]))
+    else:
+        alpha = nominal
+
+    # PARAMETERS.md §2.7 - lap and edge are one topology at different offsets.
+    if joint_type == "lap":
+        stack_offset = float(g0.uniform(*cfg["stack_offset_frac"]))
+    elif joint_type == "edge":
+        stack_offset = 0.0
+    else:
+        stack_offset = None
 
     levels = list(cfg["quality_mix"])
     probs = np.array([cfg["quality_mix"][k] for k in levels], dtype=float)
@@ -201,9 +258,13 @@ def sample_joint(cfg: dict[str, Any], streams: Streams) -> tuple[JointSpec, str]
     else:
         h = float(g1.uniform(0.0, linear_misalignment_limit(t_min, target)))
         beta = float(g1.uniform(0.0, angular_misalignment_limit(target)))
-        gap = float(g1.uniform(
-            cfg["root_gap_mm"][0],
-            min(root_gap_limit(t_min, throat, target), iso9692_cap)))
+        gap_lo = float(cfg["root_gap_mm"][0])
+        # Clamp, never invert: a preset that pins the gap (lo == hi, e.g. the measured
+        # reference joint) must reproduce it exactly even when the 617 limit for the
+        # target level falls below it. An inverted uniform() silently samples the wrong
+        # interval instead of erroring.
+        gap_hi = max(gap_lo, min(root_gap_limit(t_min, throat, target), iso9692_cap))
+        gap = float(g1.uniform(gap_lo, gap_hi)) if gap_hi > gap_lo else gap_lo
 
     # Explicit overrides, for regression fixtures that must pin a measured geometry.
     h = _draw(g1, cfg.get("linear_misalignment_mm"), h)
@@ -216,6 +277,7 @@ def sample_joint(cfg: dict[str, Any], streams: Streams) -> tuple[JointSpec, str]
         linear_misalignment_mm=h,
         angular_misalignment_deg=beta,
         included_angle_deg=alpha,
+        stack_offset_mm=None if stack_offset is None else stack_offset * H_B,
     )
     # Store what the joint ACTUALLY satisfies, not what was aimed for (PARAMETERS §2.5).
-    return spec, classify_quality(t_min, h, beta, gap, throat)
+    return spec, classify_quality(t_min, h, beta, gap, throat), joint_type

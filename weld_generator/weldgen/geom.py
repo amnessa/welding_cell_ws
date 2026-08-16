@@ -40,6 +40,16 @@ def rot_x(theta_deg: float) -> np.ndarray:
     return T
 
 
+def rot_y(theta_deg: float) -> np.ndarray:
+    """4x4 rotation about +Y by `theta_deg` degrees."""
+    t = np.deg2rad(float(theta_deg))
+    c, s_ = np.cos(t), np.sin(t)
+    T = np.eye(4)
+    T[0, 0], T[0, 2] = c, s_
+    T[2, 0], T[2, 2] = -s_, c
+    return T
+
+
 def rot_z(theta_deg: float) -> np.ndarray:
     """4x4 rotation about +Z by `theta_deg` degrees."""
     t = np.deg2rad(float(theta_deg))
@@ -96,6 +106,18 @@ class Slab:
         m = trimesh.creation.box(extents=np.asarray(self.dims_mm, dtype=float))
         m.apply_transform(self.T_world_part)
         return m
+
+    def contains(self, points: np.ndarray, tol: float = 0.0) -> np.ndarray:
+        """Exact point-in-box test, done analytically in the slab's own frame.
+
+        Deliberately not `trimesh.Trimesh.contains`, which needs `rtree` for its bounds
+        tree. D9 requires the tier-1 core to install on a clean machine with no GPU and
+        no optional native deps, and a box does not need a ray-cast to answer this.
+        """
+        half = np.asarray(self.dims_mm, dtype=float) / 2.0 + float(tol)
+        T = self.T_world_part
+        local = (np.atleast_2d(np.asarray(points, dtype=float)) - T[:3, 3]) @ T[:3, :3]
+        return np.all(np.abs(local) <= half, axis=1)
 
     def face_normal(self, name: str) -> np.ndarray:
         """Outward unit normal of a face, in WORLD coordinates."""

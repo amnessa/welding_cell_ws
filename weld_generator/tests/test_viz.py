@@ -16,6 +16,18 @@ from weldgen.config import load_config
 from weldgen.scene import generate_scene
 from weldgen.viz import assembly_frame, cross_section, to_assembly
 
+
+def fillets(scene):
+    """The two full-length T-joint fillets.
+
+    Phase 2 emits every candidate the D4 rule finds, so a scene now also carries short
+    end-face runs and rejected negatives. These tests are about the fillets, so select
+    them by face pair rather than by index.
+    """
+    want = {("A:+w", "B:+w"), ("A:+w", "B:-w")}
+    return [s for s in scene["seams"]
+            if tuple(s["face_pair"]) in want and s["weldable"]]
+
 ROOT = Path(__file__).resolve().parents[1]
 SEEDS = [8412337, 7, 99, 123456789]
 
@@ -67,7 +79,7 @@ def test_seam_runs_along_local_x(cfg, seed):
     """In the assembly frame the seam is a straight run along +X at constant (y, z)."""
     scene, arrays = generate_scene(cfg, seed)
     T = assembly_frame(scene)
-    for s in scene["seams"]:
+    for s in fillets(scene):
         p = to_assembly(arrays[f'seams.npz:seam_{s["id"]}'], T)
         assert np.ptp(p[:, 1]) < 1e-3
         assert np.ptp(p[:, 2]) < 1e-3
@@ -85,7 +97,7 @@ def test_the_three_d19_curves_land_where_they_should(cfg, seed):
     T = assembly_frame(scene)
     g = scene["fit"]["root_gap_mm"]
 
-    for s in scene["seams"]:
+    for s in fillets(scene):
         i = s["id"]
         nom = to_assembly(arrays[f"seams.npz:seam_{i}"], T)[0]
         root = to_assembly(arrays[f"seams.npz:seam_{i}_root"], T)[0]
@@ -111,7 +123,7 @@ def test_seams_sit_on_the_standing_plate_faces(cfg, seed):
     T = assembly_frame(scene)
     t_B = next(o for o in scene["objects"] if o["id"] == "B")["thickness_mm"]
     ys = sorted(to_assembly(arrays[f'seams.npz:seam_{s["id"]}'], T)[0, 1]
-                for s in scene["seams"])
+                for s in fillets(scene))
     assert ys[0] == pytest.approx(0.0, abs=1e-3)
     assert ys[1] == pytest.approx(t_B, abs=1e-3)
 
@@ -136,7 +148,7 @@ def test_gap_mid_is_equidistant_from_both_plates(cfg, seed):
     top_of_A = A.face_plane("+w")      # one side of the gap
     bottom_of_B = B.face_plane("-v")   # the other side
 
-    for s in scene["seams"]:
+    for s in fillets(scene):
         mid = arrays[f'seams.npz:seam_{s["id"]}_gapmid'][0].astype(float)
         d_a = abs(float(top_of_A.signed_distance(mid)))
         d_b = abs(float(bottom_of_B.signed_distance(mid)))
@@ -155,7 +167,7 @@ def test_root_lies_on_the_standing_plate_bottom_edge(cfg, seed):
              np.array(objs["B"]["T_world_part"]))
     bottom_of_B = B.face_plane("-v")
 
-    for s in scene["seams"]:
+    for s in fillets(scene):
         root = arrays[f'seams.npz:seam_{s["id"]}_root'][0].astype(float)
         assert abs(float(bottom_of_B.signed_distance(root))) == pytest.approx(0.0, abs=1e-4)
 

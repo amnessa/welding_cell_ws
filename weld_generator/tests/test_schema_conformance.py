@@ -69,7 +69,13 @@ def test_reference_tjoint_reproduces_the_measured_geometry():
     assert scene["joint"]["included_angle_deg"] == pytest.approx(90.0, abs=1e-9)
     for o in scene["objects"]:
         assert o["thickness_mm"] == pytest.approx(8.4, abs=1e-9)
-    for s in scene["seams"]:
+    # Phase 2 emits every candidate D4 finds, so the scene also carries short end-face
+    # runs and rejected negatives. The measured quantity is the pair of fillets.
+    fillets = [s for s in scene["seams"]
+               if s["weldable"] and tuple(s["face_pair"]) in
+               {("A:+w", "B:+w"), ("A:+w", "B:-w")}]
+    assert len(fillets) == 2
+    for s in fillets:
         assert s["length_mm"] == pytest.approx(232.0, abs=1e-6)
         assert s["dihedral_deg"] == pytest.approx(90.0, abs=1e-6)
 

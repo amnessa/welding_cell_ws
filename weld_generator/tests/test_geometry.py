@@ -83,7 +83,7 @@ def test_seam_position_matches_closed_form(h, beta):
     s = spec(root_gap_mm=g, linear_misalignment_mm=h, angular_misalignment_deg=beta)
     _, seams = build_t_joint(s, np.eye(4))
     fillet = next(x for x in seams if x.face_pair == ("A:+w", "B:+w"))
-    expected = h + g * np.tan(np.deg2rad(s.tilt_deg))
+    expected = h + g * np.tan(np.deg2rad(s.tilt_deg("T")))
     assert fillet.p0[1] == pytest.approx(expected, abs=1e-9)
 
 

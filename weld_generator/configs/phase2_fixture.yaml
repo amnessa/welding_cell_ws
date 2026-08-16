@@ -1,0 +1,8 @@
+# Phase 2 working config — all five joint types, fixture sampled (D12).
+# Fixture presence is a config choice, not a schema one: generate paired arms by running
+# this twice with fixture_present true/false on the same seeds (SCHEMA.md §6.4).
+name: phase2_fixture
+joint_type: [T, corner, butt, lap, edge]
+seam_shape: line
+prep: square
+fixture_present: true

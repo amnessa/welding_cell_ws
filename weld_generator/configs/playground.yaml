@@ -1,0 +1,22 @@
+# Scratch preset for experimenting - widened ranges, nothing pinned.
+# Copied from your edits to reference_tjoint.yaml so they are not lost.
+name: playground
+# joint_type: [T, corner, butt, lap, edge]
+joint_type: lap
+seam_shape: line
+prep: square
+fixture_present: false
+plate_length_mm: [40.0, 400.0]
+plate_width_mm: [90.0, 120.0]
+thickness_mm: [1.0, 12.0]
+dissimilar_thickness_p: 0.0
+included_angle_deg: [60.0, 120.0]
+root_gap_mm: [0.0, 2.0]
+quality_mix: {C: 1.0}
+density_per_mm2: [0.14, 0.14]
+sensor_profiles: [d435i]
+# Pin the defects too: the README measurement reports a square 90-degree joint, so
+# misalignments are zero. Without these the sampler would still draw beta from the
+# quality level and the fixture would not reproduce the measured geometry.
+linear_misalignment_mm: [0.0, 0.0]
+angular_misalignment_deg: [0.0, 0.0]

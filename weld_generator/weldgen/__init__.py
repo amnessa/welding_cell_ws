@@ -14,5 +14,5 @@ Frozen contracts this code implements:
 
 __version__ = "0.1.0"
 
-SCHEMA_VERSION = "2.0.0"
+SCHEMA_VERSION = "2.1.0"
 GENERATOR_VERSION = __version__

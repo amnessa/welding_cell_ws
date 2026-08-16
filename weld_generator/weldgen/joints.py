@@ -53,17 +53,32 @@ class JointSpec:
     linear_misalignment_mm: float   # h - ISO 5817 no. 5071
     angular_misalignment_deg: float  # beta - ISO 5817 no. 508 (Annex B)
     included_angle_deg: float        # alpha - ISO 9692-1 design nominal (D18)
+    #: lap: 0 < s < L overlap; edge: 0 (flush). None for T / corner / butt.
+    #: PARAMETERS.md §2.7 - lap and edge are one topology at different offsets.
+    stack_offset_mm: float | None = None
 
-    @property
-    def tilt_deg(self) -> float:
-        """Realised tilt of B off vertical: design departure plus defect.
+    #: The included angle each joint type takes as its nominal, i.e. the angle at which
+    #: part B is undeflected. NOT all 90: a butt joint is coplanar (180) and a lap or
+    #: edge joint is parallel (0) - PARAMETERS.md §2.7.
+    NOMINAL_INCLUDED_DEG = {"T": 90.0, "corner": 90.0, "butt": 180.0,
+                            "lap": 0.0, "edge": 0.0}
 
-        `included_angle_deg` is the nominal (90 degrees means B is vertical);
-        `angular_misalignment_deg` is the deviation from it. D18 keeps them separate
-        precisely so a 70 degree joint is not recorded as a 90 degree joint with a
+    def tilt_deg(self, joint_type: str = "T") -> float:
+        """Realised rotation of B about the seam axis: design departure plus defect.
+
+        `included_angle_deg` is the design nominal and `angular_misalignment_deg` is the
+        deviation from it (D18) — a 70 degree T-joint is not a 90 degree T-joint with a
         20 degree defect.
+
+        The departure is measured from the joint type's OWN nominal. Using 90 for every
+        type silently stands a butt or lap plate on edge, because their nominals are 180
+        and 0.
         """
-        return (self.included_angle_deg - 90.0) + self.angular_misalignment_deg
+        try:
+            nominal = self.NOMINAL_INCLUDED_DEG[joint_type]
+        except KeyError:
+            raise ValueError(f"unknown joint type {joint_type!r}") from None
+        return (self.included_angle_deg - nominal) + self.angular_misalignment_deg
 
     @property
     def throat_thickness_mm(self) -> float:
@@ -121,7 +136,7 @@ def build_t_joint(spec: JointSpec, T_world_joint: np.ndarray) -> tuple[list[Slab
     T_B = (
         T_world_joint
         @ translate(0.0, spec.linear_misalignment_mm, spec.root_gap_mm)
-        @ rot_x(spec.tilt_deg)
+        @ rot_x(spec.tilt_deg("T"))
         @ translate(0.0, spec.t_B / 2.0, spec.H_B / 2.0)
         @ rot_x(90.0)
     )

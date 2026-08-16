@@ -1,4 +1,4 @@
-"""Contract test for docs/scene.schema.json (schema_version 2.0.0).
+"""Contract test for docs/scene.schema.json (schema_version 2.1.0).
 
 Proves the frozen schema accepts the documented example and rejects the
 invariants that D12 / D16 / D18 / D19 (D17 withdrawn) depend on. Run standalone:
@@ -31,7 +31,7 @@ def faces_for(oid, start, extra=()):
     return out
 
 scene={
- "schema_version":"2.0.0","generator_version":"0.1.0",
+ "schema_version":"2.1.0","generator_version":"0.1.0",
  "scene_id":"3f9a21c4-0008412337","config_id":"3f9a21c4","seed":8412337,"tier":1,
  "twin_key":"a91cf3e2b7d40518",
  "units":{"length":"mm","angle":"deg"},
@@ -128,8 +128,8 @@ allgood += [
      lambda s: s.pop("twin_key")),
  neg("malformed twin_key",
      lambda s: s.__setitem__("twin_key","NOTHEX")),
- neg("stale schema_version 1.2.0",
-     lambda s: s.__setitem__("schema_version","1.2.0")),
+ neg("stale schema_version 2.0.0",
+     lambda s: s.__setitem__("schema_version","2.0.0")),
 ]
 
 # no-fixture scene with a non-free contact_mode must also fail
@@ -153,6 +153,8 @@ allgood += [
      lambda s: s["accessibility"].__setitem__("torch_clearance",15.0)),
  neg("non-square preparation (out of scope, PARAMETERS 5.0)",
      lambda s: s["joint"].__setitem__("prep","single_V")),
+ neg("unknown reject_reason",
+     lambda s: s["seams"][1].__setitem__("reject_reason","because")),
 ]
 
 allgood += [
