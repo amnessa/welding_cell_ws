@@ -45,7 +45,7 @@ weldgen/         the generator - trimesh + NumPy only, no simulator import (D9)
   cli.py             `python -m weldgen generate | verify`
 
 configs/         phase1, smoke, reference_tjoint presets
-tests/           67 tests: geometry, determinism, schema conformance, ISO limits
+tests/           92 tests: geometry, determinism, schema conformance, ISO limits, viz
 notes/           the plan, the handoff, and the standards PDFs
 papers/          literature
 ```
@@ -95,6 +95,13 @@ defect (D18).
 three different curves separated by `O(g)` — at the reference 1,1 mm gap that is larger
 than the ~0,6 mm RMSE the literature reports. We store `nominal` and ship the other two
 derived. See `SCHEMA.md` §1.3.
+
+**Scenes are posed randomly in the world, so world axes mean nothing.** Yaw and
+translation are sampled per scene (SCHEMA.md §1.1) precisely so a joint pinned to the world
+axes cannot leak the answer. Any cross-section or figure must first go through
+`weldgen.viz.assembly_frame`, which puts A's top face on `z = 0`, B at `y >= 0` starting at
+`z = g`, and the seam along `+X`. Slicing on world X instead produces markers that wander
+across the plate and move with every seed.
 
 **`w` is always the thickness axis.** For every slab, the broad faces are `±w`. Note the
 consequence in `joints.py`: mapping the standing plate's height onto +Z *and* its thickness
