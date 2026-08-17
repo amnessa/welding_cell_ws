@@ -346,12 +346,26 @@ gating the release — it now gates only `d435i`'s claim to match the lab camera
 
 | Parameter | Range | Reasoning |
 |---|---|---|
-| Standoff | `max(min_z, 300)` – 1200 mm | lower bound **belongs to the profile** — 280/200/400 mm. Below it the sensor returns nothing. 1200 mm is roughly where `d435i` σ_z passes 3,4 mm and the seam stops being resolvable |
+| Framing fraction | 0,35 – 1,45 of the **short** image side | **[ours]** standoff is derived from this, not drawn directly — see below |
+| Standoff | clamped to `max(min_z, 300)` – 1200 mm | lower bound **belongs to the profile** — 280/200/400 mm. Below it the sensor returns nothing. 1200 mm is roughly where `d435i` σ_z passes 3,4 mm and the seam stops being resolvable |
 | Elevation above the fixture plane | 15° – 85° | **[ours]** `dataset_plan.md` §5 — below ~20° the vertical plate of a T-joint blocks the seam entirely, **which is the point**: that is the difficulty axis |
 | Azimuth | uniform 0 – 360° | |
 | Roll about the view axis | ±15° | **[ours]** eye-in-hand mounting is not gravity-aligned |
 | Intrinsics | fixed `K` per §4.2, no jitter in tier 1 | principal point at the image centre; `model: "pinhole"` says so rather than leaving it assumed |
 | Aim point | joint centre + uniform `±0,15 ×` longest workpiece edge | **[ours]** two failures to avoid at once, see below |
+
+**Standoff is derived from the framing, not sampled directly.** The assembly's longest
+extent is made to project to `framing_frac` of the short image side, so above 1,0 it
+overflows the frame and a seam is clipped *partway*. Measured against the short side rather
+than the diagonal, because a seam at an arbitrary orientation is clipped by whichever edge it
+reaches first, and the diagonal flatters the fit enough that `framing_frac > 1` would rarely
+clip anything.
+
+Sampling standoff uniformly over 300 – 1200 mm instead framed the assembly comfortably almost
+every time, and the consequence was not cosmetic: **partial visibility never occurred**, so
+`occluded_fraction` was `{0, 1}` in 99,3% of seams and an error-vs-visibility plot would have
+been two points rather than a curve. It is also the more realistic sampler — an eye-in-hand
+camera on a robot frequently cannot get a whole 400 mm seam into one view.
 
 **What the camera looks at is a decision, not a detail.** Aiming at the assembly's centroid
 is wrong for a joint: the standing plate of a T drags the centroid upward, so the camera
@@ -370,23 +384,35 @@ that is so few.
 sampler. If it clusters near zero, the sampler is too polite — fix the sampler, not the
 metric.
 
-**Measured, 1035 weldable seams over 120 seeds × 5 joint types:** mean 0,59; 40,5% at
-exactly 0; 58% above 0,98. The named failure mode does not occur — the sampler is not
-polite, it hides the majority of seams. But the distribution is **binary, not graded**:
-only 0,7% of seams fall in (0,05 – 0,95).
+**Measured over primary seams, 80 seeds × 5 joint types.** The gate is met, and the axis is
+graded — but only once the two components are read separately, which is why 2.3.0 splits them:
 
-That is geometry, not a sampler defect, and it will not be fixed by sampling harder. A
-*straight* seam under a *convex* occluder is shadowed all-or-nothing: the occluding plate
-spans the seam's whole length, because the seam was clipped to the run the two parts share
-in the first place. Partial occlusion needs a non-convex occluder, a third body, or a
-curved seam — Phase 6 (curved parts, pipe-on-plate) and Phase 7 (tacks sitting on the
-seam). Reported rather than engineered around: manufacturing a graded histogram out of
-two-slab geometry would mean tuning the sampler until the metric looked right.
+| quantity | = 0 | strictly partial | = 1 |
+|---|---|---|---|
+| `occluded_fraction` (another part in the way) | 40% | **1,7%** | 58% |
+| `1 - in_frame_fraction` (image edge, blind zone) | 69% | **23%** | 8% |
 
-One consequence to carry forward: **≈ 40% of scenes have no seam that is even half
-visible.** Those scenes are valid and are not discarded — they are the single-view
-condition the dataset exists to characterise — but any training split must filter on
-`occluded_fraction` rather than assume every scene carries usable supervision.
+Occlusion is **binary and always will be**: a straight seam under a convex occluder is
+shadowed all-or-nothing, because the occluding plate spans the run the two parts share to
+begin with. That is geometry, not a sampler defect, and sampling harder will not change it —
+partial *occlusion* needs a non-convex occluder, a third body, or a curved seam (Phase 6,
+Phase 7).
+
+Framing is graded, which is what makes the axis usable. Among seams **not** occluded by
+another part, 22% have a `visible_fraction` strictly inside (0,05 – 0,95) and the histogram is
+populated across every bin. So the Phase 4 error-vs-visibility figure is a curve, computed on
+`in_frame_fraction` (or on `visible_fraction` restricted to unoccluded seams) rather than on
+occlusion alone.
+
+Two consequences to carry forward:
+
+- **Yield is ≈ 52%** with the tier-1 omission policy on, and **not uniform across joint
+  types**: T 79%, butt 57%, corner 44%, edge 42%, lap 36%. A config requesting a uniform
+  joint mix does not emit one.
+- **Skipped seeds are recorded in `index.jsonl`** with `emitted: false` and a reason, so the
+  selection is characterisable rather than merely reported. `min_visible_fraction` is
+  deliberately low (0,1): a high bar would eat the partially-framed band, which is the graded
+  middle the axis depends on.
 
 ### 4.2 Depth noise model
 

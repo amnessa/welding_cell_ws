@@ -11,10 +11,14 @@ import json
 import sys
 from pathlib import Path
 
+from collections import Counter
+
 from .config import load_config
+from .hashing import config_id
 from .hashing import content_hash
 from .scene import SceneRejected, generate_scene
-from .writer import index_row, split_arrays, write_index, write_scene
+from .writer import (index_row, skipped_row, split_arrays, write_index,
+                     write_scene)
 
 
 def cmd_generate(args: argparse.Namespace) -> int:
@@ -36,13 +40,16 @@ def cmd_generate(args: argparse.Namespace) -> int:
     partner - `twin_key` pairs what survives in both and drops the singletons.
     """
     cfg = load_config(args.config)
+    cid = config_id(cfg)
     rows, skipped = [], []
     for i in range(args.n):
         seed = args.seed0 + i
         try:
             scene, arrays = generate_scene(cfg, seed)
         except SceneRejected as e:
-            skipped.append((seed, f"{type(e).__name__}: {str(e).split(' (', 1)[0]}"))
+            # Recorded in the index, not just printed: the omission policy conditions the
+            # dataset unevenly across joint types, so what it dropped has to stay queryable.
+            skipped.append(skipped_row(seed, cid, type(e).__name__, str(e)))
             continue
         write_scene(args.out, scene, arrays, emit_meshes=args.emit_meshes)
         digest = content_hash(scene, arrays)
@@ -52,12 +59,19 @@ def cmd_generate(args: argparse.Namespace) -> int:
                   f"pts={scene['cloud']['n_points']:>7}  "
                   f"t={scene['fit']['root_gap_mm']:.2f}mm gap  "
                   f"{scene['joint']['quality_level']:>7}  {digest[:12]}")
-    write_index(args.out, rows)
-    print(f"\n{len(rows)} scenes -> {args.out}")
+    write_index(args.out, rows + skipped)
+    print(f"\n{len(rows)} scenes -> {args.out}"
+          f"  ({len(rows)}/{args.n} seeds = {len(rows) / max(args.n, 1):.0%} yield)")
     if skipped:
-        print(f"{len(skipped)} seed(s) skipped, no usable ground truth:")
-        for seed, why in skipped:
-            print(f"  {seed}  {why}")
+        by_reason = Counter(r["skip_reason"] for r in skipped)
+        print(f"{len(skipped)} seed(s) skipped, no usable ground truth: "
+              f"{dict(by_reason)}")
+        print("  recorded in index.jsonl with emitted=false; "
+              "`df[~df.emitted]` recovers them")
+        if not args.quiet:
+            for r in skipped:
+                print(f"  {r['seed']}  {r['skip_reason']}: "
+                      f"{r['skip_detail'].split(' (', 1)[0]}")
     return 0
 
 

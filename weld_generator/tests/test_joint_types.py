@@ -301,16 +301,16 @@ def test_misalignment_hinges_about_the_welded_edge():
     for beta in (0.0, 0.4, 2.0, 4.0):
         spec = spec_for("edge", angular_misalignment_deg=beta)
         parts = build(spec, "edge", np.eye(4))
-        weld = [c for c in enumerate_candidates(parts, joint_type="edge") if c.weldable]
+        weld = [c for c in enumerate_candidates(parts, joint_type="edge") if c.primary]
         assert weld, f"the welded edge must survive beta={beta}"
 
     # ...and a large beta does cost the opposite edge, on equal-width parts.
     flush = spec_for("edge", angular_misalignment_deg=0.0)
     opened = spec_for("edge", angular_misalignment_deg=4.0)
     n_flush = len([c for c in enumerate_candidates(build(flush, "edge", np.eye(4)),
-                                                   joint_type="edge") if c.weldable])
+                                                   joint_type="edge") if c.primary])
     n_open = len([c for c in enumerate_candidates(build(opened, "edge", np.eye(4)),
-                                                  joint_type="edge") if c.weldable])
+                                                  joint_type="edge") if c.primary])
     assert n_open <= n_flush
 
 
@@ -395,7 +395,7 @@ def test_a_deep_lap_still_yields_exactly_two_toes():
     for overlap in (12.0, 40.0, 70.0):
         spec = spec_for("lap", stack_offset_mm=overlap)
         w = [c for c in enumerate_candidates(build(spec, "lap", np.eye(4)),
-                                             joint_type="lap") if c.weldable]
+                                             joint_type="lap") if c.primary]
         assert len(w) == 2, f"overlap {overlap}: expected 2 toes, got {len(w)}"
 
 
@@ -408,7 +408,7 @@ def test_a_short_wide_plate_keeps_its_edge_weld():
     spec = spec_for("edge", L_A=345.0, W_A=240.0, L_B=95.0, H_B=217.0,
                     t_A=1.4, t_B=1.6, root_gap_mm=0.1)
     w = [c for c in enumerate_candidates(build(spec, "edge", np.eye(4)),
-                                         joint_type="edge") if c.weldable]
+                                         joint_type="edge") if c.primary]
     assert w, "the flush edge is still a weld even when the plate is wider than it is long"
     assert all(c.seam_class == "edge" for c in w)
 

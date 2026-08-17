@@ -113,6 +113,16 @@ class Candidate:
     #: and `n_b` unless an obstruction forced a work-angle tilt (see `_clear_axis`), and
     #: None on rejected candidates, where no clear axis exists to record.
     approach: np.ndarray | None = None
+    #: Whether `seam_class` is one this `joint_type` legitimately produces (D22). Separate
+    #: from `weldable` on purpose: `weldable` is reachability, this is taxonomy. Defaults
+    #: True because `enumerate_candidates` without a `joint_type` has no label to check
+    #: against - a baseline reusing this rule does not know the joint type either.
+    matches_joint_type: bool = True
+
+    @property
+    def primary(self) -> bool:
+        """A weld this joint declares as its own: reachable AND in-class."""
+        return self.weldable and self.matches_joint_type
 
     @property
     def seam_class(self) -> str:
@@ -266,23 +276,33 @@ def enumerate_candidates(
     _suppress_toes(out, access)
 
     # A seam whose class does not belong to this joint type is real geometry but is not
-    # this joint's weld. Kept as a negative rather than dropped: it is exactly what a
-    # geometric method returns when it does not know what kind of joint it is looking at.
+    # this joint's weld. It is recorded as `matches_joint_type: False` and stays
+    # `weldable`, because it IS weldable - a torch can reach it and fusing it would join
+    # metal. Only the taxonomy is off.
+    #
+    # This was previously `weldable: False, reject_reason: "wrong_class_for_joint"`, which
+    # conflated two different things. Every other reject reason means *unreachable*; this
+    # one meant *reachable but off-label*. A baseline that finds the lap toe in an
+    # edge-joint scene has made a correct detection, and scoring it as a false positive
+    # would pollute the weldable-vs-interior metric with taxonomy errors mixed into
+    # physics errors - which is the metric the whole lap/edge argument rests on. Split
+    # apart, Phase 4 can report against primary seams, against all weldable seams, or
+    # both, and the gap between those two numbers is itself a result: how often a declared
+    # joint type under-describes its own scene.
     if joint_type is not None:
         allowed = ALLOWED_CLASSES.get(joint_type)
         if allowed is not None:
             for c in out:
-                if c.weldable and c.seam_class not in allowed:
-                    c.weldable = False
-                    c.reject_reason = "wrong_class_for_joint"
+                c.matches_joint_type = c.seam_class in allowed
 
-    # Last, so that only candidates still in the running get a vote on which way the
-    # joint runs. Ordered before the class pass, a short-but-wide plate let its own
-    # out-of-class lap toes outvote the edge weld and delete it.
+    # Last, so that only the joint's OWN welds get a vote on which way the joint runs -
+    # `primary`, not merely `weldable`. Ordered before the class pass, a short-but-wide
+    # plate let its own out-of-class lap toes outvote the edge weld and delete it; leaving
+    # off-class seams weldable would let them vote again by another route.
     _drop_cross_runs(out, frozenset(p.id for p in parts if p.role == "workpiece"), access)
 
     out.sort(key=lambda c: (
-        not c.weldable, c.face_pair[0], c.face_pair[1],
+        not c.primary, not c.weldable, c.face_pair[0], c.face_pair[1],
         tuple(np.round(c.p0, 6)) if c.p0 is not None else (0.0, 0.0, 0.0),
     ))
     return out
@@ -580,9 +600,9 @@ def _drop_cross_runs(cands: list[Candidate], workpiece_ids: frozenset[str],
             and all(f.split(":")[0] in workpiece_ids for f in c.face_pair)]
     if not runs:
         return
-    # Only candidates still standing get a vote. A rejected one is not one of this
-    # joint's welds, so it has no say in which way the joint runs.
-    voters = [c for c in runs if c.weldable] or runs
+    # Only the joint's own welds get a vote. A rejected one is not one of them, and
+    # neither is an out-of-class one, so neither has a say in which way the joint runs.
+    voters = [c for c in runs if c.primary] or [c for c in runs if c.weldable] or runs
     tangents = np.array([(c.p1 - c.p0) / c.length_mm for c in voters])
     weights = np.array([c.length_mm for c in voters])
     # Tangents are undirected, so the scatter matrix - not the mean - is what carries the

@@ -46,14 +46,24 @@ def content_hash(scene: Mapping[str, Any], arrays: Mapping[str, np.ndarray]) -> 
         arrays: ``{"cloud.npz:xyz": arr, "seams.npz:seam_0": arr, ...}``. Keys are
             hashed in sorted order, each with its dtype and shape, so a silent dtype
             change cannot slip past.
+
+    Arrays are byte-swapped to little-endian first. Without that the hash is only
+    reproducible within one architecture: ``str(np.dtype("float64"))`` is ``"float64"`` on
+    both a little- and a big-endian machine, so the dtype tag matches while ``tobytes()``
+    does not, and the gate would fail across architectures while claiming to hold. Almost
+    nothing runs big-endian any more - but the claim is "separate processes, any machine",
+    and a claim that invites the question should answer it.
     """
     hashable = {k: v for k, v in scene.items() if k not in UNHASHED_KEYS}
     h = hashlib.sha256()
     h.update(canonical_json(hashable).encode("utf-8"))
     for name in sorted(arrays):
-        arr = np.ascontiguousarray(arrays[name])
+        arr = np.asarray(arrays[name])
+        if arr.dtype.byteorder not in ("|", "="):      # explicit non-native order
+            arr = arr.astype(arr.dtype.newbyteorder("="))
+        arr = np.ascontiguousarray(arr.astype(arr.dtype.newbyteorder("<"), copy=False))
         h.update(name.encode("utf-8"))
-        h.update(str(arr.dtype).encode("utf-8"))
+        h.update(np.dtype(arr.dtype).str.encode("utf-8"))   # e.g. "<f4" - order included
         h.update(str(arr.shape).encode("utf-8"))
         h.update(arr.tobytes())
     return h.hexdigest()

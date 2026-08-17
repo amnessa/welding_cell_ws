@@ -545,50 +545,62 @@ This function is reused by the baselines in Phase 4 — building it here is not 
       independent draws would have to reconcile two densities that were never equal. Raster density
       is `(f_px/z)²`. `SCHEMA.md` §7 now reads "implemented", not "reserved slot"
 
-**Gate — partly met, and the shortfall is geometry rather than sampling.** Measured over 1035
-weldable seams (120 seeds × 5 joint types):
+**Gate — met.** Measured over primary seams, 80 seeds × 5 joint types. It took splitting the
+metric to see it, which is the substance of the 2.3.0 schema bump:
 
-| | value |
-|---|---|
-| mean `occluded_fraction` | 0,59 |
-| exactly 0 (plainly visible) | 40,5% |
-| above 0,98 (effectively hidden) | 58% |
-| strictly inside (0,05 – 0,95) | **0,7%** |
+| quantity | = 0 | strictly partial | = 1 |
+|---|---|---|---|
+| `occluded_fraction` — another part in the way | 40% | **1,7%** | 58% |
+| `1 - in_frame_fraction` — image edge, blind zone | 69% | **23%** | 8% |
 
-The named failure mode — "always near zero, the sampler is too polite" — does **not** occur. The
-sampler hides the majority of seams, and the difficulty axis is large. What does not hold is a
-*graded* span: the distribution is binary.
+**Occlusion is binary and always will be.** A straight seam under a convex occluder is
+shadowed all-or-nothing, because the occluding plate spans the run the two parts share to
+begin with. Sampling harder will not change it; partial *occlusion* needs a non-convex
+occluder, a third body, or a curved seam (Phase 6, Phase 7).
 
-That is not fixable by sampling harder, and trying would be tuning the sampler until the metric
-looked right. A straight seam under a convex occluder is shadowed all-or-nothing, because the
-occluding plate spans the seam's whole length — the seam was clipped to the run the two parts share
-to begin with. Graded occlusion needs a non-convex occluder, a third body, or a curved seam:
-**Phase 6** (curved parts, pipe-on-plate) and **Phase 7** (tacks sitting on the seam). Recorded here
-so the Phase 6 gate inherits it rather than rediscovering it.
+**Framing is graded, and that was a real bug in the sampler.** Standoff was drawn uniformly
+over 300–1200 mm, which framed the assembly comfortably almost every time — so
+`occluded_fraction` was `{0, 1}` in **99,3%** of seams and **Phase 4 plot 3 (error vs
+visibility) would have been two points, not a curve.** One of the two figures the plan claims
+nobody else can produce could not have been produced here either. Standoff is now derived from
+a sampled *framing fraction* (0,35–1,45 of the short image side), so the assembly overflows the
+frame on purpose. Among seams not occluded by another part, 22% now have a `visible_fraction`
+strictly inside (0,05–0,95), populated across every bin. The framing sampler is also the more
+realistic one: an eye-in-hand camera frequently cannot get a whole 400 mm seam into one view.
 
-Two findings to carry into the paper:
+Findings worth carrying into the paper, measured on canonical geometry (24 azimuths × 4
+elevations, standoff 700 mm, aimed at the seam midpoint, "usable" = at least half returned):
 
 - **Azimuth dominates, and elevation barely matters.** Each fillet of a T-joint is visible from
   ~46% of viewpoints — its own side — and the two lobes are complementary, so at least one is
-  usable from 92% of them. The 8% that fail are a narrow band where the camera looks *along* the
-  seam axis (within ~10° of azimuth 0° or 180°), where the standing plate's near end occludes the
-  whole crease. That holds at 25° elevation and at 85° alike. An earlier reading of this as "both
-  fillets are hidden from overhead" was wrong: the case that produced it was at azimuth 0, and
-  elevation had nothing to do with it.
-- **The lower toe of a lap joint is visible from 0% of viewpoints** above the table — structurally,
-  not statistically. Only the upper toe is usable, from 44%, which is why lap scenes survive the
-  omission policy least often of the five (34% against T's 81%).
-- **A butt joint's top centreline is visible from 100%** of viewpoints: it lies on the upper surface
-  with nothing standing near it. Its underside centreline manages 21%. Since dissimilar thickness
-  leaves *only* the flush underside centreline, thickness mismatch and visibility interact — worth
-  knowing before reading a per-class result.
+  usable from 92%. The 8% that fail are a narrow band where the camera looks *along* the seam
+  axis (within ~10° of azimuth 0° or 180°), where the standing plate's near end occludes the
+  whole crease. That holds at 25° elevation and at 85° alike. An earlier reading of this as
+  "both fillets are hidden from overhead" was wrong: the case that produced it was at azimuth
+  0, and elevation had nothing to do with it.
+- **The lower toe of a lap joint is visible from 0% of viewpoints** above the table —
+  structurally, not statistically. Only the upper toe is usable, from 44%, which is why lap
+  scenes survive the omission policy least often. Phase 4 must exclude it from recall on
+  single-view metrics, or a baseline is scored for missing something no sensor could see; the
+  per-seam `visible_fraction` is what to filter on.
+- **A butt joint's top centreline is visible from 100%** of viewpoints: it lies on the upper
+  surface with nothing standing near it. Its underside centreline manages 21%. Since dissimilar
+  thickness leaves *only* the flush underside centreline, thickness mismatch and visibility
+  interact — worth knowing before reading a per-class result.
 
-Measured on canonical geometry: 24 azimuths × 4 elevations, standoff 700 mm, camera aimed at the seam
-midpoint, "usable" = `occluded_fraction <= 0.5`.
+**Tier-1 omission policy.** A scene with no primary seam the sensor returns carries no
+supervision, and is **omitted rather than relabelled**: a "no seam" class would encode joint
+type and camera placement rather than anything about the task, so a model would learn to
+predict it from the wrong evidence. `min_visible_fraction` is deliberately low (0,1) — a high
+bar would eat the partially-framed band, which is the graded middle the axis depends on.
 
-Consequence for consumers: **≈ 40% of scenes have no seam that is even half visible.** They are kept
-— they are the single-view condition the dataset exists to characterise — but a training split must
-filter on `occluded_fraction` rather than assume every scene carries usable supervision.
+Yield is **≈ 52%**, and **not uniform across joint types**: T 79%, butt 57%, corner 44%,
+edge 42%, lap 36%. So `--n` is an attempt count, not a scene count, and a config requesting a
+uniform joint mix does not emit one. **Skipped seeds are written to `index.jsonl`** with
+`emitted: false` and a reason, so the selection is characterisable rather than merely reported
+— `df[~df.emitted]` recovers exactly what was dropped. The policy is a config key, so a
+robotics-facing run that wants the untruncated visibility axis sets `require_visible_seam:
+false` and gets every scene.
 
 **Effort:** 2–3 days.
 

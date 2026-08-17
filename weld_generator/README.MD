@@ -124,11 +124,15 @@ occlusion figures on every scene it does emit; tier 2 is what uses them.
 
 Two consequences worth planning around:
 
-- **`--n` is an attempt count, not a scene count.** Overall yield is ~57%, so ask for
+- **`--n` is an attempt count, not a scene count.** Overall yield is ~52%, so ask for
   roughly twice what you want.
-- **Yield is not uniform across joint types** — T 72%, edge 68%, butt 62%, corner 40%, lap
-  30% — so a config requesting a uniform mix does not emit one. Generate per type if the
+- **Yield is not uniform across joint types** — T 79%, butt 57%, corner 44%, edge 42%, lap
+  36% — so a config requesting a uniform mix does not emit one. Generate per type if the
   balance matters.
+- **Skipped seeds are in `index.jsonl`** with `emitted: false` and a reason, so the selection
+  is characterisable rather than merely reported: `df[~df.emitted]` recovers exactly what was
+  dropped. A run that wants the untruncated visibility axis sets `require_visible_seam: false`
+  and gets every scene.
 
 Seeds are not backfilled past `seed0 + n`: both arms of an ablation twin must attempt the
 same seeds, and they do not fail on the same ones. Visibility depends on the camera, so a
@@ -147,13 +151,21 @@ re-running next month passes rather than "fails".
 are. `accessibility.py` enumerates every face pair and decides each on geometry alone. The
 two are compared, which is what makes the gate meaningful rather than circular.
 
-**Phase 3 — a real difficulty axis.** `occluded_fraction` must not cluster near zero. Over
-1035 weldable seams: mean 0,59, with 40,5% at exactly 0 and 58% above 0,98. The sampler is
-not polite. But the distribution is **binary, not graded** — only 0,7% of seams fall inside
-(0,05 – 0,95) — and that is geometry, not a sampler defect: a straight seam under a convex
-occluder is shadowed all-or-nothing, because the occluding plate spans the whole seam. The
-seam was clipped to the run the two parts share in the first place. Graded occlusion needs a
-non-convex occluder, a third body, or a curved seam — Phase 6 and Phase 7.
+**Phase 3 — a real difficulty axis.** Reading it needs the two components apart, which is
+what schema 2.3.0 split:
+
+| | = 0 | strictly partial | = 1 |
+|---|---|---|---|
+| `occluded_fraction` — another part in the way | 40% | 1,7% | 58% |
+| `1 - in_frame_fraction` — image edge, blind zone | 69% | **23%** | 8% |
+
+Occlusion is **binary and always will be**: a straight seam under a convex occluder is
+shadowed all-or-nothing, because the occluding plate spans the run the two parts share to
+begin with. Framing is graded — among seams not occluded by another part, 22% have a
+`visible_fraction` strictly inside (0,05 – 0,95). That is what makes an error-vs-visibility
+plot a curve, and it only exists because standoff is derived from a sampled **framing
+fraction** rather than drawn uniformly: drawn uniformly it framed everything, and the metric
+was `{0, 1}` in 99,3% of seams.
 
 ```bash
 python -m pytest tests/test_determinism.py tests/test_joint_types.py tests/test_visibility.py -q
@@ -196,17 +208,29 @@ showed the rule structurally *could not* produce an edge-joint seam:
   `PARAMETERS.md` §2.7 literally true in code: a lap at `stack_offset > 0` buries its
   interface, while at `stack_offset = 0` the same interface surfaces and becomes weldable.
 
-Then two semantic passes: `role == "workpiece"` on both faces (D13 → `fixture_contact`), and
-`seam_class ∈ ALLOWED_CLASSES[joint_type]` (D22 → `wrong_class_for_joint`). The class is
+Then two semantic passes. `role == "workpiece"` on both faces (D13 → `fixture_contact`), and
+`seam_class ∈ ALLOWED_CLASSES[joint_type]` (D22 → `matches_joint_type`). The class is
 *derived* from the faces involved — broad `±w` versus edge `±u/±v`, plus the dihedral — never
 declared. It is what stops a scene labelled `edge` from reporting a lap toe as an edge seam.
+
+**`weldable` is reachability; `matches_joint_type` is taxonomy; `primary` is both.** They are
+separate because every other rejection means *unreachable*, while an off-class seam is
+reachable and merely off-label — a baseline that finds the lap toe on the far side of an
+unequal-width edge joint has made a correct detection, and scoring it as a false positive
+would mix taxonomy errors into the weldable-vs-interior metric that the lap/edge argument
+rests on. `index.jsonl` carries both `n_weldable` and `n_primary`, and the gap between them
+measures how often a declared joint type under-describes its own scene.
 
 ---
 
 ## What the camera can see
 
 `visible_from_cam` is **geometry only**: in front of the camera, inside the image, beyond
-the sensor's blind zone, front-facing, and not occluded by another part. Sensor dropout is
+the sensor's blind zone, front-facing, and not occluded by another part. Per seam it is stored
+decomposed — `occluded_fraction` (another part in the way), `in_frame_fraction` (image edge and
+blind zone) and `visible_fraction` (their conjunction, = `mean(seam_<i>_visible)`) — because
+they are different physics and a consumer may want to filter on one and not the other. Sensor
+dropout is
 deliberately *not* in it — a grazing surface is visible, the stereo matcher simply fails on
 it — and lives in `noise.apply`, which returns its own validity mask. Keeping them apart is
 what lets `occluded_fraction` stay comparable across the three sensor profiles instead of

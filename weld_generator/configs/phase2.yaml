@@ -6,3 +6,9 @@ joint_type: [T, corner, butt, lap, edge]
 seam_shape: line
 prep: square
 fixture_present: false
+# The tier-1 visibility filter is OFF here. These presets exist for the Phase 2
+# joint-geometry gate, and both arms of the D12 fixture twin must attempt the same seeds:
+# the fixture changes what the camera can see, so leaving the filter on drops DIFFERENT
+# seeds from each arm and thins the pairing for a reason that has nothing to do with the
+# ablation. Phase 3 presets leave it on.
+require_visible_seam: false

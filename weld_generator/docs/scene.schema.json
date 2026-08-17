@@ -57,7 +57,7 @@
   },
   "properties": {
     "schema_version": {
-      "const": "2.2.0"
+      "const": "2.3.0"
     },
     "generator_version": {
       "type": "string",
@@ -439,6 +439,7 @@
         "required": [
           "id",
           "weldable",
+          "matches_joint_type",
           "reject_reason",
           "face_pair",
           "parametric",
@@ -452,7 +453,8 @@
             "minimum": 0
           },
           "weldable": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "REACHABILITY only: an exterior face pair whose torch cone clears, on two workpiece objects. Says nothing about whether this weld is one the declared joint.type produces - see matches_joint_type."
           },
           "reject_reason": {
             "enum": [
@@ -465,7 +467,8 @@
               "too_short",
               "toe_of_centreline",
               "wrong_class_for_joint"
-            ]
+            ],
+            "description": "Why this candidate is not weldable. `wrong_class_for_joint` is RETIRED as of 2.3.0 - off-class seams now carry matches_joint_type: false and stay weldable. The member is kept so the enum remains append-only; nothing emits it."
           },
           "face_pair": {
             "type": "array",
@@ -537,7 +540,30 @@
               "null"
             ],
             "minimum": 0,
-            "maximum": 1
+            "maximum": 1,
+            "description": "Fraction of the seam hidden BY ANOTHER PART. Pure geometry, independent of framing, so it is comparable across sensor profiles. Near-binary on straight seams: a convex occluder spans the run the two parts share to begin with."
+          },
+          "matches_joint_type": {
+            "type": "boolean",
+            "description": "Whether seam_class is one this joint.type legitimately produces (D22, SCHEMA.md 2.5.1). Split from `weldable` because every other rejection means unreachable, while an off-class seam is reachable and merely off-label: a baseline that finds it has made a correct detection. weldable AND matches_joint_type = a primary seam."
+          },
+          "in_frame_fraction": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Fraction of the seam inside the image and beyond the sensor's blind zone. Different physics from occlusion and stored apart because a consumer may filter on one and not the other. This is the field that carries a GRADED visibility axis - the image edge cuts a seam partway, where a convex occluder does not."
+          },
+          "visible_fraction": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Fraction the sensor actually returns: in_frame AND unoccluded, and equal to mean(seam_<i>_visible). The tier-1 omission policy tests this against min_visible_fraction."
           }
         },
         "allOf": [

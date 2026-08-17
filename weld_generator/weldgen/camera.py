@@ -56,6 +56,24 @@ def sample_pose(target: np.ndarray, standoff_mm: float, elevation_deg: float,
     return look_at(np.asarray(target, dtype=float) + offset, target, roll_deg)
 
 
+def standoff_for_framing(extent_mm: float, framing_frac: float, focal_px: float,
+                         width: int, height: int) -> float:
+    """Range at which `extent_mm` projects to `framing_frac` of the SHORT image side.
+
+    Sampling standoff uniformly over 300-1200 mm frames the assembly comfortably almost
+    every time, so `in_frame` was near-constant and the only graded source of lost seam
+    visibility never fired. Sampling the *framing fraction* instead puts the assembly
+    partly out of frame on purpose, which is also what an eye-in-hand camera on a robot
+    actually does - it frequently cannot get a whole 400 mm seam into one view.
+
+    Measured against the short side, not the diagonal: a seam at an arbitrary orientation
+    is clipped by whichever edge it reaches first, and the diagonal flatters the fit badly
+    enough that `framing_frac > 1` would almost never clip anything.
+    """
+    short = float(min(int(width), int(height)))
+    return float(focal_px) * float(extent_mm) / (max(float(framing_frac), 1e-6) * short)
+
+
 def intrinsics(focal_px: float, width: int, height: int) -> list[list[float]]:
     """Pinhole `K` with the principal point at the image centre.
 

@@ -1,6 +1,6 @@
 # Weld Seam Dataset — Scene Schema
 
-**schema_version: 2.2.0** — 1.0.0 frozen 2026-08-13; 1.1.0 D12/D16; 1.2.0 D18–D21; **2.0.0 (2026-08-15) removes `objects[].features`** — D17 withdrawn.
+**schema_version: 2.3.0** — 1.0.0 frozen 2026-08-13; 1.1.0 D12/D16; 1.2.0 D18–D21; **2.0.0 (2026-08-15) removes `objects[].features`** — D17 withdrawn; **2.3.0 (2026-08-17)** adds `seams[].matches_joint_type`, `in_frame_fraction`, `visible_fraction` and **narrows `occluded_fraction`** to occlusion by another part.
 Phase 0 deliverable of [`../notes/dataset_plan.md`](../notes/dataset_plan.md) §4.
 Companion: [`PARAMETERS.md`](PARAMETERS.md).
 
@@ -17,7 +17,9 @@ Change policy, semver on `schema_version`:
 |---|---|---|
 | New **optional** field, absent readers unaffected | patch | none |
 | New **required** field, or new enum member | minor | regeneration of affected splits |
+| **Existing field's meaning narrowed or widened**, name and type unchanged | minor, and say so in the version note | regeneration; readers do not error, which is what makes this the dangerous one |
 | Field removed, renamed, retyped, or unit changed | major | full regeneration, new release DOI |
+| Enum member **retired** (kept valid, nothing emits it) | minor | none; the enum stays append-only |
 
 `schema_version` is the *format*. `generator_version` is the *code that filled it in*.
 They move independently: a generator bugfix that changes geometry bumps
@@ -28,6 +30,22 @@ D17 was withdrawn (§2.2.1). The policy above says that costs a full regeneratio
 DOI. It costs neither here, because **no scenes have been generated yet**; Phase 1 has not
 started. Recorded anyway, because the policy is only worth having if it is applied when it is
 free as well as when it hurts.
+
+**2.3.0 adds three `seams[]` fields and narrows one.** The narrowing is the part worth
+reading: `occluded_fraction` used to mean *everything the sensor did not return* — occlusion,
+image bounds and blind zone together. It now means **occlusion by another part** alone, with
+framing split out into `in_frame_fraction` and the conjunction stored as `visible_fraction`.
+A reader that kept using `occluded_fraction` would not error; it would silently answer a
+different question. That is why the policy table now has a row for it.
+
+`matches_joint_type` is the other change with teeth. `weldable` previously folded two
+different claims together — *a torch can reach this* and *this is a weld the declared joint
+type produces* — by rejecting off-class seams as `wrong_class_for_joint`. Every other
+rejection means unreachable; that one meant reachable but off-label, so a baseline finding a
+lap toe in an edge-joint scene would be scored as a false positive for a correct detection,
+mixing taxonomy errors into the weldable-vs-interior metric that the whole lap/edge argument
+rests on. Now `weldable` is reachability, `matches_joint_type` is taxonomy, and
+`wrong_class_for_joint` is retired.
 
 ---
 
@@ -299,7 +317,7 @@ thickness.
 | `no_contact` | faces separated by more than `contact_tol_mm` along the candidate line |
 | `too_short` | shorter than `min_seam_length_mm`, or running across the joint rather than along it (§2.6.2) |
 | `toe_of_centreline` | an intersecting line bounding a coplanar centreline's gap — the weld's toe, not a separate seam |
-| `wrong_class_for_joint` | a real seam whose `seam_class` does not belong to this `joint.type` (D22, §2.5.1) |
+| ~~`wrong_class_for_joint`~~ | **retired 2.3.0.** Off-class seams now carry `matches_joint_type: false` and stay `weldable`. Kept in the enum so it remains append-only; nothing emits it |
 
 Adding a member is a **minor** bump (§0). Precedence when several apply is the table order,
 top to bottom, and the applied order is recorded so it is never ambiguous.
@@ -496,7 +514,10 @@ regenerable — you can reproduce any single scene from its id alone.
       "dihedral_deg": 90.0,          // the SEAM's dihedral — a lap joint has 0° included
                                      // angle and a 90° seam dihedral. Not the same quantity (D18)
       "sampled": { "array": "seam_0", "density_per_mm": 10.0, "n": 2321 },
-      "occluded_fraction": 0.34
+      "matches_joint_type": true,   // reachability and taxonomy are separate — §2.5.1
+      "occluded_fraction": 0.34,    // hidden by ANOTHER PART; near-binary on a straight seam
+      "in_frame_fraction": 0.71,    // inside the image and past the blind zone — the graded axis
+      "visible_fraction": 0.66      // what the sensor returns = mean(seam_<i>_visible)
     },
     {
       "id": 3,
@@ -507,7 +528,10 @@ regenerable — you can reproduce any single scene from its id alone.
       "length_mm": 200.0,
       "dihedral_deg": 90.0,
       "sampled": { "array": "seam_3", "density_per_mm": 10.0, "n": 2001 },
-      "occluded_fraction": 0.12
+      "matches_joint_type": false,  // real geometry, but not this joint type's own weld
+      "occluded_fraction": 0.12,
+      "in_frame_fraction": 1.0,
+      "visible_fraction": 0.88
     }
   ],
 
@@ -583,6 +607,25 @@ regenerable — you can reproduce any single scene from its id alone.
   only to lift the ray origin off the two faces that form the seam. Treating it as a
   surface normal returned `occluded_fraction: 1.0` for every seam in the first Phase 3
   scenes.
+
+- **`weldable` is reachability; `matches_joint_type` is taxonomy.** A seam that is
+  `weldable: true, matches_joint_type: false` is a real weld — a torch reaches it and fusing
+  it would join metal — that this joint type does not declare as its own. The lap toe on the
+  far side of an unequal-width edge joint is the canonical case. **`primary` = both true**,
+  and that is what supervision targets and what the omission policy tests.
+
+  Report against primary seams, against all weldable seams, or both; the gap between those
+  two numbers is itself a result, because it measures how often a declared joint type
+  under-describes its own scene. `index.jsonl` carries `n_weldable` and `n_primary` so the
+  gap is one subtraction.
+
+- **`occluded_fraction` and `in_frame_fraction` are different physics, stored apart.**
+  Occlusion is another part in the way: pure geometry, independent of the sensor, and
+  **near-binary** on a straight seam because a convex occluder spans the run the two parts
+  share to begin with. Framing is the image edge and the blind zone, and it cuts a seam
+  *partway* — so `in_frame_fraction` is the field that carries a **graded** visibility axis.
+  Keeping them separate lets a consumer filter on one without the other, and it is what
+  makes an error-vs-visibility curve a curve rather than two points.
 
 - **`occluded_fraction` is per seam, not per scene.** A scene can have one fully visible
   and one fully hidden seam; that is the point.

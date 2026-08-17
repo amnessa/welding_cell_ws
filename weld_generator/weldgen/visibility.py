@@ -104,6 +104,39 @@ def visible_mask(points: np.ndarray, normals: np.ndarray, slabs,
     return ok
 
 
+def seam_masks(seam_pts: np.ndarray, approach: np.ndarray, slabs,
+               T_world_cam: np.ndarray, K, width: int, height: int,
+               min_z_mm: float) -> dict[str, np.ndarray]:
+    """Per-sample visibility along a seam, **decomposed**.
+
+    Two different physics, kept apart because a consumer may want to filter on one and not
+    the other:
+
+      * `in_frame`   - inside the image and beyond the sensor's blind zone. A 400 mm seam
+                       at 350 mm standoff does not fit the frame, and its near end can sit
+                       inside the blind zone while its far end does not. Both cut the seam
+                       *partway*, which is the only graded source of lost visibility that
+                       two convex slabs and a straight seam can produce.
+      * `unoccluded` - not hidden by another part. All-or-nothing for a straight seam under
+                       a convex occluder, since the occluder spans the run the two parts
+                       share to begin with.
+
+    `visible` is their conjunction and is what gets stored: it is what the sensor returns.
+    """
+    p = np.asarray(seam_pts, dtype=float)
+    n = np.asarray(approach, dtype=float)
+    cam_pos = np.asarray(T_world_cam, dtype=float)[:3, 3]
+
+    uv, z_cam = project(p, T_world_cam, np.asarray(K, dtype=float))
+    in_frame = in_frustum(uv, z_cam, width, height, min_z_mm)
+    # Cast along the whole seam, not only where it is framed: `occluded_fraction` has to
+    # mean "hidden by another part" independently of how the camera happens to be framed,
+    # or the two numbers are not separable after the fact.
+    unoccluded = ~occluded(p, cam_pos, slabs, n)
+    return {"in_frame": in_frame, "unoccluded": unoccluded,
+            "visible": in_frame & unoccluded}
+
+
 def seam_visibility(seam_pts: np.ndarray, approach: np.ndarray, slabs,
                     T_world_cam: np.ndarray, K, width: int, height: int,
                     min_z_mm: float) -> np.ndarray:

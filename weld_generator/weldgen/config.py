@@ -78,16 +78,27 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # blocks its own seam, which IS the difficulty axis (PARAMETERS.md §4.1).
     "elevation_deg": [15.0, 85.0],
     "camera_roll_deg": [-15.0, 15.0],   # eye-in-hand mounting is not gravity-aligned
+    # Standoff is chosen so the assembly's longest extent projects to this fraction of the
+    # SHORT image side. Above 1,0 the assembly overflows the frame and a seam gets clipped
+    # partway - the only graded source of lost visibility that straight seams on convex
+    # slabs can produce, and what Phase 4's error-vs-visibility plot needs to be a curve
+    # rather than two points. Sampling standoff uniformly instead framed everything.
+    "frame_by_extent": True,
+    "framing_frac": [0.35, 1.45],
     "image_size": [1280, 720],
     # Tier 1 omits scenes whose every weldable seam is hidden: they carry no supervision,
     # and labelling them "no seam" would encode joint type and camera placement rather
     # than anything about the task (see scene.NoVisibleSeams). The occlusion figures are
     # still recorded on every scene that IS emitted - tier 2 uses them.
     "require_visible_seam": True,
-    # A seam counts as usable below this. Given how binary occlusion is on straight seams
-    # (0,7% of seams land between 0,05 and 0,95) the exact value barely matters; 0,5 is
-    # stated rather than tuned.
-    "max_occluded_fraction": 0.5,
+    # A scene is omitted unless some primary seam has at least this fraction of its length
+    # returned by the sensor. Deliberately LOW: "no visible seam" means essentially
+    # nothing, and a seam a quarter in frame is still supervisable. A high bar here would
+    # eat the partially-framed band - the graded middle of the visibility axis, which only
+    # exists because `framing_frac` puts the assembly out of frame on purpose - and
+    # filtering out the very examples that make Phase 4's error-vs-visibility plot a curve
+    # would be self-defeating.
+    "min_visible_fraction": 0.1,
     # How far the aim may miss the joint, as a fraction of the longest workpiece edge.
     # Non-zero on purpose: aiming exactly at the seam would pin it to the image centre and
     # let a model read the answer off the camera pose (see `scene._aim_point`).

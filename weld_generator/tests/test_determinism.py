@@ -135,3 +135,27 @@ def test_twin_key_changes_with_geometry(cfg):
     a, _ = generate_scene(cfg, SEEDS[0])
     b, _ = generate_scene(other, SEEDS[0])
     assert a["twin_key"] != b["twin_key"]
+
+
+def test_hash_is_byte_order_independent():
+    """The gate claims "separate processes, any machine", so answer for byte order.
+
+    `str(np.dtype("float64"))` is `"float64"` on a little- and a big-endian machine alike,
+    so the dtype tag would match while `tobytes()` did not: the hash would silently differ
+    across architectures while the gate claimed to hold. Arrays are byte-swapped to
+    little-endian before hashing. Almost nothing runs big-endian any more - but a claim
+    that invites the question should answer it.
+    """
+    import numpy as np
+
+    from weldgen.hashing import content_hash
+
+    little = np.arange(12, dtype="<f4").reshape(4, 3)
+    big = little.astype(">f4")
+    assert np.array_equal(little, big)
+    assert content_hash({}, {"cloud.npz:xyz": little}) \
+        == content_hash({}, {"cloud.npz:xyz": big})
+
+    # ...and the dtype must still be distinguished, or the guard has gone too far.
+    assert content_hash({}, {"cloud.npz:xyz": little}) \
+        != content_hash({}, {"cloud.npz:xyz": little.astype("<f8")})

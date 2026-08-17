@@ -11,7 +11,7 @@ import numpy as np
 
 from . import GENERATOR_VERSION, SCHEMA_VERSION
 from .accessibility import d19_curves, enumerate_candidates
-from .camera import intrinsics, sample_pose
+from .camera import intrinsics, sample_pose, standoff_for_framing
 from .config import SENSOR_PROFILES, geometry_config, sample_joint
 from .geom import SLAB_FACES, Slab, approach_dir, rot_x, rot_y, rot_z, translate
 from .hashing import config_id, twin_key
@@ -19,7 +19,7 @@ from .layouts import build as build_layout
 from .rng import Streams
 from .sampling import (sample_polyline, sample_scene_camera_raster,
                        sample_scene_surface)
-from .visibility import seam_visibility, visible_mask
+from .visibility import seam_masks, visible_mask
 
 
 class SceneRejected(ValueError):
@@ -200,10 +200,22 @@ def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict
     azimuth = float(g5.uniform(0.0, 360.0))
     roll = float(g5.uniform(*cfg["camera_roll_deg"]))
     aim_jitter = g5.uniform(-1.0, 1.0, size=3)
+    framing = float(g5.uniform(*cfg["framing_frac"]))
 
     width, height = int(cfg["image_size"][0]), int(cfg["image_size"][1])
     K = intrinsics(prof["focal_px"], width, height)
     target = _aim_point(cands, slabs, aim_jitter, float(cfg["aim_jitter_frac"]))
+
+    # Standoff comes from the FRAMING, not from a uniform draw over range: see
+    # `camera.standoff_for_framing`. The uniform draw above is still made, and still first,
+    # so substream 5 stays append-only (SCHEMA.md §6.1); it is the fallback when framing is
+    # switched off, and the clamp bound when it is on.
+    if cfg.get("frame_by_extent", True):
+        extent = float(np.ptp(np.vstack([s_.mesh().vertices for s_ in slabs
+                                         if s_.role == "workpiece"]), axis=0).max())
+        standoff = float(np.clip(
+            standoff_for_framing(extent, framing, prof["focal_px"], width, height),
+            max(prof["min_z_mm"], cfg["standoff_mm"][0]), cfg["standoff_mm"][1]))
     T_cam = sample_pose(target, standoff, elevation, azimuth, roll)
 
     def _visible(pts, nrm):
@@ -252,9 +264,9 @@ def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict
         arrays[f"seams.npz:seam_{i}_approach"] = np.tile(appr, (n, 1)).astype(np.float32)
         arrays[f"seams.npz:seam_{i}_nA"] = np.tile(c.n_a, (n, 1)).astype(np.float32)
         arrays[f"seams.npz:seam_{i}_nB"] = np.tile(c.n_b, (n, 1)).astype(np.float32)
-        seam_vis = seam_visibility(pts, np.tile(appr, (n, 1)), slabs, T_cam, K,
-                                   width, height, prof["min_z_mm"])
-        arrays[f"seams.npz:seam_{i}_visible"] = seam_vis
+        masks = seam_masks(pts, np.tile(appr, (n, 1)), slabs, T_cam, K,
+                           width, height, prof["min_z_mm"])
+        arrays[f"seams.npz:seam_{i}_visible"] = masks["visible"]
 
         seam_blocks.append({
             "id": i,
@@ -267,11 +279,21 @@ def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict
             "length_mm": float(c.length_mm),
             "dihedral_deg": float(c.dihedral_deg),
             "seam_class": c.seam_class,
+            # Reachability and taxonomy, split apart: `weldable` above is "a torch can
+            # reach it", this is "and it is a weld this joint type declares as its own".
+            "matches_joint_type": bool(c.matches_joint_type),
             "sampled": {"array": f"seam_{i}", "density_per_mm": density_per_mm, "n": n},
             # Per seam, not per scene: one seam of a joint can be fully visible while the
             # other is entirely hidden behind the standing plate, and averaging that away
             # discards the difficulty axis the camera sampler exists to create.
-            "occluded_fraction": float(1.0 - seam_vis.mean()),
+            #
+            # The two fractions are DIFFERENT physics and are stored apart. Occlusion is
+            # another part in the way, all-or-nothing on a straight seam. Framing is the
+            # image edge and the blind zone, which cut a seam partway - so this is the
+            # field that carries the graded axis Phase 4's error-vs-occlusion plot needs.
+            "occluded_fraction": float(1.0 - masks["unoccluded"].mean()),
+            "in_frame_fraction": float(masks["in_frame"].mean()),
+            "visible_fraction": float(masks["visible"].mean()),
         })
 
     # --- tier-1 omission policy --------------------------------------------------
@@ -281,19 +303,24 @@ def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict
     # The first is not a visibility question, but it is the same policy question, so it
     # lives under the same switch and mechanics presets stay unaffected by both.
     if cfg.get("require_visible_seam", True):
-        seen = [b["occluded_fraction"] for b in seam_blocks if b["weldable"]]
+        # Primary seams, not merely weldable ones: an out-of-class seam is real geometry
+        # but is not what this scene's joint-type label promises to supervise.
+        seen = [b["visible_fraction"] for b in seam_blocks
+                if b["weldable"] and b["matches_joint_type"]]
         if not seen:
             raise NoSeamsFound(
-                f"joint_type={joint_type!r} seed={seed}: {len(seam_blocks)} candidate(s) "
-                f"but none weldable, so the scene carries no ground truth. Reasons: "
-                f"{sorted({b['reject_reason'] for b in seam_blocks})}.")
-        thresh = float(cfg["max_occluded_fraction"])
-        if min(seen) > thresh:
+                f"joint_type={joint_type!r} seed={seed}: {len(seam_blocks)} candidate(s), "
+                f"none of them a primary weld, so the scene carries no ground truth. "
+                # A weldable off-class seam has no reject_reason, so `None` needs a name
+                # here - sorting a set of str against None raises.
+                f"Reasons: {sorted({b['reject_reason'] or 'off-class' for b in seam_blocks})}.")
+        thresh = float(cfg["min_visible_fraction"])
+        if max(seen) < thresh:
             raise NoVisibleSeams(
-                f"joint_type={joint_type!r} seed={seed}: {len(seen)} weldable seam(s), "
-                f"least occluded {min(seen):.3f} > max_occluded_fraction={thresh:.2f} "
+                f"joint_type={joint_type!r} seed={seed}: {len(seen)} primary seam(s), "
+                f"best visible {max(seen):.3f} < min_visible_fraction={thresh:.2f} "
                 f"(elevation={elevation:.1f} deg, azimuth={azimuth:.1f} deg, "
-                f"standoff={standoff:.0f} mm, profile={profile}).")
+                f"standoff={standoff:.0f} mm, framing={framing:.2f}, profile={profile}).")
 
     for k, v in cloud.items():
         arrays[f"cloud.npz:{k}"] = v

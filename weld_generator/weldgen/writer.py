@@ -65,7 +65,9 @@ def index_row(scene: Mapping[str, Any], digest: str) -> dict[str, Any]:
     """
     ts = [o["thickness_mm"] for o in scene["objects"] if o["role"] == "workpiece"]
     weldable = [s for s in scene["seams"] if s["weldable"]]
+    primary = [s for s in weldable if s["matches_joint_type"]]
     return {
+        "emitted": True,
         "scene_id": scene["scene_id"],
         "config_id": scene["config_id"],
         "seed": scene["seed"],
@@ -83,12 +85,22 @@ def index_row(scene: Mapping[str, Any], digest: str) -> dict[str, Any]:
         "linear_misalignment_mm": scene["fit"]["linear_misalignment_mm"],
         "angular_misalignment_deg": scene["fit"]["angular_misalignment_deg"],
         "n_seams": len(scene["seams"]),
+        # `n_weldable` is reachability; `n_primary` additionally requires the seam to be
+        # one this joint type declares. The gap between them is how often a joint-type
+        # label under-describes its own scene.
         "n_weldable": len(weldable),
+        "n_primary": len(primary),
         "n_fixture_contact": sum(
             1 for s in scene["seams"] if s["reject_reason"] == "fixture_contact"),
         "total_seam_length_mm": float(sum(s["length_mm"] for s in weldable)),
         "mean_occluded_fraction": float(
             np.mean([s["occluded_fraction"] for s in scene["seams"]])),
+        # Occlusion and framing are different physics (SCHEMA.md §5.2). Averaged over
+        # PRIMARY seams, because those are the ones a metric is computed against.
+        "mean_in_frame_fraction": float(
+            np.mean([s["in_frame_fraction"] for s in primary])) if primary else None,
+        "best_visible_fraction": float(
+            max(s["visible_fraction"] for s in primary)) if primary else 0.0,
         "n_points": scene["cloud"]["n_points"],
         "density_per_mm2": scene["cloud"]["density_per_mm2"],
         "sampling_mode": scene["cloud"]["sampling_mode"],
@@ -98,6 +110,22 @@ def index_row(scene: Mapping[str, Any], digest: str) -> dict[str, Any]:
         "part_geometry_ids": [o["part_geometry_id"] for o in scene["objects"]],
         "content_hash": digest,
     }
+
+
+def skipped_row(seed: int, config_id_: str, reason: str, detail: str) -> dict[str, Any]:
+    """One `index.jsonl` row for a seed that produced no emittable scene.
+
+    Skipped seeds go in the index, not only to stdout. The omission policy conditions the
+    dataset on the camera - and it does so unevenly across joint types - so the selection
+    has to be *characterisable* rather than merely reported: `df[~df.emitted]` recovers
+    exactly what was dropped and why. A yield percentage in a README is not a substitute,
+    because it cannot be regrouped, plotted, or checked.
+
+    `emitted` is what separates the two row kinds; every other field is null on a skip
+    because there is no scene to read them from.
+    """
+    return {"emitted": False, "seed": int(seed), "config_id": config_id_,
+            "skip_reason": reason, "skip_detail": detail}
 
 
 def write_index(out_dir: str | Path, rows: list[dict[str, Any]]) -> Path:

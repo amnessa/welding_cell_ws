@@ -7,6 +7,9 @@ comparable across sensor profiles. These tests pin that split as much as the ari
 
 from __future__ import annotations
 
+import pathlib
+import tempfile
+
 import numpy as np
 import pytest
 
@@ -20,6 +23,7 @@ from weldgen.sampling import raster_density_per_mm2
 from weldgen.scene import NoSeamsFound, SceneRejected, generate_scene
 from weldgen.visibility import hpr_exterior, occluded, ray_hits_slab, visible_mask
 
+ROOT = pathlib.Path(__file__).resolve().parents[1]
 K = intrinsics(674.0, 1280, 720)
 
 
@@ -237,14 +241,22 @@ def test_occluded_fraction_spans_the_range_and_is_not_always_zero():
     assert 0.15 < (v > 0.5).mean() < 0.85, "not all-or-nothing across the dataset"
 
 
-def test_seam_occluded_fraction_agrees_with_its_stored_mask():
+def test_the_three_seam_fractions_are_consistent_and_separable():
+    """`visible_fraction` is the stored mask. The other two decompose it.
+
+    Occlusion and framing are different physics and are stored apart so a consumer can
+    filter on one without the other; `visible` is their conjunction, so it can only be
+    smaller than either.
+    """
     cfg = load_config()
     cfg["joint_type"] = ["corner"]
     cfg["require_visible_seam"] = False        # this seed's camera sees neither seam
     scene, arrays = generate_scene(cfg, 31337)
     for s in scene["seams"]:
         mask = arrays[f"seams.npz:{s['sampled']['array']}_visible"]
-        assert s["occluded_fraction"] == pytest.approx(1.0 - mask.mean(), abs=1e-9)
+        assert s["visible_fraction"] == pytest.approx(float(mask.mean()), abs=1e-9)
+        assert s["visible_fraction"] <= s["in_frame_fraction"] + 1e-9
+        assert s["visible_fraction"] <= 1.0 - s["occluded_fraction"] + 1e-9
 
 
 # --- HPR exteriority -----------------------------------------------------------------
@@ -309,8 +321,9 @@ def test_every_emitted_scene_carries_a_seam_worth_supervising():
         except SceneRejected:
             continue
         kept += 1
-        best = min(s["occluded_fraction"] for s in scene["seams"] if s["weldable"])
-        assert best <= cfg["max_occluded_fraction"]
+        best = max(s["visible_fraction"] for s in scene["seams"]
+                   if s["weldable"] and s["matches_joint_type"])
+        assert best >= cfg["min_visible_fraction"]
     assert kept > 10, "the policy must not reject nearly everything"
 
 
@@ -328,3 +341,122 @@ def test_occlusion_is_still_recorded_on_the_scenes_that_survive():
                    for s in scene["seams"] for k in arrays)
         return
     pytest.fail("no scene survived the policy in ten seeds")
+
+
+# --- review follow-ups (2026-08-17) ---------------------------------------------------
+
+def test_framing_puts_seams_partly_out_of_frame():
+    """The graded axis exists only because the assembly sometimes overflows the frame.
+
+    With standoff drawn uniformly over 300-1200 mm it almost never did, and
+    `occluded_fraction` was {0, 1} in 99,3% of seams - an error-vs-visibility plot would
+    have been two points, not a curve.
+    """
+    partial = 0
+    total = 0
+    for jt in ("T", "corner", "butt", "lap", "edge"):
+        cfg = load_config()
+        cfg["joint_type"] = [jt]
+        cfg["require_visible_seam"] = False
+        for seed in range(7_000_000, 7_000_030):
+            try:
+                scene, _ = generate_scene(cfg, seed)
+            except SceneRejected:
+                continue
+            for s in scene["seams"]:
+                if not (s["weldable"] and s["matches_joint_type"]):
+                    continue
+                total += 1
+                partial += 0.02 < 1.0 - s["in_frame_fraction"] < 0.98
+    assert total > 100
+    assert partial / total > 0.10, (
+        f"only {partial}/{total} seams partly framed - the graded axis is gone")
+
+
+def test_turning_framing_off_recovers_the_ungraded_sampler():
+    """`frame_by_extent: false` falls back to the uniform standoff draw.
+
+    Kept as an escape hatch, and as the control arm: it is the configuration whose
+    visibility axis is binary, which is worth being able to reproduce on purpose.
+    """
+    cfg = load_config()
+    cfg["joint_type"] = ["T"]
+    cfg["require_visible_seam"] = False
+    a, _ = generate_scene(cfg, 4242)
+    cfg["frame_by_extent"] = False
+    b, _ = generate_scene(cfg, 4242)
+    assert a["camera"]["standoff_mm"] != b["camera"]["standoff_mm"]
+    lo = max(SENSOR_PROFILES[b["noise_model"]["profile"]]["min_z_mm"], 300.0)
+    assert lo <= b["camera"]["standoff_mm"] <= 1200.0
+
+
+def test_off_class_seams_stay_weldable_and_are_flagged_instead():
+    """`weldable` is reachability; `matches_joint_type` is taxonomy.
+
+    Folded together, a baseline that finds the lap toe on the far side of an unequal-width
+    edge joint is scored as a false positive for a correct detection, which pollutes the
+    weldable-vs-interior metric with taxonomy errors mixed into physics errors.
+    """
+    from weldgen.accessibility import enumerate_candidates
+    from weldgen.joints import JointSpec
+
+    spec = JointSpec(L_A=220.0, W_A=140.0, t_A=1.5, L_B=220.0, H_B=90.0, t_B=1.5,
+                     root_gap_mm=0.1, linear_misalignment_mm=0.0,
+                     angular_misalignment_deg=0.0, included_angle_deg=0.0,
+                     stack_offset_mm=0.0)
+    cands = enumerate_candidates(build(spec, "edge", np.eye(4)), joint_type="edge")
+
+    off = [c for c in cands if c.weldable and not c.matches_joint_type]
+    assert off, "an unequal-width edge joint has a lap toe on its far side"
+    assert all(c.reject_reason is None for c in off), "reachable, so not a rejection"
+    assert all(c.seam_class != "edge" for c in off)
+    assert not any(c.reject_reason == "wrong_class_for_joint" for c in cands), \
+        "retired in schema 2.3.0"
+
+    primary = [c for c in cands if c.primary]
+    assert primary and all(c.seam_class == "edge" for c in primary)
+
+
+def test_off_class_seams_do_not_vote_on_the_joint_direction():
+    """The cross-run rule must poll PRIMARY seams, not merely weldable ones.
+
+    Leaving off-class seams weldable would otherwise re-open the bug the class pass was
+    moved to fix: on a plate shorter along the seam than it is wide, its own out-of-class
+    lap toes outvote the edge weld and delete it.
+    """
+    from weldgen.accessibility import enumerate_candidates
+    from weldgen.joints import JointSpec
+
+    spec = JointSpec(L_A=345.0, W_A=240.0, t_A=1.4, L_B=95.0, H_B=217.0, t_B=1.6,
+                     root_gap_mm=0.1, linear_misalignment_mm=0.0,
+                     angular_misalignment_deg=0.0, included_angle_deg=0.0,
+                     stack_offset_mm=0.0)
+    primary = [c for c in enumerate_candidates(build(spec, "edge", np.eye(4)),
+                                               joint_type="edge") if c.primary]
+    assert primary, "the flush edge survives a plate wider than it is long"
+
+
+def test_skipped_seeds_are_recorded_in_the_index():
+    """A yield percentage in a README cannot be regrouped, plotted, or checked.
+
+    The omission policy conditions the dataset on the camera, unevenly across joint types,
+    so what it dropped has to stay queryable: `df[~df.emitted]`.
+    """
+    import json
+
+    from weldgen.cli import main
+
+    out = pathlib.Path(tempfile.mkdtemp()) / "idx"
+    assert main(["generate", "--config", str(ROOT / "configs" / "phase3.yaml"),
+                 "--n", "24", "--out", str(out), "--quiet"]) == 0
+    rows = [json.loads(ln) for ln in (out / "index.jsonl").read_text().splitlines()]
+
+    emitted = [r for r in rows if r["emitted"]]
+    skipped = [r for r in rows if not r["emitted"]]
+    assert len(rows) == 24, "every attempted seed is accounted for"
+    assert skipped, "phase3 rejects some seeds; they must be in the index"
+    for r in skipped:
+        assert r["skip_reason"] in ("NoVisibleSeams", "NoSeamsFound")
+        assert r["skip_detail"] and r["seed"] is not None
+    for r in emitted:
+        assert r["n_primary"] <= r["n_weldable"]
