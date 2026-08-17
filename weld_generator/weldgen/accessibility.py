@@ -33,7 +33,7 @@ negatives.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Iterator, Sequence
 
 import numpy as np
 
@@ -43,6 +43,10 @@ from .geom import SLAB_FACES, Plane, Slab, dihedral_deg, intersect_planes
 #: `accessibility` block, which is stored so every rejection is reproducible.
 DEFAULT_ACCESS: dict[str, Any] = {
     "torch_clearance": {"half_angle_deg": 30.0, "standoff_mm": 15.0},
+    #: How far the torch may be tilted off the dihedral bisector to dodge an obstruction.
+    #: 45 deg is a wide but real work-angle range; past it the arc stops reaching both
+    #: members, so a seam that can only be approached beyond it stays `bisector_blocked`.
+    "max_work_angle_deg": 45.0,
     "dihedral_min_deg": 30.0,
     "dihedral_max_deg": 170.0,
     # MUST exceed the largest root gap the sampler can draw, including the below_D
@@ -56,12 +60,11 @@ DEFAULT_ACCESS: dict[str, Any] = {
     #: apart register as coplanar, inventing a centreline that suppressed the real welds.
     "coplanar_tol_mm": 0.5,
     "min_seam_length_mm": 10.0,
-    #: A seam must also be a meaningful FRACTION of the joint, not merely above an
-    #: absolute floor. Without this a 200 mm lap emits its two 40 mm end runs alongside
-    #: the two 200 mm toes, and the short cross-runs - real geometry, but not what anyone
-    #: means by "the seam" - outnumber the long ones. Scale-free, so it behaves the same
-    #: on an 80 mm coupon and a 400 mm plate.
-    "min_seam_length_frac": 0.25,
+    #: How far off the joint's dominant direction a shorter run must be before it counts
+    #: as a cross-run at the end of the seam rather than a seam - see `_drop_cross_runs`.
+    #: Scale-free by construction: it is an angle, so it behaves the same on an 80 mm
+    #: coupon and a 400 mm plate, and the same whether a lap overlaps by 10% or 90%.
+    "cross_run_tol_deg": 45.0,
 }
 
 #: Faces count as parallel within this angle. NOT exact parallelism: the sampler tilts
@@ -106,6 +109,10 @@ class Candidate:
     n_b: np.ndarray
     dihedral_deg: float
     separation_mm: float
+    #: The torch axis that was found to clear the scene. Equal to the bisector of `n_a`
+    #: and `n_b` unless an obstruction forced a work-angle tilt (see `_clear_axis`), and
+    #: None on rejected candidates, where no clear axis exists to record.
+    approach: np.ndarray | None = None
 
     @property
     def seam_class(self) -> str:
@@ -167,6 +174,66 @@ def _escapes(solids: Sequence[Slab], origin: np.ndarray, axis: np.ndarray,
     return True
 
 
+def _clear_axis(solids: Sequence[Slab], pts: np.ndarray, bisector: np.ndarray,
+                normals: tuple[np.ndarray, np.ndarray],
+                access: dict[str, Any]) -> np.ndarray | None:
+    """The torch axis that actually clears the scene, or None if none does.
+
+    The bisector is where a torch WANTS to sit, not the only place it may sit. A welder
+    tilts the gun off the bisector when something is in the way, up to a work angle
+    beyond which the arc no longer reaches both members. Pinning the axis to the bisector
+    makes that impossible, and the failure is not hypothetical: on an edge joint the two
+    joint faces are coplanar, so the bisector runs horizontally, exactly tangent to the
+    table the parts are lying on. The lower half of the nozzle cone is then buried in the
+    fixture and every edge weld in the scene is rejected `bisector_blocked` - 39 of 40
+    scenes lost their only seam once D12 turned the fixture on.
+
+    So: try the bisector, then progressively larger tilts away from it, and return the
+    first axis whose whole cone clears at every sample point.
+
+    Two bounds keep the search physical. `max_work_angle_deg` caps the tilt outright, and
+    the axis must keep a positive component along BOTH face normals - the torch still has
+    to face both members it is fusing. The second bound is what does the real work on
+    acute joints: in a 30 degree nook the two normals are 150 degrees apart, so almost no
+    tilt is admissible and the seam stays blocked, while on a coplanar edge joint the two
+    normals coincide and a whole hemisphere opens up, which is exactly the freedom a
+    welder has there.
+    """
+    na, nb = normals
+    for axis in _work_angle_axes(bisector, float(access["max_work_angle_deg"])):
+        if float(axis @ na) <= 0.0 or float(axis @ nb) <= 0.0:
+            continue                                   # torch no longer faces both members
+        if all(_escapes(solids, q, axis, access) for q in pts):
+            return axis
+    return None
+
+
+def _work_angle_axes(bisector: np.ndarray, max_deg: float, n_azimuth: int = 8
+                     ) -> Iterator[np.ndarray]:
+    """Candidate torch axes, nearest the bisector first.
+
+    Yields the bisector, then rings of axes tilted away from it. Ordering matters: the
+    returned axis is stored as the seam's `approach_dir`, so the search must prefer the
+    torch pose a welder would actually choose over any other pose that merely fits.
+    """
+    axis = np.asarray(bisector, dtype=float)
+    axis = axis / np.linalg.norm(axis)
+    yield axis
+    if max_deg <= 0.0:
+        return
+    tmp = np.array([0.0, 0.0, 1.0])
+    if abs(axis @ tmp) > 0.9:
+        tmp = np.array([1.0, 0.0, 0.0])
+    u = np.cross(axis, tmp); u /= np.linalg.norm(u)
+    v = np.cross(axis, u)
+    phis = np.linspace(0.0, 2 * np.pi, n_azimuth, endpoint=False)
+    ring = np.cos(phis)[:, None] * u[None, :] + np.sin(phis)[:, None] * v[None, :]
+    for tilt in np.arange(15.0, max_deg + 1e-9, 15.0):
+        a = np.deg2rad(tilt)
+        for r in np.cos(a) * axis[None, :] + np.sin(a) * ring:
+            yield r
+
+
 def enumerate_candidates(
     parts: Sequence[Slab],
     access: dict[str, Any] | None = None,
@@ -178,15 +245,11 @@ def enumerate_candidates(
     Returns candidates sorted by the documented seam ordering (SCHEMA.md §2.7): weldable
     first, then by canonical face-pair string, then by start point.
     """
-    access = {**DEFAULT_ACCESS, **(access or {})}
+    access = dict({**DEFAULT_ACCESS, **(access or {})})
     solids = list(parts)
-    # Characteristic size of the assembly: the longest edge of any workpiece. The fixture
-    # is excluded - it is far larger than the joint and would swamp the fraction.
-    characteristic = max((max(p.dims_mm) for p in parts if p.role == "workpiece"),
-                         default=0.0)
-    access = dict(access)
-    access["_min_len"] = max(float(access["min_seam_length_mm"]),
-                             float(access.get("min_seam_length_frac", 0.0)) * characteristic)
+    # Only the absolute floor can be applied per pair; the fractional rule needs the whole
+    # candidate list to know what it is a fraction OF, so it runs as a post-pass below.
+    access["_min_len"] = float(access["min_seam_length_mm"])
     out: list[Candidate] = []
 
     for i, A in enumerate(parts):
@@ -212,6 +275,11 @@ def enumerate_candidates(
                 if c.weldable and c.seam_class not in allowed:
                     c.weldable = False
                     c.reject_reason = "wrong_class_for_joint"
+
+    # Last, so that only candidates still in the running get a vote on which way the
+    # joint runs. Ordered before the class pass, a short-but-wide plate let its own
+    # out-of-class lap toes outvote the edge weld and delete it.
+    _drop_cross_runs(out, frozenset(p.id for p in parts if p.role == "workpiece"), access)
 
     out.sort(key=lambda c: (
         not c.weldable, c.face_pair[0], c.face_pair[1],
@@ -300,6 +368,7 @@ def _judge(A: Slab, fa: str, B: Slab, fb: str, ref: tuple[str, str],
         return None
 
     reason: str | None = None
+    approach: np.ndarray | None = None
     if fixture_involved:
         reason = "fixture_contact"
     elif not (access["dihedral_min_deg"] <= theta <= access["dihedral_max_deg"]):
@@ -309,16 +378,16 @@ def _judge(A: Slab, fa: str, B: Slab, fb: str, ref: tuple[str, str],
     elif bis_norm < 1e-9:
         reason = "bisector_blocked"
     else:
-        axis = bis / bis_norm
         mids = np.linspace(0.0, 1.0, samples_along)[:, None]
         pts = p0[None, :] * (1 - mids) + p1[None, :] * mids
-        if not all(_escapes(solids, q, axis, access) for q in pts):
+        approach = _clear_axis(solids, pts, bis / bis_norm, (na, nb), access)
+        if approach is None:
             reason = "bisector_blocked"
 
     return Candidate(
         face_pair=ref, weldable=reason is None, reject_reason=reason,
         p0=p0, p1=p1, n_a=na, n_b=nb,
-        dihedral_deg=theta, separation_mm=sep,
+        dihedral_deg=theta, separation_mm=sep, approach=approach,
     )
 
 
@@ -387,15 +456,19 @@ def _coplanar_candidate(A: Slab, fa: str, B: Slab, fb: str, ref: tuple[str, str]
     """
     pa, pb = A.face_plane(fa), B.face_plane(fb)
 
-    # Use the MEAN normal, and measure the perpendicular offset between the two face
-    # centres. Comparing plane `d` values only works when the faces are exactly parallel;
-    # under a 2 deg tilt a 180 mm face deviates by 6 mm along its length and the equality
-    # test fails even though the joint is perfectly real.
+    # Use the MEAN normal. Comparing plane `d` values only works when the faces are
+    # exactly parallel; under a 2 deg tilt a 180 mm face deviates by 6 mm along its
+    # length and the equality test fails even though the joint is perfectly real.
+    #
+    # The "same plane?" test itself is deferred until the seam is known, because WHERE it
+    # is measured decides the answer. Measured between the two face CENTRES it fails for
+    # the same reason: the centres are far from the joint, so a tilt hinged at the joint
+    # line is amplified by the whole half-width of the plate. A 2.8 deg misalignment on a
+    # 146 mm plate put the centres 4.4 mm apart against a 2.6 mm tolerance, and 27% of
+    # butt joints - quality-B ones among them - never had a centreline enumerated at all.
+    # What matters is the step where the two faces actually meet, so it is measured there.
     n = pa.n + pb.n
     n = n / np.linalg.norm(n)
-    if abs(float((B.face_center(fb) - A.face_center(fa)) @ n)) > \
-            access.get("coplanar_tol_mm", 0.5) + access["contact_tol_mm"]:
-        return None                                    # parallel, but not the same plane
 
     # The in-plane basis comes from part A's OWN axes. Two earlier attempts were wrong:
     #   * a world-aligned basis found the gap only when the assembly happened to be
@@ -439,8 +512,16 @@ def _coplanar_candidate(A: Slab, fa: str, B: Slab, fb: str, ref: tuple[str, str]
     p0 = base + (lo - float(base @ other)) * other
     p1 = base + (hi - float(base @ other)) * other
 
+    # `p0`/`p1` lie on A's plane, so B's plane offset AT THE SEAM is the step between the
+    # two members - the linear misalignment of ISO 5817 ref 5071, and nothing else. Faces
+    # genuinely on different planes still fail here, which is what this test is for.
+    step = max(abs(float(pb.n @ q + pb.d)) for q in (p0, p1))
+    if step > access.get("coplanar_tol_mm", 0.5) + access["contact_tol_mm"]:
+        return None                                    # parallel, but not the same plane
+
 
     reason: str | None = None
+    approach: np.ndarray | None = None
     if fixture_involved:
         reason = "fixture_contact"
     elif hi - lo < access["_min_len"]:
@@ -451,14 +532,72 @@ def _coplanar_candidate(A: Slab, fa: str, B: Slab, fb: str, ref: tuple[str, str]
         # buried under the other part.
         ts = np.linspace(0.0, 1.0, samples_along)[:, None]
         pts = p0[None, :] * (1 - ts) + p1[None, :] * ts
-        if not all(_escapes(solids, q, n, access) for q in pts):
+        approach = _clear_axis(solids, pts, n, (n, n), access)
+        if approach is None:
             reason = "bisector_blocked"
 
     return Candidate(
         face_pair=ref, weldable=reason is None, reject_reason=reason,
         p0=p0, p1=p1, n_a=n, n_b=n,
-        dihedral_deg=180.0, separation_mm=gap,
+        dihedral_deg=180.0, separation_mm=gap, approach=approach,
     )
+
+
+def _drop_cross_runs(cands: list[Candidate], workpiece_ids: frozenset[str],
+                     access: dict[str, Any]) -> None:
+    """Reject the runs that cross the seam at its ends rather than following it.
+
+    A joint has a direction, and its welds run along it. The runs across the plate at
+    either end are real geometry but are not what anyone means by "the seam" - without
+    this a 200 mm lap emits its two end runs alongside its two toes and doubles the seam
+    count. The test is *direction*, not length: length alone cannot tell them apart,
+    because a lap with a deep overlap has end runs nearly as long as its toes.
+
+    The joint's direction is the one the geometry mostly lines up with: the principal
+    axis of the candidate tangents, each weighted by its own length. Taking it from the
+    single longest candidate instead is not good enough, and fails exactly where it
+    matters - on an edge joint between plates wider than their shared run, the longest
+    candidate is itself a cross-run, and following it deleted the real seam in 15 scenes
+    out of 40. A weighted principal axis is decided by seven candidates totalling 1364 mm
+    along the joint against two totalling 470 mm across it.
+
+    Since the dominant direction carries more length than any other by construction, at
+    least one candidate always survives.
+
+    An earlier version compared each candidate against `min_seam_length_frac` x the
+    longest PLATE EDGE. That mislabelled honest seams: with the two plate lengths sampled
+    independently, a 370 mm plate lapping a shorter one shares only an 84 mm run, and a
+    92 mm floor threw the whole fillet away - about 7% of scenes lost their only weld to
+    it, quality-B scenes among them.
+
+    Fixture pairs take no part in this. The table is far larger than the joint, so its
+    contact runs are the longest candidates in the scene and would set a dominant
+    direction of their own - with the fixture on, that demoted a quarter of the real
+    fillets in a T-joint.
+    """
+    runs = [c for c in cands
+            if c.p0 is not None and c.length_mm > 1e-9
+            and all(f.split(":")[0] in workpiece_ids for f in c.face_pair)]
+    if not runs:
+        return
+    # Only candidates still standing get a vote. A rejected one is not one of this
+    # joint's welds, so it has no say in which way the joint runs.
+    voters = [c for c in runs if c.weldable] or runs
+    tangents = np.array([(c.p1 - c.p0) / c.length_mm for c in voters])
+    weights = np.array([c.length_mm for c in voters])
+    # Tangents are undirected, so the scatter matrix - not the mean - is what carries the
+    # dominant direction; its leading eigenvector is that direction.
+    scatter = (tangents * weights[:, None]).T @ tangents
+    dominant = np.linalg.eigh(scatter)[1][:, -1]
+
+    cos_tol = float(np.cos(np.deg2rad(float(access["cross_run_tol_deg"]))))
+    for c in voters:
+        # Only candidates still in the running are demoted; one already rejected for a
+        # physical reason keeps that reason, which is the more informative label.
+        t = (c.p1 - c.p0) / c.length_mm
+        if c.weldable and abs(float(t @ dominant)) < cos_tol:
+            c.weldable = False
+            c.reject_reason = "too_short"
 
 
 def _suppress_toes(cands: list[Candidate], access: dict[str, Any]) -> None:

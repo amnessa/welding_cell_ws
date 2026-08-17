@@ -78,9 +78,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # --- accessibility, recorded so every reject_reason is reproducible ----------
     "accessibility": {
         "torch_clearance": {"half_angle_deg": 30.0, "standoff_mm": 15.0},
+        "max_work_angle_deg": 45.0,   # how far the torch may tilt off the bisector
         "dihedral_min_deg": 30.0,
         "dihedral_max_deg": 170.0,
         "contact_tol_mm": 4.0,   # scene.py widens this per scene to track the root gap
+        "coplanar_tol_mm": 0.5,
+        "cross_run_tol_deg": 45.0,
         "min_seam_length_mm": 10.0,
     },
 }

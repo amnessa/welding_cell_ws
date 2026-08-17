@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 from weldgen.accessibility import enumerate_candidates
-from weldgen.geom import rot_z, translate
+from weldgen.geom import Slab, rot_z, translate
 from weldgen.joints import JointSpec
 from weldgen.layouts import JOINT_TYPES, build
 
@@ -240,10 +240,13 @@ def test_contact_tolerance_never_exceeds_plate_thickness(t):
     for seed in range(12):
         scene, _ = generate_scene(cfg, seed)
         tol = scene["accessibility"]["contact_tol_mm"]
-        g = scene["fit"]["root_gap_mm"]
-        # Capped by thickness, unless the gap itself is larger - in which case the seam
-        # has to stay reachable and the joint is degenerate anyway.
-        assert tol <= max(0.95 * t, 1.1 * g) + 1e-9
+        # Both the gap and the linear misalignment push the joint faces apart, so both
+        # set the floor below which the tolerance may not be capped.
+        separation = (scene["fit"]["root_gap_mm"]
+                      + abs(scene["fit"]["linear_misalignment_mm"]))
+        # Capped by thickness, unless the separation itself is larger - in which case the
+        # seam has to stay reachable and the joint is degenerate anyway.
+        assert tol <= max(0.95 * t, 1.1 * separation) + 1e-9
 
 
 def test_short_cross_runs_are_dropped_by_the_length_fraction():
@@ -324,3 +327,125 @@ def test_longitudinal_offset_shortens_the_seam():
             if c.weldable)
     assert a == pytest.approx(300.0, abs=1e-6)
     assert b == pytest.approx(240.0, abs=1e-6)
+
+
+# --- the Phase 2 acceptance sweep, as regressions -------------------------------------
+# Each of these fixes a defect that a 200-scene sweep found and that the tests above did
+# not: they all used beta = 0, equal thicknesses, no fixture, or all three at once.
+
+
+def _scene_seams(joint_type: str, **cfg_kw):
+    from weldgen.config import load_config
+    from weldgen.scene import generate_scene
+
+    cfg = load_config()
+    cfg["joint_type"] = [joint_type]
+    cfg.update(cfg_kw)
+    return cfg, generate_scene
+
+
+@pytest.mark.parametrize("joint_type", JOINT_TYPES)
+def test_the_fixture_never_blocks_a_weld_approached_from_above(joint_type):
+    """D12/D13: a table blocks the welds under it. It must block nothing else.
+
+    The torch was pinned to the dihedral bisector, so an obstruction anywhere in the
+    nozzle cone rejected the seam outright rather than tilting the gun off it. An edge
+    joint's bisector runs horizontally - exactly tangent to the table the parts lie on -
+    so the lower half of the cone was buried in the fixture and 39 of 40 edge scenes lost
+    their only seam the moment the fixture was switched on.
+
+    A weld whose approach points downward is a different matter: the table really is in
+    the way, and losing it is the rule working. So the assertion is on the upward ones.
+    """
+    spec = spec_for(joint_type)
+    parts = build(spec, joint_type, np.eye(4))
+    table = Slab("F", "fixture", 255, (600.0, 400.0, 20.0),
+                 translate(0.0, 0.0, min(float(np.min(p.mesh().vertices[:, 2]))
+                                         for p in parts) - 10.0))
+
+    def welds(ps):
+        return {c.face_pair: c for c in enumerate_candidates(ps, joint_type=joint_type)
+                if c.weldable}
+
+    free, clamped = welds(parts), welds([*parts, table])
+    for pair, c in free.items():
+        if float(c.approach[2]) <= 0.0:
+            continue                                   # approached from below: fair game
+        assert pair in clamped, f"{joint_type}: the table blocked {pair} from above"
+
+
+def test_a_deep_lap_still_yields_exactly_two_toes():
+    """Cross-runs are told from seams by DIRECTION, not by length.
+
+    A length threshold cannot separate them: the runs at the ends of a lap are as long as
+    the overlap, so a deep overlap makes them rival the toes and the seam count doubles.
+    """
+    for overlap in (12.0, 40.0, 70.0):
+        spec = spec_for("lap", stack_offset_mm=overlap)
+        w = [c for c in enumerate_candidates(build(spec, "lap", np.eye(4)),
+                                             joint_type="lap") if c.weldable]
+        assert len(w) == 2, f"overlap {overlap}: expected 2 toes, got {len(w)}"
+
+
+def test_a_short_wide_plate_keeps_its_edge_weld():
+    """The joint's direction is a weighted vote, and only in-class seams may vote.
+
+    On a plate shorter along the seam than it is wide, the out-of-class lap toes running
+    across the joint outvoted the edge weld and deleted it.
+    """
+    spec = spec_for("edge", L_A=345.0, W_A=240.0, L_B=95.0, H_B=217.0,
+                    t_A=1.4, t_B=1.6, root_gap_mm=0.1)
+    w = [c for c in enumerate_candidates(build(spec, "edge", np.eye(4)),
+                                         joint_type="edge") if c.weldable]
+    assert w, "the flush edge is still a weld even when the plate is wider than it is long"
+    assert all(c.seam_class == "edge" for c in w)
+
+
+@pytest.mark.parametrize("beta", [0.0, 1.0, 2.0, 4.0])
+def test_butt_centreline_survives_angular_misalignment(beta):
+    """Coplanarity is decided AT THE SEAM, and the tilt hinges there too.
+
+    Measured between the two face centres instead, a tilt is amplified by the whole
+    half-width of the plate: 2.8 deg on a 146 mm plate reads as a 4.4 mm step against a
+    2.6 mm tolerance, and 27% of butt joints never had a centreline enumerated at all.
+    """
+    spec = spec_for("butt", W_A=140.0, H_B=146.0, angular_misalignment_deg=beta)
+    cands = enumerate_candidates(build(spec, "butt", np.eye(4)), joint_type="butt")
+    centre = [c for c in cands if c.weldable and c.seam_class == "butt"]
+    assert centre, f"beta={beta} lost the butt centreline"
+
+
+def test_dissimilar_thickness_butt_is_flush_on_one_face():
+    """Unequal plates are set flush on a face; centring both steps BOTH faces.
+
+    Centred, a 6.3 mm plate butted to a 3.1 mm one has no coplanar face pair at all, so
+    no centreline is enumerated and the scene carries no ground truth.
+    """
+    spec = spec_for("butt", t_A=6.3, t_B=3.1)
+    parts = build(spec, "butt", np.eye(4))
+    cands = enumerate_candidates(parts, joint_type="butt")
+    centre = [c for c in cands if c.weldable and c.seam_class == "butt"]
+    assert centre, "unequal thicknesses must still leave a centreline to weld"
+    # The flush side is the underside: A's and B's `-w` faces sit at the same height, so
+    # that pair is a true coplanar seam rather than one the step tolerance had to forgive.
+    A, B = parts
+    assert float(A.face_center("-w")[2]) == pytest.approx(float(B.face_center("-w")[2]),
+                                                          abs=1e-9)
+    assert ("A:-w", "B:-w") in {c.face_pair for c in centre}
+
+
+def test_corner_misalignment_does_not_widen_the_root_gap():
+    """ISO 5817 ref 5071 is a step between surfaces, not a second gap.
+
+    Added to the corner joint's `y` it moved B away across the gap, so the joint faces
+    sat `g + h` apart and the scene fell out of contact tolerance entirely.
+    """
+    from weldgen.geom import Slab
+
+    def separation(h: float) -> float:
+        spec = spec_for("corner", linear_misalignment_mm=h)
+        A, B = build(spec, "corner", np.eye(4))
+        assert isinstance(B, Slab)
+        return float(B.face_center("+w")[1] - A.face_center("+v")[1])
+
+    assert separation(0.0) == pytest.approx(separation(2.0), abs=1e-9)

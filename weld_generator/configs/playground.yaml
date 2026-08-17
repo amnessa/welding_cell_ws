@@ -5,7 +5,7 @@ name: playground
 joint_type: edge
 seam_shape: line
 prep: square
-fixture_present: false
+fixture_present: true
 plate_length_mm: [40.0, 400.0]
 plate_width_mm: [90.0, 120.0]
 thickness_mm: [1.0, 12.0]

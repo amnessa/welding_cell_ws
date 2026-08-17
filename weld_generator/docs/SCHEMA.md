@@ -68,7 +68,8 @@ primitive's own `(u, v, w)` (see §2.1). `T_world_part` places it.
 ```
 origin = seam0 start point (arc length s = 0)
 +X     = unit seam tangent at s = 0
-+Z     = unit dihedral bisector at s = 0, pointing into free space (the torch side)
++Z     = the admissible torch axis at s = 0 (§2.6.1) — the dihedral bisector unless an
+         obstruction forced a work-angle tilt, pointing into free space
 +Y     = Z × X
 ```
 
@@ -293,15 +294,57 @@ thickness.
 | `null` | seam is weldable (`weldable: true`) |
 | `fixture_contact` | one or both faces belong to a `role: "fixture"` object (§2.5) |
 | `interior_face` | one or both faces have no exterior support (HPR / construction) |
-| `bisector_blocked` | the bisector ray re-enters material within `torch_clearance_mm` |
+| `bisector_blocked` | no admissible torch axis clears the nozzle cone (§2.6.1) |
 | `degenerate_dihedral` | dihedral angle outside `[dihedral_min_deg, dihedral_max_deg]` |
 | `no_contact` | faces separated by more than `contact_tol_mm` along the candidate line |
-| `too_short` | clipped intersection shorter than `min_seam_length_mm`, or than `min_seam_length_frac` of the joint's longest edge |
+| `too_short` | shorter than `min_seam_length_mm`, or running across the joint rather than along it (§2.6.2) |
 | `toe_of_centreline` | an intersecting line bounding a coplanar centreline's gap — the weld's toe, not a separate seam |
 | `wrong_class_for_joint` | a real seam whose `seam_class` does not belong to this `joint.type` (D22, §2.5.1) |
 
 Adding a member is a **minor** bump (§0). Precedence when several apply is the table order,
 top to bottom, and the applied order is recorded so it is never ambiguous.
+
+#### 2.6.1 `bisector_blocked` — the torch may tilt off the bisector
+
+The bisector is where a torch *wants* to sit, not the only place it may sit. A welder
+tilts the gun off it when something is in the way, up to a **work angle** beyond which the
+arc no longer reaches both members. So the test is: try the bisector, then progressively
+larger tilts, and accept the first axis whose whole nozzle cone clears at every sample
+point along the seam. The accepted axis — not the bisector — is what `approach_dir`
+stores and what defines the `joint` frame's `+Z` (§1.1).
+
+Two bounds keep it physical:
+
+- `max_work_angle_deg` (45°) caps the tilt outright;
+- the axis must keep a **positive component along both face normals** — the torch still
+  has to face both members it is fusing. This is what does the real work on acute joints:
+  in a 30° nook the two normals are 150° apart, so almost no tilt is admissible, while on
+  a coplanar edge joint the two normals coincide and a whole hemisphere opens up.
+
+Pinning the axis to the bisector was not a conservative simplification but a wrong one.
+An edge joint's two faces are coplanar, so its bisector runs horizontally — exactly
+tangent to the fixture the parts lie on — and the lower half of the cone was buried in
+the table. With D12's fixture switched on, **39 of 40 edge scenes lost their only seam**.
+
+#### 2.6.2 `too_short` — cross-runs are told by direction, not by length
+
+A joint has a direction and its welds run along it; the runs across the plate at either
+end are real geometry but are not what anyone means by "the seam". A shorter candidate
+more than `cross_run_tol_deg` (45°) off that direction is demoted.
+
+The direction is the **principal axis of the candidate tangents, each weighted by its own
+length**, computed over workpiece pairs only and over candidates still in the running at
+that point. Every one of those qualifiers fixes a real failure:
+
+- *length instead of direction* — a lap with a deep overlap has end runs as long as its
+  toes, so no threshold separates them and the seam count doubles;
+- *the longest single candidate instead of the principal axis* — on an edge joint between
+  plates wider than their shared run, the longest candidate is itself a cross-run, and
+  following it deleted the real seam in 15 scenes out of 40;
+- *including fixture pairs* — the table is far larger than the joint, so its contact runs
+  set a dominant direction of their own and demoted a quarter of a T-joint's fillets;
+- *including already-rejected candidates* — on a plate shorter along the seam than it is
+  wide, its own out-of-class lap toes outvoted the edge weld and deleted it.
 
 ### 2.7 Seam ids
 
@@ -394,7 +437,10 @@ regenerable — you can reproduce any single scene from its id alone.
     },
     "dihedral_min_deg": 30.0,
     "dihedral_max_deg": 170.0,
-    "contact_tol_mm": 3.0,
+    "max_work_angle_deg": 45.0,   // how far the torch may tilt off the bisector (§2.6.1)
+    "contact_tol_mm": 3.0,        // tracks root gap AND linear misalignment; capped by thickness
+    "coplanar_tol_mm": 0.5,       // "same plane?", measured AT THE SEAM, not between face centres
+    "cross_run_tol_deg": 45.0,    // off-axis angle past which a shorter run is a cross-run (§2.6.2)
     "min_seam_length_mm": 10.0
   },
 

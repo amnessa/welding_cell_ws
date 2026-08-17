@@ -378,7 +378,7 @@ Effort estimates assume focused days, not calendar days.
 
 **Do not skip. Do not start coding first.**
 
-- [ ] Write `SCHEMA.md` (§4) and `PARAMETERS.md` (§5)
+- [x] Write `SCHEMA.md` (§4) and `PARAMETERS.md` (§5)
 - [ ] Decide directory layout for a scene and for a release
 - [ ] Decide file formats: `.npy` for arrays, `.ply` for meshes, `.json` per scene, one
       `index.parquet` or `.jsonl` over the release
@@ -438,14 +438,21 @@ and to a float32→float64 widening.
 
 ### Phase 2 — All five joint types + the accessibility rule
 
-- [ ] Part constructors for corner, butt, lap, edge
-- [ ] Implement D4 as a **verification** function: enumerate exterior face pairs, intersect, clip,
-      test bisector escape — it should independently rediscover the seams you constructed
-- [ ] Emit rejected interior candidates as `weldable: false` entries
-- [ ] Multi-seam emission (T → 2 fillets, lap → 2 toes)
-- [ ] **Fixture on, sampled** (D12): presence ~50% with paired seeds, tilt ±10°, surface `z` free.
-      Add the `role == "workpiece"` precondition to D4 → `fixture_contact` (D13)
-- [ ] **Watertightness assertion (D21):** per object, `mesh.is_watertight and
+- [x] Part constructors for corner, butt, lap, edge
+- [x] Implement D4 as a **verification** function: enumerate exterior face pairs, intersect, clip,
+      test bisector escape — it should independently rediscover the seams you constructed.
+      **Three** arms, not two: intersecting, facing, and *coplanar exposed*. The third was added
+      after enumeration showed the rule structurally could not express an edge-joint seam —
+      coplanar planes never intersect in a line
+- [x] Emit rejected interior candidates as `weldable: false` entries
+- [x] Multi-seam emission (T → 2 fillets, lap → 2 toes)
+- [x] **Fixture on, sampled** (D12): tilt ±10°, surface `z` free, and the `role == "workpiece"`
+      precondition on D4 → `fixture_contact` (D13). Presence is a **config axis rather than a
+      per-scene draw**: the two arms are generated over the same seed range with
+      `fixture_present` true/false, which keeps the workpiece geometry bit-identical across a
+      twin. `twin_key` pairs them, so `groupby(["twin_key", "fixture_present"])` is the whole
+      ablation. One command per arm; a `--pair-fixture` flag would make it one command total
+- [x] **Watertightness assertion (D21):** per object, `mesh.is_watertight and
       mesh.is_winding_consistent`; fail the scene rather than emit it. On plain slabs this is
       trivially satisfied and costs nothing — put it in now anyway, because it is the assertion
       that catches Phase 6's swept and revolved primitives, where degenerate caps and seam
@@ -455,16 +462,53 @@ and to a float32→float64 widening.
 and `part_geometry_id` is `<primitive>_<dims>`. The D11 split is therefore a held-out
 **dimensions** split until Phase 6 — say so in the paper rather than letting "held-out geometry"
 imply more than it delivers.
-- [ ] **`included_angle_deg` sampling (D18)** and the lap/edge `stack_offset_mm` unification
-- [ ] **`torch_clearance` becomes a cone**, `{half_angle_deg, standoff_mm}`, not a scalar distance.
+- [x] **`included_angle_deg` sampling (D18)** and the lap/edge `stack_offset_mm` unification
+- [x] **`torch_clearance` becomes a cone**, `{half_angle_deg, standoff_mm}`, not a scalar distance.
       At 90° the bisector test is nearly free; at 60° it is not, because a real nozzle has finite
       width. Acute-angle joints then generate `bisector_blocked` rejections from physical
       reachability instead of an arbitrary threshold, which gives the §7 weldable-vs-interior metric
-      a second interesting class alongside `fixture_contact`
+      a second interesting class alongside `fixture_contact`.
+      The cone is **steerable**: the bisector is where a torch wants to sit, not the only place it
+      may sit, so the rule tries progressively larger work angles and stores the axis it accepts
+      (`SCHEMA.md` §2.6.1). Fixed to the bisector it was not conservative but wrong — an edge
+      joint's bisector runs horizontally, tangent to the table, and D12's fixture then deleted the
+      only seam in 39 of 40 edge scenes
 
-**Gate:** for every joint type, constructed seams and rediscovered seams agree to numerical
-tolerance, **and** the lap/edge interior candidates are correctly rejected with
-`reject_reason: "bisector_blocked"`.
+**Gate — met 2026-08-17.** For every joint type, constructed seams and rediscovered seams agree to
+numerical tolerance, and the lap/edge interior candidates are rejected `bisector_blocked`. Measured
+over 600 scenes (120 seeds × 5 types) plus a 400-scene paired fixture sweep:
+
+| | weldable seams per scene | reading |
+|---|---|---|
+| T | 2 in 95, 1 in 21 | second fillet lost only to misalignment |
+| corner | 2 in 114, 1 in 4 | inside fillet + outside corner |
+| butt | 2 in 95, 1 in 25 | one centreline per exposed side; 1 when thicknesses differ |
+| lap | **2 in 120 of 120** | exactly two toes, every scene |
+| edge | 1 in 110, 2 in 10 | 1 when the widths differ, 2 when they match |
+
+Empty scenes: **5 of 600 (0,8%)**, all quality C/D/below_D, i.e. fit-up so far out that nothing is
+adjacent. The generator skips them by seed rather than aborting the run, and reports which. Every
+scene validates against `scene.schema.json`; no weldable seam carries a class outside its joint
+type's `ALLOWED_CLASSES`; `twin_key` pairs 200/200 fixture twins with bit-identical workpiece
+geometry, and `contact_mode == "free"` iff no fixture.
+
+Seven defects that only a sweep could find were fixed to get there, every one of them hidden by a
+test suite in which β = 0, thicknesses were equal and no fixture was present:
+
+1. the torch cone was rigidly centred on the bisector (above);
+2. cross-runs were told from seams by *length*, which cannot separate them — a deep lap's end runs
+   are as long as its toes. Now by direction, against a length-weighted principal axis over
+   in-class workpiece candidates only (`SCHEMA.md` §2.6.2);
+3. coplanarity was measured between face *centres*, where a tilt is amplified by half the plate
+   width — 2,8° on a 146 mm plate reads as a 4,4 mm step, and 27% of butt joints never had a
+   centreline enumerated. Now measured at the seam;
+4. angular misalignment hinged at the part centre rather than the contact, lifting the welded edge;
+5. dissimilar-thickness butt joints were centred on their mid-thickness plane, stepping *both*
+   faces, instead of set flush on one;
+6. the corner layout applied linear misalignment along the gap axis, so `h` acted as a second root
+   gap and pushed the joint out of contact;
+7. `contact_tol_mm` tracked the root gap but not the misalignment, so a near-perfect gap with a
+   legitimate misalignment fell out of tolerance.
 
 This function is reused by the baselines in Phase 4 — building it here is not duplicated work.
 

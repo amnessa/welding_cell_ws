@@ -37,6 +37,29 @@ Table 1, p. 16. `t` = the **smaller** of the two thicknesses. `h` = misalignment
 
 Applies to longitudinal welds in plates and hollow sections.
 
+**Where it is applied, per joint type.** `h` is a *step between the members' surfaces*, and
+nothing else — in particular it is not a second root gap. It therefore acts along whichever
+axis is perpendicular to the plates at that joint: along `z` for butt, corner and T, and
+along the gap-free axis for the stacked joints. Adding it to the corner joint's `y` — where
+the root gap already lives — made the joint faces sit `g + h` apart, which put them outside
+`contact_tol_mm` and cost that joint type ~10% of its scenes to a fit-up that is, by this
+very table, in tolerance. **[ours]**
+
+**Unequal thicknesses are set flush on one face.** `h` is measured from the flush side.
+Centring both plates on their mid-thickness plane instead — which equal-thickness geometry
+silently implies — steps *both* faces by half the thickness difference, so a 6,3 mm plate
+butted to a 3,1 mm one has no coplanar face pair at all and no seam is enumerated. On
+dissimilar thickness a butt joint therefore has **one** centreline, on the flush side; the
+other side is a step, which ISO 9692-1 treats as a transition rather than a second weld.
+**[ours]**
+
+**Angular misalignment hinges at the contact,** not at the part centre — two clamped plates
+rotate about where they touch. This matters far more than its size suggests, because the
+lever arm is half the plate width: 0,4° on a 179 mm plate lifts the welded edge by 0,62 mm
+against a 0,1 mm root gap, and 2° on a 133 mm plate by 2,4 mm against a 1,2 mm tolerance.
+Hinged at the centre, both cases lost the seam outright instead of recording a misaligned
+one. **[ours]**
+
 ### 2.2 Linear misalignment between tubes — no. 5072
 
 Table 1, p. 17. For the Phase 6 pipe-on-plate cases. **[ISO]**
@@ -181,7 +204,15 @@ free edges coincide:
 | | `included_angle_deg` | `stack_offset_mm` | Seams | Seam `dihedral_deg` |
 |---|---|---|---|---|
 | **lap** | 0 | `0 < offset < L` | 2 toes | 90° |
-| **edge** | 0 | 0 (flush) | 1 along the free edge | ~180° (degenerate) |
+| **edge** | 0 | 0 (flush) | 1 along the free edge, 2 if the widths match | ~180° (degenerate) |
+
+Part B keeps its **own** width in the edge layout and is aligned flush at the welded edge.
+Forcing it to A's width makes every edge joint a pair of twins with both long edges flush
+and pins the seam count at 2; real edge joints join parts of different widths, and then only
+the aligned edge is a weld — the far side is a lap toe, which D22 classifies and rejects as
+`wrong_class_for_joint`. `edge_equal_width_p` (0,35) keeps the flush-both-sides case in the
+distribution, since continuous sampling would otherwise never produce an exact match.
+**[ours]**
 
 Two consequences worth stating in the paper:
 

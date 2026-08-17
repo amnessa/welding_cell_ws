@@ -119,15 +119,20 @@ def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict
     access = {k: (v.copy() if isinstance(v, dict) else v)
               for k, v in cfg["accessibility"].items()}
     t_min = min(o.thickness_mm for o in slabs if o.role == "workpiece")
-    # Track the gap...
-    tol = 2.0 * spec.root_gap_mm + 0.5
+    # Track the gap AND the misalignment. Both separate the joint faces, and a scene can
+    # have a near-perfect gap with a real misalignment: at g = 0.01 mm the gap term alone
+    # gives 0.52 mm, which a 0.6 mm misalignment then exceeds, and the corner joint - the
+    # one whose members are displaced perpendicular to their gap - lost 5% of its scenes
+    # to a fit-up that was, by ISO, in tolerance.
+    separation = spec.root_gap_mm + abs(spec.linear_misalignment_mm)
+    tol = 2.0 * spec.root_gap_mm + abs(spec.linear_misalignment_mm) + 0.5
     # ...but never exceed the plate thickness, or a plate's own two faces become mutually
     # reachable and seams wrap around to the wrong surface (on 1.8 mm plate a 2.0 mm
     # tolerance put phantom seams on the underside). This is the same bound radius-PCA
     # lives under - R < thickness - reached from the other direction. The floor keeps the
     # real seam reachable when the gap is large on thin sheet.
     access["contact_tol_mm"] = float(
-        np.clip(min(tol, max(0.95 * t_min, 1.1 * spec.root_gap_mm)), 0.5, 12.0))
+        np.clip(min(tol, max(0.95 * t_min, 1.1 * separation)), 0.5, 12.0))
     cands = enumerate_candidates(slabs, access, joint_type=joint_type)
 
     # --- surface sampling, substream 4 ------------------------------------------
@@ -168,7 +173,9 @@ def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict
         arrays[f"seams.npz:seam_{i}_s"] = np.linspace(
             0.0, c.length_mm, n).astype(np.float32)
         tangent = (c.p1 - c.p0) / max(c.length_mm, 1e-12)
-        appr = approach_dir(c.n_a, c.n_b)
+        # The bisector unless an obstruction forced a work-angle tilt, in which case the
+        # tilted axis is the one the torch can actually take (accessibility._clear_axis).
+        appr = c.approach if c.approach is not None else approach_dir(c.n_a, c.n_b)
         arrays[f"seams.npz:seam_{i}_tangent"] = np.tile(tangent, (n, 1)).astype(np.float32)
         arrays[f"seams.npz:seam_{i}_approach"] = np.tile(appr, (n, 1)).astype(np.float32)
         arrays[f"seams.npz:seam_{i}_nA"] = np.tile(c.n_a, (n, 1)).astype(np.float32)
@@ -207,7 +214,7 @@ def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict
             f"thickness can leave nothing adjacent.")
     s0 = ordered[0]
     x_axis = (s0.p1 - s0.p0) / max(s0.length_mm, 1e-12)
-    z_axis = approach_dir(s0.n_a, s0.n_b)
+    z_axis = s0.approach if s0.approach is not None else approach_dir(s0.n_a, s0.n_b)
     y_axis = np.cross(z_axis, x_axis)
     y_axis /= np.linalg.norm(y_axis)
     z_axis = np.cross(x_axis, y_axis)

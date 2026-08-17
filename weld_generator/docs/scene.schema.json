@@ -1,24 +1,53 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/amnessa/weld_generator/schema/scene-2.2.0.json",
-  "title": "Weld seam dataset — scene",
+  "title": "Weld seam dataset \u2014 scene",
   "description": "Machine-checkable form of docs/SCHEMA.md v2.2.0. Prose wins on intent; this file wins on shape.",
   "type": "object",
   "required": [
-    "schema_version", "generator_version", "scene_id", "config_id", "seed", "tier",
-    "twin_key", "units", "joint", "seam_definition", "accessibility", "objects", "faces",
-    "fit", "T_world_joint", "seams", "camera", "noise_model", "cloud", "provenance"
+    "schema_version",
+    "generator_version",
+    "scene_id",
+    "config_id",
+    "seed",
+    "tier",
+    "twin_key",
+    "units",
+    "joint",
+    "seam_definition",
+    "accessibility",
+    "objects",
+    "faces",
+    "fit",
+    "T_world_joint",
+    "seams",
+    "camera",
+    "noise_model",
+    "cloud",
+    "provenance"
   ],
   "additionalProperties": false,
-
   "$defs": {
     "mat4": {
-      "type": "array", "minItems": 4, "maxItems": 4,
-      "items": { "type": "array", "minItems": 4, "maxItems": 4,
-                 "items": { "type": "number" } }
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": {
+        "type": "array",
+        "minItems": 4,
+        "maxItems": 4,
+        "items": {
+          "type": "number"
+        }
+      }
     },
     "vec3": {
-      "type": "array", "minItems": 3, "maxItems": 3, "items": { "type": "number" }
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "type": "number"
+      }
     },
     "faceRef": {
       "type": "string",
@@ -26,287 +55,744 @@
       "description": "<object_id>:<face_name>, per SCHEMA.md 2.2. Primitive face registry only - D17 procedural features were withdrawn 2026-08-15."
     }
   },
-
   "properties": {
-    "schema_version": { "const": "2.2.0" },
-    "generator_version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
-    "scene_id": { "type": "string", "pattern": "^[0-9a-f]{8}-\\d{10}$" },
-    "config_id": { "type": "string", "pattern": "^[0-9a-f]{8}$" },
-    "seed": { "type": "integer", "minimum": 0 },
-    "tier": { "type": "integer", "enum": [1, 2] },
-    "twin_key": {
-      "type": "string", "pattern": "^[0-9a-f]{16}$",
-      "description": "SCHEMA.md 6.4 — identical across ablation arms sharing workpiece geometry and seam truth."
+    "schema_version": {
+      "const": "2.2.0"
     },
-
+    "generator_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "scene_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-\\d{10}$"
+    },
+    "config_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}$"
+    },
+    "seed": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "tier": {
+      "type": "integer",
+      "enum": [
+        1,
+        2
+      ]
+    },
+    "twin_key": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{16}$",
+      "description": "SCHEMA.md 6.4 \u2014 identical across ablation arms sharing workpiece geometry and seam truth."
+    },
     "units": {
-      "type": "object", "additionalProperties": false,
-      "required": ["length", "angle"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "length",
+        "angle"
+      ],
       "properties": {
-        "length": { "const": "mm" },
-        "angle": { "const": "deg" }
+        "length": {
+          "const": "mm"
+        },
+        "angle": {
+          "const": "deg"
+        }
       }
     },
-
     "joint": {
-      "type": "object", "additionalProperties": false,
+      "type": "object",
+      "additionalProperties": false,
       "properties": {
-        "type": { "enum": ["T", "corner", "butt", "lap", "edge"] },
-        "seam_shape": { "enum": ["line", "arc", "spline", "closed"] },
-        "quality_level": { "enum": ["B", "C", "D", "below_D"] },
+        "type": {
+          "enum": [
+            "T",
+            "corner",
+            "butt",
+            "lap",
+            "edge"
+          ]
+        },
+        "seam_shape": {
+          "enum": [
+            "line",
+            "arc",
+            "spline",
+            "closed"
+          ]
+        },
+        "quality_level": {
+          "enum": [
+            "B",
+            "C",
+            "D",
+            "below_D"
+          ]
+        },
         "contact_mode": {
-          "enum": ["free", "flat", "on_edge", "propped"],
-          "description": "\"free\" iff no fixture object is present (D12) — enforced by the root allOf."
+          "enum": [
+            "free",
+            "flat",
+            "on_edge",
+            "propped"
+          ],
+          "description": "\"free\" iff no fixture object is present (D12) \u2014 enforced by the root allOf."
         },
         "included_angle_deg": {
-          "type": "number", "minimum": 0, "maximum": 180,
-          "description": "D18 — DESIGN nominal (ISO 9692-1), NOT fit.angular_misalignment_deg and NOT seams[].dihedral_deg. Per-type ranges enforced by the root allOf."
+          "type": "number",
+          "minimum": 0,
+          "maximum": 180,
+          "description": "D18 \u2014 DESIGN nominal (ISO 9692-1), NOT fit.angular_misalignment_deg and NOT seams[].dihedral_deg. Per-type ranges enforced by the root allOf."
         },
         "stack_offset_mm": {
-          "type": ["number", "null"], "minimum": 0,
-          "description": "D18/PARAMETERS 2.7 — lap: 0 < offset < L; edge: 0; null for T/corner/butt."
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "D18/PARAMETERS 2.7 \u2014 lap: 0 < offset < L; edge: 0; null for T/corner/butt."
         },
         "prep": {
-          "enum": ["square"],
+          "enum": [
+            "square"
+          ],
           "description": "ISO 9692-1 preparation class. Only square preparation is generated in Phases 1-6; PARAMETERS 5.0's result is scoped to it."
         }
       },
-      "required": ["type", "seam_shape", "quality_level", "contact_mode",
-                   "included_angle_deg", "stack_offset_mm", "prep"]
+      "required": [
+        "type",
+        "seam_shape",
+        "quality_level",
+        "contact_mode",
+        "included_angle_deg",
+        "stack_offset_mm",
+        "prep"
+      ]
     },
-
     "seam_definition": {
       "const": "nominal",
-      "description": "D19 / SCHEMA.md 1.3 — which of {nominal, root, gap_mid} seams[] stores. Stored is always nominal; the other two are derived arrays in seams.npz."
+      "description": "D19 / SCHEMA.md 1.3 \u2014 which of {nominal, root, gap_mid} seams[] stores. Stored is always nominal; the other two are derived arrays in seams.npz."
     },
-
     "accessibility": {
-      "type": "object", "additionalProperties": false,
-      "required": ["torch_clearance", "dihedral_min_deg", "dihedral_max_deg",
-                   "contact_tol_mm", "min_seam_length_mm"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "torch_clearance",
+        "max_work_angle_deg",
+        "dihedral_min_deg",
+        "dihedral_max_deg",
+        "contact_tol_mm",
+        "coplanar_tol_mm",
+        "cross_run_tol_deg",
+        "min_seam_length_mm"
+      ],
       "description": "The parameters that decide reject_reason. Recorded so every rejection is reproducible without rerunning the generator.",
       "properties": {
         "torch_clearance": {
-          "type": "object", "additionalProperties": false,
-          "required": ["half_angle_deg", "standoff_mm"],
-          "description": "A cone, not a scalar — a real nozzle has finite width, so acute-angle joints yield bisector_blocked from physical reachability rather than an arbitrary threshold.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "half_angle_deg",
+            "standoff_mm"
+          ],
+          "description": "A cone, not a scalar \u2014 a real nozzle has finite width, so acute-angle joints yield bisector_blocked from physical reachability rather than an arbitrary threshold.",
           "properties": {
-            "half_angle_deg": { "type": "number", "exclusiveMinimum": 0, "maximum": 90 },
-            "standoff_mm": { "type": "number", "exclusiveMinimum": 0 }
+            "half_angle_deg": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 90
+            },
+            "standoff_mm": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
           }
         },
-        "dihedral_min_deg": { "type": "number", "minimum": 0, "maximum": 180 },
-        "dihedral_max_deg": { "type": "number", "minimum": 0, "maximum": 180 },
-        "contact_tol_mm": { "type": "number", "minimum": 0 },
-        "min_seam_length_mm": { "type": "number", "exclusiveMinimum": 0 }
+        "max_work_angle_deg": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 90,
+          "description": "How far the torch may tilt off the dihedral bisector to dodge an obstruction. The bisector is where a torch wants to sit, not the only place it may sit; past this angle the arc no longer reaches both members. See SCHEMA.md 2.6.1."
+        },
+        "dihedral_min_deg": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 180
+        },
+        "dihedral_max_deg": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 180
+        },
+        "contact_tol_mm": {
+          "type": "number",
+          "minimum": 0
+        },
+        "coplanar_tol_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "\"Are these the same plane?\" - a different question from \"are these faces adjacent?\", and measured AT THE SEAM rather than between the face centres, where a tilt is amplified by the whole half-width of the plate."
+        },
+        "cross_run_tol_deg": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 90,
+          "description": "Angle off the joint's dominant direction past which a shorter run counts as a cross-run at the end of the seam rather than a seam. See SCHEMA.md 2.6.2."
+        },
+        "min_seam_length_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
       }
     },
-
     "objects": {
-      "type": "array", "minItems": 2,
-      "minContains": 0, "maxContains": 1,
+      "type": "array",
+      "minItems": 2,
+      "minContains": 0,
+      "maxContains": 1,
       "contains": {
         "type": "object",
-        "required": ["role"],
-        "properties": { "role": { "const": "fixture" } },
+        "required": [
+          "role"
+        ],
+        "properties": {
+          "role": {
+            "const": "fixture"
+          }
+        },
         "description": "At most one fixture per scene."
       },
       "items": {
-        "type": "object", "additionalProperties": false,
-        "required": ["id", "role", "object_id", "primitive", "dims_mm",
-                     "thickness_mm", "part_geometry_id", "mesh", "T_world_part"],
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "role",
+          "object_id",
+          "primitive",
+          "dims_mm",
+          "thickness_mm",
+          "part_geometry_id",
+          "mesh",
+          "T_world_part"
+        ],
         "properties": {
-          "id": { "type": "string", "pattern": "^[A-Z]$" },
-          "role": { "enum": ["workpiece", "fixture"] },
-          "object_id": { "type": "integer", "minimum": 0, "maximum": 255 },
-          "primitive": { "enum": ["slab", "swept_slab", "cylinder", "tube"] },
-          "dims_mm": { "type": "array", "minItems": 1, "items": { "type": "number", "exclusiveMinimum": 0 } },
-          "thickness_mm": { "type": "number", "exclusiveMinimum": 0 },
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Z]$"
+          },
+          "role": {
+            "enum": [
+              "workpiece",
+              "fixture"
+            ]
+          },
+          "object_id": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 255
+          },
+          "primitive": {
+            "enum": [
+              "slab",
+              "swept_slab",
+              "cylinder",
+              "tube"
+            ]
+          },
+          "dims_mm": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "thickness_mm": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
           "part_geometry_id": {
             "type": "string",
             "pattern": "^([a-z_]+_[0-9.x]+|mesh_[0-9a-f]{8,})$",
             "description": "SCHEMA.md 5.4 - <primitive>_<dims> for Phases 1-6 primitives, mesh_<hash> for Phase 6 assets. Over Phases 1-5 this varies only by DIMENSIONS, so the D11 split is a held-out-dimensions split."
           },
-          "mesh": { "type": ["string", "null"] },
-          "T_world_part": { "$ref": "#/$defs/mat4" }
-        }
-      }
-    },
-
-    "faces": {
-      "type": "array", "minItems": 1,
-      "items": {
-        "type": "object", "additionalProperties": false,
-        "required": ["face_id", "ref", "object", "name", "plane", "surface", "area_mm2"],
-        "properties": {
-          "face_id": { "type": "integer", "minimum": 0, "maximum": 255 },
-          "ref": { "$ref": "#/$defs/faceRef" },
-          "object": { "type": "string", "pattern": "^[A-Z]$" },
-          "name": { "type": "string" },
-          "plane": {
-            "oneOf": [
-              { "type": "null" },
-              { "type": "object", "additionalProperties": false,
-                "required": ["n", "d"],
-                "properties": { "n": { "$ref": "#/$defs/vec3" }, "d": { "type": "number" } } }
+          "mesh": {
+            "type": [
+              "string",
+              "null"
             ]
           },
-          "surface": { "type": ["object", "null"] },
-          "area_mm2": { "type": "number", "minimum": 0 }
+          "T_world_part": {
+            "$ref": "#/$defs/mat4"
+          }
         }
       }
     },
-
-    "fit": {
-      "type": "object", "additionalProperties": false,
-      "required": ["root_gap_mm", "linear_misalignment_mm",
-                   "angular_misalignment_deg", "throat_thickness_mm"],
-      "properties": {
-        "root_gap_mm": { "type": "number", "minimum": 0 },
-        "linear_misalignment_mm": { "type": "number", "minimum": 0 },
-        "angular_misalignment_deg": { "type": "number", "minimum": 0 },
-        "throat_thickness_mm": { "type": "number", "exclusiveMinimum": 0 }
+    "faces": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "face_id",
+          "ref",
+          "object",
+          "name",
+          "plane",
+          "surface",
+          "area_mm2"
+        ],
+        "properties": {
+          "face_id": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 255
+          },
+          "ref": {
+            "$ref": "#/$defs/faceRef"
+          },
+          "object": {
+            "type": "string",
+            "pattern": "^[A-Z]$"
+          },
+          "name": {
+            "type": "string"
+          },
+          "plane": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "n",
+                  "d"
+                ],
+                "properties": {
+                  "n": {
+                    "$ref": "#/$defs/vec3"
+                  },
+                  "d": {
+                    "type": "number"
+                  }
+                }
+              }
+            ]
+          },
+          "surface": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "area_mm2": {
+            "type": "number",
+            "minimum": 0
+          }
+        }
       }
     },
-
-    "T_world_joint": { "$ref": "#/$defs/mat4" },
-
+    "fit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root_gap_mm",
+        "linear_misalignment_mm",
+        "angular_misalignment_deg",
+        "throat_thickness_mm"
+      ],
+      "properties": {
+        "root_gap_mm": {
+          "type": "number",
+          "minimum": 0
+        },
+        "linear_misalignment_mm": {
+          "type": "number",
+          "minimum": 0
+        },
+        "angular_misalignment_deg": {
+          "type": "number",
+          "minimum": 0
+        },
+        "throat_thickness_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    },
+    "T_world_joint": {
+      "$ref": "#/$defs/mat4"
+    },
     "seams": {
-      "type": "array", "minItems": 1,
+      "type": "array",
+      "minItems": 1,
       "items": {
-        "type": "object", "additionalProperties": false,
-        "required": ["id", "weldable", "reject_reason", "face_pair",
-                     "parametric", "length_mm", "dihedral_deg", "sampled"],
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "weldable",
+          "reject_reason",
+          "face_pair",
+          "parametric",
+          "length_mm",
+          "dihedral_deg",
+          "sampled"
+        ],
         "properties": {
-          "id": { "type": "integer", "minimum": 0 },
-          "weldable": { "type": "boolean" },
+          "id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "weldable": {
+            "type": "boolean"
+          },
           "reject_reason": {
-            "enum": [null, "fixture_contact", "interior_face", "bisector_blocked",
-                     "degenerate_dihedral", "no_contact", "too_short",
-                     "toe_of_centreline", "wrong_class_for_joint"]
+            "enum": [
+              null,
+              "fixture_contact",
+              "interior_face",
+              "bisector_blocked",
+              "degenerate_dihedral",
+              "no_contact",
+              "too_short",
+              "toe_of_centreline",
+              "wrong_class_for_joint"
+            ]
           },
           "face_pair": {
-            "type": "array", "minItems": 2, "maxItems": 2,
-            "items": { "$ref": "#/$defs/faceRef" }
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "items": {
+              "$ref": "#/$defs/faceRef"
+            }
           },
           "parametric": {
             "type": "object",
-            "required": ["kind"],
-            "properties": { "kind": { "enum": ["line", "arc", "bspline"] } }
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "enum": [
+                  "line",
+                  "arc",
+                  "bspline"
+                ]
+              }
+            }
           },
-          "length_mm": { "type": "number", "exclusiveMinimum": 0 },
-          "dihedral_deg": { "type": "number", "minimum": 0, "maximum": 180 },
+          "length_mm": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "dihedral_deg": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 180
+          },
           "seam_class": {
-            "enum": ["fillet", "butt", "lap_toe", "edge"],
+            "enum": [
+              "fillet",
+              "butt",
+              "lap_toe",
+              "edge"
+            ],
             "description": "What KIND of weld this is, derived from the faces forming it: face x face perpendicular = fillet, face x face coplanar = butt, edge x face = lap_toe, edge x edge = edge. A seam whose class does not belong to joint.type is kept as a negative with reject_reason 'wrong_class_for_joint'."
           },
           "sampled": {
-            "type": "object", "additionalProperties": false,
-            "required": ["array", "density_per_mm", "n"],
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "array",
+              "density_per_mm",
+              "n"
+            ],
             "properties": {
-              "array": { "type": "string", "pattern": "^seam_\\d+$" },
-              "density_per_mm": { "type": "number", "exclusiveMinimum": 0 },
-              "n": { "type": "integer", "minimum": 2 }
+              "array": {
+                "type": "string",
+                "pattern": "^seam_\\d+$"
+              },
+              "density_per_mm": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "n": {
+                "type": "integer",
+                "minimum": 2
+              }
             }
           },
-          "occluded_fraction": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
+          "occluded_fraction": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1
+          }
         },
         "allOf": [
           {
-            "if": { "properties": { "weldable": { "const": true } } },
-            "then": { "properties": { "reject_reason": { "const": null } } }
+            "if": {
+              "properties": {
+                "weldable": {
+                  "const": true
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "reject_reason": {
+                  "const": null
+                }
+              }
+            }
           },
           {
-            "if": { "properties": { "weldable": { "const": false } } },
-            "then": { "properties": { "reject_reason": { "type": "string" } } }
+            "if": {
+              "properties": {
+                "weldable": {
+                  "const": false
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "reject_reason": {
+                  "type": "string"
+                }
+              }
+            }
           }
         ]
       }
     },
-
     "tacks": {
       "oneOf": [
-        { "type": "null" },
         {
-          "type": "object", "additionalProperties": false,
-          "required": ["rule_version", "params", "points_mm", "seam_id", "arclength_mm"],
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "rule_version",
+            "params",
+            "points_mm",
+            "seam_id",
+            "arclength_mm"
+          ],
           "properties": {
-            "rule_version": { "type": "string" },
-            "params": { "type": "object" },
-            "points_mm": { "type": "array", "items": { "$ref": "#/$defs/vec3" } },
-            "seam_id": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
-            "arclength_mm": { "type": "array", "items": { "type": "number", "minimum": 0 } }
+            "rule_version": {
+              "type": "string"
+            },
+            "params": {
+              "type": "object"
+            },
+            "points_mm": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/vec3"
+              }
+            },
+            "seam_id": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "arclength_mm": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "minimum": 0
+              }
+            }
           }
         }
       ]
     },
-
     "camera": {
-      "type": "object", "additionalProperties": false,
-      "required": ["model", "K", "width", "height", "T_world_cam",
-                   "standoff_mm", "elevation_deg"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "model",
+        "K",
+        "width",
+        "height",
+        "T_world_cam",
+        "standoff_mm",
+        "elevation_deg"
+      ],
       "properties": {
-        "model": { "const": "pinhole" },
-        "K": { "type": "array", "minItems": 3, "maxItems": 3,
-               "items": { "type": "array", "minItems": 3, "maxItems": 3,
-                          "items": { "type": "number" } } },
-        "width": { "type": "integer", "exclusiveMinimum": 0 },
-        "height": { "type": "integer", "exclusiveMinimum": 0 },
-        "T_world_cam": { "$ref": "#/$defs/mat4" },
+        "model": {
+          "const": "pinhole"
+        },
+        "K": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3,
+            "items": {
+              "type": "number"
+            }
+          }
+        },
+        "width": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "height": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "T_world_cam": {
+          "$ref": "#/$defs/mat4"
+        },
         "standoff_mm": {
-          "type": "number", "exclusiveMinimum": 0,
-          "description": "Lower bound is the sensor profile's min-Z, not a schema constant (D16) — enforced by the root allOf."
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Lower bound is the sensor profile's min-Z, not a schema constant (D16) \u2014 enforced by the root allOf."
         },
-        "elevation_deg": { "type": "number", "minimum": 0, "maximum": 90 }
+        "elevation_deg": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 90
+        }
       }
     },
-
     "noise_model": {
-      "type": "object", "additionalProperties": false,
-      "required": ["kind", "profile", "subpixel_px", "baseline_mm", "focal_px",
-                   "min_z_mm", "lateral_sigma_px", "grazing_dropout_deg", "seed"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "profile",
+        "subpixel_px",
+        "baseline_mm",
+        "focal_px",
+        "min_z_mm",
+        "lateral_sigma_px",
+        "grazing_dropout_deg",
+        "seed"
+      ],
       "properties": {
-        "kind": { "const": "stereo_z2" },
-        "profile": {
-          "enum": ["d435i", "stereo_good", "stereo_poor"],
-          "description": "D16 — named sensor profile; the physical params below must agree with PARAMETERS.md 4.0."
+        "kind": {
+          "const": "stereo_z2"
         },
-        "subpixel_px": { "type": "number", "exclusiveMinimum": 0 },
-        "baseline_mm": { "type": "number", "exclusiveMinimum": 0 },
-        "focal_px": { "type": "number", "exclusiveMinimum": 0 },
-        "min_z_mm": { "type": "number", "exclusiveMinimum": 0 },
-        "lateral_sigma_px": { "type": "number", "minimum": 0 },
-        "grazing_dropout_deg": { "type": "number", "minimum": 0, "maximum": 90 },
-        "seed": { "type": "integer", "minimum": 0 }
+        "profile": {
+          "enum": [
+            "d435i",
+            "stereo_good",
+            "stereo_poor"
+          ],
+          "description": "D16 \u2014 named sensor profile; the physical params below must agree with PARAMETERS.md 4.0."
+        },
+        "subpixel_px": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "baseline_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "focal_px": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "min_z_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "lateral_sigma_px": {
+          "type": "number",
+          "minimum": 0
+        },
+        "grazing_dropout_deg": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 90
+        },
+        "seed": {
+          "type": "integer",
+          "minimum": 0
+        }
       }
     },
-
     "cloud": {
-      "type": "object", "additionalProperties": false,
-      "required": ["file", "frame", "sampling_mode", "density_per_mm2", "n_points"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "file",
+        "frame",
+        "sampling_mode",
+        "density_per_mm2",
+        "n_points"
+      ],
       "properties": {
-        "file": { "const": "cloud.npz" },
-        "frame": { "const": "world" },
-        "sampling_mode": { "enum": ["area_uniform", "camera_raster"] },
-        "density_per_mm2": { "type": "number", "exclusiveMinimum": 0 },
-        "n_points": { "type": "integer", "minimum": 1 }
+        "file": {
+          "const": "cloud.npz"
+        },
+        "frame": {
+          "const": "world"
+        },
+        "sampling_mode": {
+          "enum": [
+            "area_uniform",
+            "camera_raster"
+          ]
+        },
+        "density_per_mm2": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "n_points": {
+          "type": "integer",
+          "minimum": 1
+        }
       }
     },
-
-    "rgb": { "type": ["string", "null"] },
-    "depth": { "type": ["string", "null"] },
-
+    "rgb": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "depth": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "provenance": {
       "type": "object",
       "description": "EXCLUDED from the content hash (SCHEMA.md 6.2).",
-      "required": ["created_utc", "git_commit"],
+      "required": [
+        "created_utc",
+        "git_commit"
+      ],
       "properties": {
-        "created_utc": { "type": "string" },
-        "git_commit": { "type": "string" }
+        "created_utc": {
+          "type": "string"
+        },
+        "git_commit": {
+          "type": "string"
+        }
       }
     }
   },
-
   "allOf": [
     {
       "$comment": "D12: contact_mode is 'free' if and only if the scene has no fixture object.",
@@ -314,105 +800,277 @@
         "properties": {
           "objects": {
             "contains": {
-              "type": "object", "required": ["role"],
-              "properties": { "role": { "const": "fixture" } }
+              "type": "object",
+              "required": [
+                "role"
+              ],
+              "properties": {
+                "role": {
+                  "const": "fixture"
+                }
+              }
             }
           }
         },
-        "required": ["objects"]
+        "required": [
+          "objects"
+        ]
       },
       "then": {
-        "properties": { "joint": { "properties": {
-          "contact_mode": { "not": { "const": "free" } } } } }
+        "properties": {
+          "joint": {
+            "properties": {
+              "contact_mode": {
+                "not": {
+                  "const": "free"
+                }
+              }
+            }
+          }
+        }
       },
       "else": {
-        "properties": { "joint": { "properties": {
-          "contact_mode": { "const": "free" } } } }
+        "properties": {
+          "joint": {
+            "properties": {
+              "contact_mode": {
+                "const": "free"
+              }
+            }
+          }
+        }
       }
     },
     {
       "$comment": "D18: fillet joints carry an ISO 9692-1 included angle. PARAMETERS.md 2.6.",
       "if": {
-        "properties": { "joint": { "properties": {
-          "type": { "enum": ["T", "corner"] } }, "required": ["type"] } },
-        "required": ["joint"]
+        "properties": {
+          "joint": {
+            "properties": {
+              "type": {
+                "enum": [
+                  "T",
+                  "corner"
+                ]
+              }
+            },
+            "required": [
+              "type"
+            ]
+          }
+        },
+        "required": [
+          "joint"
+        ]
       },
       "then": {
-        "properties": { "joint": { "properties": {
-          "included_angle_deg": { "minimum": 60, "maximum": 120 },
-          "stack_offset_mm": { "type": "null" } } } }
+        "properties": {
+          "joint": {
+            "properties": {
+              "included_angle_deg": {
+                "minimum": 60,
+                "maximum": 120
+              },
+              "stack_offset_mm": {
+                "type": "null"
+              }
+            }
+          }
+        }
       }
     },
     {
       "$comment": "D18: butt joints are coplanar - 180 deg included, no stack offset.",
       "if": {
-        "properties": { "joint": { "properties": {
-          "type": { "const": "butt" } }, "required": ["type"] } },
-        "required": ["joint"]
+        "properties": {
+          "joint": {
+            "properties": {
+              "type": {
+                "const": "butt"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          }
+        },
+        "required": [
+          "joint"
+        ]
       },
       "then": {
-        "properties": { "joint": { "properties": {
-          "included_angle_deg": { "const": 180 },
-          "stack_offset_mm": { "type": "null" } } } }
+        "properties": {
+          "joint": {
+            "properties": {
+              "included_angle_deg": {
+                "const": 180
+              },
+              "stack_offset_mm": {
+                "type": "null"
+              }
+            }
+          }
+        }
       }
     },
     {
       "$comment": "D18/PARAMETERS 2.7: lap and edge are one topology - parallel parts, 0 deg included, differing only in stack_offset_mm.",
       "if": {
-        "properties": { "joint": { "properties": {
-          "type": { "enum": ["lap", "edge"] } }, "required": ["type"] } },
-        "required": ["joint"]
+        "properties": {
+          "joint": {
+            "properties": {
+              "type": {
+                "enum": [
+                  "lap",
+                  "edge"
+                ]
+              }
+            },
+            "required": [
+              "type"
+            ]
+          }
+        },
+        "required": [
+          "joint"
+        ]
       },
       "then": {
-        "properties": { "joint": { "properties": {
-          "included_angle_deg": { "const": 0 },
-          "stack_offset_mm": { "type": "number", "minimum": 0 } } } }
+        "properties": {
+          "joint": {
+            "properties": {
+              "included_angle_deg": {
+                "const": 0
+              },
+              "stack_offset_mm": {
+                "type": "number",
+                "minimum": 0
+              }
+            }
+          }
+        }
       }
     },
     {
       "$comment": "PARAMETERS 2.7: edge is the flush degenerate case of lap.",
       "if": {
-        "properties": { "joint": { "properties": {
-          "type": { "const": "edge" } }, "required": ["type"] } },
-        "required": ["joint"]
+        "properties": {
+          "joint": {
+            "properties": {
+              "type": {
+                "const": "edge"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          }
+        },
+        "required": [
+          "joint"
+        ]
       },
       "then": {
-        "properties": { "joint": { "properties": {
-          "stack_offset_mm": { "const": 0 } } } }
+        "properties": {
+          "joint": {
+            "properties": {
+              "stack_offset_mm": {
+                "const": 0
+              }
+            }
+          }
+        }
       }
     },
     {
       "$comment": "D16: standoff must clear the profile's min-Z. PARAMETERS.md 4.0.",
       "if": {
-        "properties": { "noise_model": { "properties": {
-          "profile": { "const": "d435i" } }, "required": ["profile"] } },
-        "required": ["noise_model"]
+        "properties": {
+          "noise_model": {
+            "properties": {
+              "profile": {
+                "const": "d435i"
+              }
+            },
+            "required": [
+              "profile"
+            ]
+          }
+        },
+        "required": [
+          "noise_model"
+        ]
       },
       "then": {
-        "properties": { "camera": { "properties": {
-          "standoff_mm": { "minimum": 280 } } } }
+        "properties": {
+          "camera": {
+            "properties": {
+              "standoff_mm": {
+                "minimum": 280
+              }
+            }
+          }
+        }
       }
     },
     {
       "if": {
-        "properties": { "noise_model": { "properties": {
-          "profile": { "const": "stereo_good" } }, "required": ["profile"] } },
-        "required": ["noise_model"]
+        "properties": {
+          "noise_model": {
+            "properties": {
+              "profile": {
+                "const": "stereo_good"
+              }
+            },
+            "required": [
+              "profile"
+            ]
+          }
+        },
+        "required": [
+          "noise_model"
+        ]
       },
       "then": {
-        "properties": { "camera": { "properties": {
-          "standoff_mm": { "minimum": 200 } } } }
+        "properties": {
+          "camera": {
+            "properties": {
+              "standoff_mm": {
+                "minimum": 200
+              }
+            }
+          }
+        }
       }
     },
     {
       "if": {
-        "properties": { "noise_model": { "properties": {
-          "profile": { "const": "stereo_poor" } }, "required": ["profile"] } },
-        "required": ["noise_model"]
+        "properties": {
+          "noise_model": {
+            "properties": {
+              "profile": {
+                "const": "stereo_poor"
+              }
+            },
+            "required": [
+              "profile"
+            ]
+          }
+        },
+        "required": [
+          "noise_model"
+        ]
       },
       "then": {
-        "properties": { "camera": { "properties": {
-          "standoff_mm": { "minimum": 400 } } } }
+        "properties": {
+          "camera": {
+            "properties": {
+              "standoff_mm": {
+                "minimum": 400
+              }
+            }
+          }
+        }
       }
     }
   ]
