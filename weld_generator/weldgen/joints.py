@@ -56,6 +56,9 @@ class JointSpec:
     #: lap: 0 < s < L overlap; edge: 0 (flush). None for T / corner / butt.
     #: PARAMETERS.md §2.7 - lap and edge are one topology at different offsets.
     stack_offset_mm: float | None = None
+    #: Longitudinal (along-seam) offset of B relative to A. With L_A != L_B this makes
+    #: the seam clip to the SHARED run rather than always spanning the full plate.
+    length_offset_mm: float = 0.0
 
     #: The included angle each joint type takes as its nominal, i.e. the angle at which
     #: part B is undeflected. NOT all 90: a butt joint is coplanar (180) and a lap or

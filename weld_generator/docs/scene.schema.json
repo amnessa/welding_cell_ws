@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/amnessa/weld_generator/schema/scene-2.1.0.json",
+  "$id": "https://github.com/amnessa/weld_generator/schema/scene-2.2.0.json",
   "title": "Weld seam dataset — scene",
-  "description": "Machine-checkable form of docs/SCHEMA.md v2.1.0. Prose wins on intent; this file wins on shape.",
+  "description": "Machine-checkable form of docs/SCHEMA.md v2.2.0. Prose wins on intent; this file wins on shape.",
   "type": "object",
   "required": [
     "schema_version", "generator_version", "scene_id", "config_id", "seed", "tier",
@@ -28,7 +28,7 @@
   },
 
   "properties": {
-    "schema_version": { "const": "2.1.0" },
+    "schema_version": { "const": "2.2.0" },
     "generator_version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
     "scene_id": { "type": "string", "pattern": "^[0-9a-f]{8}-\\d{10}$" },
     "config_id": { "type": "string", "pattern": "^[0-9a-f]{8}$" },
@@ -183,7 +183,7 @@
           "reject_reason": {
             "enum": [null, "fixture_contact", "interior_face", "bisector_blocked",
                      "degenerate_dihedral", "no_contact", "too_short",
-                     "toe_of_centreline"]
+                     "toe_of_centreline", "wrong_class_for_joint"]
           },
           "face_pair": {
             "type": "array", "minItems": 2, "maxItems": 2,
@@ -196,6 +196,10 @@
           },
           "length_mm": { "type": "number", "exclusiveMinimum": 0 },
           "dihedral_deg": { "type": "number", "minimum": 0, "maximum": 180 },
+          "seam_class": {
+            "enum": ["fillet", "butt", "lap_toe", "edge"],
+            "description": "What KIND of weld this is, derived from the faces forming it: face x face perpendicular = fillet, face x face coplanar = butt, edge x face = lap_toe, edge x edge = edge. A seam whose class does not belong to joint.type is kept as a negative with reject_reason 'wrong_class_for_joint'."
+          },
           "sampled": {
             "type": "object", "additionalProperties": false,
             "required": ["array", "density_per_mm", "n"],

@@ -64,7 +64,33 @@ DEFAULT_ACCESS: dict[str, Any] = {
     "min_seam_length_frac": 0.25,
 }
 
-PARALLEL_TOL = 1e-6
+#: Faces count as parallel within this angle. NOT exact parallelism: the sampler tilts
+#: B by the angular misalignment beta (up to 4 deg, PARAMETERS.md §2.3), so an exact test
+#: means butt and edge joints only ever find their centreline when beta happens to be 0.
+#: That is how a real bug hid behind a test suite that only ever used beta = 0.
+#: Which seam classes each joint type legitimately produces. The class follows from the
+#: faces involved (see `seam_class`), and it is what makes the joint-type label honest:
+#:
+#:   edge joint - BOTH parts contribute an edge. A weld running along the surface of one
+#:                of them is not an edge weld, it is a lap toe.
+#:   lap joint  - exactly the opposite: the edge of one part against the FACE of the other.
+#:   butt joint - the weld lies on the coplanar faces; the short runs across the plate
+#:                thickness at the ends are not seams.
+#:
+#: A corner joint carries two: the inside fillet and the outside edge-to-edge weld.
+ALLOWED_CLASSES: dict[str, frozenset[str]] = {
+    "T":      frozenset({"fillet"}),
+    "corner": frozenset({"fillet", "edge"}),
+    "butt":   frozenset({"butt"}),
+    "lap":    frozenset({"lap_toe"}),
+    "edge":   frozenset({"edge"}),
+}
+
+#: Slab faces that are BROAD (the two large faces); everything else is an edge face.
+BROAD_FACES = frozenset({"+w", "-w"})
+
+PARALLEL_TOL_DEG = 8.0
+PARALLEL_TOL = float(np.sin(np.deg2rad(PARALLEL_TOL_DEG)))
 
 
 @dataclass
@@ -80,6 +106,21 @@ class Candidate:
     n_b: np.ndarray
     dihedral_deg: float
     separation_mm: float
+
+    @property
+    def seam_class(self) -> str:
+        """What KIND of weld this is, from the faces that form it.
+
+        Derived, never declared - the same discipline as `quality_level`. It is what
+        stops a scene labelled `edge` from reporting a lap toe as an edge seam.
+        """
+        a, b = (f.split(":")[1] for f in self.face_pair)
+        broad = (a in BROAD_FACES) + (b in BROAD_FACES)
+        if broad == 2:
+            return "butt" if self.dihedral_deg > 180.0 - PARALLEL_TOL_DEG else "fillet"
+        if broad == 0:
+            return "edge"
+        return "lap_toe"
 
     @property
     def length_mm(self) -> float:
@@ -130,6 +171,7 @@ def enumerate_candidates(
     parts: Sequence[Slab],
     access: dict[str, Any] | None = None,
     samples_along: int = 5,
+    joint_type: str | None = None,
 ) -> list[Candidate]:
     """Every inter-object face pair, decided on geometry alone (D4 + D13).
 
@@ -159,6 +201,17 @@ def enumerate_candidates(
                         out.append(c)
 
     _suppress_toes(out, access)
+
+    # A seam whose class does not belong to this joint type is real geometry but is not
+    # this joint's weld. Kept as a negative rather than dropped: it is exactly what a
+    # geometric method returns when it does not know what kind of joint it is looking at.
+    if joint_type is not None:
+        allowed = ALLOWED_CLASSES.get(joint_type)
+        if allowed is not None:
+            for c in out:
+                if c.weldable and c.seam_class not in allowed:
+                    c.weldable = False
+                    c.reject_reason = "wrong_class_for_joint"
 
     out.sort(key=lambda c: (
         not c.weldable, c.face_pair[0], c.face_pair[1],
@@ -333,10 +386,16 @@ def _coplanar_candidate(A: Slab, fa: str, B: Slab, fb: str, ref: tuple[str, str]
     coplanar planes do not intersect in a line.
     """
     pa, pb = A.face_plane(fa), B.face_plane(fb)
-    if abs(pa.d - pb.d) > access.get("coplanar_tol_mm", 0.5):
-        return None                                    # parallel, but not the same plane
 
-    n = pa.n
+    # Use the MEAN normal, and measure the perpendicular offset between the two face
+    # centres. Comparing plane `d` values only works when the faces are exactly parallel;
+    # under a 2 deg tilt a 180 mm face deviates by 6 mm along its length and the equality
+    # test fails even though the joint is perfectly real.
+    n = pa.n + pb.n
+    n = n / np.linalg.norm(n)
+    if abs(float((B.face_center(fb) - A.face_center(fa)) @ n)) > \
+            access.get("coplanar_tol_mm", 0.5) + access["contact_tol_mm"]:
+        return None                                    # parallel, but not the same plane
 
     # The in-plane basis comes from part A's OWN axes. Two earlier attempts were wrong:
     #   * a world-aligned basis found the gap only when the assembly happened to be

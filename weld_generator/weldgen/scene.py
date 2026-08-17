@@ -128,7 +128,7 @@ def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict
     # real seam reachable when the gap is large on thin sheet.
     access["contact_tol_mm"] = float(
         np.clip(min(tol, max(0.95 * t_min, 1.1 * spec.root_gap_mm)), 0.5, 12.0))
-    cands = enumerate_candidates(slabs, access)
+    cands = enumerate_candidates(slabs, access, joint_type=joint_type)
 
     # --- surface sampling, substream 4 ------------------------------------------
     g4 = streams["surface_sample"]
@@ -185,6 +185,7 @@ def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict
                            "p1_mm": [float(v) for v in c.p1]},
             "length_mm": float(c.length_mm),
             "dihedral_deg": float(c.dihedral_deg),
+            "seam_class": c.seam_class,
             "sampled": {"array": f"seam_{i}", "density_per_mm": density_per_mm, "n": n},
             "occluded_fraction": 0.0,   # no camera yet; Phase 3 fills this in
         })

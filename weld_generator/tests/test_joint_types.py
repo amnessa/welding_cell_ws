@@ -255,3 +255,60 @@ def test_short_cross_runs_are_dropped_by_the_length_fraction():
     longest = max(c.length_mm for c in weld)
     for c in weld:
         assert c.length_mm >= 0.25 * longest - 1e-6
+
+
+@pytest.mark.parametrize("joint_type", ["butt", "edge"])
+@pytest.mark.parametrize("beta", [0.0, 0.5, 1.0, 2.0])
+def test_centreline_survives_angular_misalignment(joint_type, beta):
+    """The coplanar arm must tolerate the sampled angular misalignment.
+
+    REGRESSION: the parallel test was exact (1e-6), so any beta > 0 made butt and edge
+    faces read as a ~178 degree *intersecting* pair and their centreline was thrown away
+    as `degenerate_dihedral`. Every earlier test used beta = 0, so the suite was blind to
+    it - the joint types that most need the coplanar arm were the ones losing it.
+    """
+    spec = spec_for(joint_type, angular_misalignment_deg=beta)
+    parts = build(spec, joint_type, np.eye(4))
+    centre = [c for c in enumerate_candidates(parts)
+              if c.weldable and c.dihedral_deg > 170.0]
+    assert centre, (
+        f"{joint_type} at beta={beta} lost its centreline; "
+        f"parallel tolerance must cover the sampled misalignment range")
+
+
+def test_extreme_misalignment_legitimately_opens_an_edge_joint():
+    """Not every lost seam is a bug.
+
+    At beta = 4 deg (the level-D extreme) a 100 mm plate's far edge lifts 3.5 mm, so an
+    edge joint is no longer flush and the gap exceeds the contact tolerance. Losing the
+    centreline there is correct - the joint has genuinely stopped being an edge joint.
+    Recorded so the behaviour is not "fixed" later by widening a tolerance.
+    """
+    spec = spec_for("edge", angular_misalignment_deg=4.0)
+    parts = build(spec, "edge", np.eye(4))
+    centre = [c for c in enumerate_candidates(parts)
+              if c.weldable and c.dihedral_deg > 170.0]
+    assert not centre
+
+
+def test_seams_clip_to_the_shared_run():
+    """With L_A != L_B the seam spans the OVERLAP, not the full plate."""
+    spec = spec_for("T", L_A=300.0, L_B=180.0, length_offset_mm=0.0)
+    _, w = weldable("T")           # sanity: the helper still works
+    parts = build(spec, "T", np.eye(4))
+    long = [c for c in enumerate_candidates(parts) if c.weldable and c.length_mm > 50]
+    assert long
+    for c in long:
+        assert c.length_mm == pytest.approx(180.0, abs=1e-6)
+
+
+def test_longitudinal_offset_shortens_the_seam():
+    """Shifting B along the seam clips the shared run further."""
+    base = spec_for("T", L_A=300.0, L_B=300.0, length_offset_mm=0.0)
+    shifted = spec_for("T", L_A=300.0, L_B=300.0, length_offset_mm=60.0)
+    a = max(c.length_mm for c in enumerate_candidates(build(base, "T", np.eye(4)))
+            if c.weldable)
+    b = max(c.length_mm for c in enumerate_candidates(build(shifted, "T", np.eye(4)))
+            if c.weldable)
+    assert a == pytest.approx(300.0, abs=1e-6)
+    assert b == pytest.approx(240.0, abs=1e-6)

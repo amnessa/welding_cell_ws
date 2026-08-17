@@ -48,7 +48,7 @@ def _standing_B(spec: JointSpec, T: np.ndarray, y0: float, z0: float,
     """
     return Slab("B", "workpiece", 1, (spec.L_B, spec.H_B, spec.t_B),
                 T
-                @ translate(0.0, y0, z0)
+                @ translate(spec.length_offset_mm, y0, z0)
                 @ rot_x(spec.tilt_deg(joint_type))
                 @ translate(0.0, spec.t_B / 2.0, spec.H_B / 2.0)
                 @ rot_x(90.0))
@@ -58,7 +58,8 @@ def _flat_B(spec: JointSpec, T: np.ndarray, y_centre: float, z_centre: float,
             joint_type: str) -> Slab:
     """A plate lying flat (thickness along Z, like part A)."""
     return Slab("B", "workpiece", 1, (spec.L_B, spec.H_B, spec.t_B),
-                T @ translate(0.0, y_centre, z_centre) @ rot_x(spec.tilt_deg(joint_type)))
+                T @ translate(spec.length_offset_mm, y_centre, z_centre)
+                  @ rot_x(spec.tilt_deg(joint_type)))
 
 
 def _base_A(spec: JointSpec, T: np.ndarray, y_centre: float) -> Slab:
@@ -127,7 +128,8 @@ def _layout_edge(spec: JointSpec, T: np.ndarray) -> list[Slab]:
     # different joint wearing the edge label.
     B = Slab("B", "workpiece", 1, (spec.L_B, spec.W_A, spec.t_B),
              T
-             @ translate(0.0, -spec.W_A / 2.0, spec.root_gap_mm + spec.t_B / 2.0)
+             @ translate(spec.length_offset_mm, -spec.W_A / 2.0,
+                         spec.root_gap_mm + spec.t_B / 2.0)
              @ rot_x(spec.tilt_deg("edge")))
     return [A, B]
 

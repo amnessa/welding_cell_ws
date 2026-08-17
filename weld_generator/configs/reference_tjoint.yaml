@@ -11,6 +11,8 @@ seam_shape: line
 prep: square
 fixture_present: false
 plate_length_mm: [232.0, 232.0]
+# Full overlap: no longitudinal offset, so the seam is the measured 232 mm.
+min_overlap_frac: 1.0
 plate_width_mm: [90.0, 120.0]
 thickness_mm: [8.4, 8.4]
 dissimilar_thickness_p: 0.0

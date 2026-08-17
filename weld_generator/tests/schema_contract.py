@@ -1,4 +1,4 @@
-"""Contract test for docs/scene.schema.json (schema_version 2.1.0).
+"""Contract test for docs/scene.schema.json (schema_version 2.2.0).
 
 Proves the frozen schema accepts the documented example and rejects the
 invariants that D12 / D16 / D18 / D19 (D17 withdrawn) depend on. Run standalone:
@@ -31,7 +31,7 @@ def faces_for(oid, start, extra=()):
     return out
 
 scene={
- "schema_version":"2.1.0","generator_version":"0.1.0",
+ "schema_version":"2.2.0","generator_version":"0.1.0",
  "scene_id":"3f9a21c4-0008412337","config_id":"3f9a21c4","seed":8412337,"tier":1,
  "twin_key":"a91cf3e2b7d40518",
  "units":{"length":"mm","angle":"deg"},
@@ -50,13 +50,13 @@ scene={
  "T_world_joint":I4,
  "seams":[{"id":0,"weldable":True,"reject_reason":None,"face_pair":["A:+w","B:-v"],
            "parametric":{"kind":"line","p0_mm":[0,0,0],"p1_mm":[232,0,0]},
-           "length_mm":232.0,"dihedral_deg":90.0,
+           "length_mm":232.0,"dihedral_deg":90.0,"seam_class":"fillet",
            "sampled":{"array":"seam_0","density_per_mm":10.0,"n":2321},
            "occluded_fraction":0.34},
           {"id":3,"weldable":False,"reject_reason":"fixture_contact",
            "face_pair":["A:-w","F:+w"],
            "parametric":{"kind":"line","p0_mm":[0,0,0],"p1_mm":[200,0,0]},
-           "length_mm":200.0,"dihedral_deg":90.0,
+           "length_mm":200.0,"dihedral_deg":90.0,"seam_class":"fillet",
            "sampled":{"array":"seam_3","density_per_mm":10.0,"n":2001},
            "occluded_fraction":0.12}],
  "tacks":None,
@@ -128,8 +128,8 @@ allgood += [
      lambda s: s.pop("twin_key")),
  neg("malformed twin_key",
      lambda s: s.__setitem__("twin_key","NOTHEX")),
- neg("stale schema_version 2.0.0",
-     lambda s: s.__setitem__("schema_version","2.0.0")),
+ neg("stale schema_version 2.1.0",
+     lambda s: s.__setitem__("schema_version","2.1.0")),
 ]
 
 # no-fixture scene with a non-free contact_mode must also fail

@@ -1,6 +1,6 @@
 # Weld Seam Dataset — Parameter Ranges
 
-**params_version: 2.0.0** — tracks `SCHEMA.md`. 2.0.0 (2026-08-15) drops procedural features (D17 withdrawn); 1.2.0 added D18–D21 + ISO 9692-1.
+**params_version: 2.2.0** — tracks `SCHEMA.md`. 2.0.0 (2026-08-15) drops procedural features (D17 withdrawn); 1.2.0 added D18–D21 + ISO 9692-1.
 Phase 0 deliverable of [`../notes/dataset_plan.md`](../notes/dataset_plan.md) §5.
 Companion: [`SCHEMA.md`](SCHEMA.md).
 
@@ -150,6 +150,29 @@ rule and the fit-up parameters are coupled, not independent. One line in the tac
 ISO 2553 Table 5 no. 7.1 lists "lap" only as an edge-weld symbol with `s` = weld metal
 thickness. Overlap stays **[ours]** — see §7.
 
+### 2.6.1 Groove preparations — deferred to Phase 6 (D24)
+
+ISO 9692-1 makes the choice **thickness-driven**, so when this lands the sampler picks the
+preparation from `t` rather than inventing a distribution: **[ISO]**
+
+| `t` (mm) | Preparation | Ref |
+|---|---|---|
+| ≤ 2 | raised edges | 1.1 |
+| ≤ 4 | square | 1.2.1 |
+| 3 – 10 | single-V, single-bevel | 1.3, 1.9.1 |
+| 5 – 40 | single-V | 1.5, 2.2 |
+| > 10 | double-V, double-bevel | 2.4, 2.9.1 |
+| > 12 | single-U | 1.6, 2.6 |
+| > 16 | single-J | 1.11, 2.10 |
+
+A groove gives the butt joint **one** seam at the groove root instead of two coplanar face
+centrelines, and the groove is cut on the sampled seam line rather than the seam being read
+off the geometry afterwards — D3 applied to preparation. It needs a bevelled-edge
+primitive, which is why it travels with Phase 6's curved geometry.
+
+**Until then, `joint.prep` is `"square"` and §5.0's radius-PCA result keeps its
+square-preparation scope.**
+
 ### 2.7 Lap and edge are the same topology at different offsets
 
 Both have **parallel** parts — included angle `0°`, not 90°. They differ only in whether the
@@ -222,6 +245,7 @@ Models the steel plate the magnets hold against.
 | **Presence** | **off in Phase 1; ~50% from Phase 2, emitted in exact pairs** | **[ours]** D12 |
 | Dimensions | 600 × 400 × 10 mm nominal, ±20% on the two in-plane dims | **[ours]** — `lab_fixture` preset should use the measured plate |
 | **Tilt** | **±10° from horizontal**, uniform in tilt direction | **[ours]** D12 |
+| Stacked-joint β cap | 0,4° for `lap` and `edge` | **[ours]** D23 — clamped face to face, so relative tilt is physically suppressed |
 | **Height** | working surface `z` **not pinned**; offset ±50 mm | **[ours]** D12 |
 | In-plane yaw | uniform 0 – 360° | **[ours]** |
 | Surface | planar; no texture in tier 1 | |

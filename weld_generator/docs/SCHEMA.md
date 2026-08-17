@@ -1,6 +1,6 @@
 # Weld Seam Dataset — Scene Schema
 
-**schema_version: 2.0.0** — 1.0.0 frozen 2026-08-13; 1.1.0 D12/D16; 1.2.0 D18–D21; **2.0.0 (2026-08-15) removes `objects[].features`** — D17 withdrawn.
+**schema_version: 2.2.0** — 1.0.0 frozen 2026-08-13; 1.1.0 D12/D16; 1.2.0 D18–D21; **2.0.0 (2026-08-15) removes `objects[].features`** — D17 withdrawn.
 Phase 0 deliverable of [`../notes/dataset_plan.md`](../notes/dataset_plan.md) §4.
 Companion: [`PARAMETERS.md`](PARAMETERS.md).
 
@@ -254,6 +254,38 @@ how much published seam-extraction performance is an artifact of pre-isolated wo
 Uniform presence makes the dataset harder without making it informative. See `twin_key`
 (§6.4) for how the on/off arms are joined.
 
+### 2.5.1 `seam_class` — what KIND of weld a seam is (D22)
+
+Derived from the faces that form it, never declared — the same discipline as
+`quality_level`. Slab faces split into **broad** (`±w`, the two large faces) and **edge**
+(`±u`, `±v`):
+
+| `seam_class` | Faces | Dihedral | Joint |
+|---|---|---|---|
+| `fillet` | face × face | 60–120° | T, corner (inside weld) |
+| `butt` | face × face | ~180°, coplanar | butt centreline |
+| `lap_toe` | **edge × face** | ~90° | lap — the edge of one part against the *face* of the other |
+| `edge` | **edge × edge** | ~180°, coplanar | edge joint — *both* parts contribute an edge |
+
+**The joint type determines which classes are legitimate**, and this is what keeps the
+type label honest:
+
+| `joint.type` | allowed | why |
+|---|---|---|
+| `T` | `fillet` | |
+| `corner` | `fillet`, `edge` | weldable from inside *and* outside |
+| `butt` | `butt` | the short runs across the plate thickness at the ends are not seams |
+| `lap` | `lap_toe` | edge of one part, face of the other — never edge-to-edge |
+| `edge` | `edge` | a weld along the *surface* of one part is a lap toe, not an edge weld |
+
+Off-class seams are real geometry, so they are kept as `weldable: false` with
+`reject_reason: "wrong_class_for_joint"` rather than dropped — they are exactly what a
+geometric method returns when it does not know what kind of joint it is looking at.
+
+Before this rule an `edge` scene reported four edge welds when two of them were lap toes,
+and a `butt` scene emitted a rectangle of seams whose short sides merely tracked the plate
+thickness.
+
 ### 2.6 `reject_reason` vocabulary — frozen
 
 | Value | Meaning |
@@ -264,7 +296,9 @@ Uniform presence makes the dataset harder without making it informative. See `tw
 | `bisector_blocked` | the bisector ray re-enters material within `torch_clearance_mm` |
 | `degenerate_dihedral` | dihedral angle outside `[dihedral_min_deg, dihedral_max_deg]` |
 | `no_contact` | faces separated by more than `contact_tol_mm` along the candidate line |
-| `too_short` | clipped intersection shorter than `min_seam_length_mm` |
+| `too_short` | clipped intersection shorter than `min_seam_length_mm`, or than `min_seam_length_frac` of the joint's longest edge |
+| `toe_of_centreline` | an intersecting line bounding a coplanar centreline's gap — the weld's toe, not a separate seam |
+| `wrong_class_for_joint` | a real seam whose `seam_class` does not belong to this `joint.type` (D22, §2.5.1) |
 
 Adding a member is a **minor** bump (§0). Precedence when several apply is the table order,
 top to bottom, and the applied order is recorded so it is never ambiguous.

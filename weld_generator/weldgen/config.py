@@ -30,6 +30,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "seam_shape": "line",
     "prep": "square",
     "plate_length_mm": [80.0, 400.0],
+    #: L_A and L_B are drawn independently and B is shifted along the seam, so seams clip
+    #: to the SHARED run instead of always spanning the full plate. This floor keeps the
+    #: overlap from collapsing to nothing.
+    "min_overlap_frac": 0.6,
     "plate_width_mm": [50.0, 250.0],
     "thickness_mm": [1.0, 12.0],
     "dissimilar_thickness_p": 0.30,
@@ -41,6 +45,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # ISO 9692-1 Table 1 ref 1.1 "raised edges" applies at t <= 2 mm, so edge joints are
     # a thin-sheet preparation by the standard's own scope, not by our choice.
     "edge_max_thickness_mm": 2.0,
+    #: Angular misalignment cap for face-to-face stacked joints (lap, edge). See the note
+    #: in sample_joint: the clamp physically prevents relative tilt.
+    "stacked_max_beta_deg": 0.4,
     # --- defects, substream 1 (PARAMETERS.md §2) ---------------------------------
     "quality_mix": {"B": 0.25, "C": 0.25, "D": 0.25, "below_D": 0.25},
     # ISO 9692-1 Tables 3-4 cap the fillet gap at b <= 2 mm; the over-range tail to
@@ -78,8 +85,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
 #: so two scenes differing only in sensor or density share a twin_key (SCHEMA.md §6.4).
 GEOMETRY_KEYS = (
     "joint_type", "seam_shape", "prep", "plate_length_mm", "plate_width_mm",
-    "thickness_mm", "dissimilar_thickness_p", "included_angle_deg",
-    "stack_offset_frac", "edge_max_thickness_mm",
+    "thickness_mm", "dissimilar_thickness_p", "included_angle_deg", "min_overlap_frac",
+    "stack_offset_frac", "edge_max_thickness_mm", "stacked_max_beta_deg",
     "quality_mix", "root_gap_mm", "root_gap_over_range_mm",
 )
 
@@ -204,7 +211,8 @@ def sample_joint(cfg: dict[str, Any], streams: Streams
     joint_type = str(choices) if isinstance(choices, str) else str(g0.choice(choices))
 
     lo, hi = cfg["plate_length_mm"]
-    L = float(g0.uniform(lo, hi))
+    L_A = float(g0.uniform(lo, hi))
+    L_B = float(g0.uniform(lo, hi))
     lo, hi = cfg["plate_width_mm"]
     W_A = float(g0.uniform(lo, hi))
     H_B = float(g0.uniform(lo, hi))
@@ -270,13 +278,29 @@ def sample_joint(cfg: dict[str, Any], streams: Streams
         gap_hi = max(gap_lo, min(root_gap_limit(t_min, throat, target), iso9692_cap))
         gap = float(g1.uniform(gap_lo, gap_hi)) if gap_hi > gap_lo else gap_lo
 
+    # Stacked joints are clamped face to face, so relative tilt about the seam axis is
+    # physically suppressed - the plates would have to lift off each other. Left at the
+    # plate-joint limit, any beta opens the flush edge (a 4 deg tilt lifts a 100 mm plate's
+    # far edge by 3.5 mm) and an edge joint stops being an edge joint: 19 of 30 seeds lost
+    # their seam entirely. The defect that DOES occur on a stacked joint is poor contact,
+    # which the root gap already carries.
+    if joint_type in ("lap", "edge"):
+        beta = min(beta, float(cfg["stacked_max_beta_deg"]))
+
     # Explicit overrides, for regression fixtures that must pin a measured geometry.
     h = _draw(g1, cfg.get("linear_misalignment_mm"), h)
     beta = _draw(g1, cfg.get("angular_misalignment_deg"), beta)
 
+    # Longitudinal offset, bounded so the shared run never collapses. Both plates are
+    # centred on x = 0, so the concentric overlap is min(L_A, L_B); the offset shifts B
+    # along the seam and the clip keeps at least `min_overlap_frac` of that.
+    slack = (1.0 - float(cfg["min_overlap_frac"])) * min(L_A, L_B)
+    length_offset = float(g0.uniform(-slack, slack)) if slack > 0.0 else 0.0
+
     spec = JointSpec(
-        L_A=L, W_A=W_A, t_A=t_A,
-        L_B=L, H_B=H_B, t_B=t_B,
+        L_A=L_A, W_A=W_A, t_A=t_A,
+        L_B=L_B, H_B=H_B, t_B=t_B,
+        length_offset_mm=length_offset,
         root_gap_mm=gap,
         linear_misalignment_mm=h,
         angular_misalignment_deg=beta,

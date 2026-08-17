@@ -35,7 +35,7 @@ Recorded so they are not re-litigated. Each was argued through; if one is reopen
 | D2 | Radius-PCA is a baseline, evaluated against GT | §1 |
 | D3 | Generator inverts the pipeline: sample joint → sample seam curve → place parts | Makes lap/edge trivially correct; no intersection solving needed at generation time |
 | D4 | Weldable seam = intersection of an **exterior** face pair whose dihedral bisector escapes to free space | Single rule covers all 5 joint types; encodes torch reachability, not just geometry |
-| D5 | Multiple seams per scene are the norm, not the exception | T = 2 fillets, lap = 2 toes, corner = 1–2, butt = 1, edge = 1 |
+| D5 | Multiple seams per scene are the norm, not the exception | T = 2 fillets, lap = 2 toes, corner = 2 (inside fillet + outside edge weld), butt = 1–2 centrelines, edge = 1–2 flush edges. **Counts revised 2026-08-16** once D22 made the classes explicit; the originals were informal |
 | D6 | Store one full-geometry cloud + per-point `visible_from_cam` mask, not two clouds | Smaller, and gives `occluded_fraction` as a difficulty axis for free |
 | D7 | Tier boundary is **sensor realism**, not visibility. Tier 1 does ray-cast occlusion | Ray casting is not rendering; costs milliseconds, no GPU, no Isaac dependency |
 | D8 | Tack points are a **derived layer** from a versioned rule function, epistemically separated from geometric GT | Seam = exact geometry; tacks = citable convention. Conflating them lets a reviewer attack the seam claim by proxy |
@@ -52,6 +52,9 @@ Recorded so they are not re-litigated. Each was argued through; if one is reopen
 | D19 | With `root_gap > 0` the seam is stored as the **nominal zero-gap intersection** of the extended faces; the root line is a derived field | At `g = 1,1 mm` the faces do not intersect, so "the seam" is a *choice* among root line / gap midline / nominal intersection. The ambiguity (~1 mm) is larger than the ~0,6 mm RMSE the literature reports. Nominal is chosen because it is continuous as `g → 0` and independent of which part is called A. **Publish the conversion between the three** — a systematic offset that may explain part of the disagreement across papers |
 | D20 | Under `camera_raster`, hidden surface is sampled **separately at matched density** and flagged `visible_from_cam: false` | The mask formulation (D6) assumes the single-view cloud is a subset of the full cloud. That holds for `area_uniform` and breaks for a raster, which has no natural sample of invisible surface |
 | D21 | Every object must be **watertight and winding-consistent**; the *union* is not and must not be | Ray-cast visibility, `bisector_blocked` and any `contains` query need a defined interior. The union is genuinely disjoint at `g > 0` — that is the physical truth, and D3 means no boolean union is ever computed |
+| D22 | A seam's **class is derived from the faces that form it**, and the joint type determines which classes are legitimate: `edge` = edge×edge, `lap_toe` = edge×face, `butt` = face×face coplanar, `fillet` = face×face angled. Off-class seams are kept as `weldable: false` / `wrong_class_for_joint` | An edge joint means BOTH parts contribute an edge — a weld running along the *surface* of one of them is a lap toe, not an edge weld. A lap is exactly the opposite: the edge of one part against the face of the other. Without this the generator reported an edge scene's 4 seams as 4 edge welds when 2 were lap toes, and a butt joint emitted short cross-runs across the plate thickness. Settled 2026-08-16 |
+| D23 | **Stacked joints (lap, edge) cap angular misalignment** at ~0.4° | The plates are clamped face to face, so relative tilt about the seam axis is physically suppressed. At the plate-joint limit a 4° tilt lifts a 100 mm plate's far edge 3.5 mm and the flush edge stops being flush — 19 of 30 edge seeds lost their seam entirely. The defect that *does* occur on a stacked joint is poor contact, which the root gap already carries |
+| D24 | **Groove preparations (V, U, J, bevel) are deferred to Phase 6**, alongside curved geometry | Both need non-slab primitives, so the machinery gets built once. Consequence to state: Phases 3–5 measure **square preparation only**, and `PARAMETERS.md` §5.0's radius-PCA result keeps its square-prep scope until Phase 6 lands. Settled 2026-08-16 |
 
 Phase 0 froze D1–D11 in [`../docs/SCHEMA.md`](../docs/SCHEMA.md) and
 [`../docs/PARAMETERS.md`](../docs/PARAMETERS.md). D12–D16 were settled 2026-08-13; D17 was withdrawn 2026-08-15; D18–D21 settled 2026-08-15.
@@ -554,6 +557,26 @@ with a closed curved seam.
 
 - [ ] Seam sampler: arcs, C-shapes, S-shapes (splines), closed curves
 - [ ] Part constructor: swept / curved plates, pipe-on-plate, cylinder-on-cylinder
+- [ ] **Groove preparations (D24)** — the other job that needs a non-slab primitive.
+      ISO 9692-1 makes the choice thickness-driven and citable, so the sampler picks the
+      preparation from `t` rather than inventing a distribution:
+
+      | `t` (mm) | preparation | ISO 9692-1 ref |
+      |---|---|---|
+      | ≤ 2 | raised edges | 1.1 |
+      | ≤ 4 | square | 1.2.1 |
+      | 3 – 10 | single-V, single-bevel | 1.3, 1.9.1 |
+      | 5 – 40 | single-V | 1.5, 2.2 |
+      | > 10 | double-V, double-bevel | 2.4, 2.9.1 |
+      | > 12 | single-U | 1.6, 2.6 |
+      | > 16 | single-J | 1.11, 2.10 |
+
+      **This is what makes a butt joint a single seam.** With a groove the weld has one
+      well-defined line at the groove root, instead of the two coplanar face centrelines
+      a square preparation yields. The seam is where the groove is placed, so the groove
+      is cut on the sampled seam line rather than the seam being read off the geometry
+      afterwards — which is D3 applied to preparation.
+- [ ] Expand `joint.prep` beyond `"square"` and re-scope `PARAMETERS.md` §5.0
 - [ ] Surface-pair intersection for the verification function (plane ∩ cylinder, quadric ∩ plane)
 - [ ] `surface` block on non-planar faces; `bspline` parametric form pinned before starting
 - [ ] Watertightness (D21) genuinely bites here — swept and revolved primitives produce degenerate
