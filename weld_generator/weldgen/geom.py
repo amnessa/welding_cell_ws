@@ -141,6 +141,12 @@ class Slab:
                 "+v": L * t, "-v": L * t,
                 "+w": L * W, "-w": L * W}[name]
 
+    @property
+    def surface_area_mm2(self) -> float:
+        """Total area of all six faces — the denominator for a realised point density."""
+        L, W, t = self.dims_mm
+        return 2.0 * (L * W + W * t + L * t)
+
     def face_extent_along(self, name: str, direction: np.ndarray) -> tuple[float, float]:
         """Projected span of a face onto a world `direction`, as (min, max).
 

@@ -1,0 +1,11 @@
+# Phase 3 working config — all five joint types with the visibility layer live.
+# Same geometry as phase2; what is new is that the camera is posed and every point and
+# every seam sample carries a visibility verdict.
+name: phase3
+joint_type: [T, corner, butt, lap, edge]
+seam_shape: line
+prep: square
+fixture_present: false
+sampling_mode: area_uniform
+# All three profiles, so sensor quality is a benchmark axis rather than a constant (D16).
+sensor_profiles: [d435i, stereo_good, stereo_poor]

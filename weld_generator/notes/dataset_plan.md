@@ -518,23 +518,66 @@ This function is reused by the baselines in Phase 4 — building it here is not 
 
 ### Phase 3 — Visibility layer
 
-- [ ] **Camera pose sampler:** spherical shell, standoff from RealSense valid range, incidence-angle
-      constraint, elevation range from §5
-- [ ] **Ray-cast visibility:** `trimesh.ray` or `open3d.t.geometry.RaycastingScene` → per-point
-      `visible_from_cam`
-- [ ] **Analytic depth noise:** axial σ ∝ z² (already in `README §11`), lateral blur,
-      grazing-incidence dropout
-- [ ] **Per-seam `occluded_fraction`**
-- [ ] **HPR exteriority** utility (shared with Phase 4 baseline B)
-- [ ] **Pin `camera_raster` mask semantics (D20)** — raster-sample the visible surface as the camera
-      would, then additionally sample the hidden surface at density matched to the mean visible
-      density and flag it `visible_from_cam: false`. Cheap to implement either way now; expensive to
-      change once numbers are plotted. Move it out of `SCHEMA.md` §7 from "reserved slot" to
-      "pinned answer"
+- [x] **Camera pose sampler:** spherical shell, standoff from the profile's valid range, elevation
+      15–85° from the world XY plane, azimuth free, roll ±15°. **Where it aims turned out to be the
+      decision that mattered:** the assembly centroid is dragged upward by the standing plate, so the
+      camera looks over the seam; aiming exactly at the seam pins it to the image centre and leaks
+      the answer through the pose, the same leak `SCHEMA.md` §1.1 avoids by not pinning the assembly
+      to the world origin. Resolved the same way — aim at the joint, miss by ±0,15 of the longest
+      part edge
+- [x] **Ray-cast visibility** → per-point `visible_from_cam`. Neither `trimesh.ray` nor open3d in the
+      end: `trimesh.ray` needs `rtree`, which D9 rules out, and every part is a box, so ray–box
+      intersection is exact in closed form and vectorises over the whole cloud. Phase 6's swept and
+      revolved primitives are where a real ray engine earns itself
+- [x] **Analytic depth noise:** σ_z = subpixel·z²/(f·b) along the view ray, lateral blur in pixels,
+      grazing dropout past 75°. The realisation is **not stored** (`SCHEMA.md` §5.1) — `noise.apply`
+      is deterministic in `noise_model.seed`, which makes the noise a citable convention rather than
+      a baked artefact
+- [x] **Per-seam `occluded_fraction`** — and the split that makes it meaningful: the mask is
+      *geometry only* (framed, in range, front-facing, unoccluded). Sensor dropout lives in
+      `noise.apply` with its own validity mask, so occlusion stays comparable across the three
+      sensor profiles instead of being confounded with them
+- [x] **HPR (Hidden Point Removal) exteriority** utility (shared with Phase 4 baseline B). scipy's
+      convex hull, no open3d. On a lap joint it marks the buried interface 1,3% exterior and the same
+      face outside the overlap 100% exterior
+- [x] **Pin `camera_raster` mask semantics (D20)** — pinned and implemented. Both classes come from
+      **one** dense area-uniform pass split on the mask, which is what makes them rate-matched; two
+      independent draws would have to reconcile two densities that were never equal. Raster density
+      is `(f_px/z)²`. `SCHEMA.md` §7 now reads "implemented", not "reserved slot"
 
-**Gate:** `occluded_fraction` spans roughly 0 → 0.8 across the camera sampler. If it is always near
-zero, the sampler is too polite and the dataset has no difficulty axis — fix the sampler, not the
-metric.
+**Gate — partly met, and the shortfall is geometry rather than sampling.** Measured over 1035
+weldable seams (120 seeds × 5 joint types):
+
+| | value |
+|---|---|
+| mean `occluded_fraction` | 0,59 |
+| exactly 0 (plainly visible) | 40,5% |
+| above 0,98 (effectively hidden) | 58% |
+| strictly inside (0,05 – 0,95) | **0,7%** |
+
+The named failure mode — "always near zero, the sampler is too polite" — does **not** occur. The
+sampler hides the majority of seams, and the difficulty axis is large. What does not hold is a
+*graded* span: the distribution is binary.
+
+That is not fixable by sampling harder, and trying would be tuning the sampler until the metric
+looked right. A straight seam under a convex occluder is shadowed all-or-nothing, because the
+occluding plate spans the seam's whole length — the seam was clipped to the run the two parts share
+to begin with. Graded occlusion needs a non-convex occluder, a third body, or a curved seam:
+**Phase 6** (curved parts, pipe-on-plate) and **Phase 7** (tacks sitting on the seam). Recorded here
+so the Phase 6 gate inherits it rather than rediscovering it.
+
+Two findings to carry into the paper:
+
+- **From directly overhead, both fillets of a T-joint are occluded** — by the standing plate's own
+  thickness. Visibility of a fillet needs an oblique view from its own side. This is why elevation
+  is a real difficulty axis and not a nuisance parameter.
+- **The lower toe of a lap joint is essentially never visible** from a camera above the table: 75%
+  of lap seams are fully hidden against ~50% for the other four types. A single view cannot see a
+  joint's underside, which is a statement about the task, not about this generator.
+
+Consequence for consumers: **≈ 40% of scenes have no seam that is even half visible.** They are kept
+— they are the single-view condition the dataset exists to characterise — but a training split must
+filter on `occluded_fraction` rather than assume every scene carries usable supervision.
 
 **Effort:** 2–3 days.
 

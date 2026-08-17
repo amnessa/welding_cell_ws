@@ -350,11 +350,43 @@ gating the release — it now gates only `d435i`'s claim to match the lab camera
 | Elevation above the fixture plane | 15° – 85° | **[ours]** `dataset_plan.md` §5 — below ~20° the vertical plate of a T-joint blocks the seam entirely, **which is the point**: that is the difficulty axis |
 | Azimuth | uniform 0 – 360° | |
 | Roll about the view axis | ±15° | **[ours]** eye-in-hand mounting is not gravity-aligned |
-| Intrinsics | fixed `K` per §4.2, no jitter in tier 1 | |
+| Intrinsics | fixed `K` per §4.2, no jitter in tier 1 | principal point at the image centre; `model: "pinhole"` says so rather than leaving it assumed |
+| Aim point | joint centre + uniform `±0,15 ×` longest workpiece edge | **[ours]** two failures to avoid at once, see below |
+
+**What the camera looks at is a decision, not a detail.** Aiming at the assembly's centroid
+is wrong for a joint: the standing plate of a T drags the centroid upward, so the camera
+looks over the top of the very seam it is there to see. Aiming *exactly* at the seam is
+worse — it pins the seam to the image centre, and a model could then read the answer off
+the camera pose. That is the same leak `SCHEMA.md` §1.1 avoids by refusing to pin the
+assembly to the world origin, and it takes the same answer: aim at the joint, then miss it
+by a random fraction of the assembly's size. No one aims perfectly, and nothing is
+recoverable from the pose alone.
+
+The jitter also lets the frame edge cut across a seam sometimes instead of never, which is
+the only source of partial occlusion that exists at this phase — see the note below on why
+that is so few.
 
 **Phase 3 gate** (`dataset_plan.md`): `occluded_fraction` must span ≈ 0 → 0.8 across this
 sampler. If it clusters near zero, the sampler is too polite — fix the sampler, not the
 metric.
+
+**Measured, 1035 weldable seams over 120 seeds × 5 joint types:** mean 0,59; 40,5% at
+exactly 0; 58% above 0,98. The named failure mode does not occur — the sampler is not
+polite, it hides the majority of seams. But the distribution is **binary, not graded**:
+only 0,7% of seams fall in (0,05 – 0,95).
+
+That is geometry, not a sampler defect, and it will not be fixed by sampling harder. A
+*straight* seam under a *convex* occluder is shadowed all-or-nothing: the occluding plate
+spans the seam's whole length, because the seam was clipped to the run the two parts share
+in the first place. Partial occlusion needs a non-convex occluder, a third body, or a
+curved seam — Phase 6 (curved parts, pipe-on-plate) and Phase 7 (tacks sitting on the
+seam). Reported rather than engineered around: manufacturing a graded histogram out of
+two-slab geometry would mean tuning the sampler until the metric looked right.
+
+One consequence to carry forward: **≈ 40% of scenes have no seam that is even half
+visible.** Those scenes are valid and are not discarded — they are the single-view
+condition the dataset exists to characterise — but any training split must filter on
+`occluded_fraction` rather than assume every scene carries usable supervision.
 
 ### 4.2 Depth noise model
 

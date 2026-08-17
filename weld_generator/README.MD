@@ -5,8 +5,9 @@ seam geometry is computed in closed form from the placement transforms, so there
 annotator, no estimator, and no intra-rater-consistency hand-waving anywhere in the label
 path.
 
-Status: **Phase 2 complete** (all five joint types, the D4 accessibility rule, fixture
-sampled). Plan: [`notes/dataset_plan.md`](notes/dataset_plan.md).
+Status: **Phase 3 complete** (five joint types, the D4 accessibility rule, fixture sampled,
+camera + visibility + analytic sensor noise).
+Plan: [`notes/dataset_plan.md`](notes/dataset_plan.md).
 
 ---
 
@@ -51,7 +52,10 @@ weldgen/         the generator - trimesh + NumPy only, no simulator import (D9)
   joints.py          JointSpec: the sampled fit-up, and tilt relative to each type's nominal
   layouts.py         placement for the five joint types - placement ONLY, no seams
   accessibility.py   the D4/D13 rule: enumerates face pairs and rediscovers the seams
-  sampling.py        area-uniform surface sampling with exact normals + face ids
+  camera.py          pose sampler, pinhole intrinsics, projection (OpenCV convention)
+  visibility.py      exact ray-box occlusion, per-seam visibility, HPR exteriority
+  noise.py           analytic stereo depth noise - params stored, realisation not
+  sampling.py        area_uniform + camera_raster sampling, exact normals + face ids
   config.py          ISO limit functions, parameter sampling, quality classification
   hashing.py         canonical JSON, content hash, config_id, twin_key
   scene.py           assembles a schema-conforming scene
@@ -59,30 +63,38 @@ weldgen/         the generator - trimesh + NumPy only, no simulator import (D9)
   writer.py          scene.json / cloud.npz / seams.npz / index.jsonl
   cli.py             `python -m weldgen generate | verify`
 
-configs/         phase1, phase2, phase2_fixture, smoke, reference_tjoint, playground
-tests/           161 tests: geometry, determinism, schema conformance, ISO limits,
-                 viz, and the Phase 2 joint-type gate
+configs/         phase1, phase2, phase2_fixture, phase3, phase3_raster,
+                 smoke, reference_tjoint, playground
+tests/           187 tests: geometry, determinism, schema conformance, ISO limits, viz,
+                 the Phase 2 joint-type gate and the Phase 3 visibility gate
 notes/           the plan, the handoff, and the standards PDFs
 papers/          literature
 ```
 
 ---
 
-## What Phase 2 produces
+## What Phase 3 produces
 
 Per scene: two watertight slabs forming one of **five joint types**, every seam the D4 rule
-finds, an area-uniform surface sample with exact per-point normals, `object_id` and
-`face_id`, and every seam stored three ways (D19). Rejected candidates stay in the file as
-`weldable: false` negatives — they are exactly what a geometric baseline returns, which is
-what makes the §7 weldable-vs-interior metric measurable.
+finds, a surface sample with exact per-point normals, `object_id` and `face_id`, every seam
+stored three ways (D19), **a posed camera and a per-point visibility mask**. Rejected
+candidates stay in the file as `weldable: false` negatives — they are exactly what a
+geometric baseline returns, which is what makes the §7 weldable-vs-interior metric
+measurable.
 
 ```
 out/phase2/<scene_id>/
   scene.json      conforms to docs/scene.schema.json
   cloud.npz       xyz, normals, object_id, face_id, visible_from_cam
-  seams.npz       per seam: nominal, root, gapmid, arclength, tangent, approach, nA, nB
+  seams.npz       per seam: nominal, root, gapmid, arclength, tangent, approach, nA, nB,
+                  visible
   scene.sha256    the content hash
 ```
+
+The **noisy** cloud is not stored: `scene.json` carries the noise parameters and
+`weldgen.noise.apply` is deterministic in `noise_model.seed`, which makes the sensor model a
+citable convention anyone can re-run with different constants rather than a baked artefact
+(SCHEMA.md §5.1). It also halves the release size.
 
 Seam counts over 120 seeds per type, no fixture:
 
@@ -112,9 +124,30 @@ re-running next month passes rather than "fails".
 are. `accessibility.py` enumerates every face pair and decides each on geometry alone. The
 two are compared, which is what makes the gate meaningful rather than circular.
 
+**Phase 3 — a real difficulty axis.** `occluded_fraction` must not cluster near zero. Over
+1035 weldable seams: mean 0,59, with 40,5% at exactly 0 and 58% above 0,98. The sampler is
+not polite. But the distribution is **binary, not graded** — only 0,7% of seams fall inside
+(0,05 – 0,95) — and that is geometry, not a sampler defect: a straight seam under a convex
+occluder is shadowed all-or-nothing, because the occluding plate spans the whole seam. The
+seam was clipped to the run the two parts share in the first place. Graded occlusion needs a
+non-convex occluder, a third body, or a curved seam — Phase 6 and Phase 7.
+
 ```bash
-python -m pytest tests/test_determinism.py tests/test_joint_types.py -q
+python -m pytest tests/test_determinism.py tests/test_joint_types.py tests/test_visibility.py -q
 ```
+
+Two results from it worth carrying into the paper:
+
+- **From directly overhead, both fillets of a T-joint are occluded** — by the standing
+  plate's own thickness. A fillet needs an oblique view from its own side, which is why
+  elevation is a difficulty axis rather than a nuisance parameter.
+- **The lower toe of a lap joint is essentially never visible** from a camera above the
+  table: 75% of lap seams are fully hidden against ~50% for the other four types.
+
+Consequence for consumers: **≈ 40% of scenes have no seam that is even half visible.** They
+are kept — they are the single-view condition the dataset exists to characterise — but a
+training split must filter on `occluded_fraction` rather than assume every scene carries
+usable supervision.
 
 ---
 
@@ -138,6 +171,33 @@ Then two semantic passes: `role == "workpiece"` on both faces (D13 → `fixture_
 `seam_class ∈ ALLOWED_CLASSES[joint_type]` (D22 → `wrong_class_for_joint`). The class is
 *derived* from the faces involved — broad `±w` versus edge `±u/±v`, plus the dihedral — never
 declared. It is what stops a scene labelled `edge` from reporting a lap toe as an edge seam.
+
+---
+
+## What the camera can see
+
+`visible_from_cam` is **geometry only**: in front of the camera, inside the image, beyond
+the sensor's blind zone, front-facing, and not occluded by another part. Sensor dropout is
+deliberately *not* in it — a grazing surface is visible, the stereo matcher simply fails on
+it — and lives in `noise.apply`, which returns its own validity mask. Keeping them apart is
+what lets `occluded_fraction` stay comparable across the three sensor profiles instead of
+being confounded with them.
+
+Ray-casting uses no ray engine. `trimesh.ray` needs `rtree`, which D9 rules out, and every
+part is a box, so ray–box intersection is exact in closed form and vectorises over the whole
+cloud at once — the same reasoning that produced the analytic `Slab.contains`.
+
+Two mode-level choices worth knowing:
+
+- **`sampling_mode: camera_raster`** (D20) samples the visible surface at the raster density
+  `(f_px / z)²` and keeps the hidden surface from the same draw, flagged false. Both classes
+  come from one pass, which is what makes them rate-matched. Density is then *not* uniform
+  across the mask boundary, so density-sensitive metrics must be computed within a class.
+- **`weldgen.visibility.hpr_exterior`** is the CAD-free exteriority test the Phase 4
+  baselines need. Ground truth never uses it — it knows the transforms — but at runtime
+  there is no registration, so a point-cloud-only method needs it to reject the buried
+  mid-lap interface. On a lap joint it marks that interface 1,3% exterior and the same face
+  outside the overlap 100% exterior.
 
 ---
 
@@ -173,6 +233,18 @@ axis the gap already occupies, it pushes the joint faces `g + h` apart and out o
 `contact_tol_mm`. And unequal thicknesses are set **flush on one face** — centring both on
 their mid-thickness plane steps *both* faces by half the difference, leaving a butt joint
 with no coplanar face pair at all.
+
+**Where the camera aims is a decision, not a detail.** The assembly centroid is dragged
+upward by the standing plate, so a camera aimed at it looks over the seam. Aiming exactly at
+the seam is worse: it pins the seam to the image centre and lets a model read the answer off
+the pose — the same leak §1.1 avoids by not pinning the assembly to the world origin. Aim at
+the joint, then miss by ±0,15 of the longest part edge.
+
+**A seam is not subject to the facing test.** A surface point cannot be seen from behind its
+own face. A seam point lies on the crease, on the boundary of *both* solids, and is visible
+from far more than the 90° either side of its bisector. `approach_dir` lifts the ray origin
+off the two faces and nothing more; using it as a surface normal returned
+`occluded_fraction: 1.0` for every seam in the first Phase 3 scenes.
 
 **`included_angle_deg` is not `dihedral_deg`.** The first is the ISO 9692-1 *design* nominal,
 one per scene. The second is a property of each *seam*. A T-joint at a 70° included angle has
@@ -226,9 +298,6 @@ so the array layout never changes:
 
 | Field | Current value | Filled in |
 |---|---|---|
-| `cloud.visible_from_cam` | all `True` — no camera yet | Phase 3 |
-| `seams[].occluded_fraction` | `0.0` | Phase 3 |
-| `camera.T_world_cam` | identity | Phase 3 |
 | `tacks` | `null` | Phase 7 |
 | `joint.prep` | `"square"` — groove preparations V/U/J/bevel | Phase 6 (D24) |
 | curved seams, non-slab primitives | — | Phase 6 |

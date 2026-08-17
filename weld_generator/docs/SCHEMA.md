@@ -570,6 +570,20 @@ regenerable — you can reproduce any single scene from its id alone.
 - **`parametric` is the truth; `sampled` is a convenience.** The parametric form is what
   makes "10 dots per mm, or 50 if someone asks" real — resampling needs no regeneration.
   If the two ever disagree, `parametric` wins.
+- **`visible_from_cam` is geometry, not sensor yield.** Framed, in range, front-facing,
+  unoccluded — and nothing else. Grazing-incidence dropout is *not* in the mask: a steeply
+  viewed surface is visible, the stereo matcher simply fails on it. That is a sensor effect
+  and it lives in `noise.apply`, which returns its own validity mask. Keeping the two apart
+  is what lets `occluded_fraction` stay a statement about geometry, comparable across the
+  three sensor profiles rather than confounded with them.
+
+- **A seam is not subject to the facing test.** A surface point cannot be seen from behind
+  its own face; a seam point lies on the crease, on the boundary of *both* solids, and is
+  visible from far more than the 90° either side of its bisector. `approach_dir` is used
+  only to lift the ray origin off the two faces that form the seam. Treating it as a
+  surface normal returned `occluded_fraction: 1.0` for every seam in the first Phase 3
+  scenes.
+
 - **`occluded_fraction` is per seam, not per scene.** A scene can have one fully visible
   and one fully hidden seam; that is the point.
 - **`throat_thickness_mm` (`aA`)** is in `fit` because the ISO 5817 no. 617 root-gap limit
@@ -595,7 +609,7 @@ regenerable — you can reproduce any single scene from its id alone.
 | `normals` | float32 | (N,3) | exact outward unit normals |
 | `object_id` | uint8 | (N,) | §2.1; fixture = 255 |
 | `face_id` | uint8 | (N,) | index into `faces[]` — free per-point face segmentation |
-| `visible_from_cam` | bool | (N,) | Phase 3 ray-cast result (D6) |
+| `visible_from_cam` | bool | (N,) | Phase 3 ray-cast result (D6) — geometry only, see below |
 
 **The noisy cloud is not stored.** `xyz` is the exact sample; the sensor realization is
 produced by the released, versioned function
@@ -617,6 +631,7 @@ are in the schema from day one so the single-view benchmark condition can be mad
 genuinely camera-like without a schema bump.
 
 **D20 — the raster mode breaks D6's subset assumption, and the fix is in the sampler.**
+*Pinned and implemented in Phase 3; what follows is the answer, not a proposal.*
 D6 stores one cloud plus a `visible_from_cam` mask, which presumes the single-view cloud is
 a *subset* of the full cloud. That holds for `area_uniform`. It fails for `camera_raster`,
 because a raster only produces points where a ray hit — there is no natural sample of the
@@ -627,10 +642,14 @@ So under `camera_raster` the hidden surface is sampled **separately, at matched 
 and flagged `visible_from_cam: false`:
 
 ```
-visible   points ← ray hits from the camera        (raster density z/f_px)
-invisible points ← area-uniform sample of the remaining surface,
-                   rate-matched to the local raster density
+visible   points ← raster density (f_px / z)², then the D6 test
+invisible points ← the same draw's rejects, kept rather than discarded
 ```
+
+Both classes come from **one** dense area-uniform pass, split on the mask. That is what
+makes them rate-matched: two independent draws would have to reconcile two densities that
+were never equal. Raster density goes as `(f_px / z)²` — it falls off with the *square* of
+range, which is the first half of why `area_uniform` is not what a depth camera returns.
 
 The union is stored as one cloud, so D6's file layout is untouched and every consumer that
 filters on the mask keeps working. What changes is that **point density is no longer
@@ -829,7 +848,7 @@ because a twin pair split across train and test leaks geometry perfectly.
 
 | Item | Status |
 |---|---|
-| `camera_raster` sampling mode | schema slot reserved; implement in Phase 3 alongside visibility |
+| `camera_raster` sampling mode | **implemented (Phase 3)** — D20 semantics are pinned in §5.1; `sampling_mode` is a config key and both modes are exercised by the suite |
 | `surface` block for non-planar faces | schema slot reserved; fill in Phase 6 |
 | Phase 6 `bspline` parametric form (knots, degree, control points) | slot reserved, exact encoding to be pinned before Phase 6 starts |
 | `tacks` block | `null` until Phase 7; shape frozen here so adding it is a patch bump |

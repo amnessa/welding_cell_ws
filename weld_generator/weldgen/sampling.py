@@ -77,9 +77,8 @@ def sample_scene_surface(
 ) -> dict[str, np.ndarray]:
     """Concatenate per-slab samples in `objects[]` order.
 
-    `visible_from_cam` is emitted all-True in Phase 1: there is no camera yet, so every
-    point is "visible" by construction. Phase 3 replaces this with the ray-cast result.
-    The field exists now so the array layout never changes (D6).
+    `visible_from_cam` is emitted all-True here; `scene.py` overwrites it with the Phase 3
+    ray-cast result. The field exists in both cases so the array layout never changes (D6).
     """
     parts = [
         sample_slab_surface(s, density_per_mm2, rng, face_id_base=6 * i)
@@ -87,6 +86,49 @@ def sample_scene_surface(
     ]
     out = {k: np.concatenate([p[k] for p in parts]) for k in parts[0]}
     out["visible_from_cam"] = np.ones(len(out["xyz"]), dtype=bool)
+    return out
+
+
+def raster_density_per_mm2(z_mm: float, focal_px: float) -> float:
+    """Surface density a pixel raster achieves at range `z`, in points per mm^2.
+
+    One sample per pixel, and a pixel subtends `z / f_px` mm at range `z`, so the density
+    goes as `(f_px / z)^2` - it falls off with the SQUARE of range. This is the first half
+    of why `area_uniform` is not what a depth camera returns.
+    """
+    return float(focal_px / max(float(z_mm), 1e-6)) ** 2
+
+
+def sample_scene_camera_raster(
+    slabs: list[Slab],
+    visible_fn,
+    z_mean_mm: float,
+    focal_px: float,
+    rng: np.random.Generator,
+) -> dict[str, np.ndarray]:
+    """`camera_raster` mode — D20, SCHEMA.md §5.1.
+
+    A raster only produces points where a ray hit, so there is no natural sample of the
+    surface the camera *cannot* see. Sampling the visible surface alone would leave the
+    mask all-True and collapse `occluded_fraction` to zero exactly when the scene is
+    hardest - which is what D20 is about. So the hidden surface is sampled separately, at
+    matched density, and flagged `visible_from_cam: false`:
+
+        visible   points <- raster density (f_px / z)^2, then the D6 test
+        invisible points <- the same draw's rejects, kept rather than discarded
+
+    Drawing both from one dense area-uniform pass and splitting on the mask is what keeps
+    the two rate-matched: the alternative, two independent draws, has to reconcile two
+    densities that were never equal to begin with.
+
+    The union is stored as one cloud, so D6's file layout is untouched and every consumer
+    that filters on the mask keeps working. What changes is that **point density is no
+    longer uniform across the mask boundary** - `density_per_mm2` becomes a nominal figure,
+    not a guarantee, and any density-sensitive metric must be computed within a mask class
+    rather than across it.
+    """
+    out = sample_scene_surface(slabs, raster_density_per_mm2(z_mean_mm, focal_px), rng)
+    out["visible_from_cam"] = visible_fn(out["xyz"], out["normals"])
     return out
 
 

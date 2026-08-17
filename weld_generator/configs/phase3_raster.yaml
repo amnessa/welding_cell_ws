@@ -1,0 +1,12 @@
+# Phase 3, camera_raster mode (D20) — the genuinely camera-like benchmark condition.
+# The visible surface is sampled at the raster density (f_px / z)^2 and the hidden surface
+# is kept from the same draw, flagged `visible_from_cam: false`. Point density is therefore
+# NOT uniform across the mask boundary: `density_per_mm2` is a realised mean, not a
+# guarantee, and any density-sensitive metric must be computed within a mask class.
+name: phase3_raster
+joint_type: [T, corner, butt, lap, edge]
+seam_shape: line
+prep: square
+fixture_present: false
+sampling_mode: camera_raster
+sensor_profiles: [d435i, stereo_good, stereo_poor]

@@ -11,12 +11,15 @@ import numpy as np
 
 from . import GENERATOR_VERSION, SCHEMA_VERSION
 from .accessibility import d19_curves, enumerate_candidates
+from .camera import intrinsics, sample_pose
 from .config import SENSOR_PROFILES, geometry_config, sample_joint
 from .geom import SLAB_FACES, Slab, approach_dir, rot_x, rot_y, rot_z, translate
 from .hashing import config_id, twin_key
 from .layouts import build as build_layout
 from .rng import Streams
-from .sampling import sample_polyline, sample_scene_surface
+from .sampling import (sample_polyline, sample_scene_camera_raster,
+                       sample_scene_surface)
+from .visibility import seam_visibility, visible_mask
 
 
 class NoSeamsFound(ValueError):
@@ -25,6 +28,29 @@ class NoSeamsFound(ValueError):
     Not a crash and not a silent empty scene: the caller decides whether to resample or
     to treat it as a degenerate fit-up worth recording separately.
     """
+
+
+def _aim_point(cands, slabs, jitter: np.ndarray, jitter_frac: float) -> np.ndarray:
+    """Where the camera looks: the joint region, deliberately off-centre.
+
+    Aiming at the assembly's centroid is wrong for a joint: the standing plate of a T
+    drags it upward, so the camera looks over the top of the very seam it is there to
+    see. An eye-in-hand welding camera is pointed at the work.
+
+    But aiming *exactly* at the seam would pin the seam to the image centre, and a model
+    could then read the answer off the camera pose. That is the same leak SCHEMA.md §1.1
+    avoids by refusing to pin the assembly to the world origin, and it deserves the same
+    answer: aim at the joint, then miss it by a random fraction of the assembly's size. No
+    one aims perfectly, and now nothing is recoverable from the pose alone.
+    """
+    weldable = [c for c in cands if c.weldable and c.p0 is not None]
+    pts = [0.5 * (c.p0 + c.p1) for c in (weldable or [c for c in cands if c.p0 is not None])]
+    centre = (np.mean(pts, axis=0) if pts
+              else np.mean([s.T_world_part[:3, 3] for s in slabs], axis=0))
+
+    span = max((float(np.max(s.dims_mm)) for s in slabs if s.role == "workpiece"),
+               default=100.0)
+    return centre + np.asarray(jitter, dtype=float) * (jitter_frac * span)
 
 
 def _git_commit() -> str:
@@ -135,20 +161,41 @@ def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict
         np.clip(min(tol, max(0.95 * t_min, 1.1 * separation)), 0.5, 12.0))
     cands = enumerate_candidates(slabs, access, joint_type=joint_type)
 
-    # --- surface sampling, substream 4 ------------------------------------------
-    g4 = streams["surface_sample"]
-    density = float(g4.uniform(*cfg["density_per_mm2"]))
-    cloud = sample_scene_surface(slabs, density, g4)
-
-    # --- sensor, substreams 5-6 --------------------------------------------------
+    # --- camera, substream 5 -----------------------------------------------------
+    # Sampled BEFORE the cloud, because `camera_raster` needs the pose to know its own
+    # density (D20). Substreams are independent generators, so the order in which two of
+    # them are read does not change what either draws - but the order WITHIN substream 5
+    # does, so azimuth and roll are appended after the Phase 1 draws (SCHEMA.md §6.1).
     g5 = streams["camera"]
     profile = str(g5.choice(cfg["sensor_profiles"]))
     prof = SENSOR_PROFILES[profile]
     standoff = float(g5.uniform(max(prof["min_z_mm"], cfg["standoff_mm"][0]),
                                 cfg["standoff_mm"][1]))
     elevation = float(g5.uniform(*cfg["elevation_deg"]))
-    f = prof["focal_px"]
-    K = [[f, 0.0, 640.0], [0.0, f, 360.0], [0.0, 0.0, 1.0]]
+    azimuth = float(g5.uniform(0.0, 360.0))
+    roll = float(g5.uniform(*cfg["camera_roll_deg"]))
+    aim_jitter = g5.uniform(-1.0, 1.0, size=3)
+
+    width, height = int(cfg["image_size"][0]), int(cfg["image_size"][1])
+    K = intrinsics(prof["focal_px"], width, height)
+    target = _aim_point(cands, slabs, aim_jitter, float(cfg["aim_jitter_frac"]))
+    T_cam = sample_pose(target, standoff, elevation, azimuth, roll)
+
+    def _visible(pts, nrm):
+        return visible_mask(pts, nrm, slabs, T_cam, K, width, height, prof["min_z_mm"])
+
+    # --- surface sampling, substream 4 ------------------------------------------
+    g4 = streams["surface_sample"]
+    density = float(g4.uniform(*cfg["density_per_mm2"]))
+    sampling_mode = str(cfg["sampling_mode"])
+    if sampling_mode == "camera_raster":
+        cloud = sample_scene_camera_raster(slabs, _visible, standoff,
+                                           prof["focal_px"], g4)
+        density = float(len(cloud["xyz"])
+                        / sum(s_.surface_area_mm2 for s_ in slabs))
+    else:
+        cloud = sample_scene_surface(slabs, density, g4)
+        cloud["visible_from_cam"] = _visible(cloud["xyz"], cloud["normals"])
 
     # --- seams ------------------------------------------------------------------
     density_per_mm = 10.0
@@ -180,7 +227,9 @@ def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict
         arrays[f"seams.npz:seam_{i}_approach"] = np.tile(appr, (n, 1)).astype(np.float32)
         arrays[f"seams.npz:seam_{i}_nA"] = np.tile(c.n_a, (n, 1)).astype(np.float32)
         arrays[f"seams.npz:seam_{i}_nB"] = np.tile(c.n_b, (n, 1)).astype(np.float32)
-        arrays[f"seams.npz:seam_{i}_visible"] = np.ones(n, dtype=bool)
+        seam_vis = seam_visibility(pts, np.tile(appr, (n, 1)), slabs, T_cam, K,
+                                   width, height, prof["min_z_mm"])
+        arrays[f"seams.npz:seam_{i}_visible"] = seam_vis
 
         seam_blocks.append({
             "id": i,
@@ -194,7 +243,10 @@ def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict
             "dihedral_deg": float(c.dihedral_deg),
             "seam_class": c.seam_class,
             "sampled": {"array": f"seam_{i}", "density_per_mm": density_per_mm, "n": n},
-            "occluded_fraction": 0.0,   # no camera yet; Phase 3 fills this in
+            # Per seam, not per scene: one seam of a joint can be fully visible while the
+            # other is entirely hidden behind the standing plate, and averaging that away
+            # discards the difficulty axis the camera sampler exists to create.
+            "occluded_fraction": float(1.0 - seam_vis.mean()),
         })
 
     for k, v in cloud.items():
@@ -266,8 +318,8 @@ def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict
         "seams": seam_blocks,
         "tacks": None,                        # Phase 7
         "camera": {
-            "model": "pinhole", "K": K, "width": 1280, "height": 720,
-            "T_world_cam": np.eye(4).tolist(),   # Phase 3 poses the camera properly
+            "model": "pinhole", "K": K, "width": width, "height": height,
+            "T_world_cam": [[float(v) for v in row] for row in T_cam],
             "standoff_mm": standoff,
             "elevation_deg": elevation,
         },
@@ -284,7 +336,10 @@ def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict
         },
         "cloud": {
             "file": "cloud.npz", "frame": "world",
-            "sampling_mode": "area_uniform",
+            "sampling_mode": sampling_mode,
+            # Under `camera_raster` this is the REALISED mean, not a request: D20 splits
+            # the cloud into a visible raster and a rate-matched hidden sample, so density
+            # is not uniform across the mask boundary (SCHEMA.md §5.1).
             "density_per_mm2": density,
             "n_points": int(len(cloud["xyz"])),
         },

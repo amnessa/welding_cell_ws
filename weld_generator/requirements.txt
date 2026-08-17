@@ -10,5 +10,11 @@ pytest>=7.0
 # Notebooks / inspection only
 matplotlib>=3.7
 
-# Used by Phase 3 (ray-cast visibility, HPR exteriority); not imported by Phase 1.
+# Phase 3. Ray-cast visibility does NOT need a ray engine: every part is a box, so
+# ray-box intersection is exact in closed form (weldgen/visibility.py). `trimesh.ray`
+# would have pulled in `rtree`, which D9 rules out. scipy is only for the HPR convex
+# hull, and it already ships as a trimesh dependency.
+scipy>=1.10
+
+# Phase 6 introduces swept and revolved primitives, where a real ray engine earns itself.
 # open3d>=0.18

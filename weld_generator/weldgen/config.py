@@ -74,7 +74,19 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # --- camera / sensor, substreams 5-6 -----------------------------------------
     "sensor_profiles": ["d435i", "stereo_good", "stereo_poor"],
     "standoff_mm": [300.0, 1200.0],
+    # 15 deg is not a nuisance bound - below about 20 deg the standing plate of a T-joint
+    # blocks its own seam, which IS the difficulty axis (PARAMETERS.md §4.1).
     "elevation_deg": [15.0, 85.0],
+    "camera_roll_deg": [-15.0, 15.0],   # eye-in-hand mounting is not gravity-aligned
+    "image_size": [1280, 720],
+    # How far the aim may miss the joint, as a fraction of the longest workpiece edge.
+    # Non-zero on purpose: aiming exactly at the seam would pin it to the image centre and
+    # let a model read the answer off the camera pose (see `scene._aim_point`).
+    "aim_jitter_frac": 0.15,
+    # area_uniform | camera_raster (D20). area_uniform is the default because it is the
+    # full-surface variant the annotation-error and R-window experiments are computed on;
+    # camera_raster is the genuinely camera-like benchmark condition.
+    "sampling_mode": "area_uniform",
     # --- accessibility, recorded so every reject_reason is reproducible ----------
     "accessibility": {
         "torch_clearance": {"half_angle_deg": 30.0, "standoff_mm": 15.0},
