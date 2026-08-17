@@ -214,6 +214,10 @@ def sample_joint(cfg: dict[str, Any], streams: Streams
         # scenes makes the joint type a consequence of the standard, not an arbitrary
         # inclusion - and it lands exactly where §5 predicts radius-PCA has no valid R.
         hi = min(hi, float(cfg["edge_max_thickness_mm"]))
+        # Clamp, never invert: if the preset's minimum thickness already exceeds the
+        # edge-joint limit, uniform(lo, hi) with lo > hi silently samples the wrong
+        # interval instead of erroring.
+        lo = min(lo, hi)
     t_A = float(g0.uniform(lo, hi))
     t_B = float(g0.uniform(lo, hi)) if g0.random() < cfg["dissimilar_thickness_p"] else t_A
 

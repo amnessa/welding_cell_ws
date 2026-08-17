@@ -2,7 +2,7 @@
 # Copied from your edits to reference_tjoint.yaml so they are not lost.
 name: playground
 # joint_type: [T, corner, butt, lap, edge]
-joint_type: lap
+joint_type: edge
 seam_shape: line
 prep: square
 fixture_present: false

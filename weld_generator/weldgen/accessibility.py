@@ -56,6 +56,12 @@ DEFAULT_ACCESS: dict[str, Any] = {
     #: apart register as coplanar, inventing a centreline that suppressed the real welds.
     "coplanar_tol_mm": 0.5,
     "min_seam_length_mm": 10.0,
+    #: A seam must also be a meaningful FRACTION of the joint, not merely above an
+    #: absolute floor. Without this a 200 mm lap emits its two 40 mm end runs alongside
+    #: the two 200 mm toes, and the short cross-runs - real geometry, but not what anyone
+    #: means by "the seam" - outnumber the long ones. Scale-free, so it behaves the same
+    #: on an 80 mm coupon and a 400 mm plate.
+    "min_seam_length_frac": 0.25,
 }
 
 PARALLEL_TOL = 1e-6
@@ -132,6 +138,13 @@ def enumerate_candidates(
     """
     access = {**DEFAULT_ACCESS, **(access or {})}
     solids = list(parts)
+    # Characteristic size of the assembly: the longest edge of any workpiece. The fixture
+    # is excluded - it is far larger than the joint and would swamp the fraction.
+    characteristic = max((max(p.dims_mm) for p in parts if p.role == "workpiece"),
+                         default=0.0)
+    access = dict(access)
+    access["_min_len"] = max(float(access["min_seam_length_mm"]),
+                             float(access.get("min_seam_length_frac", 0.0)) * characteristic)
     out: list[Candidate] = []
 
     for i, A in enumerate(parts):
@@ -204,6 +217,22 @@ def _judge(A: Slab, fa: str, B: Slab, fb: str, ref: tuple[str, str],
     # either of them.
     sep = _line_separation(A, fa, B, fb, p0, p1, samples_along)
 
+    # ...and is the gap between them OPEN, or is there material in the way?
+    #
+    # On thin sheet the plate thickness can fall below `contact_tol_mm`, so the far side
+    # of a plate sits "close enough" to the other part: on 1.8 mm plate with a 2.0 mm
+    # tolerance, A's underside is 1.9 mm from B, and six phantom seams appear wrapped
+    # around the wrong surface. Tightening the tolerance is not the fix - it has to stay
+    # above the root gap. The fix is to ask whether the two faces can SEE each other: the
+    # straight path from the seam line to the nearest point on each face must not pass
+    # through a solid. For a real fillet that path is the root gap and crosses nothing;
+    # for the wrap-around it drives straight through the plate.
+    #
+    # This is the same bound radius-PCA lives under - a neighbourhood must not bridge a
+    # plate's own two faces - arrived at from the opposite direction.
+    if not _mutually_visible(A, fa, B, fb, p0, p1, solids, samples_along):
+        return None
+
     theta = dihedral_deg(na, nb)
     bis = na + nb
     bis_norm = float(np.linalg.norm(bis))
@@ -222,7 +251,7 @@ def _judge(A: Slab, fa: str, B: Slab, fb: str, ref: tuple[str, str],
         reason = "fixture_contact"
     elif not (access["dihedral_min_deg"] <= theta <= access["dihedral_max_deg"]):
         reason = "degenerate_dihedral"
-    elif hi - lo < access["min_seam_length_mm"]:
+    elif hi - lo < access["_min_len"]:
         reason = "too_short"
     elif bis_norm < 1e-9:
         reason = "bisector_blocked"
@@ -309,34 +338,43 @@ def _coplanar_candidate(A: Slab, fa: str, B: Slab, fb: str, ref: tuple[str, str]
 
     n = pa.n
 
-    # The separation direction comes from the GEOMETRY, not from an arbitrary basis.
-    # Projecting axis-aligned extents onto a world-aligned in-plane basis only finds the
-    # gap when the parts happen to be axis-aligned; rotate the assembly and the two
-    # rectangles overlap in that projection, the gap vanishes, and the seam disappears.
-    delta = B.face_center(fb) - A.face_center(fa)
-    delta = delta - float(delta @ n) * n                # into the shared plane
-    if np.linalg.norm(delta) < 1e-9:
-        return None                                    # concentric: not a joint
-    axis = delta / np.linalg.norm(delta)
-    other = np.cross(n, axis)
+    # The in-plane basis comes from part A's OWN axes. Two earlier attempts were wrong:
+    #   * a world-aligned basis found the gap only when the assembly happened to be
+    #     axis-aligned - rotate the scene and the seam vanished;
+    #   * the A->B centre offset gives a diagonal when the faces are offset along BOTH
+    #     in-plane axes (a lap's plate ends differ in y AND z), and no extent is then
+    #     cleanly disjoint, so the centreline was silently missed and both of its toes
+    #     survived as separate seams.
+    # A's own axes rotate with A, so they are pose-invariant and stay aligned with the
+    # rectangular faces whose extents we are comparing.
+    R = A.T_world_part[:3, :3]
+    face_axis = "uvw".index(fa[1])
+    in_plane = [R[:, k] for k in range(3) if k != face_axis]
 
-    (a0, a1) = A.face_extent_along(fa, axis)
-    (b0, b1) = B.face_extent_along(fb, axis)
-    if b0 > a1:
-        gap, mid = b0 - a1, 0.5 * (a1 + b0)
-    elif a0 > b1:
-        gap, mid = a0 - b1, 0.5 * (b1 + a0)
-    else:
-        return None                                    # the faces overlap: not a gap
-    if gap > access["contact_tol_mm"]:
-        return None                                    # too far apart to be a joint
+    best = None
+    for axis in in_plane:
+        (a0, a1) = A.face_extent_along(fa, axis)
+        (b0, b1) = B.face_extent_along(fb, axis)
+        if b0 > a1:
+            gap, mid = b0 - a1, 0.5 * (a1 + b0)
+        elif a0 > b1:
+            gap, mid = a0 - b1, 0.5 * (b1 + a0)
+        else:
+            continue                                   # the faces overlap on this axis
+        if gap > access["contact_tol_mm"]:
+            continue                                   # too far apart to be a joint
+        other = np.cross(n, axis)
+        (c0, c1) = A.face_extent_along(fa, other)
+        (d0, d1) = B.face_extent_along(fb, other)
+        lo, hi = max(c0, d0), min(c1, d1)
+        if hi - lo <= 1e-9:
+            continue                                   # no shared run along the seam
+        if best is None or (hi - lo) > best[4] - best[3]:
+            best = (axis, other, gap, mid, lo, hi)
 
-    (c0, c1) = A.face_extent_along(fa, other)
-    (d0, d1) = B.face_extent_along(fb, other)
-    lo, hi = max(c0, d0), min(c1, d1)
-    if hi - lo <= 1e-9:
-        return None                                    # no shared run: not a joint
-
+    if best is None:
+        return None
+    axis, other, gap, mid, lo, hi = best
     origin = -pa.d * n                                 # a point on the shared plane
     base = origin + (mid - float(origin @ axis)) * axis
     p0 = base + (lo - float(base @ other)) * other
@@ -346,7 +384,7 @@ def _coplanar_candidate(A: Slab, fa: str, B: Slab, fb: str, ref: tuple[str, str]
     reason: str | None = None
     if fixture_involved:
         reason = "fixture_contact"
-    elif hi - lo < access["min_seam_length_mm"]:
+    elif hi - lo < access["_min_len"]:
         reason = "too_short"
     else:
         # Bisector of two identical normals is the normal itself: straight out of
@@ -406,6 +444,24 @@ def _faces_overlap(A: Slab, fa: str, B: Slab, fb: str) -> bool:
         b_lo, b_hi = B.face_extent_along(fb, axis)
         if min(a_hi, b_hi) - max(a_lo, b_lo) <= 0.0:
             return False
+    return True
+
+
+def _mutually_visible(A: Slab, fa: str, B: Slab, fb: str,
+                      p0: np.ndarray, p1: np.ndarray,
+                      solids: Sequence[Slab], n: int) -> bool:
+    """Can the two faces reach each other without passing through material?"""
+    ts = np.linspace(0.15, 0.85, max(2, n))[:, None]
+    pts = p0[None, :] * (1 - ts) + p1[None, :] * ts
+    for part, face in ((A, fa), (B, fb)):
+        target = _closest_on_face(part, face, pts)
+        # Sample strictly between the line and the face, excluding both endpoints so a
+        # point lying exactly on a surface is never counted as inside it.
+        for f in (0.25, 0.5, 0.75):
+            probe = pts + (target - pts) * f
+            for s in solids:
+                if s.contains(probe, tol=-1e-6).any():
+                    return False
     return True
 
 

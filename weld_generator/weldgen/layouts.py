@@ -122,10 +122,13 @@ def _layout_edge(spec: JointSpec, T: np.ndarray) -> list[Slab]:
     a thin-sheet preparation by the standard's own scope, not by our choice.
     """
     A = _base_A(spec, T, y_centre=-spec.W_A / 2.0)
-    B = _flat_B(spec, T,
-                y_centre=-spec.H_B / 2.0,
-                z_centre=spec.root_gap_mm + spec.t_B / 2.0,
-                joint_type="edge")
+    # B matches A's width so the stack is flush on BOTH long sides, which is what an edge
+    # joint is. With B narrower, one side is flush and the other is a lap toe - a
+    # different joint wearing the edge label.
+    B = Slab("B", "workpiece", 1, (spec.L_B, spec.W_A, spec.t_B),
+             T
+             @ translate(0.0, -spec.W_A / 2.0, spec.root_gap_mm + spec.t_B / 2.0)
+             @ rot_x(spec.tilt_deg("edge")))
     return [A, B]
 
 

@@ -19,6 +19,14 @@ from .rng import Streams
 from .sampling import sample_polyline, sample_scene_surface
 
 
+class NoSeamsFound(ValueError):
+    """Raised when D4 finds no candidate at all for a sampled configuration.
+
+    Not a crash and not a silent empty scene: the caller decides whether to resample or
+    to treat it as a degenerate fit-up worth recording separately.
+    """
+
+
 def _git_commit() -> str:
     try:
         return subprocess.check_output(
@@ -110,8 +118,16 @@ def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict
     # stored per scene so every rejection stays reproducible.
     access = {k: (v.copy() if isinstance(v, dict) else v)
               for k, v in cfg["accessibility"].items()}
+    t_min = min(o.thickness_mm for o in slabs if o.role == "workpiece")
+    # Track the gap...
+    tol = 2.0 * spec.root_gap_mm + 0.5
+    # ...but never exceed the plate thickness, or a plate's own two faces become mutually
+    # reachable and seams wrap around to the wrong surface (on 1.8 mm plate a 2.0 mm
+    # tolerance put phantom seams on the underside). This is the same bound radius-PCA
+    # lives under - R < thickness - reached from the other direction. The floor keeps the
+    # real seam reachable when the gap is large on thin sheet.
     access["contact_tol_mm"] = float(
-        np.clip(2.0 * spec.root_gap_mm + 1.0, 2.0, 12.0))
+        np.clip(min(tol, max(0.95 * t_min, 1.1 * spec.root_gap_mm)), 0.5, 12.0))
     cands = enumerate_candidates(slabs, access)
 
     # --- surface sampling, substream 4 ------------------------------------------
@@ -177,6 +193,17 @@ def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict
         arrays[f"cloud.npz:{k}"] = v
 
     # --- joint frame: from seam 0 (SCHEMA.md §1.1) --------------------------------
+    if not ordered:
+        # A scene with no seam carries no ground truth and is useless in the dataset.
+        # Raise rather than emit it - and rather than crash on ordered[0], which is what
+        # happened before and hid the real cause behind an IndexError.
+        raise NoSeamsFound(
+            f"joint_type={joint_type!r} seed={seed} produced no seam candidates "
+            f"(root_gap={spec.root_gap_mm:.3f} mm, t_min="
+            f"{min(o.thickness_mm for o in slabs if o.role == 'workpiece'):.3f} mm, "
+            f"contact_tol={access['contact_tol_mm']:.3f} mm). The accessibility "
+            f"tolerance is capped by plate thickness, so a gap comparable to the "
+            f"thickness can leave nothing adjacent.")
     s0 = ordered[0]
     x_axis = (s0.p1 - s0.p0) / max(s0.length_mm, 1e-12)
     z_axis = approach_dir(s0.n_a, s0.n_b)
