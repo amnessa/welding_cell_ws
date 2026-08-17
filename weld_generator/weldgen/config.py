@@ -79,6 +79,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "elevation_deg": [15.0, 85.0],
     "camera_roll_deg": [-15.0, 15.0],   # eye-in-hand mounting is not gravity-aligned
     "image_size": [1280, 720],
+    # Tier 1 omits scenes whose every weldable seam is hidden: they carry no supervision,
+    # and labelling them "no seam" would encode joint type and camera placement rather
+    # than anything about the task (see scene.NoVisibleSeams). The occlusion figures are
+    # still recorded on every scene that IS emitted - tier 2 uses them.
+    "require_visible_seam": True,
+    # A seam counts as usable below this. Given how binary occlusion is on straight seams
+    # (0,7% of seams land between 0,05 and 0,95) the exact value barely matters; 0,5 is
+    # stated rather than tuned.
+    "max_occluded_fraction": 0.5,
     # How far the aim may miss the joint, as a fraction of the longest workpiece edge.
     # Non-zero on purpose: aiming exactly at the seam would pin it to the image centre and
     # let a model read the answer off the camera pose (see `scene._aim_point`).

@@ -17,7 +17,7 @@ from weldgen.layouts import build
 from weldgen.noise import apply as apply_noise
 from weldgen.noise import sigma_z_mm
 from weldgen.sampling import raster_density_per_mm2
-from weldgen.scene import NoSeamsFound, generate_scene
+from weldgen.scene import NoSeamsFound, SceneRejected, generate_scene
 from weldgen.visibility import hpr_exterior, occluded, ray_hits_slab, visible_mask
 
 K = intrinsics(674.0, 1280, 720)
@@ -220,6 +220,9 @@ def test_occluded_fraction_spans_the_range_and_is_not_always_zero():
     for jt in ("T", "corner", "butt", "lap", "edge"):
         cfg = load_config()
         cfg["joint_type"] = [jt]
+        # The gate is about the RAW sampler, so the tier-1 omission policy is off: with it
+        # on, the scenes it drops are exactly the ones at the top of the distribution.
+        cfg["require_visible_seam"] = False
         for seed in range(7_000_000, 7_000_020):
             try:
                 scene, _ = generate_scene(cfg, seed)
@@ -237,6 +240,7 @@ def test_occluded_fraction_spans_the_range_and_is_not_always_zero():
 def test_seam_occluded_fraction_agrees_with_its_stored_mask():
     cfg = load_config()
     cfg["joint_type"] = ["corner"]
+    cfg["require_visible_seam"] = False        # this seed's camera sees neither seam
     scene, arrays = generate_scene(cfg, 31337)
     for s in scene["seams"]:
         mask = arrays[f"seams.npz:{s['sampled']['array']}_visible"]
@@ -271,3 +275,56 @@ def test_hpr_marks_the_buried_lap_interface_interior():
     assert buried.sum() > 100 and exposed.sum() > 100
     assert ext[buried].mean() < 0.05, "the mid-lap interface must read as interior"
     assert ext[exposed].mean() > 0.95, "...and the same face outside the overlap must not"
+
+
+# --- the tier-1 omission policy -------------------------------------------------------
+
+def test_scenes_with_no_visible_seam_are_omitted_not_relabelled():
+    """A "no seam" label would encode joint type and camera placement, not the task.
+
+    Whether a seam is visible depends on where the camera landed and, structurally, on the
+    joint type - the lower toe of a lap joint is never visible from above the table. A
+    model would learn to predict the label from the wrong evidence, which is a false
+    positive manufactured by a design choice. So the scene is dropped instead.
+    """
+    from weldgen.scene import NoVisibleSeams
+
+    cfg = load_config()
+    cfg["joint_type"] = ["corner"]
+    with pytest.raises(NoVisibleSeams):
+        generate_scene(cfg, 31337)
+
+    cfg["require_visible_seam"] = False
+    scene, _ = generate_scene(cfg, 31337)      # same seed, policy off -> a scene
+    assert scene["seams"], "the geometry itself was never the problem"
+
+
+def test_every_emitted_scene_carries_a_seam_worth_supervising():
+    cfg = load_config()
+    cfg["joint_type"] = ["T", "corner", "butt", "lap", "edge"]
+    kept = 0
+    for seed in range(8_600_000, 8_600_040):
+        try:
+            scene, _ = generate_scene(cfg, seed)
+        except SceneRejected:
+            continue
+        kept += 1
+        best = min(s["occluded_fraction"] for s in scene["seams"] if s["weldable"])
+        assert best <= cfg["max_occluded_fraction"]
+    assert kept > 10, "the policy must not reject nearly everything"
+
+
+def test_occlusion_is_still_recorded_on_the_scenes_that_survive():
+    """Tier 1 does not use occlusion; tier 2 does, so it is kept either way."""
+    cfg = load_config()
+    cfg["joint_type"] = ["T"]
+    for seed in range(8_700_000, 8_700_010):
+        try:
+            scene, arrays = generate_scene(cfg, seed)
+        except SceneRejected:
+            continue
+        assert all("occluded_fraction" in s for s in scene["seams"])
+        assert any(f"{s['sampled']['array']}_visible" in k
+                   for s in scene["seams"] for k in arrays)
+        return
+    pytest.fail("no scene survived the policy in ten seeds")

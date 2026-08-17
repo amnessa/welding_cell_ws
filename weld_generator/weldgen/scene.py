@@ -22,11 +22,36 @@ from .sampling import (sample_polyline, sample_scene_camera_raster,
 from .visibility import seam_visibility, visible_mask
 
 
-class NoSeamsFound(ValueError):
-    """Raised when D4 finds no candidate at all for a sampled configuration.
+class SceneRejected(ValueError):
+    """A scene was built but carries no usable ground truth, so it is not emitted.
 
-    Not a crash and not a silent empty scene: the caller decides whether to resample or
-    to treat it as a degenerate fit-up worth recording separately.
+    Not a crash and not a silent empty scene: the caller decides whether to resample or to
+    treat it as a degenerate case worth recording separately. `cli.generate` skips the seed
+    and reports it.
+    """
+
+
+class NoSeamsFound(SceneRejected):
+    """D4 found no candidate at all for the sampled configuration.
+
+    A root gap comparable to the plate thickness can leave no face pair adjacent, so there
+    is nothing to construct ground truth from.
+    """
+
+
+class NoVisibleSeams(SceneRejected):
+    """Every weldable seam is hidden from the camera, so tier 1 omits the scene.
+
+    Omitting rather than keeping it under a "no seam" label, because that label would not
+    mean what it says. Whether a seam is visible depends on where the camera happened to
+    land, and *structurally* on the joint type - the lower toe of a lap joint is never
+    visible from above the table, so 75% of lap seams are hidden against ~50% for the other
+    four types. A "no seam" class would therefore encode joint type and camera placement,
+    and a model would learn to predict it from the wrong evidence. That is a false positive
+    manufactured by a design choice, not a property of the task.
+
+    The occlusion figures are still recorded on every scene that IS emitted. Tier 1 does not
+    use them; tier 2 does, and keeping them costs nothing.
     """
 
 
@@ -248,6 +273,27 @@ def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict
             # discards the difficulty axis the camera sampler exists to create.
             "occluded_fraction": float(1.0 - seam_vis.mean()),
         })
+
+    # --- tier-1 omission policy --------------------------------------------------
+    # A scene with nothing worth supervising is omitted rather than relabelled - see
+    # `NoVisibleSeams` for why a "no seam" class would be a trap. Two ways to have nothing:
+    # no weldable seam was constructed at all, or every one there is happens to be hidden.
+    # The first is not a visibility question, but it is the same policy question, so it
+    # lives under the same switch and mechanics presets stay unaffected by both.
+    if cfg.get("require_visible_seam", True):
+        seen = [b["occluded_fraction"] for b in seam_blocks if b["weldable"]]
+        if not seen:
+            raise NoSeamsFound(
+                f"joint_type={joint_type!r} seed={seed}: {len(seam_blocks)} candidate(s) "
+                f"but none weldable, so the scene carries no ground truth. Reasons: "
+                f"{sorted({b['reject_reason'] for b in seam_blocks})}.")
+        thresh = float(cfg["max_occluded_fraction"])
+        if min(seen) > thresh:
+            raise NoVisibleSeams(
+                f"joint_type={joint_type!r} seed={seed}: {len(seen)} weldable seam(s), "
+                f"least occluded {min(seen):.3f} > max_occluded_fraction={thresh:.2f} "
+                f"(elevation={elevation:.1f} deg, azimuth={azimuth:.1f} deg, "
+                f"standoff={standoff:.0f} mm, profile={profile}).")
 
     for k, v in cloud.items():
         arrays[f"cloud.npz:{k}"] = v

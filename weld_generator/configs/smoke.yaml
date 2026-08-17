@@ -1,9 +1,14 @@
 # 8 fast scenes for CI and the determinism gate. Low density keeps it quick.
+#
+# The tier-1 omission policy is OFF here on purpose. This preset exercises scene mechanics
+# - determinism, hashing, schema conformance - and those must hold for every seed, not only
+# for the ~55% whose camera happens to see a seam. A dataset preset leaves it on.
 name: smoke
 joint_type: T
 seam_shape: line
 prep: square
 fixture_present: false
+require_visible_seam: false
 plate_length_mm: [100.0, 240.0]
 plate_width_mm: [60.0, 120.0]
 density_per_mm2: [0.05, 0.15]

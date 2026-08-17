@@ -13,22 +13,27 @@ from pathlib import Path
 
 from .config import load_config
 from .hashing import content_hash
-from .scene import NoSeamsFound, generate_scene
+from .scene import SceneRejected, generate_scene
 from .writer import index_row, split_arrays, write_index, write_scene
 
 
 def cmd_generate(args: argparse.Namespace) -> int:
-    """Write `n` scenes, skipping seeds whose sampled geometry has no seam at all.
+    """Write `n` scenes, skipping seeds that carry no usable ground truth.
 
-    A seed can draw a root gap comparable to the plate thickness, which leaves no face
-    pair adjacent and so no ground truth to construct. Such a scene is not a hard example,
-    it is an empty one, and it used to abort the whole run - a mixed-joint config could
-    not be generated at all. Skipping stays deterministic: which seeds fail is a pure
-    function of the config, so the same config and seed range give the same scenes.
+    Two reasons a seed is skipped. A root gap comparable to the plate thickness leaves no
+    face pair adjacent, so there is no seam to construct (`NoSeamsFound`); or every seam
+    there is happens to be hidden from the camera (`NoVisibleSeams`). Neither is a hard
+    example - both are empty ones - and `NoSeamsFound` used to abort the whole run, so a
+    mixed-joint config could not be generated at all.
 
-    Seeds are NOT backfilled past `seed0 + n`. Both arms of a fixture twin must attempt
-    the same seeds, and the two arms do not fail on the same ones; backfilling would give
-    them different seed sets and silently break the D12 pairing.
+    Skipping stays deterministic: which seeds fail is a pure function of the config, so the
+    same config and seed range give the same scenes.
+
+    Seeds are NOT backfilled past `seed0 + n`. Both arms of an ablation twin must attempt
+    the same seeds, and they do not fail on the same ones; backfilling would give them
+    different seed sets and silently break the pairing. Note that visibility depends on the
+    camera, so a sensor-profile or sampling-mode twin loses different seeds than its
+    partner - `twin_key` pairs what survives in both and drops the singletons.
     """
     cfg = load_config(args.config)
     rows, skipped = [], []
@@ -36,8 +41,8 @@ def cmd_generate(args: argparse.Namespace) -> int:
         seed = args.seed0 + i
         try:
             scene, arrays = generate_scene(cfg, seed)
-        except NoSeamsFound as e:
-            skipped.append((seed, str(e).split(" (", 1)[0]))
+        except SceneRejected as e:
+            skipped.append((seed, f"{type(e).__name__}: {str(e).split(' (', 1)[0]}"))
             continue
         write_scene(args.out, scene, arrays, emit_meshes=args.emit_meshes)
         digest = content_hash(scene, arrays)
@@ -50,7 +55,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
     write_index(args.out, rows)
     print(f"\n{len(rows)} scenes -> {args.out}")
     if skipped:
-        print(f"{len(skipped)} seed(s) skipped, no seam candidates:")
+        print(f"{len(skipped)} seed(s) skipped, no usable ground truth:")
         for seed, why in skipped:
             print(f"  {seed}  {why}")
     return 0

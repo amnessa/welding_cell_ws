@@ -205,6 +205,10 @@ def test_no_seams_wrap_around_to_the_far_face(t):
     from weldgen.scene import generate_scene
 
     cfg = load_config()
+    # Geometry test, not a curation test: the tier-1 omission policy would drop the
+    # seeds whose camera happens to miss, and an xfail marker would then hide the
+    # exception instead of reporting the geometry.
+    cfg["require_visible_seam"] = False
     cfg["joint_type"] = "lap"
     cfg["thickness_mm"] = [t, t]
     cfg["dissimilar_thickness_p"] = 0.0
@@ -234,6 +238,10 @@ def test_contact_tolerance_never_exceeds_plate_thickness(t):
     from weldgen.scene import generate_scene
 
     cfg = load_config()
+    # Geometry test, not a curation test: the tier-1 omission policy would drop the
+    # seeds whose camera happens to miss, and an xfail marker would then hide the
+    # exception instead of reporting the geometry.
+    cfg["require_visible_seam"] = False
     cfg["joint_type"] = "T"          # one type, so the edge thickness clamp is not in play
     cfg["thickness_mm"] = [t, t]
     cfg["dissimilar_thickness_p"] = 0.0
@@ -339,6 +347,10 @@ def _scene_seams(joint_type: str, **cfg_kw):
     from weldgen.scene import generate_scene
 
     cfg = load_config()
+    # Geometry test, not a curation test: the tier-1 omission policy would drop the
+    # seeds whose camera happens to miss, and an xfail marker would then hide the
+    # exception instead of reporting the geometry.
+    cfg["require_visible_seam"] = False
     cfg["joint_type"] = [joint_type]
     cfg.update(cfg_kw)
     return cfg, generate_scene

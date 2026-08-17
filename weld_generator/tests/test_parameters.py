@@ -107,6 +107,10 @@ def test_realised_mix_is_roughly_balanced():
     from weldgen.rng import Streams
 
     cfg = load_config()
+    # Geometry test, not a curation test: the tier-1 omission policy would drop the
+    # seeds whose camera happens to miss, and an xfail marker would then hide the
+    # exception instead of reporting the geometry.
+    cfg["require_visible_seam"] = False
     counts = Counter(sample_joint(cfg, Streams(s))[1] for s in range(1500))
     for level in ("B", "C", "D", "below_D"):
         frac = counts[level] / sum(counts.values())

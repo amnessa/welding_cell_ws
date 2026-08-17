@@ -10,6 +10,9 @@ joint_type: T
 seam_shape: line
 prep: square
 fixture_present: false
+# A regression fixture must be reproducible from its seed alone, so the omission policy is
+# off: whether the sampled camera happens to see the seam is not what this config pins.
+require_visible_seam: false
 plate_length_mm: [232.0, 232.0]
 # Full overlap: no longitudinal offset, so the seam is the measured 232 mm.
 min_overlap_frac: 1.0
