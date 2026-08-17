@@ -32,9 +32,15 @@ Fixture presence is a config axis rather than a per-scene draw, so the workpiece
 is bit-identical across a twin. `twin_key` pairs them:
 `df.groupby(["twin_key", "fixture_present"])` is the whole ablation.
 
-`notebooks/01_inspect_scene.ipynb` builds one scene and plots the cloud, the seams and the
-three D19 curves. It separates weldable seams from rejected ones — restart its kernel after
-changing `weldgen/`, since `sys.path.insert` will not re-import a loaded module.
+Two notebooks, both of which need a **kernel restart** after you change `weldgen/` —
+`sys.path.insert` will not re-import a module that is already loaded:
+
+- `notebooks/01_inspect_scene.ipynb` — the constructed ground truth: cloud, seams, the three
+  D19 curves, weldable separated from rejected.
+- `notebooks/02_inspect_visibility.ipynb` — what a single view of it returns: the mask in
+  world and image space, an azimuth × elevation map of where each seam can be seen from, the
+  sensor model, `area_uniform` vs `camera_raster`, and the per-joint-type yield of the
+  omission policy.
 
 ---
 
@@ -106,11 +112,28 @@ Seam counts over 120 seeds per type, no fixture:
 | lap | 2 in 120 of 120 | exactly two toes |
 | edge | 1 in 110, 2 in 10 | 1 when the widths differ, 2 when they match |
 
-**Empty scenes are skipped, not fatal.** A seed can draw a root gap comparable to the plate
-thickness, which leaves no face pair adjacent and so no ground truth to construct — about
-0,8% of scenes, all quality C/D/below_D. `generate` skips those seeds and reports which.
-It does not backfill past `seed0 + n`: both arms of a fixture twin must attempt the same
-seeds, and they do not fail on the same ones.
+**Scenes with no usable ground truth are skipped, not fatal.** Two reasons: the sampled
+fit-up left no face pair adjacent, so there is no seam to construct (`NoSeamsFound`, ~1% of
+seeds, all quality C/D/below_D); or every seam there is happens to be hidden from the camera
+(`NoVisibleSeams`). `generate` skips the seed and reports which and why.
+
+Omitted rather than relabelled. A "no seam" class would not mean what it says — whether a
+seam is visible depends on where the camera landed and, structurally, on the joint type, so a
+model would learn to predict the label from the wrong evidence. Tier 1 still records the
+occlusion figures on every scene it does emit; tier 2 is what uses them.
+
+Two consequences worth planning around:
+
+- **`--n` is an attempt count, not a scene count.** Overall yield is ~57%, so ask for
+  roughly twice what you want.
+- **Yield is not uniform across joint types** — T 72%, edge 68%, butt 62%, corner 40%, lap
+  30% — so a config requesting a uniform mix does not emit one. Generate per type if the
+  balance matters.
+
+Seeds are not backfilled past `seed0 + n`: both arms of an ablation twin must attempt the
+same seeds, and they do not fail on the same ones. Visibility depends on the camera, so a
+sensor-profile or sampling-mode twin loses different seeds than its partner — `twin_key`
+pairs what survives in both and drops the singletons.
 
 ### The gates
 
@@ -138,11 +161,17 @@ python -m pytest tests/test_determinism.py tests/test_joint_types.py tests/test_
 
 Two results from it worth carrying into the paper:
 
-- **From directly overhead, both fillets of a T-joint are occluded** — by the standing
-  plate's own thickness. A fillet needs an oblique view from its own side, which is why
-  elevation is a difficulty axis rather than a nuisance parameter.
-- **The lower toe of a lap joint is essentially never visible** from a camera above the
-  table: 75% of lap seams are fully hidden against ~50% for the other four types.
+- **Azimuth dominates; elevation barely matters.** Each fillet of a T-joint is visible from
+  ~46% of viewpoints — its own side — and the lobes are complementary, so at least one is
+  usable from 92%. The failures are a narrow band where the camera looks *along* the seam
+  axis, where the standing plate's near end occludes the whole crease. True at 25° and 85°
+  elevation alike.
+- **The lower toe of a lap joint is visible from 0% of viewpoints** above the table —
+  structurally, not statistically. Only the upper toe is usable, from 44%, which is why lap
+  scenes survive the omission policy least often (34%, against T's 81%).
+- **A butt joint's top centreline is visible from 100%**; its underside centreline from 21%.
+  Dissimilar thickness leaves only the flush underside one, so thickness mismatch and
+  visibility interact.
 
 Consequence for consumers: **≈ 40% of scenes have no seam that is even half visible.** They
 are kept — they are the single-view condition the dataset exists to characterise — but a

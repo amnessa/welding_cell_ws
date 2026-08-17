@@ -568,12 +568,23 @@ so the Phase 6 gate inherits it rather than rediscovering it.
 
 Two findings to carry into the paper:
 
-- **From directly overhead, both fillets of a T-joint are occluded** — by the standing plate's own
-  thickness. Visibility of a fillet needs an oblique view from its own side. This is why elevation
-  is a real difficulty axis and not a nuisance parameter.
-- **The lower toe of a lap joint is essentially never visible** from a camera above the table: 75%
-  of lap seams are fully hidden against ~50% for the other four types. A single view cannot see a
-  joint's underside, which is a statement about the task, not about this generator.
+- **Azimuth dominates, and elevation barely matters.** Each fillet of a T-joint is visible from
+  ~46% of viewpoints — its own side — and the two lobes are complementary, so at least one is
+  usable from 92% of them. The 8% that fail are a narrow band where the camera looks *along* the
+  seam axis (within ~10° of azimuth 0° or 180°), where the standing plate's near end occludes the
+  whole crease. That holds at 25° elevation and at 85° alike. An earlier reading of this as "both
+  fillets are hidden from overhead" was wrong: the case that produced it was at azimuth 0, and
+  elevation had nothing to do with it.
+- **The lower toe of a lap joint is visible from 0% of viewpoints** above the table — structurally,
+  not statistically. Only the upper toe is usable, from 44%, which is why lap scenes survive the
+  omission policy least often of the five (34% against T's 81%).
+- **A butt joint's top centreline is visible from 100%** of viewpoints: it lies on the upper surface
+  with nothing standing near it. Its underside centreline manages 21%. Since dissimilar thickness
+  leaves *only* the flush underside centreline, thickness mismatch and visibility interact — worth
+  knowing before reading a per-class result.
+
+Measured on canonical geometry: 24 azimuths × 4 elevations, standoff 700 mm, camera aimed at the seam
+midpoint, "usable" = `occluded_fraction <= 0.5`.
 
 Consequence for consumers: **≈ 40% of scenes have no seam that is even half visible.** They are kept
 — they are the single-view condition the dataset exists to characterise — but a training split must
