@@ -276,19 +276,31 @@ def test_centreline_survives_angular_misalignment(joint_type, beta):
         f"parallel tolerance must cover the sampled misalignment range")
 
 
-def test_extreme_misalignment_legitimately_opens_an_edge_joint():
-    """Not every lost seam is a bug.
+def test_misalignment_hinges_about_the_welded_edge():
+    """The angular misalignment must pivot at the CONTACT, not at the part centre.
 
-    At beta = 4 deg (the level-D extreme) a 100 mm plate's far edge lifts 3.5 mm, so an
-    edge joint is no longer flush and the gap exceeds the contact tolerance. Losing the
-    centreline there is correct - the joint has genuinely stopped being an edge joint.
-    Recorded so the behaviour is not "fixed" later by widening a tolerance.
+    Two clamped plates hinge about where they touch. Pivoting at the centre lifted the
+    welded edge itself: at only 0.4 deg on a 179 mm plate that is 0.62 mm, larger than a
+    0.1 mm root gap, so the flush edge opened wider than the gap and the seam vanished -
+    13 of 60 edge seeds produced nothing at all.
+
+    With the pivot on the welded edge, that edge stays in contact at any beta and it is
+    the FAR edge that opens, which is the real failure mode.
     """
-    spec = spec_for("edge", angular_misalignment_deg=4.0)
-    parts = build(spec, "edge", np.eye(4))
-    centre = [c for c in enumerate_candidates(parts)
-              if c.weldable and c.dihedral_deg > 170.0]
-    assert not centre
+    for beta in (0.0, 0.4, 2.0, 4.0):
+        spec = spec_for("edge", angular_misalignment_deg=beta)
+        parts = build(spec, "edge", np.eye(4))
+        weld = [c for c in enumerate_candidates(parts, joint_type="edge") if c.weldable]
+        assert weld, f"the welded edge must survive beta={beta}"
+
+    # ...and a large beta does cost the opposite edge, on equal-width parts.
+    flush = spec_for("edge", angular_misalignment_deg=0.0)
+    opened = spec_for("edge", angular_misalignment_deg=4.0)
+    n_flush = len([c for c in enumerate_candidates(build(flush, "edge", np.eye(4)),
+                                                   joint_type="edge") if c.weldable])
+    n_open = len([c for c in enumerate_candidates(build(opened, "edge", np.eye(4)),
+                                                  joint_type="edge") if c.weldable])
+    assert n_open <= n_flush
 
 
 def test_seams_clip_to_the_shared_run():

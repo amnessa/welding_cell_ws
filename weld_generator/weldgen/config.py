@@ -48,6 +48,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     #: Angular misalignment cap for face-to-face stacked joints (lap, edge). See the note
     #: in sample_joint: the clamp physically prevents relative tilt.
     "stacked_max_beta_deg": 0.4,
+    #: Probability that an edge joint's two parts share a width exactly. Equal widths make
+    #: BOTH long edges flush (2 edge seams); unequal widths leave one flush edge and one
+    #: lap toe (1 edge seam). Continuous sampling would otherwise never produce a match.
+    "edge_equal_width_p": 0.35,
     # --- defects, substream 1 (PARAMETERS.md §2) ---------------------------------
     "quality_mix": {"B": 0.25, "C": 0.25, "D": 0.25, "below_D": 0.25},
     # ISO 9692-1 Tables 3-4 cap the fillet gap at b <= 2 mm; the over-range tail to
@@ -87,6 +91,7 @@ GEOMETRY_KEYS = (
     "joint_type", "seam_shape", "prep", "plate_length_mm", "plate_width_mm",
     "thickness_mm", "dissimilar_thickness_p", "included_angle_deg", "min_overlap_frac",
     "stack_offset_frac", "edge_max_thickness_mm", "stacked_max_beta_deg",
+    "edge_equal_width_p",
     "quality_mix", "root_gap_mm", "root_gap_over_range_mm",
 )
 
@@ -216,6 +221,8 @@ def sample_joint(cfg: dict[str, Any], streams: Streams
     lo, hi = cfg["plate_width_mm"]
     W_A = float(g0.uniform(lo, hi))
     H_B = float(g0.uniform(lo, hi))
+    if joint_type == "edge" and g0.random() < float(cfg["edge_equal_width_p"]):
+        H_B = W_A          # both long edges flush -> two edge seams
     lo, hi = cfg["thickness_mm"]
     if joint_type == "edge":
         # ISO 9692-1 Table 1 ref 1.1: raised edges apply at t <= 2 mm. Restricting edge

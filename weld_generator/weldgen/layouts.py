@@ -55,11 +55,25 @@ def _standing_B(spec: JointSpec, T: np.ndarray, y0: float, z0: float,
 
 
 def _flat_B(spec: JointSpec, T: np.ndarray, y_centre: float, z_centre: float,
-            joint_type: str) -> Slab:
-    """A plate lying flat (thickness along Z, like part A)."""
+            joint_type: str, pivot_y: float | None = None) -> Slab:
+    """A plate lying flat (thickness along Z, like part A).
+
+    `pivot_y` is where the angular misalignment hinges. For a STACKED joint that must be
+    the contact line, not the part centre: two clamped plates hinge about where they
+    touch. Pivoting at the centre lifts the welded edge itself - at only 0.4 deg on a
+    179 mm plate that is 0.62 mm, larger than a 0.1 mm root gap, so the flush edge opened
+    wider than the gap and the seam was lost outright.
+    """
+    tilt = spec.tilt_deg(joint_type)
+    if pivot_y is None:
+        return Slab("B", "workpiece", 1, (spec.L_B, spec.H_B, spec.t_B),
+                    T @ translate(spec.length_offset_mm, y_centre, z_centre)
+                      @ rot_x(tilt))
     return Slab("B", "workpiece", 1, (spec.L_B, spec.H_B, spec.t_B),
-                T @ translate(spec.length_offset_mm, y_centre, z_centre)
-                  @ rot_x(spec.tilt_deg(joint_type)))
+                T
+                @ translate(spec.length_offset_mm, pivot_y, spec.root_gap_mm)
+                @ rot_x(tilt)
+                @ translate(0.0, y_centre - pivot_y, z_centre - spec.root_gap_mm))
 
 
 def _base_A(spec: JointSpec, T: np.ndarray, y_centre: float) -> Slab:
@@ -112,7 +126,8 @@ def _layout_lap(spec: JointSpec, T: np.ndarray) -> list[Slab]:
     B = _flat_B(spec, T,
                 y_centre=spec.H_B / 2.0 - overlap,
                 z_centre=spec.root_gap_mm + spec.t_B / 2.0,
-                joint_type="lap")
+                joint_type="lap",
+                pivot_y=-overlap / 2.0)      # hinge about the middle of the overlap
     return [A, B]
 
 
@@ -123,14 +138,18 @@ def _layout_edge(spec: JointSpec, T: np.ndarray) -> list[Slab]:
     a thin-sheet preparation by the standard's own scope, not by our choice.
     """
     A = _base_A(spec, T, y_centre=-spec.W_A / 2.0)
-    # B matches A's width so the stack is flush on BOTH long sides, which is what an edge
-    # joint is. With B narrower, one side is flush and the other is a lap toe - a
-    # different joint wearing the edge label.
-    B = Slab("B", "workpiece", 1, (spec.L_B, spec.W_A, spec.t_B),
-             T
-             @ translate(spec.length_offset_mm, -spec.W_A / 2.0,
-                         spec.root_gap_mm + spec.t_B / 2.0)
-             @ rot_x(spec.tilt_deg("edge")))
+    # B keeps its OWN width and is aligned flush at the welded edge (y = 0). Forcing
+    # B's width to A's made every edge joint a pair of twins with both long edges flush,
+    # so the seam count was pinned at 2. Real edge joints join parts of different widths,
+    # and then only the aligned edge is a weld: the far side becomes a lap toe, which D22
+    # classifies and rejects as `wrong_class_for_joint`. So the count is 1 when the widths
+    # differ and 2 when they match - and the classification, not the layout, is what keeps
+    # it honest.
+    B = _flat_B(spec, T,
+                y_centre=-spec.H_B / 2.0,
+                z_centre=spec.root_gap_mm + spec.t_B / 2.0,
+                joint_type="edge",
+                pivot_y=0.0)                 # hinge about the WELDED edge
     return [A, B]
 
 
