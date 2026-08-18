@@ -298,7 +298,7 @@ line that is geometrically indistinguishable from a fillet, labelled
 the dataset, free.
 
 Second consequence, worth anticipating rather than discovering in Phase 4: the fixture is a
-large clean planar patch, so **Baseline A (plane segmentation + pairwise intersection) gains
+large clean planar patch, so **Baseline B (plane segmentation + pairwise intersection) gains
 extra plane pairs** and will emit a phantom candidate along every part–fixture contact —
 plane pairing has no notion of `role`. That is a result about the baseline, not a bug.
 

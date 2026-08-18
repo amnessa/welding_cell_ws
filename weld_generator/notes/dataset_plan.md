@@ -95,28 +95,53 @@ in the literature map can answer that.
 
 ---
 
-## 3. Baselines to implement (not contributions — the comparison table)
+## 3. Baselines — the comparison table
 
-Two geometric baselines, because two costs almost nothing and makes the table meaningful.
+**Naming, fixed 2026-08-18.** `A` is **ours**, the method being developed. `B`, `C`, `D` are taken
+from the literature and implemented for comparison, so the table compares *methodologies* rather
+than one method against itself. Only `A` is a contribution; the rest exist to be argued with.
 
-### Baseline A — plane segmentation + pairwise intersection
+| | method | provenance |
+|---|---|---|
+| **A** | radius-PCA surface variation + multi-seam components + line fit | **ours** — the admittance-control repo's method (`README §8`), migrated and upgraded |
+| **B** | plane segmentation + pairwise intersection | Yi et al. 2026; the PPF-plane paper (`Weld_seam_object_detection_system…`) |
+| **C** | — to pick from `papers/` | literature |
+| **D** | — to pick from `papers/` | literature |
+
+### Baseline A — radius-PCA (ours)
+
+Per-point PCA over a **radius** ball, `V = λ₃/(λ₁+λ₂+λ₃)`; radius rather than k-NN is what lets
+the covariance straddle the gap between two parts that do not touch. Migrated in Phase 4 step 1;
+see the Phase 4 record below for the first numbers and what they exposed. Two upgrades were part
+of the migration and a third is outstanding:
+
+1. **Multi-seam** — connected components on surviving high-`V` points, one line fit per component.
+   The original assumes a single seam. *Done.*
+2. **Band → centreline** — `README §8` admits the published seam is a ~16 mm band, not a line.
+   *Done*, and the `band_*` metrics report what the fit is worth.
+3. **Exteriority gate** — see below. *Wired, not yet used in an evaluation arm.*
+
+The migration also exposed the thing that most needs fixing, which is not on the original list:
+the cross-object gate that makes the method work at all is a **CAD oracle**. Without it F1 falls
+from 0,75 to 0,03. Whatever `A` becomes, it has to earn that back from the cloud alone.
+
+### Baseline B — plane segmentation + pairwise intersection (literature)
 
 RANSAC or region-growing → planar patches → intersect every plane pair → clip each line to where
 both patches have actual support → reject pairs whose dihedral angle is implausible.
 
-Fixes three of the current `README §8` problems structurally:
+Structurally avoids three of `README §8`'s problems, which is exactly why it is the first
+comparison worth having:
 - returns a **line**, not a 16 mm band (no post-hoc centreline fit needed)
 - handles **multiple seams** natively (every surviving plane pair is a candidate)
 - the support-clip is most of the interior/exterior test
 
 Precedent: Yi et al. 2026; the PPF-plane paper (`Weld_seam_object_detection_system…`).
 
-### Baseline B — radius-PCA, fixed
+### Baselines C and D — to select from `papers/`
 
-Keep what exists. Two changes needed:
-1. **Multi-seam:** connected components on surviving high-`V` points, then one line/spline fit per
-   component. Currently assumes a single seam.
-2. **Exteriority gate:** see below.
+Not yet chosen. Wang et al.'s PCA slicing is one candidate (see *Curved seams* below); pick the
+other two so the table spans method *families* rather than three variations on plane fitting.
 
 ### The exteriority test without CAD
 
@@ -537,7 +562,7 @@ This function is reused by the baselines in Phase 4 — building it here is not 
       *geometry only* (framed, in range, front-facing, unoccluded). Sensor dropout lives in
       `noise.apply` with its own validity mask, so occlusion stays comparable across the three
       sensor profiles instead of being confounded with them
-- [x] **HPR (Hidden Point Removal) exteriority** utility (shared with Phase 4 baseline B). scipy's
+- [x] **HPR (Hidden Point Removal) exteriority** utility (shared with Phase 4 baseline A). scipy's
       convex hull, no open3d. On a lap joint it marks the buried interface 1,3% exterior and the same
       face outside the overlap 100% exterior
 - [x] **Pin `camera_raster` mask semantics (D20)** — pinned and implemented. Both classes come from
@@ -610,9 +635,55 @@ false` and gets every scene.
 
 Now the PCA fix happens, **with a number in front of you** instead of RViz eyeballing.
 
-- [ ] Baseline B: multi-seam connected components + per-component line/spline fit
-- [ ] Baseline B: HPR exteriority gate
-- [ ] Baseline A: plane segmentation + pairwise intersection, from scratch
+**Step 1 done — Baseline A migrated and measured (2026-08-18).** `scripts/baselines/`:
+`radius_pca.py` (the method), `metrics.py` (Chamfer, P/R/F1, lateral, band width),
+`dataset.py` (the harness), `notebooks/03_baselines.ipynb`. Not tuned, not fixed — the point
+of this step was to get numbers to argue with. 44 scenes, both views, `R` taken from the
+midpoint of the predicted window, density controlled at 0,5 pts/mm².
+
+- [x] Baseline A: multi-seam connected components + per-component line/spline fit
+- [ ] Baseline A: HPR exteriority gate — `detect(..., exterior=...)` is wired; not yet used
+      in an evaluation arm
+
+**First numbers, and they are not flattering.** Median by joint type, full / single view:
+
+| | Chamfer full | F1 full | Chamfer single | F1 single |
+|---|---|---|---|---|
+| corner | 1,2 mm | **1,00** | 3,4 mm | 0,84 |
+| T | 5,8 mm | 0,66 | 4,4 mm | 0,94 |
+| butt | 7,8 mm | **0,00** | 3,0 mm | 0,96 |
+| lap | 21,8 mm | **0,00** | 11,8 mm | 0,88 |
+| edge | 69,6 mm | 0,21 | 109,0 mm | **0,00** |
+
+Four things fall out of this, all of which the plan predicted in outline and none of which
+had a number before:
+
+1. **The cross-object gate is doing nearly all the work, and it is an oracle.** Same scenes,
+   single view, gate on vs off: Chamfer **4,2 mm → 56,7 mm**, F1 **0,75 → 0,03**. Per-point
+   object membership comes from the registered CAD assembly and no sensor provides it, so
+   the honest point-cloud-only number for this method is the second column. This is a
+   sharper version of the §3 claim than the plan had, and it belongs in the paper: the
+   published method's performance is substantially CAD registration's, not PCA's.
+2. **Lap and edge are where it dies**, exactly as the plan expected — and edge is worse than
+   lap, at 70–109 mm error. Two coplanar faces have no dihedral for a variance ratio to
+   detect: the method has no signal there, rather than a weak one.
+3. **Single view often beats full visibility** (F1 0,86 vs 0,64 overall; butt and lap go
+   0,00 → 0,96 / 0,88). Consistent with §3's argument that the buried mid-lap interface is
+   *absent by construction* from a single-view cloud rather than merely wrong — the hardest
+   false positive is one the camera never delivers. Worth confirming directly, since it also
+   means full-visibility numbers in the literature are measuring a harder problem than the
+   one a robot faces.
+4. **The validity window is empty in 16 of 88 runs** at ρ = 0,5, and where it is open the
+   usable-F1 range is *wider* than predicted (2,5–11,9 mm against 3,4–6,6 mm on the scene
+   swept). The bound may need restating rather than confirming — a corrected bound, derived
+   and then measured, is the stronger result.
+
+Two engineering notes carried forward: component linking is the most sensitive knob and
+proximity alone cannot separate two parallel centrelines a plate-thickness apart (direction
+splitting is the fix); and `surface_variation` was rebatched to ~100× the original speed
+(bit-identical, pinned by test) because a corpus sweep otherwise does not finish.
+- [ ] Baseline B: plane segmentation + pairwise intersection, from scratch (literature)
+- [ ] Baselines C and D: pick two more from `papers/` and implement
 - [ ] **Metrics:** Chamfer distance as primary (cheap, standard, report it everywhere);
       Sinkhorn / EMD as secondary (more principled, much slower — the advisor's "transport cost";
       the meeting transcript's "synchron distance" is almost certainly this)
@@ -633,7 +704,7 @@ Now the PCA fix happens, **with a number in front of you** instead of RViz eyeba
    The plan currently predicts where it closes in three of those four
 7. **Fixture on vs. off, paired seeds (D12).** This is the plot that quantifies how much of
    published seam-extraction performance is an artifact of pre-isolated workpieces. Report the
-   `fixture_contact` false-positive rate separately — expect Baseline A to emit a phantom candidate
+   `fixture_contact` false-positive rate separately — expect Baseline B (plane pairing) to emit a phantom candidate
    along every part–fixture contact, since the fixture is a large clean plane and plane pairing has
    no notion of `role`
 8. **Error vs. sensor profile (D16)** — `d435i` / `stereo_good` / `stereo_poor`, same seeds
@@ -731,7 +802,21 @@ self-sufficient so a tier-2 delay never blocks a submission.
 
 - [ ] Pick backend. **BlenderProc is the recommended default** — less painful than Isaac Sim and no
       proprietary dependency, which matters for the release (D9). Isaac Sim as a second backend only
-      if the lab's existing expertise (Umut, Ege) makes it cheap
+      if the lab's existing expertise (Umut, Ege) makes it cheap.
+
+      **Isaac Sim route confirmed available on this machine (2026-08-18):** Isaac Sim
+      `5.1.0-rc.19` at `/isaac-sim`, with `omni.replicator.core` **1.12.27** in `extscache/`
+      and an RTX 4060 Laptop GPU or RTX 5070 Ti Desktop GPU present; `/isaac-sim/python.sh` resolves both `isaacsim`
+      and `omni.kit.app`. Replicator ships *with* Isaac Sim rather than being a separate
+      install, so the second backend costs no new procurement — it needs a headless Kit app
+      (`SimulationApp` before any `omni.replicator.core` import), which is why the module
+      does not import from a plain interpreter.
+
+      This does **not** overturn the default. D9 is about what the *release* requires, and a
+      Replicator backend is RTX-only and proprietary, so it stays the second backend behind
+      BlenderProc. What it changes is the risk: the fallback is known-present rather than
+      hypothetical, and the "1–2 weeks, high variance" estimate can be read as variance in
+      materials and failure-mode fidelity rather than in whether a renderer exists at all.
 - [ ] Materials: painted MDF, stainless, mill scale / rust
 - [ ] Lighting variation
 - [ ] Structured-light failure modes: specular dropout, shadow-induced depth holes, realistic
