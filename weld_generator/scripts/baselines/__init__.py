@@ -3,9 +3,10 @@
 These are **not** contributions. They are the comparison table, and the reason the
 generator exists is to put a number under them instead of an RViz screenshot.
 
-    radius_pca   Baseline A (OURS) - the admittance-control repo's method, migrated
-                 and upgraded. A is ours; B, C and D are taken from the literature
-                 for comparison, so the table compares methodologies
+    radius_pca   `ours` - the admittance-control repo's method, migrated. One entry in a
+                 seven-method comparison (`dataset_plan.md` §4); the other six are
+                 reimplementations from the literature. `ours` is NOT claimed as a novel
+                 extractor - the contribution is the dataset and the comparison
     metrics      Chamfer, precision/recall, lateral error, band width
 
 Everything here is **millimetres**, like the rest of `weld_generator` (SCHEMA.md §1). The

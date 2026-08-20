@@ -234,7 +234,7 @@ scanned parts carry the kind of irregularity no feature vocabulary reproduces ho
 Cost: a few hundred bytes. Buys three things — free per-point **face segmentation
 labels** (a superset of the per-part A/B/intersect masks that K-Net-style methods
 consume, `thesis_direction_handoff.md` §3), a stable `face_id → ref` map, and the plane
-equations that both the D4 verification function (Phase 2) and Baseline B (Phase 4) need.
+equations that both the D4 verification function (Phase 2) and the Phase 4 plane-pair methods need.
 
 `plane` is `null` for non-planar faces (Phase 6); those carry `surface` instead
 (`{"kind":"cylinder","axis":[...],"point":[...],"radius_mm":...}`).

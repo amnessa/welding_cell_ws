@@ -43,7 +43,7 @@ Recorded so they are not re-litigated. Each was argued through; if one is reopen
 | D10 | RGB is rendered and stored, but **not benchmarked on** | Handoff §3. Storing is cheap; not storing forecloses the 2D→3D line without full regeneration |
 | D11 | Splits hold out **part geometries and joint configurations**, not random frames | Random-frame splits across near-duplicate camera poses inflate every reported number |
 | D12 | Fixture (`role: "fixture"`, `object_id 255`) is **sampled, not always present** — ~50/50, with **paired seeds** so on/off twins are exact, and **pose-varied** (tilt ±10°, working surface not pinned to `z = 0`) | Revised 2026-08-13, see below |
-| D13 | D4 requires **both faces on `role: "workpiece"` objects**; part–fixture contact is rejected as `fixture_contact` | A plate standing on the fixture has two exterior faces, a 90° dihedral and an escaping bisector — it passes D4 on pure geometry and is *not* weldable. The rejection is not derivable from geometry, which makes it the most interesting class in the weldable-vs-interior metric (§7) |
+| D13 | D4 requires **both faces on `role: "workpiece"` objects**; part–fixture contact is rejected as `fixture_contact` | A plate standing on the fixture has two exterior faces, a 90° dihedral and an escaping bisector — it passes D4 on pure geometry and is *not* weldable. The rejection is not derivable from geometry, which makes it the most interesting class in the weldable-vs-interior metric (§8) |
 | D14 | Cloud stores the **noiseless** sample + noise params; the realization comes from a released `apply_noise()` | Same epistemic move as D8: the exact thing is truth, the corruption is a versioned convention. Frozen Zenodo release additionally materialises `xyz_noisy` for bit-comparability |
 | D15 | Determinism gate is a **content hash**, not byte-identical files | `np.savez` embeds zip timestamps, so byte-identity is unachievable; hashing canonical JSON + raw array bytes is the stronger property anyway |
 | D16 | The depth model is a **stereo-depth model with named sensor profiles**, not a D435i model | Parameterised by `(baseline, focal, subpixel)`, which the schema already does. `d435i` is one profile alongside `stereo_good` / `stereo_poor`. Makes sensor quality a benchmark axis and demotes the datasheet-verification item off the critical path |
@@ -55,9 +55,13 @@ Recorded so they are not re-litigated. Each was argued through; if one is reopen
 | D22 | A seam's **class is derived from the faces that form it**, and the joint type determines which classes are legitimate: `edge` = edge×edge, `lap_toe` = edge×face, `butt` = face×face coplanar, `fillet` = face×face angled. Off-class seams are kept as `weldable: false` / `wrong_class_for_joint` | An edge joint means BOTH parts contribute an edge — a weld running along the *surface* of one of them is a lap toe, not an edge weld. A lap is exactly the opposite: the edge of one part against the face of the other. Without this the generator reported an edge scene's 4 seams as 4 edge welds when 2 were lap toes, and a butt joint emitted short cross-runs across the plate thickness. Settled 2026-08-16 |
 | D23 | **Stacked joints (lap, edge) cap angular misalignment** at ~0.4° | The plates are clamped face to face, so relative tilt about the seam axis is physically suppressed. At the plate-joint limit a 4° tilt lifts a 100 mm plate's far edge 3.5 mm and the flush edge stops being flush — 19 of 30 edge seeds lost their seam entirely. The defect that *does* occur on a stacked joint is poor contact, which the root gap already carries |
 | D24 | **Groove preparations (V, U, J, bevel) are deferred to Phase 6**, alongside curved geometry | Both need non-slab primitives, so the machinery gets built once. Consequence to state: Phases 3–5 measure **square preparation only**, and `PARAMETERS.md` §5.0's radius-PCA result keeps its square-prep scope until Phase 6 lands. Settled 2026-08-16 |
+| D25 | The **MPS label is a versioned rule function**, never stored truth: `mps_rule-0.1` = argmax over weldable seams of *visible* arclength, ties broken by larger dihedral fold then lower seam id, null below `min_len_mm` | Fourth instance of a pattern the project already follows — tacks (D8), the noise realisation (D14), the seam-under-gap choice (D19). Visible arclength rather than total length is what makes it well-posed: with partial seams out of scope, seam length equals contact length, so a T-joint's two fillets and a lap's two toes have *equal* total length and an argmax over it would tie in most scenes. Settled 2026-08-20 |
+| D26 | **Two camera regimes, sampled per config**: `approach_cone` (from the target seam's well-observed viewpoint region) and `uniform_sphere` (the Phase 3 sampler). Both twin-paired | The Phase 3 gate — "the sampler must not be polite" — encoded an assumption the advisor meeting overturned. Under coarse positioning a polite sampler is the *correct* model of deployment, not a weak one. Keeping both makes the `approach_cone`/`uniform_sphere` delta on paired seeds a measurement of **what coarse positioning is worth**. The good-viewpoint region is a "Swiss cheese slice", not a clean cone, and it is **already computed** — the azimuth × elevation map in `notebooks/02`. Sample it empirically rather than parameterising a cone. Settled 2026-08-20 |
+| D27 | Part dimensions vary **across** the seam, never **along** it: the along-seam dimension is pinned by seam length; width, height and overhang are free; thickness is free subject to ISO 9692-1 | The advisor proposed expanding one seam into many scenes via a list of plate sizes. Right perpendicular to the seam, wrong along it — growing a plate along the seam axis lengthens the contact run, and with partial seams out of scope the seam length *is* the contact length, so it is no longer the same seam. The constrained form makes "same seam, many parts" well-defined, and gives a clean held-out axis: train on narrow plates, test on wide ones, same seam. Settled 2026-08-20 |
 
 Phase 0 froze D1–D11 in [`../docs/SCHEMA.md`](../docs/SCHEMA.md) and
-[`../docs/PARAMETERS.md`](../docs/PARAMETERS.md). D12–D16 were settled 2026-08-13; D17 was withdrawn 2026-08-15; D18–D21 settled 2026-08-15.
+[`../docs/PARAMETERS.md`](../docs/PARAMETERS.md). D12–D16 were settled 2026-08-13; D17 was withdrawn 2026-08-15; D18–D21 settled 2026-08-15;
+D22–D24 settled 2026-08-16; **D25–D27 settled 2026-08-20** from the advisor meeting — see §3.
 
 ### Why D12 is *sampled* rather than *always*
 
@@ -95,80 +99,171 @@ in the literature map can answer that.
 
 ---
 
-## 3. Baselines — the comparison table
+## 3. Task definitions
 
-**Naming, fixed 2026-08-18.** `A` is **ours**, the method being developed. `B`, `C`, `D` are taken
-from the literature and implemented for comparison, so the table compares *methodologies* rather
-than one method against itself. Only `A` is a contribution; the rest exist to be argued with.
+*Added 2026-08-20 from the advisor meeting.*
 
-| | method | provenance |
+The plan had so far assumed one ground truth per scene: the set of weldable seams. The meeting
+split that into **two tasks with different label types**, and the second has a label that is not
+derivable from geometry alone. Both are served by the same generator; they differ in what is
+given and what is asked.
+
+### Task 1 — Complete seam recovery
+
+> *"Varsayalım ki sen bunu mükemmel taradın. Al olası tüm seam'leri."*
+
+**Given:** the full-geometry cloud, no occlusion.
+**Return:** every weldable seam, each with its class and geometry.
+
+This is what Phases 1–3 already produce, and its label is **exact geometry** — no convention
+enters anywhere. It is the task the dataset's central claim rests on.
+
+Because generation is inverted (D3), the per-point form of this label is free: every point
+carries `face_id`, and every seam names the `face_pair` that produced it, so each surface point
+can be labelled with the seam it belongs to, or none. Task 1 is therefore posable three ways
+from one file — per-point segmentation, per-seam instance grouping, or curve regression —
+without storing anything new.
+
+### Task 2 — Most probable seam (MPS)
+
+> *"Al, baktığın açıdaki en olası seam'i bul."*
+
+**Given:** one view.
+**Return:** one seam — its **class** and its **location**.
+
+The advisor's justification, and the assumption the paper must state outright:
+
+> *"Genelde algoritma şöyle çalışıyor: önce bir kaynak bölgesine git. Gittin mi kaynak seam'ini
+> bul."*
+
+The robot is coarsely positioned into the weld region first; seam finding happens afterwards.
+The camera is therefore already inside the approach region and is not sampling an arbitrary
+sphere. This is a citable workflow assumption, not a convenience — and it is what makes a
+single-answer task well-posed at all. **Draw it as a figure.**
+
+**The MPS label is a convention, not truth** (D25), handled like every other convention in this
+project: ship a versioned rule function over the exact geometry, never a stored label. Store
+`mps` alongside `tacks` as a derived block: `{rule_version, params, seam_id, class}`.
+
+Consequence to check in Phase 4: under the Phase 3 occlusion distribution (58% of seams above
+0,98 occluded, 40% at exactly 0), visible arclength is close to binary, so MPS will usually
+reduce to *"the one seam that is visible at all."* That is a legitimate answer but a weak task.
+**Grading the occlusion distribution — D26 — is what gives MPS teeth**, and it must happen
+before MPS is evaluated.
+
+### Scope: what was declined from the meeting, and why
+
+Recorded so they are not silently reopened.
+
+| Proposal | Status | Reason |
 |---|---|---|
-| **A** | radius-PCA surface variation + multi-seam components + line fit | **ours** — the admittance-control repo's method (`README §8`), migrated and upgraded |
-| **B** | plane segmentation + pairwise intersection | Yi et al. 2026; the PPF-plane paper (`Weld_seam_object_detection_system…`) |
-| **C** | — to pick from `papers/` | literature |
-| **D** | — to pick from `papers/` | literature |
-
-### Baseline A — radius-PCA (ours)
-
-Per-point PCA over a **radius** ball, `V = λ₃/(λ₁+λ₂+λ₃)`; radius rather than k-NN is what lets
-the covariance straddle the gap between two parts that do not touch. Migrated in Phase 4 step 1;
-see the Phase 4 record below for the first numbers and what they exposed. Two upgrades were part
-of the migration and a third is outstanding:
-
-1. **Multi-seam** — connected components on surviving high-`V` points, one line fit per component.
-   The original assumes a single seam. *Done.*
-2. **Band → centreline** — `README §8` admits the published seam is a ~16 mm band, not a line.
-   *Done*, and the `band_*` metrics report what the fit is worth.
-3. **Exteriority gate** — see below. *Wired, not yet used in an evaluation arm.*
-
-The migration also exposed the thing that most needs fixing, which is not on the original list:
-the cross-object gate that makes the method work at all is a **CAD oracle**. Without it F1 falls
-from 0,75 to 0,03. Whatever `A` becomes, it has to earn that back from the cloud alone.
-
-### Baseline B — plane segmentation + pairwise intersection (literature)
-
-RANSAC or region-growing → planar patches → intersect every plane pair → clip each line to where
-both patches have actual support → reject pairs whose dihedral angle is implausible.
-
-Structurally avoids three of `README §8`'s problems, which is exactly why it is the first
-comparison worth having:
-- returns a **line**, not a 16 mm band (no post-hoc centreline fit needed)
-- handles **multiple seams** natively (every surviving plane pair is a candidate)
-- the support-clip is most of the interior/exterior test
-
-Precedent: Yi et al. 2026; the PPF-plane paper (`Weld_seam_object_detection_system…`).
-
-### Baselines C and D — to select from `papers/`
-
-Not yet chosen. Wang et al.'s PCA slicing is one candidate (see *Curved seams* below); pick the
-other two so the table spans method *families* rather than three variations on plane fitting.
-
-### The exteriority test without CAD
-
-Important observation: the `README §8` blob problem is **partly an artifact of the SEPC being full
-CAD clouds baked at poses** — 360° geometry including faces no camera can ever see. A real
-single-view cloud contains only exterior surface by construction, so the mid-lap interior candidate
-is not merely wrong, it is *absent*.
-
-So the test is only needed on the full-geometry variant. Use **hidden point removal**
-(Katz et al.; `open3d.geometry.PointCloud.hidden_point_removal`): run from ~30 viewpoints on a
-sphere, union the results, mark every point visible from at least one direction as exterior. Then a
-candidate seam is weldable if it has exterior support on both parts and the dihedral bisector
-escapes without re-entering material.
-
-This matters because at runtime there is no CAD registration — the test must be point-cloud-only.
-
-### Curved seams
-
-Plane-pair generalizes to **surface-pair intersection**: plane ∩ cylinder for pipe-on-plate,
-quadric ∩ plane for a dished end. Same code shape, different primitive fitter. Wang et al.'s PCA
-slicing is the third family — cite it even if not implemented.
-
-**Where each baseline stops working is a result, not a bug.** Report it.
+| Ground truth conditioned on **loading conditions** | **Out of scope** | Which seam carries load is structural knowledge, not visible geometry. No vision method can recover it, so it cannot be a vision label. Agree explicitly with the advisor that MPS is a *geometric proxy* adopted for tractability, and say so in the paper — otherwise it arrives as a reviewer question instead of a stated limitation |
+| **Partial seams** (pre-welded sections, weld only the middle) | **Out of scope** | Requires knowing which regions are already welded. Nothing in a single view carries that, so the label would encode information the input cannot contain |
+| **Same seam, varying part sizes** | **Constrained, not dropped** | D27 — dimensions across the seam are free; the along-seam dimension is pinned by the seam |
 
 ---
 
-## 4. Schema (Phase 0 deliverable — freeze before coding)
+## 4. Baselines — the seven-method comparison
+
+**Superseded 2026-08-20.** The `A / B / C / D` naming fixed on 2026-08-18 is retired; the
+advisor meeting replaced it with a named seven-method comparison. Recorded rather than erased
+so the change is traceable: `A` became `ours`, `B` split into `lit-ransac` and `lit-ppf`.
+
+### Framing note — this is the change that matters most
+
+`ours` is **not claimed as a novel extractor.** It is one entry in the comparison, carried into
+the thesis as the method the robot pipeline actually uses.
+
+Worth stating plainly in the paper, because it removes the largest review risk in the project:
+the contribution is the **dataset and the comparison**, and a reviewer cannot attack the dataset
+by attacking a novelty claim that was never made. It also dissolves the tuning-fairness problem
+— with no horse in the race, equal treatment of all seven is the obvious protocol rather than a
+concession.
+
+### The seven
+
+| Name | Mechanism | Source |
+|---|---|---|
+| `ours` | radius-PCA curvature + nearest-point midpoint | the robot pipeline (`README §8`) |
+| `lit-ransac` | improved RANSAC multi-plane fitting → plane intersection lines → inliers projected onto the weld vector for endpoints → dihedral for torch pose | Yi et al., *Automation in Construction* 2026 |
+| `lit-ppf` | point-pair-feature coplanarity + voting for orthogonal plane pairs and their intersections; explicitly proposed as a RANSAC alternative on grounds of speed and threshold sensitivity | *Scientific Reports* 2024 fusion paper |
+| `lit-regiongrow` | region growing seeded at the smoothest point by δ = λ₀/(λ₀+λ₁+λ₂), then least-squares fit of near-edge points | *Coarse-to-Fine Detection of Multiple Seams* |
+| `lit-lobb` | local oriented bounding box descriptor, nonlinear feature activation, hierarchical K-means separating **face / crease / boundary / corner** points | Zhang et al., *IEEE T-ASE* 22, 2025 |
+| `lit-pcaslice` | PCA-based adaptive slicing with the slicing direction determined from the data, centreline per slice | *3D vision-based intersecting pipe welding path planning* |
+| `lit-modelreg` | registration of a CAD model to the scan, welding path transferred from the model | *A novel model-based welding trajectory planning method for identical structural workpieces* |
+
+Two are chosen for what they add to the argument rather than for performance. **`lit-lobb`
+classifies crease versus boundary points** — precisely the distinction between a fillet seam and
+a lap toe, so it is the one literature method whose feature space can in principle express the
+D22 joint taxonomy. **`lit-modelreg` requires CAD by construction**, which anchors the top of
+the oracle ladder with a real published method rather than a hypothetical one.
+
+### The coverage prediction — and `ours` is on the wrong side of it too
+
+`lit-ransac` derives seams from plane **intersections**; `lit-ppf` is built on **orthogonal**
+plane pairs. Neither mechanism can express a butt or edge seam, which come from D4's *coplanar
+exposed* arm — two faces sharing a plane, no intersection line, no orthogonality. That is
+structural, not a tuning failure, and it is the same discovery the D4 enumeration made when it
+needed a third arm.
+
+**Measured 2026-08-20, and it applies to `ours` as well.** Radius-PCA is a curvature measure,
+and two parallel plates have no curvature between them: on an edge joint the band covers the
+*entire area between the parts* rather than the flush edge, giving precision 0,01–0,05 against
+a band width of 170 mm. Every other joint type sits at 0,29–0,92. This is not a parameter
+problem and may not be solvable within the mechanism — a variance ratio has nothing to respond
+to when the dihedral is 180°.
+
+That makes the headline stronger, not weaker. The **mechanism × D4-arm coverage table** is
+measured rather than argued, and it now reads: *seam extraction as the field practises it —
+including the method in our own robot — is built on the fillet assumption, and its geometric
+machinery cannot express half the joint taxonomy.* A finding that indicts our own method is
+considerably harder to dismiss than one that only indicts everyone else's.
+
+### The exteriority test without CAD
+
+The `README §8` blob problem is **partly an artifact of the SEPC being full CAD clouds baked at
+poses** — 360° geometry including faces no camera can ever see. A real single-view cloud
+contains only exterior surface by construction, so the mid-lap interior candidate is not merely
+wrong, it is *absent*.
+
+So the test is only needed on the full-geometry variant. Use **hidden point removal**
+(Katz et al.): ~30 viewpoints on a sphere, union the results, mark every point visible from at
+least one direction as exterior. A candidate seam is then weldable if it has exterior support on
+both parts and the dihedral bisector escapes without re-entering material.
+
+This matters because at runtime there is no CAD registration — the test must be
+point-cloud-only.
+
+### On the CAD dependency, stated fairly
+
+An earlier draft called `ours`' cross-object gate an unavailable oracle. That was too strong,
+and the correction matters for how the ladder is read: in the deployed pipeline `object_id` **is**
+available at runtime, because the SEPC is a stack of per-object CAD clouds placed at poses from
+FoundationPose/ICP. It is a **dependency on object-level segmentation**, not a cheat.
+
+The dependency still has costs worth measuring, and the dataset can measure all three: you need
+CAD models of the parts; registration has to succeed; and **registration error propagates
+straight into the seam**. That last one is a plot nothing else can produce — perturb the object
+poses by a known amount and watch the seam error move.
+
+Report two arms rather than replacing one with the other:
+
+| arm | segmentation from | answers |
+|---|---|---|
+| CAD-assisted | registered CAD (the deployed pipeline) | how the deployed method actually does, plus sensitivity to registration error |
+| cloud-only | nothing | does the method generalise to parts with no model |
+
+### Curved seams
+
+Plane-pair generalises to **surface-pair intersection**: plane ∩ cylinder for pipe-on-plate,
+quadric ∩ plane for a dished end. Same code shape, different primitive fitter. `lit-pcaslice` is
+the third family and is most interesting in Phase 6, since slicing is aimed at curved seams.
+
+**Where each method stops working is a result, not a bug.** Report it.
+
+---
+
+## 5. Schema (Phase 0 deliverable — freeze before coding)
 
 One JSON per scene, plus binary arrays for the cloud. Every field below has a reason to exist;
 adding a field after Phase 4 costs a full regeneration and invalidates every plotted number.
@@ -255,7 +350,7 @@ Notes:
 
 ---
 
-## 5. Parameter ranges (Phase 0 deliverable)
+## 6. Parameter ranges (Phase 0 deliverable)
 
 Ranges should be **cited, not invented**. `ISO_5817_Ed_4_2023.pdf` is in the project and supplies the
 defect axes directly.
@@ -321,7 +416,7 @@ The gap **scales with thickness** rather than being a flat 0–3 mm range, which
 
 **Edge joints.** Table 1 ref 1.1, "raised edges", applies at `t ≤ 2 mm` and specifies no dimensions.
 That is a citable constraint and a convenient one: edge joints are a **thin-sheet** preparation, and
-1–2 mm is exactly the stainless in your lab and exactly where §5 predicts radius-PCA has no valid
+1–2 mm is exactly the stainless in your lab and exactly where §6 predicts radius-PCA has no valid
 radius. Restrict edge-joint scenes to `t ≤ 2 mm` and the joint type stops being an arbitrary
 inclusion.
 
@@ -368,7 +463,7 @@ anecdotes.
 | Fixture pose | tilt ±10°, surface `z` not pinned | Otherwise the fixture is identifiable by pose alone |
 | Part geometry | plain slabs through Ph. 5; curved / pipe-on-plate from Ph. 6 | ~~D17~~ withdrawn — no procedural features. Diversity comes from Phase 6 primitives and Phase 9 scans |
 
-### 5.1 Sensor profiles (D16)
+### 6.1 Sensor profiles (D16)
 
 Parameterise by physics, name the profiles. The schema's `noise_model` block already does this;
 only the prose was bound to one product.
@@ -393,7 +488,7 @@ samples into that region.
 
 ---
 
-## 6. Phases
+## 7. Phases
 
 Effort estimates assume focused days, not calendar days.
 
@@ -403,7 +498,7 @@ Effort estimates assume focused days, not calendar days.
 
 **Do not skip. Do not start coding first.**
 
-- [x] Write `SCHEMA.md` (§4) and `PARAMETERS.md` (§5)
+- [x] Write `SCHEMA.md` (§5) and `PARAMETERS.md` (§6)
 - [ ] Decide directory layout for a scene and for a release
 - [ ] Decide file formats: `.npy` for arrays, `.ply` for meshes, `.json` per scene, one
       `index.parquet` or `.jsonl` over the release
@@ -491,7 +586,7 @@ imply more than it delivers.
 - [x] **`torch_clearance` becomes a cone**, `{half_angle_deg, standoff_mm}`, not a scalar distance.
       At 90° the bisector test is nearly free; at 60° it is not, because a real nozzle has finite
       width. Acute-angle joints then generate `bisector_blocked` rejections from physical
-      reachability instead of an arbitrary threshold, which gives the §7 weldable-vs-interior metric
+      reachability instead of an arbitrary threshold, which gives the §8 weldable-vs-interior metric
       a second interesting class alongside `fixture_contact`.
       The cone is **steerable**: the bisector is where a torch wants to sit, not the only place it
       may sit, so the rule tries progressively larger work angles and stores the axis it accepts
@@ -562,7 +657,7 @@ This function is reused by the baselines in Phase 4 — building it here is not 
       *geometry only* (framed, in range, front-facing, unoccluded). Sensor dropout lives in
       `noise.apply` with its own validity mask, so occlusion stays comparable across the three
       sensor profiles instead of being confounded with them
-- [x] **HPR (Hidden Point Removal) exteriority** utility (shared with Phase 4 baseline A). scipy's
+- [x] **HPR (Hidden Point Removal) exteriority** utility (shared with Phase 4 `ours`). scipy's
       convex hull, no open3d. On a lap joint it marks the buried interface 1,3% exterior and the same
       face outside the overlap 100% exterior
 - [x] **Pin `camera_raster` mask semantics (D20)** — pinned and implemented. Both classes come from
@@ -577,6 +672,14 @@ metric to see it, which is the substance of the 2.3.0 schema bump:
 |---|---|---|---|
 | `occluded_fraction` — another part in the way | 40% | **1,7%** | 58% |
 | `1 - in_frame_fraction` — image edge, blind zone | 69% | **23%** | 8% |
+
+**Revised by D26 (2026-08-20).** This gate encoded an assumption the advisor meeting
+overturned: that a polite sampler is a defect. Under coarse positioning it is the *correct*
+model of deployment. The `uniform_sphere` regime below stays as the stress test and keeps this
+gate; `approach_cone` is added alongside it, and the delta between them on paired seeds
+measures what coarse positioning is worth. The `NoVisibleSeams` yield problem largely
+disappears under `approach_cone`, because the camera is drawn from a region where the seam is
+observable by construction.
 
 **Occlusion is binary and always will be.** A straight seam under a convex occluder is
 shadowed all-or-nothing, because the occluding plate spans the run the two parts share to
@@ -635,15 +738,22 @@ false` and gets every scene.
 
 Now the PCA fix happens, **with a number in front of you** instead of RViz eyeballing.
 
-**Step 1 done — Baseline A migrated and measured (2026-08-18).** `scripts/baselines/`:
+**Step 1 done — `ours` migrated and measured (2026-08-18).** `scripts/baselines/`:
 `radius_pca.py` (the method), `metrics.py` (Chamfer, P/R/F1, lateral, band width),
 `dataset.py` (the harness), `notebooks/03_baselines.ipynb`. Not tuned, not fixed — the point
 of this step was to get numbers to argue with. 44 scenes, both views, `R` taken from the
 midpoint of the predicted window, density controlled at 0,5 pts/mm².
 
-- [x] Baseline A: multi-seam connected components + per-component line/spline fit
-- [ ] Baseline A: HPR exteriority gate — `detect(..., exterior=...)` is wired; not yet used
-      in an evaluation arm
+- [x] `ours`: multi-seam connected components. **The per-component line fit was tried and
+      removed** — on these joints the band is a rectangle, and a total-least-squares line
+      through a rectangle lands in its middle, which is the mid-surface between two plates
+      rather than the seam. `detect` now returns the band and its clusters, scored as a point
+      set. Several attempts to replace the estimator (ridge-following, crease projection,
+      direction-gated linking, DBSCAN) each won on the case they targeted and lost more
+      elsewhere: corpus F1 went 0,64 → 0,16 and 0,64 → 0,43. Kept in
+      `scratchpad/radius_pca_experimental.py`
+- [ ] `ours`: HPR exteriority gate — `detect(..., exterior=...)` is wired; not yet used in an
+      evaluation arm
 
 **First numbers, and they are not flattering.** Median by joint type, full / single view:
 
@@ -662,13 +772,13 @@ had a number before:
    single view, gate on vs off: Chamfer **4,2 mm → 56,7 mm**, F1 **0,75 → 0,03**. Per-point
    object membership comes from the registered CAD assembly and no sensor provides it, so
    the honest point-cloud-only number for this method is the second column. This is a
-   sharper version of the §3 claim than the plan had, and it belongs in the paper: the
+   sharper version of the §4 claim than the plan had, and it belongs in the paper: the
    published method's performance is substantially CAD registration's, not PCA's.
 2. **Lap and edge are where it dies**, exactly as the plan expected — and edge is worse than
    lap, at 70–109 mm error. Two coplanar faces have no dihedral for a variance ratio to
    detect: the method has no signal there, rather than a weak one.
 3. **Single view often beats full visibility** (F1 0,86 vs 0,64 overall; butt and lap go
-   0,00 → 0,96 / 0,88). Consistent with §3's argument that the buried mid-lap interface is
+   0,00 → 0,96 / 0,88). Consistent with §4's argument that the buried mid-lap interface is
    *absent by construction* from a single-view cloud rather than merely wrong — the hardest
    false positive is one the camera never delivers. Worth confirming directly, since it also
    means full-visibility numbers in the literature are measuring a harder problem than the
@@ -682,12 +792,52 @@ Two engineering notes carried forward: component linking is the most sensitive k
 proximity alone cannot separate two parallel centrelines a plate-thickness apart (direction
 splitting is the fix); and `surface_variation` was rebatched to ~100× the original speed
 (bit-identical, pinned by test) because a corpus sweep otherwise does not finish.
-- [ ] Baseline B: plane segmentation + pairwise intersection, from scratch (literature)
-- [ ] Baselines C and D: pick two more from `papers/` and implement
+- [ ] `lit-regiongrow`, `lit-lobb` — pure feature-space methods, no registration or CAD
+      dependency, so the cheapest faithful reimplementations
+- [ ] `lit-ransac`, `lit-ppf` — randomised; add the repeat harness with these
+- [ ] `lit-pcaslice`, `lit-modelreg` — last, and both may slip to Phase 6
 - [ ] **Metrics:** Chamfer distance as primary (cheap, standard, report it everywhere);
       Sinkhorn / EMD as secondary (more principled, much slower — the advisor's "transport cost";
       the meeting transcript's "synchron distance" is almost certainly this)
 - [ ] Evaluate on the **full-visibility** and **single-view** variants separately and report both
+
+### Protocol additions from the 2026-08-20 meeting
+
+**Repeats and box plots.** *"Random consensus RANSAC'ın... aynı algoritmayı 100 defa koşsan
+birebir aynı şeyi elde etmeyeceksin... box plot'lar, minimum ve deviation'ı gösterecek
+şekilde."* `lit-ransac` and `lit-ppf` are randomised, so every number for them is a
+distribution: 100 repeats per condition, box plots with min and spread. The deterministic
+methods show zero spread — **state that as a finding**, because method reproducibility is a
+property this generator can measure and the field does not report.
+
+**Noise sweep as a table axis.** *"Zero noise'da her birinin başarısı, %5 noise'da, %10
+noise'da."* Report two ways: sensor profiles (`d435i` / `stereo_good` / `stereo_poor`) for
+physical realism, and a scalar multiplier on σ as a comparability axis readers can map onto
+other papers. **Define the percentage explicitly** — a multiple of the derived σ_z, not a
+fraction of range.
+
+**The oracle ladder.** L0 (xyz + `object_id` + exact normals, noiseless), L1 (no
+segmentation), L2 (xyz only, normals estimated), L3 (L2 + noise + single view). Not an
+artificial axis: `ours` depends on `object_id` through its cross-object check and
+`lit-modelreg` depends on CAD, so two of the seven genuinely live on it. The **L0→L1 delta is
+a number for how much each method depends on segmentation it does not publish about** — for
+`ours` that delta is F1 0,75 → 0,03.
+
+### Order of work
+
+1. **Harness first** — matching, metrics, per-scene dataframe — validated against a fake
+   oracle predictor (ground truth plus noise) before any real method output flows through it.
+2. `ours` adapter to `cloud.npz`, run on `reference_tjoint`, compare against `seams.npz`
+   nominal. *Done — see the step-1 record above.*
+3. **Write down every input `ours` consumes.** That list defines the ladder levels.
+4. `lit-regiongrow` and `lit-lobb`.
+5. `lit-ransac`, `lit-ppf`, with the repeat harness.
+6. `lit-pcaslice`, `lit-modelreg`.
+
+**A corpus that can support these comparisons does not exist yet.** `out/phase3` holds 44
+scenes with **2 lap and 4 edge**, and every per-type conclusion drawn from it so far has been
+overturned by the next measurement. Before any method comparison: generate ~60 scenes per
+joint type (~150 attempts each at the measured yields), balanced.
 
 **First real results — the plots to produce:**
 
@@ -704,7 +854,7 @@ splitting is the fix); and `surface_variation` was rebatched to ~100× the origi
    The plan currently predicts where it closes in three of those four
 7. **Fixture on vs. off, paired seeds (D12).** This is the plot that quantifies how much of
    published seam-extraction performance is an artifact of pre-isolated workpieces. Report the
-   `fixture_contact` false-positive rate separately — expect Baseline B (plane pairing) to emit a phantom candidate
+   `fixture_contact` false-positive rate separately — expect `lit-ransac` and `lit-ppf` (plane pairing) to emit a phantom candidate
    along every part–fixture contact, since the fixture is a large clean plane and plane pairing has
    no notion of `role`
 8. **Error vs. sensor profile (D16)** — `d435i` / `stereo_good` / `stereo_poor`, same seeds
@@ -850,7 +1000,7 @@ the schema is shared.
 
 ---
 
-## 7. Metrics summary
+## 8. Metrics summary
 
 | Metric | Role | Note |
 |---|---|---|
@@ -865,7 +1015,7 @@ small, defensible contribution on its own.
 
 ---
 
-## 8. Named risks
+## 9. Named risks
 
 | Risk | Mitigation |
 |---|---|
@@ -878,7 +1028,7 @@ small, defensible contribution on its own.
 
 ---
 
-## 9. Open decisions
+## 10. Open decisions
 
 - [ ] Second annotator for Phase 5 — who?
 - [ ] BlenderProc vs Isaac Sim for Phase 8 — decide before Phase 8, not during
@@ -918,6 +1068,27 @@ Opened by this revision:
       is that sensor quality *is* a benchmark axis rather than a private ablation. Cost is bounded:
       profiles differ only in substreams 5–6, so the three arms share geometry and are joined by
       `twin_key`
+Opened by the 2026-08-20 advisor meeting:
+
+- [ ] Confirm with the advisor that **MPS is a geometric proxy** and that load-path
+      correctness is explicitly out of scope. This is the one that becomes a reviewer
+      question if it is not stated as a limitation first
+- [ ] Decide whether **Task 2 ships in paper 1 or is deferred**. Recommendation: generate the
+      data and release the rule; scope paper 1 to Task 1 plus the seven-method comparison, and
+      keep MPS as a short section if Phase 4 runs ahead
+- [ ] **Grade the occlusion distribution before MPS is evaluated** (D26 sampler work, plus the
+      framing-fraction change already landed) — MPS is a weak task while visibility is
+      near-binary
+- [ ] Verify `lit-modelreg` is implementable without the original CAD assets. If not it
+      becomes an L0 upper bound computed from generator transforms rather than a
+      reimplementation, and **must be labelled as such**
+- [ ] Build the **balanced benchmark corpus** (~60 scenes per joint type). Every per-type
+      number in Phase 4 so far rests on 2–4 scenes and has been overturned once already
+- [ ] Decide whether radius-PCA's inability to express a coplanar seam is worth one more
+      attempt or should be **reported as a mechanism limit**. The measurement says the band
+      covers the whole area between two parallel plates; nothing in a variance ratio responds
+      to a 180° dihedral
+
 - [ ] Lap overlap length has no ISO citation and stays **[ours]**. AWS D1.1 or a fabrication text
       may give a minimum (commonly quoted as some multiple of `t`) — worth one lookup before
       submission, not before Phase 2

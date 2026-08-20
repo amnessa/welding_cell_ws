@@ -1,4 +1,4 @@
-"""Baseline A (ours) — radius-PCA surface variation.
+"""`ours` — radius-PCA surface variation. One of seven methods in the Phase 4 comparison.
 
 Migrated from `ros2_ws/src/admittance_control/scripts/icp_pose_refiner_node.py`
 (`surface_variation`, `_welding_points`, `_cross_object_mask`) and the voxel merge in

@@ -1,4 +1,4 @@
-"""Baseline A (ours) — the migrated radius-PCA, checked against known geometry.
+"""`ours` — the migrated radius-PCA, checked against known geometry.
 
 These are not accuracy claims. They pin the things the migration could silently get wrong:
 the unit change from metres to millimetres, the validity window, and the fact that the

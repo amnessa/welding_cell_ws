@@ -41,8 +41,9 @@ Two notebooks, both of which need a **kernel restart** after you change `weldgen
   world and image space, an azimuth × elevation map of where each seam can be seen from, the
   sensor model, `area_uniform` vs `camera_raster`, and the per-joint-type yield of the
   omission policy.
-- `notebooks/03_baselines.ipynb` — Baseline A (radius-PCA, ours) scored against constructed truth:
-  the validity window on trial, per-joint-type error, and the CAD-oracle ablation.
+- `notebooks/03_baselines.ipynb` — `ours` (radius-PCA) scored against constructed truth: the
+  validity window on trial, per-joint-type error, and the segmentation-dependency ablation.
+  One of seven methods in the Phase 4 comparison; see `notes/dataset_plan.md` §4.
 
 ---
 
@@ -72,7 +73,7 @@ weldgen/         the generator - trimesh + NumPy only, no simulator import (D9)
   cli.py             `python -m weldgen generate | verify`
 
 scripts/         evaluation, NOT part of the generator (Phase 4)
-  baselines/         radius_pca.py (Baseline A, ours), metrics.py, dataset.py
+  baselines/         radius_pca.py (`ours`), metrics.py, dataset.py
 
 configs/         phase1, phase2, phase2_fixture, phase3, phase3_raster,
                  smoke, reference_tjoint, playground
