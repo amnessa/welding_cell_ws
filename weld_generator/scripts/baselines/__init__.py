@@ -7,6 +7,9 @@ generator exists is to put a number under them instead of an RViz screenshot.
                  seven-method comparison (`dataset_plan.md` §4); the other six are
                  reimplementations from the literature. `ours` is NOT claimed as a novel
                  extractor - the contribution is the dataset and the comparison
+    lit_ransac   `lit-ransac` - Yi et al., Automation in Construction 183 (2026) 106792.
+                 Improved multi-plane RANSAC, then plane intersections for the path.
+                 Randomised: every number it gives is a distribution over `seed`
     metrics      Chamfer, precision/recall, lateral error, band width
 
 Everything here is **millimetres**, like the rest of `weld_generator` (SCHEMA.md §1). The
@@ -20,6 +23,9 @@ from .dataset import (cloud_for, ground_truth, iter_scenes, load_scene,
 from .metrics import (band_width_mm, chamfer_mm, densify, evaluate,
                       evaluate_band,
                       lateral_error_mm, precision_recall_f1)
+from .lit_ransac import (LitRansacResult, LitRansacSeam, Plane,
+                         detect as lit_ransac_detect, multi_plane_fit,
+                         seam_region_oracle)
 from .radius_pca import RadiusPCAResult, detect, surface_variation, validity_window_mm
 
 __all__ = [
@@ -28,4 +34,6 @@ __all__ = [
     "densify", "evaluate", "evaluate_band",
     "load_scene", "iter_scenes", "scene_dirs", "cloud_for", "ground_truth",
     "scene_facts",
+    "lit_ransac_detect", "LitRansacResult", "LitRansacSeam", "Plane", "multi_plane_fit",
+    "seam_region_oracle",
 ]

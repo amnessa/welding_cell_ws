@@ -219,6 +219,74 @@ including the method in our own robot — is built on the fillet assumption, and
 machinery cannot express half the joint taxonomy.* A finding that indicts our own method is
 considerably harder to dismiss than one that only indicts everyone else's.
 
+#### `lit-ransac` measured, 2026-08-20 — the prediction holds for edge, and fails for butt
+
+First implementation of one of the seven (`scripts/baselines/lit_ransac.py`, Yi et al. 2026,
+§5–§6). Full-visibility arm, 44 `out/phase3` scenes, one seed, F1 at 3 mm. `L0` = input
+restricted to the paper's ~40 mm annotated weld region (their PointNet++ stage, supplied here
+as an oracle); `L1` = whole workpiece. **One seed, and on the unbalanced corpus** — 2 lap and
+4 edge scenes — so read the per-type rows as directional and the spread section below as the
+actual result.
+
+| joint | L0 F1 | L1 F1 | L0 precision | L0 recall |
+|---|---|---|---|---|
+| T | 0,75 | 0,58 | 0,69 | 0,91 |
+| lap | 0,55 | **0,00** | 0,38 | 1,00 |
+| butt | 0,54 | 0,50 | 0,49 | 0,60 |
+| corner | 0,51 | 0,45 | 0,39 | 0,86 |
+| edge | **0,00** | **0,00** | 0,00 | 0,00 |
+
+Four things, and two of them revise text written above.
+
+1. **Edge is 0,00, exactly as predicted, and for the predicted reason.** `n₁ × n₂` is the zero
+   vector, `intersection_line` returns `None`, and there is no seam to score. Nothing about the
+   input or the parameters can change that. The prediction is now measured for `lit-ransac`.
+
+2. **Butt is *not* 0,00, and the prediction above is wrong about it.** The reason is a feature
+   of this generator the prediction did not account for: a butt joint with a **root gap** has
+   two gap walls, and a gap wall *is* orthogonal to the plate faces. The intersection of wall
+   and face lands on the seam. So the coverage claim has to be narrowed — the mechanism cannot
+   express a *zero-gap* butt, and D18 samples the gap from an ISO 9692-1 range that is almost
+   never zero. Keep the claim for edge, restate it for butt. This is the kind of correction only
+   a generator that models joint preparation can produce.
+
+3. **Recall is high and precision is not** — 0,91 against 0,69 on T. The method finds the seam
+   and also finds every plate border, because a plate's own top face and edge face are an
+   orthogonal intersecting pair indistinguishable from a fillet. **This is the false-positive
+   result the Phase 4 checklist asks for**, and it arrives without a fixture in the scene.
+
+4. **The L0→L1 delta is largest on lap: 0,55 → 0,00.** Not a segmentation-quality effect. The
+   eq. 17 termination `n_in / N_seg > T_mpp` is an *area ratio*, and a lap toe is made by the
+   top plate's **edge face**, which is under 2% of a whole workpiece and is therefore never
+   fitted as a plane at all. Restrict the input to the weld region and the same face is a large
+   fraction, so it survives. A published constant deletes an entire joint type, and only off
+   its own segmented input — worth a paragraph of its own in the paper.
+
+#### The reproducibility result, and why it is the strongest thing here
+
+The advisor asked for box plots because RANSAC is randomised. The size of the effect is larger
+than that framing suggests. Same scene, same parameters, only `seed` varying, 30 repeats:
+
+| scene | F1 min | median | max | zero runs |
+|---|---|---|---|---|
+| `…412392` (butt, gap 1,82) | 0,00 | 0,94 | 0,96 | 2 / 30 |
+| `…412402` (butt, gap 0,24) | 0,00 | 0,00 | 0,96 | 20 / 30 |
+| `…412339` (butt, gap 1,95) | 0,00 | 0,00 | 0,00 | 30 / 30 |
+
+The middle row is a coin flip between a near-perfect answer and nothing, on one fixed input.
+The mechanism is greedy plane removal: whether the gap wall is ever fitted depends on which
+three points were drawn first, and the plane count itself varies (2, 3, 4 or 5 on one scene).
+
+Consequences:
+
+- **Every per-scene number for `lit-ransac` and `lit-ppf` above is meaningless as a single
+  value.** The table in this section is one draw and is labelled as such. Do not quote it.
+- The repeat harness is not a protocol nicety, it is a prerequisite. Build it before any
+  further `lit-*` method.
+- The bottom row is the useful control: a scene that fails at every seed is a *structural*
+  failure and separable from a sampling failure. That separation is a metric the field has no
+  way to compute, because it needs many scenes of known truth.
+
 ### The exteriority test without CAD
 
 The `README §8` blob problem is **partly an artifact of the SEPC being full CAD clouds baked at
@@ -794,7 +862,12 @@ splitting is the fix); and `surface_variation` was rebatched to ~100× the origi
 (bit-identical, pinned by test) because a corpus sweep otherwise does not finish.
 - [ ] `lit-regiongrow`, `lit-lobb` — pure feature-space methods, no registration or CAD
       dependency, so the cheapest faithful reimplementations
-- [ ] `lit-ransac`, `lit-ppf` — randomised; add the repeat harness with these
+- [x] **`lit-ransac`** — Yi et al. 2026 §5–§6, `scripts/baselines/lit_ransac.py`, 15 tests.
+      Measured; see §4. Edge 0,00 as predicted, butt **not** 0,00 (root gap ⇒ orthogonal wall),
+      lap 0,00 without the segmentation oracle because `T_mpp` is an area ratio
+- [ ] **Repeat harness — now a prerequisite, not a protocol nicety.** `lit-ransac` swings F1
+      0,00 → 0,96 across seeds on one fixed scene. Build it before `lit-ppf`
+- [ ] `lit-ppf` — randomised; runs through the repeat harness from day one
 - [ ] `lit-pcaslice`, `lit-modelreg` — last, and both may slip to Phase 6
 - [ ] **Metrics:** Chamfer distance as primary (cheap, standard, report it everywhere);
       Sinkhorn / EMD as secondary (more principled, much slower — the advisor's "transport cost";
@@ -831,7 +904,9 @@ a number for how much each method depends on segmentation it does not publish ab
    nominal. *Done — see the step-1 record above.*
 3. **Write down every input `ours` consumes.** That list defines the ladder levels.
 4. `lit-regiongrow` and `lit-lobb`.
-5. `lit-ransac`, `lit-ppf`, with the repeat harness.
+5. `lit-ransac` *(done — see §4)*, then the repeat harness, then `lit-ppf`. The order is
+   forced: `lit-ransac`'s seed spread is 0,00–0,96 on a fixed scene, so a harness that reports
+   one draw reports noise.
 6. `lit-pcaslice`, `lit-modelreg`.
 
 **A corpus that can support these comparisons does not exist yet.** `out/phase3` holds 44

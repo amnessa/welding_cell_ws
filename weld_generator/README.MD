@@ -43,7 +43,8 @@ Two notebooks, both of which need a **kernel restart** after you change `weldgen
   omission policy.
 - `notebooks/03_baselines.ipynb` — `ours` (radius-PCA) scored against constructed truth: the
   validity window on trial, per-joint-type error, and the segmentation-dependency ablation.
-  One of seven methods in the Phase 4 comparison; see `notes/dataset_plan.md` §4.
+  One of seven methods in the Phase 4 comparison; see `notes/dataset_plan.md` §4 and
+  **Baselines** below. `lit-ransac` has no notebook yet — it is scored from the harness.
 
 ---
 
@@ -73,11 +74,12 @@ weldgen/         the generator - trimesh + NumPy only, no simulator import (D9)
   cli.py             `python -m weldgen generate | verify`
 
 scripts/         evaluation, NOT part of the generator (Phase 4)
-  baselines/         radius_pca.py (`ours`), metrics.py, dataset.py
+  baselines/         radius_pca.py (`ours`), lit_ransac.py (Yi et al. 2026),
+                     metrics.py, dataset.py
 
 configs/         phase1, phase2, phase2_fixture, phase3, phase3_raster,
                  smoke, reference_tjoint, playground
-tests/           212 tests: geometry, determinism, schema conformance, ISO limits, viz,
+tests/           227 tests: geometry, determinism, schema conformance, ISO limits, viz,
                  the Phase 2 joint-type gate, the Phase 3 visibility gate, and the
                  migrated baseline
 notes/           the plan, the handoff, and the standards PDFs
@@ -348,6 +350,40 @@ levels each imperfection satisfies (PARAMETERS.md §2.5).
 mutually reachable and seams wrap around to the underside — on 1,8 mm plate a 2,0 mm
 tolerance is enough. This is the same bound radius-PCA lives under (`R < t`), reached from
 the other direction.
+
+---
+
+## Baselines (Phase 4)
+
+Seven methods, scored against constructed truth. Two exist so far. `ours` is **not** claimed
+as a novel extractor — the contribution is the dataset and the comparison
+(`notes/dataset_plan.md` §4).
+
+| Module | Method | Depends on |
+|---|---|---|
+| `radius_pca.py` | `ours` — radius-PCA surface variation, band only | `object_id` (cross-object gate) |
+| `lit_ransac.py` | `lit-ransac` — Yi et al., *Automation in Construction* 183 (2026) 106792: improved multi-plane RANSAC, plane intersections, endpoints by projection, torch pose from the dihedral | a weld-region segmentation (their PointNet++) |
+
+Three things a reader of the paper should know before quoting either.
+
+**A published constant can delete a joint type.** `lit-ransac` terminates plane fitting when a
+plane holds under `T_mpp = 2,5%` of the points (their eq. 17). A lap toe is made by the top
+plate's *edge face*, which is under 2% of a whole workpiece — so the plane is never fitted and
+the joint scores 0,00. Restricted to the paper's own 40 mm weld region the same face is a large
+fraction and the joint scores 0,55. The constant is fine on the input it was tuned for.
+
+**Two of the paper's equations are unusable as printed** — the iteration budget (eq. 18, which
+reads as ~10¹⁰ samples against a reported 0,187 s runtime) and the plane refit (eq. 19, two
+random points and one cross product, against a reported 0,011° residual). Both are implemented
+in the reading consistent with the paper's own results, with the literal form behind a switch
+and the discrepancy written down in the module docstring rather than smoothed over.
+
+**A single number for a randomised method is noise.** On one fixed `out/phase3` butt scene,
+varying only the RANSAC seed over 30 repeats: F1 min 0,00, median 0,94, max 0,96. On another,
+20 of 30 runs return nothing at all. The plane *count* varies with the seed, so whether the
+seam exists to be found is decided by which three points were drawn first. Report distributions.
+Scenes that fail at **every** seed are a separate, structural failure — and telling the two
+apart needs many scenes of known truth, which is the argument for this generator.
 
 ---
 
