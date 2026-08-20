@@ -539,6 +539,10 @@ class LitRansacResult:
     #: different experiment and must be labelled as one.
     used_segmentation_oracle: bool = False
     note: str = ""
+    #: The cloud §5 actually fitted — after the segmentation mask and the voxel merge, so
+    #: `Plane.inliers` indexes into THIS and not into what the caller passed. Kept because
+    #: a plane is only interpretable next to the points that voted for it.
+    points: np.ndarray = field(default_factory=lambda: np.zeros((0, 3)))
 
     @property
     def polylines(self) -> list[np.ndarray]:
@@ -626,14 +630,14 @@ def detect(pts: np.ndarray,
 
     if len(pts) < 3:
         return LitRansacResult([], [], [], params, used_oracle,
-                               "cloud too small to fit a plane")
+                               "cloud too small to fit a plane", points=pts)
 
     planes = multi_plane_fit(pts, dist_thresh_mm, min_inlier_ratio, confidence, seed,
                              max_planes, max_iterations, iteration_rule, plane_refit,
                              refit_k)
     if len(planes) < 2:
         return LitRansacResult([], planes, [], params, used_oracle,
-                               f"{len(planes)} plane(s) fitted; §6 needs a pair")
+                               f"{len(planes)} plane(s) fitted; §6 needs a pair", points=pts)
 
     bbox = (pts.min(axis=0), pts.max(axis=0))
     # eq. 25 first: the triple points are shared across pairs, so compute them once.
@@ -707,7 +711,15 @@ def detect(pts: np.ndarray,
 
     note = ""
     if not seams:
-        n_parallel = sum(p["status"] == "parallel" for p in pairs)
-        note = (f"no seam from {len(planes)} planes "
-                f"({n_parallel}/{len(pairs)} pair(s) parallel — no intersection line exists)")
-    return LitRansacResult(seams, planes, pairs, params, used_oracle, note)
+        # Say which gate did the rejecting, not which one was expected to. Two faces that
+        # are parallel *in the geometry* are rarely parallel in the FIT - RANSAC on sampled
+        # points leaves a fraction of a degree between them, enough that `n1 x n2` is not
+        # numerically zero and the line exists, in mid-air. It is the orthogonality gate
+        # that then throws it out, at a fold angle near 0. Reporting "0 pairs parallel"
+        # for a joint whose faces are all parallel is exactly the wrong summary.
+        census = {}
+        for pr in pairs:
+            census[pr["status"]] = census.get(pr["status"], 0) + 1
+        detail = ", ".join(f"{v} {k}" for k, v in sorted(census.items()))
+        note = f"no seam from {len(planes)} planes; {len(pairs)} pair(s): {detail}"
+    return LitRansacResult(seams, planes, pairs, params, used_oracle, note, points=pts)

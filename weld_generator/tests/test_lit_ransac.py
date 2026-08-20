@@ -170,9 +170,14 @@ def test_an_edge_joint_returns_nothing_and_says_why():
     pts, _ = slabs("edge")
     r = detect(pts, seed=0, prefilter_density_per_mm2=1.0)
     assert r.n_seams == 0
-    assert "parallel" in r.note
     assert r.pairs and all(p["status"] in ("parallel", "not_orthogonal") for p in r.pairs)
     assert not any(p["status"] == "seam" for p in r.pairs)
+    assert "not_orthogonal" in r.note
+
+    # And every rejected pair is rejected at a fold angle near ZERO, not near 90. That
+    # distinction is the whole claim: the faces are parallel, so there is no fold for a
+    # fillet to sit in. A tuning failure would show folds near 90 falling out on support.
+    assert max(p["fold_deg"] for p in r.pairs) < 30.0
 
 
 def test_the_endpoints_come_from_the_plate_that_terminates_not_the_base():
