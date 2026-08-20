@@ -229,17 +229,20 @@ unbalanced corpus** — 2 lap and 4 edge scenes. Every one of those three qualif
 to move a row; read the per-type numbers as directional and the spread section below as the
 actual result.
 
-| joint | L0 F1 | L1 F1 | L0 precision | L0 recall |
-|---|---|---|---|---|
-| T | 0,75 | 0,58 | 0,69 | 0,91 |
-| lap | 0,55 | **0,00** | 0,38 | 1,00 |
-| butt | 0,54 | 0,50 | 0,49 | 0,60 |
-| corner | 0,51 | 0,45 | 0,39 | 0,86 |
-| edge | **0,00** | **0,00** | 0,00 | 0,00 |
+| joint | L0 F1 | L1 F1 | L0 precision | L0 recall | n |
+|---|---|---|---|---|---|
+| T | 0,75 | 0,58 | 0,69 | 0,91 | 12 |
+| lap | 0,55 ⚠ | **0,00** ⚠ | 0,38 | 1,00 | **2** |
+| butt | 0,54 | 0,50 | 0,49 | 0,60 | 15 |
+| corner | 0,51 | 0,45 | 0,39 | 0,86 | 11 |
+| edge | **0,00** | **0,00** | 0,00 | 0,00 | 4 |
 
-Four things, and two of them revise text written above.
+⚠ The lap row did not survive a seed sweep — see item 4. It is left in place as the record of
+what one draw looked like, not as a number.
 
-1. **Edge is 0,00, exactly as predicted — but one gate down from where the prediction put it.**
+Four things, and three of them revise text written above.
+
+1. **Edge is 0,00 — as predicted, but one gate down from where the prediction put it.**
    The faces are parallel *in the geometry*; they are almost never parallel in the *fit*, because
    RANSAC on sampled points leaves a fraction of a degree between them. So `n₁ × n₂` is not
    numerically zero, `intersection_line` returns a line — in mid-air, hundreds of mm away — and
@@ -247,7 +250,11 @@ Four things, and two of them revise text written above.
    different line of code, and worth getting right because the distinguishing evidence is the
    *angle at which pairs are rejected*: every edge pair is thrown out near 0°, never near 90°.
    A tuning failure looks like the opposite. `LitRansacResult.pairs` records the verdict and
-   fold angle of every pair for exactly this reason, so the claim is a column in a table.
+   fold angle of every pair for exactly this reason, so the claim is a column in a table: the
+   widest fold across every edge pair in the corpus is 15,8°.
+
+   One exception, kept rather than rounded away: over 90 seeded edge runs, 89 return nothing and
+   one scores F1 0,23 — a line grazing the truth, at a third of the T-joint figure.
 
 2. **Butt is *not* 0,00, and the prediction above is wrong about it.** The reason is a feature
    of this generator the prediction did not account for: a butt joint with a **root gap** has
@@ -262,25 +269,34 @@ Four things, and two of them revise text written above.
    orthogonal intersecting pair indistinguishable from a fillet. **This is the false-positive
    result the Phase 4 checklist asks for**, and it arrives without a fixture in the scene.
 
-4. **The L0→L1 delta is largest on lap: 0,55 → 0,00, and it fails in two stages.** A lap toe is
-   made by the top plate's **edge face** — a thin ribbon, ~8 × 200 mm.
+4. **The L0→L1 delta is largest on lap — and the first reading of it was wrong.** A lap toe is
+   made by the top plate's **edge face**, a ribbon roughly 8 × 200 mm: a small plane, and a badly
+   conditioned one.
 
-   *Stage one, at L1:* eq. 17's termination `n_in / N_seg > T_mpp` is an **area ratio**, and
-   that ribbon is under 2% of a whole workpiece. It is never fitted as a plane at all, so every
-   pair the method sees is one of the big parallel faces against another — measured folds of
-   0–4° across every L1 lap run. A published constant deletes a joint type.
+   At seed 0 and ρ = 1 the numbers said 0,55 → 0,00, and at ρ = 0,5 they said 0,00 at both arms.
+   That looked like a clean two-stage mechanism — `T_mpp` deletes the ribbon at L1; density
+   decides whether it fits straight at L0. **Neither half survived varying the seed.** Over
+   2 scenes × 4 densities × 8 seeds:
 
-   *Stage two, at L0:* restricted to the weld region the ribbon clears `T_mpp` (ratios 0,03–0,07)
-   and **is** fitted — but a thin ribbon is a badly conditioned plane, and whether it comes out
-   at the right angle depends on how many points are on it. At ρ = 1 pt/mm² it fits at 89–90°
-   and yields seams; at ρ = 0,5 the same face fits at 21–34° and every pair is rejected as
-   off-orthogonal. F1 0,55 → 0,00 on a halved density, nothing else changed.
+   | | L0 | L1 |
+   |---|---|---|
+   | mean F1 | 0,31 | 0,07 |
+   | runs returning nothing | 45% | 89% |
+   | runs that fitted the ribbon at all | most | 8 of 64 |
 
-   So the honest statement is not "segmentation rescues lap". It is that lap needs the
-   segmentation **and** enough points on a ribbon, and the second condition is one the paper
-   never has to think about because its own cloud is 0,64 mm-resolution CSL. **Density is not a
-   nuisance axis for this method either** — the same finding `ours` produced, on a different
-   quantity.
+   *What survives:* the segmentation effect is real and large. `T_mpp` is an **area ratio**, the
+   ribbon is under 2% of a whole workpiece, and at L1 it is dropped before it is ever a plane —
+   in 89% of runs. A published constant *mostly* deletes a joint type, and "mostly" is the
+   honest word; "always" is what one seed said.
+
+   *What does not survive:* the density story. Spread across seeds at fixed (scene, ρ) is 0,27;
+   spread across ρ at fixed (scene, seed) is 0,31. Same size. At n = 2 lap scenes neither is
+   attributable, and the single-seed density effect was noise wearing a mechanism's clothes.
+
+   Recorded at length because it is the **third** time in this project that a per-type conclusion
+   from a handful of scenes has been overturned by the next measurement. The rule that follows:
+   for a randomised method, no per-type claim is made from fewer than a seed sweep, and no claim
+   at all is made from 2 scenes.
 
 #### The reproducibility result, and why it is the strongest thing here
 

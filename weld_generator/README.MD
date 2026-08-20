@@ -43,8 +43,12 @@ Two notebooks, both of which need a **kernel restart** after you change `weldgen
   omission policy.
 - `notebooks/03_baselines.ipynb` — `ours` (radius-PCA) scored against constructed truth: the
   validity window on trial, per-joint-type error, and the segmentation-dependency ablation.
-  One of seven methods in the Phase 4 comparison; see `notes/dataset_plan.md` §4 and
-  **Baselines** below. `lit-ransac` has no notebook yet — it is scored from the harness.
+- `notebooks/04_lit_ransac.ipynb` — `lit-ransac` (Yi et al. 2026) reimplemented and put on
+  trial: the two gates that decide coverage, the L0/L1 segmentation delta, the seed box plots,
+  and the two equations that do not work as printed.
+
+Both are entries in the seven-method Phase 4 comparison; see `notes/dataset_plan.md` §4 and
+**Baselines** below.
 
 ---
 
@@ -366,11 +370,13 @@ as a novel extractor — the contribution is the dataset and the comparison
 
 Three things a reader of the paper should know before quoting either.
 
-**A published constant can delete a joint type.** `lit-ransac` terminates plane fitting when a
-plane holds under `T_mpp = 2,5%` of the points (their eq. 17). A lap toe is made by the top
-plate's *edge face*, which is under 2% of a whole workpiece — so the plane is never fitted and
-the joint scores 0,00. Restricted to the paper's own 40 mm weld region the same face is a large
-fraction and the joint scores 0,55. The constant is fine on the input it was tuned for.
+**A published constant can delete a joint type — mostly.** `lit-ransac` terminates plane
+fitting when a plane holds under `T_mpp = 2,5%` of the points (their eq. 17). A lap toe is made
+by the top plate's *edge face*, under 2% of a whole workpiece, so the plane is never fitted. Over
+2 scenes × 4 densities × 8 seeds the joint returns nothing in **89%** of whole-workpiece runs
+against **45%** restricted to the paper's own 40 mm weld region; mean F1 0,07 against 0,31. The
+constant is fine on the input it was tuned for. *"Mostly"* is doing real work in that sentence:
+read at one seed the same comparison looked like a clean 0,00 against 0,55, and it is not.
 
 **Two of the paper's equations are unusable as printed** — the iteration budget (eq. 18, which
 reads as ~10¹⁰ samples against a reported 0,187 s runtime) and the plane refit (eq. 19, two
