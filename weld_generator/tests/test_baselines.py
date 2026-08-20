@@ -16,8 +16,8 @@ import pytest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from baselines import (cloud_for, detect, evaluate, ground_truth,  # noqa: E402
-                       load_scene, scene_facts)
+from baselines import (cloud_for, detect, evaluate, evaluate_band,  # noqa: E402
+                       ground_truth, load_scene, scene_facts)
 from baselines.metrics import (chamfer_mm, densify,  # noqa: E402
                                point_segment_distance, precision_recall_f1)
 from baselines.radius_pca import (mean_spacing_mm, surface_variation,  # noqa: E402
@@ -102,8 +102,8 @@ def test_lengths_are_millimetres():
     its value and changed its meaning by 1000x.
     """
     pts, oid = fold()
-    assert detect(pts, 0.006, object_id=oid).n_seams == 0, "6 mm written as 0.006"
-    assert detect(pts, 6.0, object_id=oid).n_seams >= 1
+    assert detect(pts, 0.006, object_id=oid).n_clusters == 0, "6 mm written as 0.006"
+    assert detect(pts, 6.0, object_id=oid).n_clusters >= 1
 
 
 # --- the upgrades ---------------------------------------------------------------------
@@ -140,16 +140,28 @@ def test_multi_seam_returns_two_components_not_one_blob():
     pts = np.vstack([a, b])
     oid = np.r_[oid_a, oid_b + 2]
     r = detect(pts, 4.0, object_id=oid, link_mm=4.0)
-    assert r.n_seams == 2, f"expected 2 seams, got {r.n_seams}"
+    assert r.n_clusters == 2, f"expected 2 clusters, got {r.n_clusters}"
 
 
-def test_the_line_fit_narrows_the_band():
-    """README §8's caveat: the published seam is a ~16 mm band, not a centreline."""
-    pts, oid = fold()
-    r = detect(pts, 4.0, object_id=oid)
-    gt = [np.array([[0.0, 0.0, 0.0], [50.0, 0.0, 0.0]])]
-    m = evaluate(r.seams, gt, band=r.band)
-    assert m["band_width_mm"] <= m["band_width_raw_mm"] + 1e-9
+def test_the_band_contains_the_seam_and_precision_is_its_width():
+    """No line is fitted any more, and the band is scored as a point set.
+
+    On these joints the band is a RECTANGLE, and a total-least-squares line through it
+    lands in the middle of that rectangle - the mid-surface between two plates, not the
+    seam. So the fit was removed rather than improved.
+
+    Scored directly the band asks the question the method can actually answer: recall says
+    the seam is inside what it returned, precision is the honest cost of the band's width.
+    That is `README §8`'s "the published seam is a ~16 mm band" as a number instead of a
+    paragraph.
+    """
+    pts, oid, _ = slabs("T", density=0.6)
+    r = detect(pts, 5.0, object_id=oid)
+    gt = [np.array([[-100.0, 0.0, 0.0], [100.0, 0.0, 0.0]])]
+    m = evaluate_band(r.band, gt, n_clusters=r.n_clusters)
+    assert m["recall"] > 0.5, "the band must contain the seam"
+    assert 0.0 <= m["precision"] <= 1.0
+    assert m["band_width_mm"] > 0.0
 
 
 # --- metrics --------------------------------------------------------------------------
@@ -206,8 +218,8 @@ def test_runs_end_to_end_on_a_generated_scene():
     lo, hi = validity_window_mm(facts["root_gap_mm"], spacing, facts["t_min_mm"])
     r = detect(cloud["xyz"], 0.5 * (lo + hi) if lo < hi else lo,
                object_id=cloud["object_id"])
-    m = evaluate(r.seams, gt, band=r.band)
-    assert set(m) >= {"chamfer", "precision", "recall", "f1", "seam_count_error"}
+    m = evaluate_band(r.band, gt, n_clusters=r.n_clusters)
+    assert set(m) >= {"chamfer", "precision", "recall", "f1", "cluster_count_error"}
 
 
 @pytest.mark.skipif(not (ROOT / "out" / "phase3" / "index.jsonl").exists(),

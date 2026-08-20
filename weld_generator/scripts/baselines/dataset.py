@@ -98,8 +98,8 @@ def cloud_for(scene: dict, arrays: dict, view: str = "full", noisy: bool = False
 
 
 def ground_truth(scene: dict, arrays: dict, curve: str = "nominal",
-                 primary_only: bool = True, min_visible_fraction: float | None = None
-                 ) -> list[np.ndarray]:
+                 primary_only: bool = True, min_visible_fraction: float | None = None,
+                 include_rejected: bool = False) -> list[np.ndarray]:
     """Truth polylines for one scene.
 
     Args:
@@ -116,8 +116,11 @@ def ground_truth(scene: dict, arrays: dict, curve: str = "nominal",
         raise ValueError(f"curve must be one of {CURVES}, got {curve!r}")
     out = []
     for s in scene["seams"]:
-        if not s["weldable"]:
+        if not s["weldable"] and not include_rejected:
             continue
+        if not s["weldable"] and s.get("reject_reason") in (
+                "fixture_contact", "bisector_blocked", "degenerate_dihedral", "no_contact"):
+            continue                                   # not a reachable interface at all
         if primary_only and not s["matches_joint_type"]:
             continue
         if (min_visible_fraction is not None

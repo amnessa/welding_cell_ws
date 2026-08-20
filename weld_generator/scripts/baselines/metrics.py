@@ -20,6 +20,26 @@ from typing import Any
 
 import numpy as np
 
+try:
+    from scipy.spatial import cKDTree
+except ImportError:                                    # pragma: no cover
+    cKDTree = None
+
+
+def _nearest(query: np.ndarray, target: np.ndarray) -> np.ndarray:
+    """Distance from each `query` point to the nearest `target` point.
+
+    A KD-tree rather than the obvious `query[:, None] - target[None, :]` broadcast: that
+    allocates `len(query) x len(target) x 3` floats, and an edge joint's band is 26 000
+    points, which is enough to take the process out with an OOM kill.
+    """
+    if len(query) == 0 or len(target) == 0:
+        return np.full(len(query), np.inf)
+    if cKDTree is None:                                # pragma: no cover
+        return np.min(np.linalg.norm(query[:, None, :] - target[None, :, :], axis=-1),
+                      axis=1)
+    return cKDTree(target).query(query, k=1, workers=-1)[0]
+
 
 # --------------------------------------------------------------------------------
 # geometry
@@ -86,8 +106,7 @@ def chamfer_mm(pred: np.ndarray, gt_polylines, step_mm: float = 1.0) -> dict[str
 
     a = float(distance_to_polylines(pred, polys).mean())
     gt_pts = np.vstack([_sample_polyline(p, step_mm) for p in polys])
-    b = float(np.min(np.linalg.norm(gt_pts[:, None, :] - pred[None, :, :], axis=-1),
-                     axis=1).mean())
+    b = float(_nearest(gt_pts, pred).mean())
     return {"pred_to_gt": a, "gt_to_pred": b, "chamfer": a + b}
 
 
@@ -106,8 +125,7 @@ def precision_recall_f1(pred: np.ndarray, gt_polylines, tol_mm: float,
 
     precision = float((distance_to_polylines(pred, polys) <= tol_mm).mean())
     gt_pts = np.vstack([_sample_polyline(p, step_mm) for p in polys])
-    d = np.min(np.linalg.norm(gt_pts[:, None, :] - pred[None, :, :], axis=-1), axis=1)
-    recall = float((d <= tol_mm).mean())
+    recall = float((_nearest(gt_pts, pred) <= tol_mm).mean())
     f1 = 0.0 if precision + recall == 0 else 2 * precision * recall / (precision + recall)
     return {"precision": precision, "recall": recall, "f1": f1}
 
@@ -156,6 +174,33 @@ def densify(polylines_or_points, step_mm: float = 1.0) -> np.ndarray:
     parts = [_sample_polyline(np.asarray(p, dtype=float), step_mm)
              for p in polylines_or_points if len(np.asarray(p)) >= 2]
     return np.vstack(parts) if parts else np.zeros((0, 3))
+
+
+def evaluate_band(band: np.ndarray, gt_polylines, n_clusters: int | None = None,
+                  tol_mm: float = 3.0, step_mm: float = 1.0) -> dict[str, Any]:
+    """Score the band **as a point set**, with no line fitted through it.
+
+    The line fit is gone on purpose. On these joints the band is a rectangle and a
+    total-least-squares line through it sits in the middle of that rectangle - which is the
+    mid-surface between two plates, not the seam. Scoring the band directly asks the
+    question the method can actually answer: *is the seam inside what it returned, and how
+    much of what it returned is not seam?*
+
+    `precision` is now the honest cost of the band's width: a 16 mm band around a seam
+    scores badly on it however well centred it is, which is exactly the `README §8` caveat
+    turned into a number rather than a paragraph.
+    """
+    band = np.asarray(band, dtype=float)
+    out: dict[str, Any] = {"n_band_points": int(len(band)),
+                           "n_clusters": int(n_clusters) if n_clusters is not None else -1,
+                           "n_gt_seams": len(gt_polylines)}
+    if n_clusters is not None:
+        out["cluster_count_error"] = int(n_clusters) - len(gt_polylines)
+    out.update(chamfer_mm(band, gt_polylines, step_mm))
+    out.update(precision_recall_f1(band, gt_polylines, tol_mm, step_mm))
+    out.update({f"lat_{k}": v for k, v in lateral_error_mm(band, gt_polylines).items()})
+    out["band_width_mm"] = band_width_mm(band, gt_polylines)
+    return out
 
 
 def evaluate(pred_seams, gt_polylines, band: np.ndarray | None = None,

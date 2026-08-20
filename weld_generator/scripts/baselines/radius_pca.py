@@ -192,6 +192,49 @@ def cross_object_mask(pts: np.ndarray, object_id: np.ndarray, radius_mm: float,
     return mask
 
 
+def density_anomaly(pts: np.ndarray, radius_mm: float, chunk: int = 20_000
+                    ) -> np.ndarray:
+    """Local point density, normalised by the set's own median. 1,0 = typical.
+
+    Measured on the **raw** band, before any voxel step. That ordering is the whole point:
+    `voxel_downsample` makes density uniform by construction, so computing this after it
+    returns 1,0 everywhere and the signal is gone.
+
+    Two surfaces converge at a fold, so a fold seam sits in a density *surplus*; a coplanar
+    seam is a gap in a flat surface, so it sits in a *deficit*. Measured on the band,
+    normalised, against distance from the true seam in units of R:
+
+    | joint | 0-,25R | ,25-,5R | ,5-1R | 1-1,5R |
+    |---|---|---|---|---|
+    | corner | **1,26** | 1,10 | 0,85 | 0,47 |
+    | lap | **1,16** | 1,09 | 0,88 | 0,97 |
+    | butt | **1,14** | 1,03 | 0,85 | 0,61 |
+    | T | **1,05** | 1,03 | 0,98 | 0,64 |
+    | edge | **0,62** | 0,71 | 0,71 | 0,63 |
+
+    So `|1 - density|` responds on every joint type and **the sign says which family the
+    seam belongs to** - which is the same measurement the gap channel wanted for coplanar
+    seams, read in the other direction.
+
+    Weaker than `V` (a 1,05-1,26x surplus against `V`'s much sharper response), so it is a
+    tie-breaker and a clustering weight rather than a detector in its own right.
+
+    Normalised by the median rather than an absolute expectation, so it needs no density
+    parameter and behaves the same at 0,25 and 4 pts/mm².
+    """
+    pts = np.asarray(pts, dtype=float)
+    if len(pts) == 0 or cKDTree is None:               # pragma: no cover
+        return np.ones(len(pts))
+    tree = cKDTree(pts)
+    counts = np.empty(len(pts))
+    for start in range(0, len(pts), chunk):
+        sl = slice(start, min(start + chunk, len(pts)))
+        counts[sl] = [len(x) for x in tree.query_ball_point(pts[sl], radius_mm,
+                                                            workers=-1)]
+    med = float(np.median(counts))
+    return counts / med if med > 0 else np.ones(len(pts))
+
+
 def voxel_downsample(pts: np.ndarray, voxel_mm: float) -> np.ndarray:
     """Average points per voxel — the trick that merges the two parallel edge lines.
 
@@ -217,6 +260,34 @@ def voxel_downsample(pts: np.ndarray, voxel_mm: float) -> np.ndarray:
     return out
 
 
+def dbscan_components(pts: np.ndarray, eps_mm: float, min_samples: int) -> np.ndarray:
+    """Density-based clustering. Returns labels; **-1 marks noise**.
+
+    The difference from `connected_components` is entirely in that noise label, and it is
+    the point. Plain linking is DBSCAN with `min_samples = 1`: every point is a core point,
+    so a thin trail of stragglers between two seams chains them into one cluster. That is
+    the failure behind every wrong seam count - one component spanning both ground-truth
+    seams, and a fitted polyline zigzagging between them by up to 65 degrees.
+
+    With `min_samples > 1` the sparse in-between points are not core points, so they join a
+    cluster only if they are reachable from one and never act as bridges themselves. The
+    band supports this because the density really does dip between seams: normalised to the
+    band median it runs ~1,05-1,26 at the seam and ~0,47-0,64 at 1-1,5 R out.
+
+    **Must run on the raw band.** `voxel_downsample` makes density uniform by construction,
+    so after it the dip DBSCAN needs is gone and it degenerates to plain linking.
+    """
+    pts = np.asarray(pts, dtype=float)
+    if len(pts) == 0:
+        return np.zeros(0, dtype=int)
+    try:
+        from sklearn.cluster import DBSCAN
+    except ImportError:                                # pragma: no cover
+        raise ImportError("cluster_method='dbscan' needs scikit-learn; "
+                          "pip install scikit-learn") from None
+    return DBSCAN(eps=float(eps_mm), min_samples=int(min_samples)).fit(pts).labels_
+
+
 def connected_components(pts: np.ndarray, link_mm: float) -> np.ndarray:
     """Component label per point, linking anything within `link_mm`.
 
@@ -239,27 +310,17 @@ def connected_components(pts: np.ndarray, link_mm: float) -> np.ndarray:
     return labels
 
 
-def fit_line(pts: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Total-least-squares line through a band, returned as its two endpoints.
-
-    README §8's caveat, answered: the thresholded result is a band ~16 mm wide, not a line,
-    and "for a true single-line toolpath, fit a line/spline through the band and project
-    onto it". Measuring Chamfer against the band instead charges the method for its own
-    width, which is a property of the threshold rather than of where the seam is.
-    """
-    pts = np.asarray(pts, dtype=float)
-    centre = pts.mean(axis=0)
-    d = np.linalg.svd(pts - centre, full_matrices=False)[2][0]
-    t = (pts - centre) @ d
-    return centre + d * t.min(), centre + d * t.max()
-
-
 @dataclass
 class RadiusPCAResult:
     """What the baseline returned, and enough context to know what it means."""
 
-    band: np.ndarray                      #: (N,3) surviving points, before the line fit
-    seams: list[np.ndarray]               #: one (2,3) endpoint pair per component
+    band: np.ndarray                      #: (N,3) the detection - the whole band
+    #: The band split into clusters, one point set each. NOT fitted lines: the line fit is
+    #: gone on purpose. On these generated joints the band is a RECTANGLE and a
+    #: total-least-squares line through it lands in the middle of that rectangle, which is
+    #: not where the seam is - it is the mid-surface between two plates. The band is what
+    #: the method actually knows; the line was an assumption laid on top of it.
+    clusters: list[np.ndarray]
     labels: np.ndarray                    #: component label per band point
     variation: np.ndarray                 #: V for every input point - the raw signal
     params: dict[str, Any] = field(default_factory=dict)
@@ -267,10 +328,15 @@ class RadiusPCAResult:
     #: number produced with this set is not a point-cloud-only result.
     used_object_oracle: bool = False
     note: str = ""
+    #: The band BEFORE the voxel merge, and its local density normalised to the set median.
+    #: Kept because `voxel_downsample` flattens density by construction, so after it the
+    #: signal no longer exists to be measured. Exposed, not yet acted on.
+    band_raw: np.ndarray = field(default_factory=lambda: np.zeros((0, 3)))
+    band_density: np.ndarray = field(default_factory=lambda: np.zeros(0))
 
     @property
-    def n_seams(self) -> int:
-        return len(self.seams)
+    def n_clusters(self) -> int:
+        return len(self.clusters)
 
 
 def detect(pts: np.ndarray,
@@ -283,7 +349,13 @@ def detect(pts: np.ndarray,
            exterior: np.ndarray | None = None,
            min_component_pts: int = 8,
            link_mm: float | None = None,
-           prefilter_density_per_mm2: float | None = None) -> RadiusPCAResult:
+           prefilter_density_per_mm2: float | None = None,
+           density_radius_mm: float | None = None,
+           band_sampling: str = "voxel",
+           cluster_method: str = "components",
+           dbscan_eps_mm: float | None = None,
+           dbscan_min_samples: int = 6,
+           density_keep: float | None = None) -> RadiusPCAResult:
     """Run the baseline. Lengths in **millimetres**.
 
     Args:
@@ -305,6 +377,23 @@ def detect(pts: np.ndarray,
             parameter here, it is one of the four axes the window is a surface over.
             It also bounds the cost: a 400 k-point cloud at R = 5 mm is ~180 M neighbour
             pairs, which is where an unprefiltered corpus sweep runs out of memory.
+        density_radius_mm: ball for the density anomaly (`density_anomaly`), default
+            1,5 x the point spacing. Small on purpose - it has to resolve a surplus that
+            is only 1,05-1,26x, so a large ball averages it away.
+        band_sampling: `"voxel"` (default, the original) merges the band on a voxel grid
+            coarser than the gap, which averages the two parallel edge lines into one.
+            `"raw"` keeps every band point. Voxelising **destroys the density signal**, so
+            `"raw"` is required for `cluster_method="dbscan"` to do anything.
+        cluster_method: `"components"` (default, the original) or `"dbscan"`. See
+            `dbscan_components` for why the noise label is the whole difference.
+        dbscan_eps_mm: neighbourhood for DBSCAN, default 2 x the point spacing. It must be
+            **below the seam separation** or the two seams are density-reachable from each
+            other and no `min_samples` can separate them.
+        dbscan_min_samples: core-point threshold. This is the knob that decides what counts
+            as a bridge rather than a seam.
+        density_keep: if set, drop band points whose `density_anomaly` is below this before
+            clustering. A direct filter on the same dip DBSCAN exploits - cruder, but it
+            makes the effect visible on its own.
         link_mm: component linking distance, default `radius_mm`. Bounded by the same
             argument as `R` itself: if the PCA ball must not bridge a plate's own two
             faces, neither must the thing that decides which points belong to one seam.
@@ -318,6 +407,8 @@ def detect(pts: np.ndarray,
             would, and that is an upgrade to make with a number in front of you.
     """
     pts = np.asarray(pts, dtype=float)
+    spacing_hint = (1.0 / np.sqrt(float(prefilter_density_per_mm2))
+                    if prefilter_density_per_mm2 else radius_mm / 4.0)
     voxel_mm = float(voxel_mm) if voxel_mm else 2.0 * radius_mm / 3.0
     link_mm = float(link_mm) if link_mm else float(radius_mm)
     params = dict(radius_mm=radius_mm, curvature_thresh=curvature_thresh,
@@ -328,7 +419,7 @@ def detect(pts: np.ndarray,
 
     if len(pts) < min_neighbors:
         return RadiusPCAResult(empty, [], np.zeros(0, int), np.zeros(len(pts)),
-                               params, False, "too few points")
+                               params=params, note="too few points")
 
     if prefilter_density_per_mm2:
         # Voxel side ~ mean spacing at the target density (spacing ~ 1/sqrt(rho)). Object
@@ -351,9 +442,9 @@ def detect(pts: np.ndarray,
     params["n_above_threshold"] = int(keep.sum())
     if not keep.any():
         return RadiusPCAResult(
-            empty, [], np.zeros(0, int), var, params, False,
-            f"no point above V={curvature_thresh:g} (max {var.max():.4f}); the radius is "
-            f"probably below the gap")
+            empty, [], np.zeros(0, int), var, params=params,
+            note=f"no point above V={curvature_thresh:g} (max {var.max():.4f}); the radius "
+                 f"is probably below the gap")
 
     used_oracle = False
     if cross_object and object_id is not None:
@@ -362,22 +453,54 @@ def detect(pts: np.ndarray,
         params["n_cross_object"] = int(keep.sum())
         if not keep.any():
             return RadiusPCAResult(
-                empty, [], np.zeros(0, int), var, params, True,
-                "high-curvature points exist but none lie within R of another object")
+                empty, [], np.zeros(0, int), var, params=params, used_object_oracle=True,
+                note="high-curvature points exist but none lie within R of another object")
 
-    band = voxel_downsample(pts[keep], voxel_mm)
-    labels = connected_components(band, link_mm)
+    # Density is measured on the RAW band and carried alongside: the voxel merge below
+    # makes density uniform, so after it the signal no longer exists to be measured.
+    band_raw = pts[keep]
+    band_density = density_anomaly(band_raw, density_radius_mm or (1.5 * spacing_hint))
+    params["density_radius_mm"] = float(density_radius_mm or (1.5 * spacing_hint))
 
-    seams: list[np.ndarray] = []
+    if density_keep is not None:
+        surviving = band_density >= float(density_keep)
+        params["n_density_kept"] = int(surviving.sum())
+        if surviving.sum() >= min_component_pts:
+            band_raw = band_raw[surviving]
+            band_density = band_density[surviving]
+
+    if band_sampling not in ("voxel", "raw"):
+        raise ValueError(f"band_sampling must be 'voxel' or 'raw', got {band_sampling!r}")
+    band = voxel_downsample(band_raw, voxel_mm) if band_sampling == "voxel" else band_raw
+    params["band_sampling"] = band_sampling
+
+    if cluster_method == "dbscan":
+        eps = float(dbscan_eps_mm) if dbscan_eps_mm else 2.0 * spacing_hint
+        params["dbscan_eps_mm"] = eps
+        params["dbscan_min_samples"] = int(dbscan_min_samples)
+        labels = dbscan_components(band, eps, dbscan_min_samples)
+        params["n_noise"] = int((labels < 0).sum())
+    elif cluster_method == "components":
+        labels = connected_components(band, link_mm)
+    else:
+        raise ValueError(
+            f"cluster_method must be 'components' or 'dbscan', got {cluster_method!r}")
+    params["cluster_method"] = cluster_method
+
+    clusters: list[np.ndarray] = []
     kept_labels = np.full(len(band), -1)
     for lab in np.unique(labels):
+        if lab < 0:
+            continue                                   # DBSCAN noise: the bridge points
         m = labels == lab
         if int(m.sum()) < min_component_pts:
             continue                                   # a speck, not a seam
-        kept_labels[m] = len(seams)
-        p0, p1 = fit_line(band[m])
-        seams.append(np.stack([p0, p1]))
+        kept_labels[m] = len(clusters)
+        clusters.append(band[m])
 
     params["n_components"] = int(len(np.unique(labels)))
-    return RadiusPCAResult(band, seams, kept_labels, var, params, used_oracle,
-                           f"{len(seams)} seam(s) from {int(keep.sum())} edge points")
+    return RadiusPCAResult(band, clusters, kept_labels, var,
+                           band_raw=band_raw, band_density=band_density,
+                           params=params, used_object_oracle=used_oracle,
+                           note=f"{len(clusters)} cluster(s), {len(band)} band points "
+                                f"from {int(keep.sum())} above threshold")
