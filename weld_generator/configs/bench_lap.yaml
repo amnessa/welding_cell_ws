@@ -1,0 +1,13 @@
+# Balanced benchmark corpus — one config per joint type, 50 emitted scenes each.
+# Per-type configs on purpose: `joint_type` is sampled per seed, so a mixed config gives
+# whatever the draw gives (out/phase3: 15 butt against 2 lap), and every per-type conclusion
+# drawn from that corpus so far has been overturned by the next measurement.
+# Seed ranges differ per type because the yields do — lap and edge lose most seeds to
+# `NoSeamsFound` / `NoVisibleSeams`, which is itself a recorded property of those joints.
+name: bench_lap
+joint_type: [lap]
+seam_shape: line
+prep: square
+fixture_present: false
+sampling_mode: area_uniform
+sensor_profiles: [d435i, stereo_good, stereo_poor]

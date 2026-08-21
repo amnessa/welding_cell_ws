@@ -44,11 +44,15 @@ Two notebooks, both of which need a **kernel restart** after you change `weldgen
 - `notebooks/03_baselines.ipynb` — `ours` (radius-PCA) scored against constructed truth: the
   validity window on trial, per-joint-type error, and the segmentation-dependency ablation.
 - `notebooks/04_lit_ransac.ipynb` — `lit-ransac` (Yi et al. 2026) reimplemented and put on
-  trial: the two gates that decide coverage, the L0/L1 segmentation delta, the seed box plots,
-  and the two equations that do not work as printed.
+  trial: the reproduction of its published RMSE/ME, the two gates that decide coverage, the
+  L0/L1 segmentation delta, the seed box plots, and the two equations that do not work as
+  printed.
+- `notebooks/05_lit_regiongrow.ipynb` — `lit-regiongrow` (Wei et al. 2024): the feature it
+  shares with `ours`, why PCL's defaults put a 9 mm neighbourhood on an 8 mm plate, and the
+  clustering wall it hits in the same place `ours` does.
 
-Both are entries in the seven-method Phase 4 comparison; see `notes/dataset_plan.md` §4 and
-**Baselines** below.
+All three are entries in the seven-method Phase 4 comparison; see `notes/dataset_plan.md` §4
+and **Baselines** below.
 
 ---
 
@@ -79,11 +83,12 @@ weldgen/         the generator - trimesh + NumPy only, no simulator import (D9)
 
 scripts/         evaluation, NOT part of the generator (Phase 4)
   baselines/         radius_pca.py (`ours`), lit_ransac.py (Yi et al. 2026),
-                     metrics.py, dataset.py
+                     lit_regiongrow.py (Wei et al. 2024), metrics.py, dataset.py
 
 configs/         phase1, phase2, phase2_fixture, phase3, phase3_raster,
+                 bench_{T,corner,butt,lap,edge}  <- the balanced benchmark corpus,
                  smoke, reference_tjoint, playground
-tests/           227 tests: geometry, determinism, schema conformance, ISO limits, viz,
+tests/           238 tests: geometry, determinism, schema conformance, ISO limits, viz,
                  the Phase 2 joint-type gate, the Phase 3 visibility gate, and the
                  migrated baseline
 notes/           the plan, the handoff, and the standards PDFs
@@ -367,6 +372,20 @@ as a novel extractor — the contribution is the dataset and the comparison
 |---|---|---|
 | `radius_pca.py` | `ours` — radius-PCA surface variation, band only | `object_id` (cross-object gate) |
 | `lit_ransac.py` | `lit-ransac` — Yi et al., *Automation in Construction* 183 (2026) 106792: improved multi-plane RANSAC, plane intersections, endpoints by projection, torch pose from the dihedral | a weld-region segmentation (their PointNet++) |
+| `lit_regiongrow.py` | `lit-regiongrow` — Wei et al., arXiv:2408.10710 (2024): curvature-seeded region growing, then the edge points that span two grown surfaces | a weld-region crop (their FastSAM) |
+
+**`lit-ransac` reproduces its paper.** Checked against §7.2.1's own metric, not ours — RMSE
+0,60 mm and ME 0,81 mm against a reported max of 0,64 and 1,16, on a T joint at the paper's
+0,6427 mm point spacing with its 40 mm weld region supplied. Noiseless and with the §5.4
+refit disabled the error is **exactly zero**, which is the real proof: three exact points
+give an exact plane, two exact planes an exact line, and nothing is left for a bug to hide
+in. `metrics.matched_path_errors` computes the literature's RMSE/ME form for exactly this.
+
+**`lit-regiongrow` uses the same curvature `ours` does** — eq. 3's `λ₀/Σλ` is
+`surface_variation`, pinned by a test — so the two differ only in neighbourhood (k-NN vs
+ball), decision rule (region growing vs threshold), and how they tell two parts apart (its
+own grown regions vs an `object_id` oracle). Each of those is now measurable on one code path
+rather than arguable.
 
 Three things a reader of the paper should know before quoting either.
 

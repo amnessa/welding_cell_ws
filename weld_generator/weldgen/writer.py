@@ -128,7 +128,35 @@ def skipped_row(seed: int, config_id_: str, reason: str, detail: str) -> dict[st
             "skip_reason": reason, "skip_detail": detail}
 
 
-def write_index(out_dir: str | Path, rows: list[dict[str, Any]]) -> Path:
+def write_index(out_dir: str | Path, rows: list[dict[str, Any]], merge: bool = True
+                ) -> Path:
+    """Write `index.jsonl`, merging with any rows already there rather than replacing them.
+
+    Merging is the default because the scene *directories* are written per scene and the
+    index is written once at the end, so a second `generate` into the same `--out` used to
+    leave the directory holding 62 scenes and the index listing 25 of them. Nothing warned,
+    and `scene_dirs` reads the index — so two-thirds of a corpus silently stopped existing
+    as far as every downstream tool was concerned.
+
+    A top-up run is a legitimate thing to want: seeds are deliberately not backfilled inside
+    a run (it would break twin pairing, `cli.cmd_generate`), so reaching a target count means
+    appending a second seed range. That stays reproducible — the union of two stated ranges —
+    and merging by seed is what makes it safe.
+
+    Rows are keyed by `(config_id, seed)` and the incoming row wins, so re-running the same
+    range overwrites its own rows instead of duplicating them. Output is sorted, so the file
+    is a pure function of what has been generated and not of the order it was generated in.
+    """
     path = Path(out_dir) / "index.jsonl"
-    path.write_text("".join(canonical_json(r) + "\n" for r in rows))
+    merged: dict[tuple[str, int], dict[str, Any]] = {}
+    if merge and path.exists():
+        for line in path.read_text().splitlines():
+            if not line.strip():
+                continue
+            r = json.loads(line)
+            merged[(str(r.get("config_id", "")), int(r["seed"]))] = r
+    for r in rows:
+        merged[(str(r.get("config_id", "")), int(r["seed"]))] = r
+    ordered = [merged[k] for k in sorted(merged)]
+    path.write_text("".join(canonical_json(r) + "\n" for r in ordered))
     return path

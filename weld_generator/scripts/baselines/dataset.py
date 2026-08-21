@@ -52,6 +52,50 @@ def scene_dirs(out_dir: str | Path) -> list[Path]:
     return sorted(p for p in root.iterdir() if (p / "scene.json").exists())
 
 
+def balanced_corpus(root: str | Path = "out/bench", per_type: int = 50,
+                    joint_types: tuple[str, ...] | None = None) -> dict[str, list[Path]]:
+    """`{joint_type: [scene_dir, ...]}` — exactly `per_type` scenes of each type.
+
+    The benchmark corpus is generated **one config per joint type** into
+    `out/bench/<joint_type>/`, because `joint_type` is sampled per seed and a mixed config
+    gives whatever the draw gives: `out/phase3` came out 15 butt against 2 lap, and three
+    per-type conclusions drawn from it have since been overturned.
+
+    The generated counts are not equal and cannot be made equal by asking. Yields differ by
+    a factor of five across types — measured 59-81% for butt/T against **38% for lap**, the
+    rest lost to `NoVisibleSeams` — and seeds are deliberately not backfilled inside a run
+    (it would break twin pairing), so each type is generated with a generous budget and
+    trimmed here. Selection is the `per_type` **lowest seeds**, so it is a pure function of
+    the corpus and does not depend on generation order or on how much surplus a type has.
+
+    Raises if a type is short, rather than returning an unbalanced corpus quietly - being
+    silently down to 37 scenes of one type is the exact failure this function exists to stop.
+    """
+    root = Path(root)
+    types = joint_types or tuple(sorted(p.name for p in root.iterdir() if p.is_dir()))
+    out: dict[str, list[Path]] = {}
+    short = {}
+    for jt in types:
+        rows = []
+        index = root / jt / "index.jsonl"
+        if not index.exists():
+            short[jt] = 0
+            continue
+        for ln in index.read_text().splitlines():
+            r = json.loads(ln)
+            if r.get("emitted"):
+                rows.append((int(r["seed"]), root / jt / r["scene_id"]))
+        rows.sort()
+        if len(rows) < per_type:
+            short[jt] = len(rows)
+        out[jt] = [p for _, p in rows[:per_type]]
+    if short:
+        raise ValueError(
+            f"corpus is not balanced at {per_type} per type: {short}. "
+            f"Generate more seeds for those types - `configs/bench_<type>.yaml`.")
+    return out
+
+
 def iter_scenes(out_dir: str | Path):
     """Every emitted scene under an output directory, in index order.
 

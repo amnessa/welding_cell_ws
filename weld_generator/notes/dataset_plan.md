@@ -298,6 +298,126 @@ Four things, and three of them revise text written above.
    for a randomised method, no per-type claim is made from fewer than a seed sweep, and no claim
    at all is made from 2 scenes.
 
+#### `lit-ransac` **validated against the paper's own metric**, 2026-08-20
+
+Everything above is measured with this project's metrics, and no number in Yi et al. was ever
+computed with them — so none of it can say whether the reimplementation is faithful. §7.2.1
+can: one seam per workpiece, taught manually, **max ME 1,16 mm and max RMSE 0,64 mm** across
+four workpieces. `metrics.matched_path_errors` computes that form; `notebooks/04` runs it.
+
+Conditions matched to theirs: T joint, 0,6427 mm point spacing (their measured cloud
+resolution, §5.2), the ~40 mm weld region (§3), full visibility, `nominal` curve, and only
+scenes where §5.2's own validity window is open. 8 scenes × 5 seeds.
+
+| condition | RMSE | ME | paper |
+|---|---|---|---|
+| noiseless, §5.4 refit on | **0,60** | 0,81 | max RMSE **0,64**, max ME **1,16** |
+| noisy, §5.4 refit on | 0,77 | 1,19 | |
+| noiseless, **no refit** | **0,00** | **0,00** | — |
+| eq. 19 as printed | 2,67 | 5,04 | — |
+
+Three independent confirmations, the third strongest:
+
+1. **The headline lands on it** — 0,60 against 0,64, 0,81 against 1,16, slightly better on
+   both. That is the correct side: §7.2.1 measures 0,23 mm of hand-eye, 0,36 mm of TCP and
+   0,28 mm of teaching error *inside its own ground truth*, and ours is exact.
+2. **§5.4 does what §5.4 claims.** The centroid refit is a **noise** remedy, so it must help
+   only where there is noise — and it does: 0,77 against 1,22 with noise, 0,60 against 0,00
+   without. A correct implementation has to show that sign flip. Eq. 19 as printed is 4–5×
+   worse in both regimes, which settles deviation 2 empirically.
+3. **Noiseless without the refit, the error is exactly 0,000.** Three exact points give an
+   exact plane; two exact planes give an exact line. The whole §6.1/§6.2 chain returning the
+   seam to floating point is a far stronger statement than any millimetre figure — there is
+   nothing left for a bug to hide in.
+
+**A harness bug this found, worth generalising.** The first run gave RMSE 3,3 mm and ME
+13,7 mm. The decomposition said the *line* was accurate to 0,97 mm and the seam was **38 mm
+too long**. The fault was in `seam_region_oracle`, not the method: "within 20 mm of the seam"
+is a **capsule**, and a capsule reaches 20 mm past the seam's last point, sweeping up base
+plate no annotator would call weld region. §6.2 reads the seam's extent off the points it is
+given, so it read the capsule's. `end_margin_mm` now separates the annotation's *width* from
+its *extent* and defaults to zero. **An oracle standing in for a learned stage can inject a
+failure indistinguishable from a failure of the method it feeds** — check every future one
+the same way, by decomposing the metric before believing it.
+
+**A result the paper could not have produced.** §5.2 states a validity window and never tests
+it: *"given the steel plate thickness of 6 mm, a threshold exceeding this value inevitably
+leads to the erroneous merging of parallel planes."* Their plate is 6 mm and never varies.
+This corpus goes to 1,7 mm, where `T_d2 = 2 mm` exceeds the plate, the two faces merge, and
+the fitted plane is a compromise between them: **median RMSE 0,57 mm above 4 mm of plate
+against 1,51 mm below it**, rank correlation −0,78 against thickness. The same two-sided
+bound `ours` has on its PCA radius, on a different quantity — and neither is testable without
+a generator that varies the plate.
+
+**D19 confirmed, quantitatively.** The three curve definitions give median RMSE `nominal`
+0,599, `root` 0,735, `gap_mid` 1,078 — a **0,48 mm spread against a 0,64 mm target**. D19
+predicted exactly this (*"the ambiguity is larger than the ~0,6 mm RMSE the literature
+reports"*) and it is now measured. `nominal` wins, as it should: SCHEMA §1.3 defines it as the
+intersection of the two extended supporting planes, which is what this method computes.
+**Publish the conversion table** — a systematic offset of this size may explain part of the
+disagreement between published accuracies.
+
+#### `lit-regiongrow` implemented, 2026-08-20 — and it hits `ours`' wall
+
+Wei et al. §III-D. Coarse-to-fine: FastSAM segments each *surface* in the RGB image and the
+cloud is cropped to where two surfaces meet (§III-C, supplied here as the same
+`seam_region_oracle`), then region growing on the point cloud finds the seam.
+
+**Its curvature is the same quantity `ours` uses.** Eq. 3 is `δ = λ₀/(λ₀+λ₁+λ₂)`, which is
+`radius_pca.surface_variation` under another name — pinned by a test that asserts the two
+agree to 1e-9. So the two methods share a feature and differ only in what they do with it,
+which makes each difference measurable on its own rather than arguable:
+
+| | `ours` | `lit-regiongrow` |
+|---|---|---|
+| neighbourhood | radius ball | **k nearest** |
+| decision | global threshold on δ | **region growing** from the smoothest point, split on normal-angle jump |
+| "two different parts?" | `object_id` **oracle** | **its own grown regions** |
+
+The third row is the most valuable thing in the paper for this project. `ours` loses F1
+0,75 → 0,03 when `object_id` is withheld; this method runs the same test off segmentation it
+produced itself. Whether that survives contact is now a measurement rather than a hope.
+
+**Only one constant is published** (§IV-A's 3 mm voxel grid). `k`, Threshold1, Threshold2 and
+the two-surface radius are given no value anywhere, so a choice has to be made, and PCL's
+defaults — the implementation Alg. 1 is pseudocode for — **do not work here**: k = 30 at a
+3 mm grid spans a ~9 mm ball, wider than an 8 mm plate, so the normal wraps around the plate's
+own two faces and *every point in the scene* comes back an edge. That is `ours`' "must not
+bridge a plate's own two faces" bound arriving in a second method by a different route.
+Defaults were swept against constructed truth instead and are labelled tuned. Note the
+protocol asymmetry: `lit-ransac` publishes all three of its constants and so gets no such
+freedom — **equal treatment of the seven means tuning what a paper leaves unspecified and
+saying which ones those were.**
+
+**First measurement, and it is not good.** On the 12 T scenes at L0, the *detection* is
+strong — 99% of surviving seam points within 3 mm of truth, median distance 1,14 mm — and
+the *seam* is not. Best configurations sit at RMSE 1,2–3,0 mm and F1 0,29–0,48, against
+`lit-ransac`'s 0,60 mm and 0,75, and against this paper's own published RMSE of 0,37–0,56 mm.
+
+The failure is in the clustering, and it is **the same wall `ours` hit**:
+
+- Link short: the seam shatters into ~10 fragments of a dozen points each (length error
+  −127 mm).
+- Link long enough to hold one seam together: a T's two fillets, **8 mm apart**, merge into a
+  single line sitting between them — 3,0 mm RMSE, and only one of two truth seams matched.
+
+The plan already records this for `ours`: *proximity alone cannot separate two parallel
+centrelines a plate-thickness apart; splitting components by direction as well would.* Two
+independent methods reaching the identical wall is the stronger form of that finding, and
+**neither paper could have found it** — their workpieces are large steel structures whose
+seams are nowhere near each other. It is also a concrete, shared upgrade: direction-aware
+clustering is now worth building once, for both.
+
+Written up in `notebooks/05_lit_regiongrow.ipynb`, which also carries the neighbourhood-reach
+plot and the fragmentation-versus-merge figure.
+
+Open before this method can be reported: the L1 arm — the oracle-free two-surface test is the
+reason this method is in the seven at all, and every number above supplies §III-C's crop. And
+**direction-aware clustering, built once for both methods**, which is now the single highest-
+value piece of work in Phase 4: it is the named blocker for `ours` and the measured blocker
+for `lit-regiongrow`, and a fix that moves both is a result about the mechanism rather than
+about either method.
+
 #### The reproducibility result, and why it is the strongest thing here
 
 The advisor asked for box plots because RANSAC is randomised. The size of the effect is larger
@@ -896,8 +1016,11 @@ Two engineering notes carried forward: component linking is the most sensitive k
 proximity alone cannot separate two parallel centrelines a plate-thickness apart (direction
 splitting is the fix); and `surface_variation` was rebatched to ~100× the original speed
 (bit-identical, pinned by test) because a corpus sweep otherwise does not finish.
-- [ ] `lit-regiongrow`, `lit-lobb` — pure feature-space methods, no registration or CAD
-      dependency, so the cheapest faithful reimplementations
+- [x] **`lit-regiongrow`** — Wei et al. arXiv:2408.10710 §III-D, `scripts/baselines/
+      lit_regiongrow.py`, 8 tests. Implemented and first-measured; see §4. Its curvature is
+      **the same quantity `ours` uses**, so the k-NN-vs-radius substitution and the
+      oracle-free two-surface test are now both measurable on one code path
+- [ ] `lit-lobb` — pure feature-space, no registration or CAD dependency
 - [x] **`lit-ransac`** — Yi et al. 2026 §5–§6, `scripts/baselines/lit_ransac.py`, 15 tests.
       Measured; see §4. Edge 0,00 as predicted, butt **not** 0,00 (root gap ⇒ orthogonal wall),
       lap 0,00 without the segmentation oracle because `T_mpp` is an area ratio
@@ -939,7 +1062,7 @@ a number for how much each method depends on segmentation it does not publish ab
 2. `ours` adapter to `cloud.npz`, run on `reference_tjoint`, compare against `seams.npz`
    nominal. *Done — see the step-1 record above.*
 3. **Write down every input `ours` consumes.** That list defines the ladder levels.
-4. `lit-regiongrow` and `lit-lobb`.
+4. `lit-regiongrow` *(done — see §4)*, then `lit-lobb`.
 5. `lit-ransac` *(done — see §4)*, then the repeat harness, then `lit-ppf`. The order is
    forced: `lit-ransac`'s seed spread is 0,00–0,96 on a fixed scene, so a harness that reports
    one draw reports noise.
@@ -947,8 +1070,17 @@ a number for how much each method depends on segmentation it does not publish ab
 
 **A corpus that can support these comparisons does not exist yet.** `out/phase3` holds 44
 scenes with **2 lap and 4 edge**, and every per-type conclusion drawn from it so far has been
-overturned by the next measurement. Before any method comparison: generate ~60 scenes per
-joint type (~150 attempts each at the measured yields), balanced.
+overturned by the next measurement. Before any method comparison: **50 scenes per joint type**
+(confirmed 2026-08-20), one config per type in `configs/bench_*.yaml`, emitted to
+`out/bench/<joint_type>/`.
+
+Seed budgets are sized from the measured `out/phase3` yields and differ by an order of
+magnitude across types — T ~75%, butt ~94%, corner ~69%, edge ~25%, **lap ~12%**. Seeds are
+deliberately not backfilled (it would break twin pairing), so each budget is set generously
+and the surplus is kept rather than discarded. **The yield spread is itself a result**: lap
+and edge lose most seeds to `NoSeamsFound` / `NoVisibleSeams`, which says the omission policy
+conditions the dataset unevenly across joint types and has to be reported with any per-type
+number, not silently corrected for.
 
 **First real results — the plots to produce:**
 
@@ -1181,9 +1313,12 @@ Opened by this revision:
       `twin_key`
 Opened by the 2026-08-20 advisor meeting:
 
-- [ ] Confirm with the advisor that **MPS is a geometric proxy** and that load-path
-      correctness is explicitly out of scope. This is the one that becomes a reviewer
-      question if it is not stated as a limitation first
+- [x] **CONFIRMED 2026-08-20 — MPS is a geometric proxy**, and load-path correctness is
+      explicitly out of scope. Now a *stated limitation* rather than an open question, so the
+      paper must say it in its own voice: the MPS label is a convention over exact geometry
+      (D25, `mps_rule-0.1`), adopted for tractability, and it does **not** claim to identify
+      the seam that carries load. Which seam is structurally critical is not recoverable from
+      a single view by any method, so it cannot be a vision label
 - [ ] Decide whether **Task 2 ships in paper 1 or is deferred**. Recommendation: generate the
       data and release the rule; scope paper 1 to Task 1 plus the seven-method comparison, and
       keep MPS as a short section if Phase 4 runs ahead
@@ -1193,8 +1328,24 @@ Opened by the 2026-08-20 advisor meeting:
 - [ ] Verify `lit-modelreg` is implementable without the original CAD assets. If not it
       becomes an L0 upper bound computed from generator transforms rather than a
       reimplementation, and **must be labelled as such**
-- [ ] Build the **balanced benchmark corpus** (~60 scenes per joint type). Every per-type
-      number in Phase 4 so far rests on 2–4 scenes and has been overturned once already
+- [x] **BUILT 2026-08-20 — balanced benchmark corpus, 50 scenes per joint type.** 250
+      scenes in `out/bench/<joint_type>/`, one config per type (`configs/bench_*.yaml`),
+      loaded through `baselines.balanced_corpus(root, per_type=50)`. Per-type configs are not
+      a convenience: `joint_type` is sampled per seed, so a mixed config gives whatever the
+      draw gives — `out/phase3` gave 15 butt against 2 lap, and **three** per-type
+      conclusions drawn from it have since been overturned (single-view vs full visibility,
+      the lap segmentation delta, the lap density effect).
+
+      Generated counts are 61 / 53 / 60 / 92 / 182 (T / butt / corner / edge / lap);
+      `balanced_corpus` trims to the 50 lowest seeds per type, so the selection is a pure
+      function of the corpus and not of generation order. It **raises** on a short type
+      rather than quietly returning an unbalanced set.
+
+      **The yields are themselves a result and must be reported with any per-type number.**
+      Seeds needed per emitted scene, measured: butt 1,7 | T 1,2 | corner 2,2 | edge 2,6 |
+      **lap 2,6**, with almost every loss to `NoVisibleSeams` — the omission policy (D-tier-1)
+      conditions the dataset unevenly across joint types. That is a property of the joint, not
+      a sampling defect, and correcting for it silently would hide it
 - [ ] Decide whether radius-PCA's inability to express a coplanar seam is worth one more
       attempt or should be **reported as a mechanism limit**. The measurement says the band
       covers the whole area between two parallel plates; nothing in a variance ratio responds

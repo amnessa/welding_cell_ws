@@ -155,6 +155,141 @@ def band_width_mm(pred: np.ndarray, gt_polylines) -> float:
     return float(2.0 * np.median(d)) if len(d) else float("nan")
 
 
+# --------------------------------------------------------------------------------
+# the literature's own metric — RMSE / ME on a matched path
+# --------------------------------------------------------------------------------
+#
+# Chamfer and F1 are this project's metrics. They are not what the welding papers report,
+# and a reimplementation cannot be checked against a paper using a metric the paper never
+# computed. Yi et al. §7.2.1 select **one weld seam per workpiece**, teach it manually, and
+# report the RMSE and the maximum error (ME) between the taught path and the generated one:
+# across four workpieces, **max ME 1,16 mm and max RMSE 0,64 mm**.
+#
+# Two things must be said whenever those numbers are quoted as a target.
+#
+# **Their ground truth is not exact.** §7.2.1 measures its own error sources: hand-eye
+# calibration 0,23 mm RMSE, TCP calibration 0,36 mm, teaching repeatability 0,28 mm. So
+# 0,64 mm is a *path error plus a truth error*, and a correct reimplementation scored
+# against constructed truth on a noiseless cloud should come in **below** it. Matching 0,64
+# exactly would be evidence of a bug, not of fidelity.
+#
+# **The D19 curve choice moves the answer by more than the number does.** With a root gap
+# the seam is a choice among nominal / root / gap-mid, and they differ by O(gap) ~ 1 mm
+# against a 0,64 mm target. `nominal` is the right curve here and not by convenience: it is
+# defined as the intersection of the two extended supporting planes (SCHEMA §1.3), which is
+# exactly what this method computes. Report all three anyway - the spread is the point.
+
+
+def _supporting_line_distance(pts: np.ndarray, poly: np.ndarray) -> np.ndarray:
+    """Distance to the INFINITE line of the nearest truth segment, not to the segment.
+
+    Separates two failures the segment distance adds together: how well the method placed
+    the seam *line*, and how well it found the *ends*. For a plane-intersection method
+    those are different equations - §6.1 and §6.2 - and only one of them can be wrong at a
+    time. Endpoint overshoot inflates ME and leaves this untouched.
+    """
+    pts = np.asarray(pts, dtype=float)
+    poly = np.asarray(poly, dtype=float)
+    if len(pts) == 0 or len(poly) < 2:
+        return np.zeros(len(pts))
+    seg = np.full(len(pts), np.inf)
+    best = np.full(len(pts), np.inf)
+    for a, b in zip(poly[:-1], poly[1:]):
+        d = b - a
+        L = float(np.linalg.norm(d))
+        if L < 1e-12:
+            continue
+        d = d / L
+        rel = pts - a
+        perp = np.linalg.norm(np.cross(rel, d), axis=1)
+        on_seg = point_segment_distance(pts, a, b)
+        take = on_seg < seg
+        seg = np.where(take, on_seg, seg)
+        best = np.where(take, perp, best)
+    return np.where(np.isfinite(best), best, 0.0)
+
+
+def polyline_length_mm(poly) -> float:
+    poly = np.asarray(poly, dtype=float)
+    return float(np.linalg.norm(np.diff(poly, axis=0), axis=1).sum()) if len(poly) > 1 \
+        else 0.0
+
+
+def path_error_mm(pred, gt, step_mm: float = 0.25) -> dict[str, float]:
+    """RMSE and ME of one predicted path against one truth polyline. Yi et al. §7.2.1.
+
+    The predicted path is resampled at `step_mm` so the statistic is over *arclength* and
+    not over however many vertices the method happened to return - two endpoints and a
+    thousand would otherwise give different RMSEs for the same line.
+
+    Returns the paper's two numbers (`rmse`, `me`) plus the decomposition that says which
+    equation is wrong when they are large: `lateral_*` is §6.1's line, `length_error_mm`
+    and `end_error_mm` are §6.2's endpoints.
+    """
+    pred = np.asarray(pred, dtype=float)
+    gt = np.asarray(gt, dtype=float)
+    if len(pred) < 2 or len(gt) < 2:
+        return {k: float("nan") for k in
+                ("rmse", "me", "mean", "lateral_rmse", "lateral_me",
+                 "length_error_mm", "end_error_mm", "n_samples")}
+    P = _sample_polyline(pred, step_mm)
+    d = distance_to_polylines(P, [gt])
+    lat = _supporting_line_distance(P, gt)
+    ends = min(np.linalg.norm(pred[0] - gt[0]) + np.linalg.norm(pred[-1] - gt[-1]),
+               np.linalg.norm(pred[0] - gt[-1]) + np.linalg.norm(pred[-1] - gt[0])) / 2.0
+    return {"rmse": float(np.sqrt(np.mean(d ** 2))), "me": float(d.max()),
+            "mean": float(d.mean()),
+            "lateral_rmse": float(np.sqrt(np.mean(lat ** 2))),
+            "lateral_me": float(lat.max()),
+            "length_error_mm": polyline_length_mm(pred) - polyline_length_mm(gt),
+            "end_error_mm": float(ends), "n_samples": float(len(P))}
+
+
+def match_seams(pred_polylines, gt_polylines, step_mm: float = 0.25):
+    """Greedy one-to-one match, closest mean distance first. `(gt_index, pred_index)` pairs.
+
+    One-to-one on purpose. A method that returns twenty phantoms would otherwise get to
+    pick the luckiest one for every truth seam, and the RMSE it reported would be a
+    statement about how many guesses it made. Unmatched truth seams come back with
+    `pred_index = None` and are the misses.
+    """
+    cost = {}
+    for gi, g in enumerate(gt_polylines):
+        for pi, p in enumerate(pred_polylines):
+            P = _sample_polyline(np.asarray(p, dtype=float), step_mm)
+            if len(P) == 0:
+                continue
+            cost[(gi, pi)] = float(distance_to_polylines(
+                P, [np.asarray(g, dtype=float)]).mean())
+    used_g, used_p, out = set(), set(), []
+    for (gi, pi) in sorted(cost, key=cost.get):
+        if gi in used_g or pi in used_p:
+            continue
+        used_g.add(gi); used_p.add(pi)
+        out.append((gi, pi))
+    out += [(gi, None) for gi in range(len(gt_polylines)) if gi not in used_g]
+    return sorted(out)
+
+
+def matched_path_errors(pred_polylines, gt_polylines, step_mm: float = 0.25
+                        ) -> list[dict[str, Any]]:
+    """`path_error_mm` for every truth seam, against the prediction matched to it.
+
+    This is the shape Yi et al. report in: one row per seam, and the headline is the
+    **max** over rows, not the mean.
+    """
+    rows = []
+    for gi, pi in match_seams(pred_polylines, gt_polylines, step_mm):
+        row: dict[str, Any] = {"gt_index": gi, "pred_index": pi, "matched": pi is not None}
+        row.update(path_error_mm(pred_polylines[pi], gt_polylines[gi], step_mm)
+                   if pi is not None
+                   else {k: float("nan") for k in
+                         ("rmse", "me", "mean", "lateral_rmse", "lateral_me",
+                          "length_error_mm", "end_error_mm", "n_samples")})
+        rows.append(row)
+    return rows
+
+
 def seam_count_error(n_pred: int, n_gt: int) -> int:
     """Signed miscount. Negative = seams missed, positive = phantoms."""
     return int(n_pred) - int(n_gt)

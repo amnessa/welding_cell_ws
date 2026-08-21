@@ -118,9 +118,9 @@ SEAM_REGION_HALF_WIDTH_MM = 20.0
 # §3 stand-in — the segmentation this method is normally handed
 # --------------------------------------------------------------------------------
 
-def seam_region_oracle(pts: np.ndarray, gt_polylines, half_width_mm: float = None
-                       ) -> np.ndarray:
-    """Boolean mask of points within `half_width_mm` of any truth seam. **An oracle.**
+def seam_region_oracle(pts: np.ndarray, gt_polylines, half_width_mm: float = None,
+                       end_margin_mm: float = 0.0) -> np.ndarray:
+    """Boolean mask of the weld region around the truth seams. **An oracle.**
 
     Stands in for the trained PointNet++ of §3, which annotates "the weld seam
     neighborhood ... with the region width maintained at approximately 40 mm" and reaches
@@ -130,23 +130,77 @@ def seam_region_oracle(pts: np.ndarray, gt_polylines, half_width_mm: float = Non
     Withholding it is the L1 arm. The gap between the two is this method's dependency on a
     segmentation stage its plane-fitting contribution is never evaluated without — which is
     the whole point of measuring it rather than describing it.
+
+    Args:
+        half_width_mm: half of §3's annotated *width*, measured **across** the seam.
+        end_margin_mm: how far the annotation runs past each seam **end**, along it.
+
+    `end_margin_mm = 0` is not a detail. A plain "within 20 mm of the seam" test is a
+    *capsule*, and a capsule reaches 20 mm beyond the last point of the seam — sweeping up
+    base-plate material that no annotator would call weld region. §6.2 then reads the seam's
+    extent off the points it was given, so it reads the capsule's extent instead of the
+    plate's: measured on a T joint, the seam came back **38 mm too long, 19 mm at each end**,
+    while its *line* was accurate to 0,6 mm. A round end on the mask is enough to destroy
+    the length asymmetry between the two plates that §6.2 depends on, so the width and the
+    extent are separate parameters here and the extent defaults to no margin at all.
     """
-    from .metrics import densify, distance_to_polylines
+    from .metrics import distance_to_polylines
     hw = SEAM_REGION_HALF_WIDTH_MM if half_width_mm is None else float(half_width_mm)
     pts = np.asarray(pts, dtype=float)
-    if len(pts) == 0 or len(gt_polylines) == 0:
+    polys = [np.asarray(g, dtype=float) for g in gt_polylines if len(np.asarray(g)) >= 2]
+    if len(pts) == 0 or not polys:
         return np.zeros(len(pts), dtype=bool)
     if cKDTree is None:                                # pragma: no cover
-        return distance_to_polylines(pts, gt_polylines) <= hw
+        return distance_to_polylines(pts, polys) <= hw
 
     # Exact point-to-polyline distance is the wrong tool here. `distance_to_polylines`
-    # loops in Python over every segment, and the stored seams carry ~200 vertices each,
-    # so masking a 200 k-point cloud is 80 M segment evaluations - minutes per scene, which
+    # loops in Python over every segment, and the stored seams carry ~2000 vertices each,
+    # so masking a 200 k-point cloud is 400 M segment evaluations - minutes per scene, which
     # is a corpus sweep that never finishes. A KD-tree over the truth curve resampled at
     # `step` costs one query and errs by at most `step/2`, against a 20 mm half-width. The
     # metrics keep the exact form, where the query set is a few hundred points.
     step = max(hw / 40.0, 0.5)
-    return cKDTree(densify(gt_polylines, step)).query(pts, k=1, workers=-1)[0] <= hw
+    samples, is_end, tangent = [], [], []
+    for poly in polys:
+        S = _resample(poly, step)
+        samples.append(S)
+        flag = np.zeros(len(S), dtype=bool)
+        flag[0] = flag[-1] = True
+        is_end.append(flag)
+        t = np.zeros_like(S)
+        t[0] = _unit(S[min(1, len(S) - 1)] - S[0])
+        t[-1] = _unit(S[-1] - S[max(0, len(S) - 2)])
+        tangent.append(t)
+    S = np.vstack(samples)
+    is_end = np.concatenate(is_end)
+    tangent = np.vstack(tangent)
+
+    dist, idx = cKDTree(S).query(pts, k=1, workers=-1)
+    keep = dist <= hw
+    # Points whose nearest truth sample is a seam END project past it. Their offset splits
+    # into an across-seam part (already bounded by `hw`) and an along-seam part, which is
+    # what `end_margin_mm` bounds.
+    past = keep & is_end[idx]
+    if past.any():
+        axial = np.abs(np.einsum("ij,ij->i", pts[past] - S[idx[past]], tangent[idx[past]]))
+        keep[past] = axial <= float(end_margin_mm)
+    return keep
+
+
+def _unit(v: np.ndarray) -> np.ndarray:
+    n = float(np.linalg.norm(v))
+    return v / n if n > 1e-12 else np.zeros(3)
+
+
+def _resample(poly: np.ndarray, step_mm: float) -> np.ndarray:
+    """Polyline resampled at a fixed spacing, endpoints preserved."""
+    from .metrics import _sample_polyline
+    S = _sample_polyline(poly, step_mm)
+    if len(S) == 0:
+        return poly
+    if np.linalg.norm(S[-1] - poly[-1]) > 1e-9:
+        S = np.vstack([S, poly[-1]])
+    return S
 
 
 # --------------------------------------------------------------------------------
