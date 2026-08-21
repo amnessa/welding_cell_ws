@@ -290,6 +290,46 @@ def matched_path_errors(pred_polylines, gt_polylines, step_mm: float = 0.25
     return rows
 
 
+def emd_mm(pred, gt_polylines, n: int = 256, step_mm: float = 1.0, seed: int = 0
+           ) -> float:
+    """Exact transport cost between prediction and truth, in mm. The plan's secondary metric.
+
+    The advisor's "transport cost" (the meeting transcript's "synchron distance" is almost
+    certainly this). Chamfer lets a prediction pile all its mass on the easiest stretch of
+    seam and still score well, because every point is matched to its own nearest neighbour
+    independently; a transport plan must move that pile along the seam and pays for the
+    distance. So EMD is the metric that punishes coverage failure — the exact failure mode
+    Chamfer and the papers' sampled-point RMSE both missed on `lit-regiongrow`.
+
+    Exact assignment (`linear_sum_assignment`) on `n`-point resamples of both sides rather
+    than Sinkhorn: at n = 256 the exact solve is milliseconds, has no epsilon to tune, and
+    the resampling floor (~`step`) is shared with every other metric here. Subsampling is
+    deterministic in `seed`. Secondary on purpose — O(n^3) means it is a table column, not
+    an inner loop.
+    """
+    from scipy.optimize import linear_sum_assignment
+    from scipy.spatial.distance import cdist
+
+    P = densify(pred, step_mm)
+    G = densify(gt_polylines, step_mm)
+    if len(P) == 0 or len(G) == 0:
+        return float("nan")
+    rng = np.random.default_rng(seed)
+    if len(P) > n:
+        P = P[rng.choice(len(P), n, replace=False)]
+    if len(G) > n:
+        G = G[rng.choice(len(G), n, replace=False)]
+    m = min(len(P), len(G))
+    # Equal masses need equal counts; trim the longer side at random. The alternative -
+    # padding - would invent mass that has to travel somewhere and pollutes the cost.
+    if len(P) > m:
+        P = P[rng.choice(len(P), m, replace=False)]
+    if len(G) > m:
+        G = G[rng.choice(len(G), m, replace=False)]
+    r, c = linear_sum_assignment(cdist(P, G))
+    return float(np.linalg.norm(P[r] - G[c], axis=1).mean())
+
+
 def seam_count_error(n_pred: int, n_gt: int) -> int:
     """Signed miscount. Negative = seams missed, positive = phantoms."""
     return int(n_pred) - int(n_gt)

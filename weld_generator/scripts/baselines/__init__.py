@@ -21,6 +21,10 @@ generator exists is to put a number under them instead of an RViz screenshot.
     metrics      Chamfer, precision/recall, lateral error, band width, and RMSE / ME on a
                  matched path - the literature's own metric, the only one a paper's
                  reported accuracy can be checked against
+    harness      the repeat harness: every method x scene x seed as one dataframe, each
+                 method given ITS OWN paper's coarse stage at L0, the noise axis as a
+                 multiplier on the derived sigma_z, and a fake-oracle predictor the whole
+                 thing is validated against before any real method's number flows through
 
 Everything here is **millimetres**, like the rest of `weld_generator` (SCHEMA.md §1). The
 ROS node this was migrated from works in metres, so every length constant changed by 1000x
@@ -30,10 +34,12 @@ of this code, and it is why the parameter names all carry `_mm`.
 
 from .dataset import (balanced_corpus, cloud_for, ground_truth, iter_scenes,
                       load_scene, scene_dirs, scene_facts)
-from .metrics import (band_width_mm, chamfer_mm, densify, evaluate,
+from .metrics import (band_width_mm, chamfer_mm, densify, emd_mm, evaluate,
                       evaluate_band, match_seams, matched_path_errors,
                       lateral_error_mm, path_error_mm, polyline_length_mm,
                       precision_recall_f1)
+from .harness import (REGISTRY, MethodSpec, PreparedScene, fake_oracle, prepare,
+                      run_matrix, spread)
 from .lit_lobb import (LobbResult, activate, detect as lit_lobb_detect,
                        kmeans_1d_binary, lobb_features, part_labels_oracle)
 from .lit_ransac import (LitRansacResult, LitRansacSeam, Plane,
@@ -49,7 +55,7 @@ __all__ = [
     "surface_variation", "detect", "RadiusPCAResult", "validity_window_mm",
     "directional_components", "local_tangent",
     "chamfer_mm", "precision_recall_f1", "lateral_error_mm", "band_width_mm",
-    "densify", "evaluate", "evaluate_band",
+    "densify", "emd_mm", "evaluate", "evaluate_band",
     "path_error_mm", "match_seams", "matched_path_errors", "polyline_length_mm",
     "load_scene", "iter_scenes", "scene_dirs", "cloud_for", "ground_truth",
     "scene_facts", "balanced_corpus",
@@ -59,4 +65,6 @@ __all__ = [
     "two_surface_edges",
     "lit_lobb_detect", "LobbResult", "lobb_features", "activate", "kmeans_1d_binary",
     "part_labels_oracle",
+    "run_matrix", "prepare", "spread", "REGISTRY", "MethodSpec", "PreparedScene",
+    "fake_oracle",
 ]

@@ -55,8 +55,12 @@ Two notebooks, both of which need a **kernel restart** after you change `weldgen
 - `notebooks/06_lit_lobb.ipynb` — `lit-lobb` (Zhang et al. 2025): bounding-box flatness against
   the eigenvalue ratio, the `tanh` activation, and the closed contact perimeter that breaks
   its curve fit.
+- `notebooks/07_repeats.ipynb` — the repeat harness: the fake-oracle validation, the
+  advisor's seed box plots for `lit-ransac`, the measured zero spread of the deterministic
+  three, the noise axis as a multiplier on the derived σ_z, and EMD as the metric that sees
+  coverage failure.
 
-All four are entries in the seven-method Phase 4 comparison; see `notes/dataset_plan.md` §4
+All five are entries in the seven-method Phase 4 comparison; see `notes/dataset_plan.md` §4
 and **Baselines** below.
 
 ---
@@ -89,12 +93,13 @@ weldgen/         the generator - trimesh + NumPy only, no simulator import (D9)
 scripts/         evaluation, NOT part of the generator (Phase 4)
   baselines/         radius_pca.py (`ours`), lit_ransac.py (Yi et al. 2026),
                      lit_regiongrow.py (Wei et al. 2024),
-                     lit_lobb.py (Zhang et al. 2025), metrics.py, dataset.py
+                     lit_lobb.py (Zhang et al. 2025), harness.py (the repeat
+                     harness), metrics.py, dataset.py
 
 configs/         phase1, phase2, phase2_fixture, phase3, phase3_raster,
                  bench_{T,corner,butt,lap,edge}  <- the balanced benchmark corpus,
                  smoke, reference_tjoint, playground
-tests/           255 tests: geometry, determinism, schema conformance, ISO limits, viz,
+tests/           262 tests: geometry, determinism, schema conformance, ISO limits, viz,
                  the Phase 2 joint-type gate, the Phase 3 visibility gate, and the
                  migrated baseline
 notes/           the plan, the handoff, and the standards PDFs

@@ -1242,9 +1242,26 @@ splitting is the fix); and `surface_variation` was rebatched to ~100× the origi
 - [x] **`lit-ransac`** — Yi et al. 2026 §5–§6, `scripts/baselines/lit_ransac.py`, 15 tests.
       Measured; see §4. Edge 0,00 as predicted, butt **not** 0,00 (root gap ⇒ orthogonal wall),
       lap 0,00 without the segmentation oracle because `T_mpp` is an area ratio
-- [ ] **Repeat harness — now a prerequisite, not a protocol nicety.** `lit-ransac` swings F1
-      0,00 → 0,96 across seeds on one fixed scene. Build it before `lit-ppf`
-- [ ] `lit-ppf` — randomised; runs through the repeat harness from day one
+- [x] **Repeat harness — BUILT 2026-08-21.** `scripts/baselines/harness.py`, 7 tests,
+      `notebooks/07_repeats.ipynb`. One dataframe over method × scene × seed × arm × view ×
+      noise_scale. Three commitments baked in: each method's **L0 is its own paper's coarse
+      stage** (the shared-mask mistake is structurally excluded); deterministic methods run
+      `verify_seeds` times so *zero spread is measured, not assumed*; the noise axis is a
+      **multiplier on the derived σ_z** (scales `subpixel_px`/`lateral_sigma_px` in a copy of
+      the sensor model — "200%" can never mean a fraction of range). Validated against a
+      **fake oracle** (truth + known jitter / phantoms / misses) with closed-form
+      expectations before any real method's number flows through, as the order of work
+      requires — and that validation caught two real bugs before any method did: a fake
+      whose densified mass hid a phantom at 1% precision cost, and a resampler that could
+      not coarsen
+- [x] **EMD secondary metric** — `metrics.emd_mm`, exact assignment on 256-pt resamples (the
+      advisor's "transport cost"). It is the metric that *sees* the coverage failure Chamfer
+      forgives: a perfectly-placed 10% stub scores Chamfer ≈ its offset but EMD ≈ L/2. Off
+      by default (O(n³)); a table column, not an inner loop
+- [ ] `lit-ppf` — randomised; runs through the repeat harness from its first execution,
+      never outside it. It consumes **normals**, which no implemented method does — the L2
+      rung (normals estimated, not read from the generator) becomes meaningful there and the
+      harness needs an `estimated_normals` switch when it lands
 - [ ] `lit-pcaslice`, `lit-modelreg` — last, and both may slip to Phase 6
 - [ ] **Metrics:** Chamfer distance as primary (cheap, standard, report it everywhere);
       Sinkhorn / EMD as secondary (more principled, much slower — the advisor's "transport cost";
