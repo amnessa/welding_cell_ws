@@ -255,3 +255,70 @@ def test_chunking_does_not_change_the_answer():
     pts = np.random.default_rng(1).random((1500, 3)) * 40.0
     assert np.allclose(surface_variation(pts, 5.0, 5, chunk=100),
                        surface_variation(pts, 5.0, 5, chunk=100_000), atol=1e-12)
+
+
+# --- direction-aware clustering: an upgrade to `ours`, NOT to the literature -------------
+
+def test_directional_clustering_cuts_a_cross_run_bridge_that_proximity_cannot():
+    """Two parallel runs joined at their ends — a T joint's closed contact perimeter.
+
+    Proximity sees one connected loop at any link distance, because the bridge is real
+    contact. Direction sees a ~90 deg turn at the join and cuts it.
+    """
+    from baselines.radius_pca import connected_components, directional_components
+
+    t = np.linspace(0, 100, 200)
+    a = np.column_stack([t, np.zeros_like(t), np.zeros_like(t)])
+    b = np.column_stack([t, np.full_like(t, 8.0), np.zeros_like(t)])
+    s = np.linspace(0, 8, 20)
+    ends = np.vstack([np.column_stack([np.zeros_like(s), s, np.zeros_like(s)]),
+                      np.column_stack([np.full_like(s, 100.0), s, np.zeros_like(s)])])
+    loop = np.vstack([a, b, ends])
+
+    assert len(np.unique(connected_components(loop, 1.5))) == 1
+    lab = directional_components(loop, link_mm=1.5, tangent_radius_mm=4.0,
+                                 max_turn_deg=30.0, lateral_link_mm=4.0)
+    assert len(np.unique(lab)) >= 2
+
+
+def test_direction_alone_cannot_separate_two_parallel_seams():
+    """The half a tangent test cannot touch, and the reason the lateral stage exists.
+
+    Two parallel fillets have the **same** direction — they differ by a plate-thickness of
+    lateral offset, not by any angle. Measured on the corpus before the lateral stage was
+    added, direction alone split 1 of 12 T and corner scenes.
+    """
+    from baselines.radius_pca import directional_components, local_tangent
+
+    t = np.linspace(0, 100, 300)
+    a = np.column_stack([t, np.zeros_like(t), np.zeros_like(t)])
+    b = np.column_stack([t, np.full_like(t, 3.0), np.zeros_like(t)])
+    both = np.vstack([a, b])
+
+    tan = local_tangent(both, radius_mm=5.0)
+    cos = np.abs(tan[:len(a)] @ tan[len(a):].T)
+    assert np.median(cos) > 0.99                       # identical direction, so no angle to cut
+
+    # Proximity links them at 4 mm; the lateral stage is what separates them.
+    assert len(np.unique(directional_components(both, 4.0, 5.0, lateral_link_mm=1.0))) == 2
+    assert len(np.unique(directional_components(both, 4.0, 5.0, lateral_link_mm=6.0))) == 1
+
+
+def test_the_directional_switch_is_off_by_default_and_the_literature_never_sees_it():
+    """A fidelity guard, not a behaviour test.
+
+    Neither Wei et al. nor Zhang et al. specifies a clustering step, so this repo chose one
+    for them (`lit_regiongrow` deviation 5, `lit_lobb` deviation 4). Filling an unspecified
+    step with the standard choice is faithful; filling it with a better one would make the
+    reimplementation beat the published method, which is the same failure as making it worse.
+    So `ours` gets the upgrade and the `lit-*` modules must not even import it.
+    """
+    import inspect
+
+    from baselines import lit_lobb, lit_regiongrow
+    from baselines.radius_pca import detect as ours_detect
+
+    assert inspect.signature(ours_detect).parameters["cluster_method"].default == "components"
+    for mod in (lit_regiongrow, lit_lobb):
+        src = inspect.getsource(mod)
+        assert "directional_components" not in src, mod.__name__

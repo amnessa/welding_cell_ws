@@ -203,6 +203,81 @@ def _resample(poly: np.ndarray, step_mm: float) -> np.ndarray:
     return S
 
 
+def surface_labels_oracle(face_id: np.ndarray) -> np.ndarray:
+    """Per-point **surface** labels. **An oracle** — and a different one from the band above.
+
+    Stands in for Wei et al. §III-C, whose FastSAM is prompted at the centre of each
+    workpiece *surface* and returns one mask per surface. The generator already stores
+    exactly this as `cloud.npz:face_id`, so no approximation is involved: 12 faces for two
+    slabs, and every point carries the face that generated it.
+
+    Note what this is **not**. It is not `object_id`, and the difference is the whole
+    part-versus-face problem: a plate has six faces, so perfect surface segmentation still
+    reports a plate's own rim as a junction between two surfaces. FastSAM segmenting an RGB
+    image has the same property — it sees surfaces, not solids.
+    """
+    return np.asarray(face_id).astype(np.int64)
+
+
+def surface_intersection_crop(pts: np.ndarray, labels: np.ndarray,
+                              half_width_mm: float = SEAM_REGION_HALF_WIDTH_MM,
+                              junction_tol_mm: float | None = None) -> np.ndarray:
+    """§III-C's crop, **derived** from surface segmentation rather than handed from truth.
+
+    *"The intersection area between the surfaces indicates the approximate location of the
+    weld seams, aiding us to obtain fine-grained point clouds."* The coarse stage in Wei et
+    al. produces surfaces, and the seam region is a **consequence** of them.
+
+    Two radii, and conflating them makes the function useless. The *intersection* is where
+    two surfaces actually meet — a tolerance of a point spacing or two (`junction_tol_mm`).
+    The *crop* is a neighbourhood of that intersection, at the annotation half-width
+    (`half_width_mm`). Run at 20 mm, the meeting test alone returns **every point in the
+    scene**: an 8 mm plate is thinner than the annotation width, so its top face is within
+    20 mm of its bottom face everywhere.
+
+    Why this matters for scoring. Handing `lit-regiongrow` `seam_region_oracle` gives it a
+    band centred on the answer, which its own pipeline never has. This gives it what §III-C
+    actually produces — including every junction its coarse stage cannot tell apart from a
+    seam, because **FastSAM segments surfaces, and a plate has six of them**. The gap
+    between the two masks measures how much of the method's score comes from the crop being
+    drawn around the truth.
+    """
+    pts = np.asarray(pts, dtype=float)
+    labels = np.asarray(labels)
+    keep = np.zeros(len(pts), dtype=bool)
+    if len(pts) == 0:
+        return keep
+    if cKDTree is None:                                # pragma: no cover
+        raise ImportError("surface_intersection_crop needs scipy.spatial.cKDTree")
+
+    if junction_tol_mm is None:                        # ~2 point spacings
+        junction_tol_mm = 2.0 * float(np.cbrt(np.prod(np.ptp(pts, axis=0) + 1e-9)
+                                              / max(len(pts), 1)) or 1.0)
+
+    # Find the junction with a grid hash rather than a tree per surface: quantise to
+    # `junction_tol_mm` and keep the cells holding more than one surface. One pass over the
+    # points, against twelve KD-tree builds over half a million each - 460 s down to under
+    # one. Cells are then dilated to the annotation width, so a junction clipped by a cell
+    # boundary is recovered from its neighbours.
+    key = np.floor(pts / float(junction_tol_mm)).astype(np.int64)
+    key -= key.min(axis=0)
+    dims = key.max(axis=0) + 1
+    flat = (key[:, 0] * int(dims[1]) + key[:, 1]) * int(dims[2]) + key[:, 2]
+    order = np.argsort(flat, kind="stable")
+    fs, ls = flat[order], labels[order]
+    starts = np.flatnonzero(np.r_[True, fs[1:] != fs[:-1]])
+    ends = np.r_[starts[1:], len(fs)]
+    seeds = []
+    for a, b in zip(starts, ends):
+        if b - a > 1 and ls[a:b].min() != ls[a:b].max():
+            seeds.append(order[a:b])
+    if not seeds:
+        return keep
+    seed_pts = pts[np.concatenate(seeds)]
+    d, _ = cKDTree(seed_pts).query(pts, k=1, workers=-1)
+    return d <= float(half_width_mm)
+
+
 # --------------------------------------------------------------------------------
 # §5.1 — the original RANSAC primitives, eqs. 13-16
 # --------------------------------------------------------------------------------

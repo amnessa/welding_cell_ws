@@ -102,7 +102,8 @@ try:
 except ImportError:                                    # pragma: no cover
     cKDTree = None
 
-from .lit_ransac import seam_region_oracle  # noqa: F401  (re-exported: the §III-C stand-in)
+from .lit_ransac import (seam_region_oracle,  # noqa: F401  (re-exported)
+                         surface_intersection_crop, surface_labels_oracle)
 from .radius_pca import connected_components, voxel_downsample
 
 # §IV-A: "setting the edge length to 3 mm can ensure sub-millimeter accuracy while
@@ -254,6 +255,46 @@ def region_grow(pts: np.ndarray, normals: np.ndarray, curvature: np.ndarray,
     return labels, is_edge
 
 
+def _labels_for(src_pts: np.ndarray, src_labels: np.ndarray, dst_pts: np.ndarray
+                ) -> np.ndarray:
+    """Carry per-point labels through the voxel merge, by nearest neighbour.
+
+    `preprocess` replaces each voxel with its centroid, so the label array the caller passed
+    no longer indexes the cloud the rest of the method sees. Nearest-neighbour is exact
+    wherever a voxel holds one surface and picks the majority side where it straddles two —
+    which is the same ambiguity the voxel merge introduces for every other quantity.
+    """
+    if cKDTree is None:                                # pragma: no cover
+        raise ImportError("lit-regiongrow needs scipy.spatial.cKDTree")
+    _, idx = cKDTree(np.asarray(src_pts, float)).query(dst_pts, k=1, workers=-1)
+    return np.asarray(src_labels).astype(np.int64)[idx]
+
+
+def _edge_from_labels(pts: np.ndarray, labels: np.ndarray, normals: np.ndarray, k: int,
+                      smoothness_deg: float, radius_mm: float | None) -> np.ndarray:
+    """Alg. 1's Threshold1 test, run against supplied surfaces instead of grown ones.
+
+    A point is an edge when a neighbour's normal turns by more than `smoothness_deg`. With
+    the surfaces given, that is the only part of Alg. 1 still doing work — the growth was
+    only ever a way to obtain the surfaces.
+    """
+    tree = cKDTree(pts)
+    cos_thresh = np.cos(np.radians(float(smoothness_deg)))
+    if radius_mm is None:
+        # The k-NN case is a rectangular (N, k) index array, so the whole test is one
+        # einsum. The loop this replaces was 150 000 numpy calls per scene, and this runs
+        # once per scene per arm across a 100-scene corpus.
+        idx = np.atleast_2d(tree.query(pts, k=min(k, len(pts)), workers=-1)[1])
+        cos = np.abs(np.einsum("nkj,nj->nk", normals[idx], normals))
+        return cos.min(axis=1) < cos_thresh
+    out = np.zeros(len(pts), dtype=bool)
+    for i, nb in enumerate(tree.query_ball_point(pts, radius_mm, workers=-1)):
+        if len(nb) and np.min(np.abs(normals[np.asarray(nb, dtype=int)] @ normals[i])) \
+                < cos_thresh:
+            out[i] = True
+    return out
+
+
 def two_surface_edges(pts: np.ndarray, labels: np.ndarray, is_edge: np.ndarray,
                       edge_radius_mm: float, min_region_share: float = 0.15
                       ) -> np.ndarray:
@@ -391,6 +432,7 @@ def detect(pts: np.ndarray,
            curve: str = "line",
            poly_degree: int = 2,
            segmentation_mask: np.ndarray | None = None,
+           region_labels: np.ndarray | None = None,
            z_range_mm: tuple[float, float] | None = None) -> RegionGrowResult:
     """Run `lit-regiongrow` end to end. Lengths in **millimetres**.
 
@@ -415,8 +457,17 @@ def detect(pts: np.ndarray,
             Measured on the T scenes, `1,5 x voxel` keeps 164 seam points and `4-5 x voxel`
             keeps over a thousand, for the same input.
         curve: `"line"` for the paper's three linear workpieces, `"poly"` for its curved one.
-        segmentation_mask: the §III-C FastSAM crop, supplied as an **oracle** via
-            `seam_region_oracle`. Withhold it for the L1 arm.
+        segmentation_mask: the §III-C crop, supplied as an **oracle**. Two different masks
+            are defensible and they are not interchangeable — see `region_labels`.
+        region_labels: per-point **surface** labels, supplied instead of grown. This is what
+            §III-C's FastSAM actually returns: it is prompted at the centre of each workpiece
+            *surface* and gives one mask per surface, and the weld region is then *derived*
+            as the area where two surfaces meet. Supplying only a seam-band crop and making
+            Alg. 1 re-grow the regions gives the method a band centred on the answer while
+            withholding the labels its own pipeline already has — generous in one direction
+            and stingy in the other. Pass `surface_labels_oracle(face_id)` for the rung the
+            paper actually occupies. Points whose label is negative are treated as
+            unassigned, exactly as Alg. 1 leaves its edge points.
     """
     pts = np.asarray(pts, dtype=float)
     used_oracle = segmentation_mask is not None
@@ -432,7 +483,7 @@ def detect(pts: np.ndarray,
     if neighbourhood not in ("knn", "radius"):
         raise ValueError(f"unknown neighbourhood {neighbourhood!r}")
 
-    params = dict(voxel_mm=voxel_mm, k=k, smoothness_deg=smoothness_deg,
+    params: dict[str, Any] = dict(voxel_mm=voxel_mm, k=k, smoothness_deg=smoothness_deg,
                   curvature_thresh=curvature_thresh, neighbourhood=neighbourhood,
                   radius_mm=radius_mm, edge_radius_mm=edge_radius_mm,
                   min_region_share=min_region_share, link_mm=link_mm, curve=curve,
@@ -444,8 +495,15 @@ def detect(pts: np.ndarray,
                                 used_oracle, "cloud too small to grow a region")
 
     normals, curv = local_pca(P, k, ball)
-    labels, is_edge = region_grow(P, normals, curv, k, smoothness_deg, curvature_thresh,
-                                  min_region_pts, ball)
+    if region_labels is None:
+        labels, is_edge = region_grow(P, normals, curv, k, smoothness_deg, curvature_thresh,
+                                      min_region_pts, ball)
+    else:
+        # Supplied surfaces replace Alg. 1's growth, not its edge test: §III-D still has to
+        # decide which points sit ON a junction, and that is the normal-angle threshold.
+        labels = _labels_for(pts, region_labels, P)
+        is_edge = _edge_from_labels(P, labels, normals, k, smoothness_deg, ball)
+        params["region_labels"] = "supplied"
     seam_mask = two_surface_edges(P, labels, is_edge, edge_radius_mm, min_region_share)
 
     idx = np.flatnonzero(seam_mask)

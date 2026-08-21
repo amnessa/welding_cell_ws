@@ -310,6 +310,126 @@ def connected_components(pts: np.ndarray, link_mm: float) -> np.ndarray:
     return labels
 
 
+def local_tangent(pts: np.ndarray, radius_mm: float, min_neighbors: int = 4,
+                  chunk: int = 20_000) -> np.ndarray:
+    """Unit direction the seam runs in at each point — the top PCA axis of a local ball.
+
+    On a seam band the points form a ribbon, so the largest-variance direction is *along*
+    the seam. Sign is arbitrary out of an eigen-decomposition and is deliberately left that
+    way: every consumer here compares `|t_i . t_j|`, because a curve has a direction but not
+    an orientation and forcing a sign would split a straight seam wherever the flip landed.
+    """
+    pts = np.asarray(pts, dtype=float)
+    n = len(pts)
+    out = np.zeros((n, 3))
+    if n == 0:
+        return out
+    tree = cKDTree(pts)
+    for start in range(0, n, chunk):
+        sl = slice(start, min(start + chunk, n))
+        for j, ids in enumerate(tree.query_ball_point(pts[sl], radius_mm, workers=-1)):
+            ids = np.asarray(ids, dtype=int)
+            i = start + j
+            if len(ids) < min_neighbors:
+                continue
+            c = pts[ids] - pts[ids].mean(axis=0)
+            _, v = np.linalg.eigh(c.T @ c)
+            out[i] = v[:, -1]
+    return out
+
+
+def lateral_split(pts: np.ndarray, link_mm: float, min_pts: int = 4) -> np.ndarray:
+    """Split one direction-consistent component into parallel runs. Label per point.
+
+    The second half of the problem, and the half a direction test cannot touch: **two
+    parallel seams have the same direction.** A T joint's two fillets differ by one
+    plate-thickness of *lateral offset*, not by any angle, so no tangent comparison
+    separates them and no link distance does either — they are proximity-connected across
+    the plate.
+
+    What does separate them is where they sit once the along-seam coordinate is removed.
+    Project onto the plane perpendicular to the component's own principal axis and cluster
+    *there*: a single seam collapses to one spot, two parallel seams to two spots a plate
+    apart. That is the same trick §III-D of `lit_lobb` uses for fitting, applied to
+    clustering instead.
+    """
+    pts = np.asarray(pts, dtype=float)
+    if len(pts) < min_pts:
+        return np.zeros(len(pts), dtype=int)
+    c = pts - pts.mean(axis=0)
+    _, v = np.linalg.eigh(c.T @ c)
+    axis = v[:, -1]
+    perp = c - np.outer(c @ axis, axis)                # drop the along-seam coordinate
+    return connected_components(perp, link_mm)
+
+
+def directional_components(pts: np.ndarray, link_mm: float, tangent_radius_mm: float,
+                           max_turn_deg: float = 30.0, min_neighbors: int = 4,
+                           lateral_link_mm: float | None = None) -> np.ndarray:
+    """Components that link on proximity **and** direction. Component label per point.
+
+    `connected_components` is the standard choice and it has one failure this dataset keeps
+    producing: two seams that run parallel a plate-thickness apart are proximity-connected,
+    and a T joint's contact perimeter is *closed* — its two fillets are bridged at the ends
+    by short cross-runs D4 excludes from the label. No link distance separates either case,
+    because the quantity that distinguishes them is **direction**, and proximity never
+    consults it.
+
+    Two points join only when they are within `link_mm` *and* their local tangents agree to
+    `max_turn_deg`. A cross-run meets a fillet at ~90 deg, so the bridge is cut; two parallel
+    fillets are not bridged in the first place once the ends are gone.
+
+    **This is an upgrade to `ours`, and it is deliberately not applied to any `lit-*`
+    method.** Neither Wei et al. nor Zhang et al. specifies a clustering step at all
+    (`lit_regiongrow` deviation 5, `lit_lobb` deviation 4), so replacing the standard choice
+    with a better one there would make the reimplementation outperform the paper — the same
+    fidelity failure as making it worse, in the flattering direction, and it would leave
+    every number unattributable. Use `cluster_method="directional"` here; keep the
+    literature on `connected_components`; and if the question is *"how much of each method's
+    error is clustering?"*, run this as a clearly labelled diagnostic arm across all of them
+    and never quote it as a paper's result.
+    """
+    pts = np.asarray(pts, dtype=float)
+    if len(pts) == 0:
+        return np.zeros(0, dtype=int)
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components as _cc
+
+    pairs = cKDTree(pts).query_pairs(link_mm, output_type="ndarray")
+    if len(pairs) == 0:
+        return np.arange(len(pts))
+
+    t = local_tangent(pts, tangent_radius_mm, min_neighbors)
+    # `|cos|`, not `cos`: the eigenvector sign is arbitrary, so an unsigned comparison is
+    # the only one that means anything. A point with no tangent (too few neighbours) keeps
+    # its proximity links rather than being cut loose.
+    cos = np.abs(np.einsum("ij,ij->i", t[pairs[:, 0]], t[pairs[:, 1]]))
+    have = (np.linalg.norm(t[pairs[:, 0]], axis=1) > 0.5) & \
+           (np.linalg.norm(t[pairs[:, 1]], axis=1) > 0.5)
+    keep = (~have) | (cos >= np.cos(np.radians(float(max_turn_deg))))
+    pairs = pairs[keep]
+    if len(pairs) == 0:
+        return np.arange(len(pts))
+
+    g = coo_matrix((np.ones(len(pairs)), (pairs[:, 0], pairs[:, 1])),
+                   shape=(len(pts), len(pts)))
+    _, labels = _cc(g, directed=False)
+
+    # Stage two. Cutting the cross-runs leaves each fillet pair still joined along its
+    # length, because they are PARALLEL - identical direction, one plate-thickness apart.
+    # Measured before this was added: direction alone split 1 of 7 T and corner scenes.
+    lat = float(lateral_link_mm) if lateral_link_mm else float(link_mm)
+    out = np.full(len(pts), -1, dtype=int)
+    nxt = 0
+    for lab in np.unique(labels):
+        m = np.flatnonzero(labels == lab)
+        sub = lateral_split(pts[m], lat, min_neighbors)
+        for s_lab in np.unique(sub):
+            out[m[sub == s_lab]] = nxt
+            nxt += 1
+    return out
+
+
 @dataclass
 class RadiusPCAResult:
     """What the baseline returned, and enough context to know what it means."""
@@ -353,6 +473,9 @@ def detect(pts: np.ndarray,
            density_radius_mm: float | None = None,
            band_sampling: str = "voxel",
            cluster_method: str = "components",
+           tangent_radius_mm: float | None = None,
+           max_turn_deg: float = 30.0,
+           lateral_link_mm: float | None = None,
            dbscan_eps_mm: float | None = None,
            dbscan_min_samples: int = 6,
            density_keep: float | None = None) -> RadiusPCAResult:
@@ -384,8 +507,22 @@ def detect(pts: np.ndarray,
             coarser than the gap, which averages the two parallel edge lines into one.
             `"raw"` keeps every band point. Voxelising **destroys the density signal**, so
             `"raw"` is required for `cluster_method="dbscan"` to do anything.
-        cluster_method: `"components"` (default, the original) or `"dbscan"`. See
-            `dbscan_components` for why the noise label is the whole difference.
+        cluster_method: `"components"` (default, the original), `"dbscan"`, or
+            `"directional"`. See `directional_components` — proximity alone cannot separate
+            two parallel centrelines a plate-thickness apart, nor cut a closed contact
+            perimeter into the open runs that are actually welded, and both cases occur in
+            every T joint in this dataset.
+        tangent_radius_mm: ball for the local seam direction used by `"directional"`.
+            Default `2 x radius_mm` — it has to span enough of the ribbon to see which way
+            it runs, and stay short enough to turn with a curved seam.
+        lateral_link_mm: link distance for the second stage of `"directional"`, applied
+            *across* the seam after the along-seam coordinate is projected out. It must be
+            **below the separation between two parallel seams** — a plate thickness — and
+            above the band's own width, which is what makes it the sensitive knob. Defaults
+            to `link_mm`.
+        max_turn_deg: how far two tangents may differ and still link. A cross-run meets a
+            fillet at ~90 deg, so anything well under that cuts the bridge; the default is
+            set by how much a *curved* seam may turn within `link_mm`, not by the bridge.
         dbscan_eps_mm: neighbourhood for DBSCAN, default 2 x the point spacing. It must be
             **below the seam separation** or the two seams are density-reachable from each
             other and no `min_samples` can separate them.
@@ -482,9 +619,14 @@ def detect(pts: np.ndarray,
         params["n_noise"] = int((labels < 0).sum())
     elif cluster_method == "components":
         labels = connected_components(band, link_mm)
+    elif cluster_method == "directional":
+        tr = float(tangent_radius_mm) if tangent_radius_mm else 2.0 * radius_mm
+        params["tangent_radius_mm"] = tr
+        params["max_turn_deg"] = float(max_turn_deg)
+        labels = directional_components(band, link_mm, tr, max_turn_deg)
     else:
-        raise ValueError(
-            f"cluster_method must be 'components' or 'dbscan', got {cluster_method!r}")
+        raise ValueError("cluster_method must be 'components', 'dbscan' or 'directional', "
+                         f"got {cluster_method!r}")
     params["cluster_method"] = cluster_method
 
     clusters: list[np.ndarray] = []

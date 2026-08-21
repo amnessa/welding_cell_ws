@@ -188,7 +188,7 @@ concession.
 | `lit-ransac` | improved RANSAC multi-plane fitting → plane intersection lines → inliers projected onto the weld vector for endpoints → dihedral for torch pose | Yi et al., *Automation in Construction* 2026 |
 | `lit-ppf` | point-pair-feature coplanarity + voting for orthogonal plane pairs and their intersections; explicitly proposed as a RANSAC alternative on grounds of speed and threshold sensitivity | *Scientific Reports* 2024 fusion paper |
 | `lit-regiongrow` | region growing seeded at the smoothest point by δ = λ₀/(λ₀+λ₁+λ₂), then least-squares fit of near-edge points | *Coarse-to-Fine Detection of Multiple Seams* |
-| `lit-lobb` | local oriented bounding box descriptor, nonlinear feature activation, hierarchical K-means separating **face / crease / boundary / corner** points | Zhang et al., *IEEE T-ASE* 22, 2025 |
+| `lit-lobb` | K-Net **component** segmentation → edge pixels where two masks meet → ROI by shape extension → LOBB bounding-box flatness → tanh activation → binary K-means → polynomial fit | Zhang et al., *RCIM* 95 (2025) 102987, with the LOBB descriptor of *IEEE T-ASE* 22 (2025) 75 |
 | `lit-pcaslice` | PCA-based adaptive slicing with the slicing direction determined from the data, centreline per slice | *3D vision-based intersecting pipe welding path planning* |
 | `lit-modelreg` | registration of a CAD model to the scan, welding path transferred from the model | *A novel model-based welding trajectory planning method for identical structural workpieces* |
 
@@ -389,34 +389,161 @@ protocol asymmetry: `lit-ransac` publishes all three of its constants and so get
 freedom — **equal treatment of the seven means tuning what a paper leaves unspecified and
 saying which ones those were.**
 
-**First measurement, and it is not good.** On the 12 T scenes at L0, the *detection* is
-strong — 99% of surviving seam points within 3 mm of truth, median distance 1,14 mm — and
-the *seam* is not. Best configurations sit at RMSE 1,2–3,0 mm and F1 0,29–0,48, against
-`lit-ransac`'s 0,60 mm and 0,75, and against this paper's own published RMSE of 0,37–0,56 mm.
+**Measured on the balanced corpus, 2026-08-20 — 50 T + 50 corner**, which is the fair
+comparison set: Wei et al.'s four workpieces are fillet welds on steel structures, and this is
+the joint their method was built and tuned for.
 
-The failure is in the clustering, and it is **the same wall `ours` hit**:
+**The coarse-detection ladder, and it revises everything below it.** Four rungs, because the
+first measurement gave this method *`lit-ransac`'s* oracle — a band drawn around the truth
+seam — which is not the stage §III-C describes:
 
-- Link short: the seam shatters into ~10 fragments of a dozen points each (length error
-  −127 mm).
-- Link long enough to hold one seam together: a T's two fillets, **8 mm apart**, merge into a
-  single line sitting between them — 3,0 mm RMSE, and only one of two truth seams matched.
+| arm | what is supplied | T F1 | corner F1 | T RMSE | seam pts |
+|---|---|---|---|---|---|
+| `L0-band` | a ~40 mm band round the **truth seam** (Yi et al.'s stage) | **0,38** | **0,45** | 2,2 | 166 |
+| `L0-crop` | §III-C's own crop, derived from surfaces; regions re-grown | 0,13 | 0,10 | 3,8 | 2 101 |
+| `L0-paper` | §III-C's crop **and** perfect surface labels | **0,05** | **0,02** | **40,9** | 5 569 |
+| `L1` | nothing | 0,13 | 0,10 | 3,8 | 2 102 |
 
-The plan already records this for `ours`: *proximity alone cannot separate two parallel
-centrelines a plate-thickness apart; splitting components by direction as well would.* Two
-independent methods reaching the identical wall is the stronger form of that finding, and
-**neither paper could have found it** — their workpieces are large steel structures whose
-seams are nowhere near each other. It is also a concrete, shared upgrade: direction-aware
-clustering is now worth building once, for both.
+1. **This method's own coarse stage is worth nothing.** `L0-crop` and `L1` agree to three
+   decimals (0,125 / 0,126 and 0,102 / 0,101). The surface-derived crop keeps 331 k of 522 k
+   points, so cropping to it is the same as not cropping. Every earlier claim here that "the
+   segmentation effect is real and large" was measuring the **seam band** — Yi et al.'s
+   oracle, drawn around the answer — and is withdrawn.
+
+2. **Supplying *perfect* surface labels is worse than supplying nothing**: F1 0,05 against
+   0,13, RMSE 41 mm against 3,8. This is the face-versus-part problem in its purest form. The
+   two-surface test assumes a surface boundary indicates a seam; give it perfect surfaces and
+   **every plate edge qualifies**, so the crease set triples and collapses into one or two
+   clusters spanning the workpiece. Region growing was accidentally helping by
+   *under*-segmenting — merging faces it should not have, which suppressed some rim junctions.
+   A method improved by a worse segmentation is a strong statement about its premise.
+
+   *Caveat, unmeasured:* `face_id` supplies all 12 faces including ones no camera sees, while
+   FastSAM segments only camera-visible surfaces. On the single-view arm their stage would
+   return fewer surfaces and might land between `L0-paper` and `L0-crop`. Worth measuring
+   before this is written up.
+
+**The oracle-free claim does not survive, and the reason is precise.** The two-surface test
+was the reason this method is in the seven — it asks "do these two points sit on different
+surfaces?" using regions it grew itself, where `ours` asks the same question of an `object_id`
+oracle. On a cropped weld region it works: 55% of surviving points land within 3 mm of truth.
+On a whole workpiece it admits **ten times as many points, 89% of them nowhere near a seam.**
+
+The flaw is a category error, not a threshold: **the test asks "two surfaces?" when the
+question that matters is "two parts?"**. A plate has six faces, so region growing gives one
+plate several regions, and *every edge of every plate* is a junction of two of them —
+indistinguishable, by this test, from a fillet. `ours` collapses the same way (F1 0,75 → 0,03)
+for a different reason: it needs the oracle to answer the question at all. Neither method has
+a point-cloud-only way to tell a *part boundary* from a *face boundary*, and that is now a
+statement about the method class rather than about either paper.
+
+**Accuracy, on the paper's own metric — and the first reading of this was wrong.** Reporting
+the per-scene *maximum* RMSE (2,8–3,3 mm) conflated two failures that have to be separated,
+because the method fails at only one of them. Per matched fragment, over the same 100 scenes:
+
+| arm | joint | median RMSE | median ME | **coverage** | recall | precision |
+|---|---|---|---|---|---|---|
+| L0 | corner | **0,94 mm** | 1,37 | **35%** | 0,78 | 0,40 |
+| L0 | T | **1,17 mm** | 1,49 | **10%** | 0,37 | 0,76 |
+| L1 | T | 3,19 mm | 3,45 | 10% | 0,28 | 0,11 |
+| L1 | corner | 3,92 mm | 5,11 | 24% | 0,35 | 0,08 |
+
+**Localisation roughly holds; coverage collapses.** Where the method returns a seam fragment,
+that fragment is on the seam — median 0,94–1,17 mm against Wei et al.'s reported 0,37–0,56 mm,
+so about 2× rather than 5×, and **35% of fragments meet their worst reported RMSE outright**
+with **41% inside their stated 1 mm maximum-error requirement**. What fails is that a
+fragment covers **10% of its seam on a T joint** and 35% on a corner. Their metric cannot
+show this: §IV-A samples 3 points per linear seam and 10 on the curved one, and reports the
+distance at those points. A method returning an accurate 14 mm stub of a 142 mm seam scores
+well on it. **This dataset's exact truth is what makes the distinction visible**, and it is a
+better argument for the generator than any accuracy number.
+
+**Read the precision/recall pair, not F1.** T and corner have almost the same F1 (0,47 / 0,49)
+by opposite routes: T returns short accurate stubs (precision 0,76, recall 0,37), corner
+returns over-wide coverage (precision 0,40, recall 0,78). A single scalar hides that the two
+joints break the method in opposite directions.
+
+**T against corner separates the mechanism from the method.** Same code, same parameters:
+corner coverage 35% against T's 10%, and corner's median fragment is more accurate too. A T
+joint's two fillets are one plate-thickness apart and proximity is all the clustering has to
+go on. This is the wall `ours` hit, reached independently by a method that shares only the
+curvature feature — and **neither paper could have found it**, because their workpieces are
+large steel structures whose seams are nowhere near each other.
+
+*(A tempting explanation that the data does not support: fragments being matched to the wrong
+fillet. Checked — only 19% of T fragments are closer to the other fillet than to their own.
+The dominant effect is fragmentation, not mis-assignment.)*
 
 Written up in `notebooks/05_lit_regiongrow.ipynb`, which also carries the neighbourhood-reach
 plot and the fragmentation-versus-merge figure.
 
-Open before this method can be reported: the L1 arm — the oracle-free two-surface test is the
-reason this method is in the seven at all, and every number above supplies §III-C's crop. And
-**direction-aware clustering, built once for both methods**, which is now the single highest-
-value piece of work in Phase 4: it is the named blocker for `ours` and the measured blocker
-for `lit-regiongrow`, and a fix that moves both is a result about the mechanism rather than
-about either method.
+Still open: **direction-aware clustering, built once for both methods.** It is now the
+highest-value piece of work in Phase 4 — the named blocker for `ours` and the measured blocker
+for `lit-regiongrow` — and a fix that moves both is a result about the mechanism rather than
+about either method. Second: a **part-boundary versus face-boundary** test that needs no
+`object_id`. Both methods now fail on the same missing primitive, which makes it worth
+building once and reporting as its own contribution rather than as a patch to either.
+
+#### `lit-lobb` implemented, 2026-08-20 — and the three coarse stages are three different oracles
+
+Zhang et al., *RCIM* 95 (2025) 102987, with the LOBB descriptor from the same group's
+*IEEE T-ASE* 22 (2025) 75. Pipeline: K-Net semantic segmentation → edge pixels where two
+masks meet → ROI by shape extension → LOBB flatness → tanh activation → binary K-means →
+Mean-Shift key points → polynomial fit. Reported: **max error < 1,2 mm, RMSE < 0,7 mm**.
+
+**The coarse-stage correction.** Until this was checked, one `seam_region_oracle` was serving
+every literature method. The three papers do not have the same coarse stage, and conflating
+them flatters some and starves others:
+
+| method | its coarse stage produces | supplied here from |
+|---|---|---|
+| `lit-ransac` | a **weld-seam band**, annotated at ~40 mm width (PointNet++) | truth seams |
+| `lit-regiongrow` | one mask per **surface** (FastSAM), seam region *derived* from where two meet | `face_id` |
+| `lit-lobb` | one mask per **component** (K-Net, labels "A"/"B") | `object_id` |
+
+Measured, the first two are not close: on a T joint the seam band is 94 k points, **100%**
+within 20 mm of a seam; the surface-derived crop is 331 k points, **31%**. The paper's own
+coarse stage keeps 3–6× more and three-quarters of it is nowhere near a seam — because
+**FastSAM segments surfaces and a plate has six of them**, so every plate rim is a surface
+junction. The face-versus-part problem is in their *coarse* stage too, not only downstream.
+
+**And `lit-lobb`'s coarse stage is `ours`' cross-object gate.** RCIM eq. 2 declares a pixel an
+edge when its neighbourhood holds two different **component** masks — which is exactly what
+`cross_object_mask` does with `object_id`, obtained from a K-Net at 97,35% mIoU instead of
+from a stack of registered CAD clouds. This plan calls that gate *a dependency on
+segmentation `ours` does not publish about*. Here is the literature taking the same
+dependency and publishing it. **That materially strengthens the `ours` write-up**: the
+dependency is a property of the problem, not a weakness of one method, and the honest framing
+is a *ladder* every method sits on rather than an accusation aimed at ours.
+
+**First measurement.** On a corner joint at L0: **F1 1,00, RMSE 0,38 mm** — inside their
+reported < 0,7 mm, on the first run, with no tuning. That is the strongest reproduction any
+of the three has produced.
+
+On a T joint it returns **F1 0,00**, and the reason is worth recording carefully because the
+detection is not what fails. **98% of its crease points land within 3 mm of truth.** What
+fails is cutting them into seams: a web sitting on a base plate touches it along a **closed
+perimeter** — two long fillets joined by two short cross-runs at the ends. D4 excludes the
+cross-runs, so the *label* is two open curves while the *geometry* is one loop. LOBB finds
+the loop almost perfectly and then fits one polynomial through it.
+
+Proximity cannot make that cut. The cross-runs are only **2,5%** of the crease points and all
+of them sit within 15 mm of a seam endpoint, but they physically bridge the two fillets, so
+**no link distance separates them** — measured at 1,5 / 2 / 3 / 5 mm, all give one component.
+
+That is now **three independent methods stopped by the same missing primitive**, reached by
+three different routes:
+
+| method | what it cannot do |
+|---|---|
+| `ours` | separate two parallel centrelines a plate-thickness apart |
+| `lit-regiongrow` | hold a seam together without merging both fillets |
+| `lit-lobb` | cut a closed contact perimeter into the open runs that are welded |
+
+All three are the same request: **split a point set by direction, not by proximity.** Build
+it once, measure it on all three, and report it as a finding about the mechanism. Neither of
+the three papers could have found this — their workpieces have well-separated seams and no
+closed perimeters.
 
 #### The reproducibility result, and why it is the strongest thing here
 
@@ -1020,7 +1147,9 @@ splitting is the fix); and `surface_variation` was rebatched to ~100× the origi
       lit_regiongrow.py`, 8 tests. Implemented and first-measured; see §4. Its curvature is
       **the same quantity `ours` uses**, so the k-NN-vs-radius substitution and the
       oracle-free two-surface test are now both measurable on one code path
-- [ ] `lit-lobb` — pure feature-space, no registration or CAD dependency
+- [x] **`lit-lobb`** — Zhang et al. RCIM 2025 + T-ASE 2025, `scripts/baselines/lit_lobb.py`,
+      11 tests. Implemented; first measurement in §4. **Its coarse stage is `ours`'
+      cross-object gate**, obtained from a trained 2D segmenter instead of a CAD stack
 - [x] **`lit-ransac`** — Yi et al. 2026 §5–§6, `scripts/baselines/lit_ransac.py`, 15 tests.
       Measured; see §4. Edge 0,00 as predicted, butt **not** 0,00 (root gap ⇒ orthogonal wall),
       lap 0,00 without the segmentation oracle because `T_mpp` is an area ratio

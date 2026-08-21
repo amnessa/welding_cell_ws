@@ -83,12 +83,13 @@ weldgen/         the generator - trimesh + NumPy only, no simulator import (D9)
 
 scripts/         evaluation, NOT part of the generator (Phase 4)
   baselines/         radius_pca.py (`ours`), lit_ransac.py (Yi et al. 2026),
-                     lit_regiongrow.py (Wei et al. 2024), metrics.py, dataset.py
+                     lit_regiongrow.py (Wei et al. 2024),
+                     lit_lobb.py (Zhang et al. 2025), metrics.py, dataset.py
 
 configs/         phase1, phase2, phase2_fixture, phase3, phase3_raster,
                  bench_{T,corner,butt,lap,edge}  <- the balanced benchmark corpus,
                  smoke, reference_tjoint, playground
-tests/           238 tests: geometry, determinism, schema conformance, ISO limits, viz,
+tests/           251 tests: geometry, determinism, schema conformance, ISO limits, viz,
                  the Phase 2 joint-type gate, the Phase 3 visibility gate, and the
                  migrated baseline
 notes/           the plan, the handoff, and the standards PDFs
@@ -372,7 +373,23 @@ as a novel extractor — the contribution is the dataset and the comparison
 |---|---|---|
 | `radius_pca.py` | `ours` — radius-PCA surface variation, band only | `object_id` (cross-object gate) |
 | `lit_ransac.py` | `lit-ransac` — Yi et al., *Automation in Construction* 183 (2026) 106792: improved multi-plane RANSAC, plane intersections, endpoints by projection, torch pose from the dihedral | a weld-region segmentation (their PointNet++) |
-| `lit_regiongrow.py` | `lit-regiongrow` — Wei et al., arXiv:2408.10710 (2024): curvature-seeded region growing, then the edge points that span two grown surfaces | a weld-region crop (their FastSAM) |
+| `lit_regiongrow.py` | `lit-regiongrow` — Wei et al., arXiv:2408.10710 (2024): curvature-seeded region growing, then the edge points that span two grown surfaces | per-**surface** masks (their FastSAM) |
+| `lit_lobb.py` | `lit-lobb` — Zhang et al., *RCIM* 95 (2025) 102987 with the LOBB descriptor of *IEEE T-ASE* 22 (2025) 75: bounding-box flatness, tanh activation, binary K-means, polynomial fit | per-**component** masks (their K-Net) |
+
+**The three literature methods have three different coarse stages, and they are not
+interchangeable.** One method wants a weld-seam band, one wants per-surface masks, one wants
+per-component masks — supplying the same oracle to all three flatters some and starves
+others. Measured on a T joint: the seam band is 94 k points and **100%** of it lies within
+20 mm of a seam; the surface-derived crop is 331 k points and **31%** does. A plate has six
+faces, so every plate rim is a surface junction.
+
+**`lit-lobb`'s coarse stage is `ours`' cross-object gate.** Its eq. 2 calls a pixel an edge
+when its neighbourhood holds two different *component* masks — that is `object_id`, obtained
+from a trained 2D segmenter at 97,35% mIoU instead of from a stack of registered CAD clouds.
+So the dependency `ours` is criticised for is one the literature also takes and publishes,
+which makes the honest framing a *ladder every method sits on* rather than a weakness of one.
+On a corner joint it reproduces its paper first time: **F1 1,00 at RMSE 0,38 mm** against a
+reported < 0,7 mm.
 
 **`lit-ransac` reproduces its paper.** Checked against §7.2.1's own metric, not ours — RMSE
 0,60 mm and ME 0,81 mm against a reported max of 0,64 and 1,16, on a T joint at the paper's
@@ -384,8 +401,36 @@ in. `metrics.matched_path_errors` computes the literature's RMSE/ME form for exa
 **`lit-regiongrow` uses the same curvature `ours` does** — eq. 3's `λ₀/Σλ` is
 `surface_variation`, pinned by a test — so the two differ only in neighbourhood (k-NN vs
 ball), decision rule (region growing vs threshold), and how they tell two parts apart (its
-own grown regions vs an `object_id` oracle). Each of those is now measurable on one code path
+own grown regions vs an `object_id` oracle). Each of those is measurable on one code path
 rather than arguable.
+
+**Its accuracy holds and its coverage does not.** Where it returns a seam fragment, that
+fragment is on the seam — median RMSE 0,94 mm (corner) and 1,17 mm (T) against Wei et al.'s
+reported 0,37–0,56, with 41% of fragments inside their stated 1 mm maximum-error requirement.
+What collapses is coverage: a fragment spans **10% of its seam on a T joint**, 35% on a
+corner. Their own metric cannot see this — §IV-A samples 3 points per linear seam and reports
+the distance at those points, so an accurate 14 mm stub of a 142 mm seam scores well. Exact
+constructed truth is what makes the distinction visible, and that is a better argument for
+this generator than any accuracy number.
+
+**Its own coarse stage is worth nothing, and a perfect one is worse than none.** Four rungs
+over 50 T + 50 corner: a seam band drawn round the truth gives F1 0,38; **§III-C's own
+surface-derived crop gives 0,13, which is what no crop at all gives** (0,13); and supplying
+*perfect* surface labels gives **0,05**, worse than nothing, at 41 mm RMSE. Region growing was
+accidentally helping by under-segmenting. A method improved by a worse segmentation is a
+strong statement about its premise.
+
+**And its oracle-free claim fails, for a nameable reason.** Its two-surface test was the
+reason it is in the comparison: it asks *"different surfaces?"* using regions it grew itself,
+where `ours` asks an `object_id` oracle. Given the paper's own weld-region crop it works —
+F1 0,41, and 55% of surviving points within 3 mm of truth over 50 T + 50 corner scenes.
+Given a whole workpiece it returns **ten times as many points, 89% of them nowhere near a
+seam** (F1 0,11, median 84,7 mm from truth). The flaw is a category error rather than a
+threshold: **a plate has six faces, so every edge of every plate is a junction of two
+surfaces** — the test asks *"two surfaces?"* when the question that matters is *"two parts?"*.
+`ours` collapses the same way for a different reason (F1 0,75 → 0,03). Neither method has a
+point-cloud-only way to tell a part boundary from a face boundary, which makes that a missing
+primitive rather than a flaw in either paper.
 
 Three things a reader of the paper should know before quoting either.
 
