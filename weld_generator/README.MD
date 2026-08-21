@@ -41,17 +41,22 @@ Two notebooks, both of which need a **kernel restart** after you change `weldgen
   world and image space, an azimuth × elevation map of where each seam can be seen from, the
   sensor model, `area_uniform` vs `camera_raster`, and the per-joint-type yield of the
   omission policy.
-- `notebooks/03_baselines.ipynb` — `ours` (radius-PCA) scored against constructed truth: the
-  validity window on trial, per-joint-type error, and the segmentation-dependency ablation.
+- `notebooks/03_baselines.ipynb` — `ours` (radius-PCA) scored against constructed truth on
+  the balanced corpus: both validity-window bounds on trial (the corrected `R < t/2` paired
+  against the original claim), per-joint-type error, the direction-aware clustering
+  measurement, and the segmentation-dependency ablation.
 - `notebooks/04_lit_ransac.ipynb` — `lit-ransac` (Yi et al. 2026) reimplemented and put on
   trial: the reproduction of its published RMSE/ME, the two gates that decide coverage, the
   L0/L1 segmentation delta, the seed box plots, and the two equations that do not work as
   printed.
 - `notebooks/05_lit_regiongrow.ipynb` — `lit-regiongrow` (Wei et al. 2024): the feature it
-  shares with `ours`, why PCL's defaults put a 9 mm neighbourhood on an 8 mm plate, and the
-  clustering wall it hits in the same place `ours` does.
+  shares with `ours`, why PCL's defaults put a 9 mm neighbourhood on an 8 mm plate, the
+  four-rung coarse-detection ladder, and the clustering wall it hits where `ours` does.
+- `notebooks/06_lit_lobb.ipynb` — `lit-lobb` (Zhang et al. 2025): bounding-box flatness against
+  the eigenvalue ratio, the `tanh` activation, and the closed contact perimeter that breaks
+  its curve fit.
 
-All three are entries in the seven-method Phase 4 comparison; see `notes/dataset_plan.md` §4
+All four are entries in the seven-method Phase 4 comparison; see `notes/dataset_plan.md` §4
 and **Baselines** below.
 
 ---
@@ -89,7 +94,7 @@ scripts/         evaluation, NOT part of the generator (Phase 4)
 configs/         phase1, phase2, phase2_fixture, phase3, phase3_raster,
                  bench_{T,corner,butt,lap,edge}  <- the balanced benchmark corpus,
                  smoke, reference_tjoint, playground
-tests/           251 tests: geometry, determinism, schema conformance, ISO limits, viz,
+tests/           255 tests: geometry, determinism, schema conformance, ISO limits, viz,
                  the Phase 2 joint-type gate, the Phase 3 visibility gate, and the
                  migrated baseline
 notes/           the plan, the handoff, and the standards PDFs
@@ -388,8 +393,10 @@ when its neighbourhood holds two different *component* masks — that is `object
 from a trained 2D segmenter at 97,35% mIoU instead of from a stack of registered CAD clouds.
 So the dependency `ours` is criticised for is one the literature also takes and publishes,
 which makes the honest framing a *ladder every method sits on* rather than a weakness of one.
-On a corner joint it reproduces its paper first time: **F1 1,00 at RMSE 0,38 mm** against a
-reported < 0,7 mm.
+On a corner joint it reproduces its paper: median **RMSE 0,51 mm** over 25 scenes against a
+reported < 0,7 mm, first run, no tuning. **And it collapses exactly as `ours` does when the
+masks are withheld** — F1 0,83 → 0,02, against `ours`' 0,75 → 0,03. Two methods sharing
+nothing but that one input, failing by the same factor without it.
 
 **`lit-ransac` reproduces its paper.** Checked against §7.2.1's own metric, not ours — RMSE
 0,60 mm and ME 0,81 mm against a reported max of 0,64 and 1,16, on a T joint at the paper's
@@ -433,6 +440,20 @@ point-cloud-only way to tell a part boundary from a face boundary, which makes t
 primitive rather than a flaw in either paper.
 
 Three things a reader of the paper should know before quoting either.
+
+**`ours`' own validity window was wrong, and correcting it is worth more than any
+clustering.** §8 states `gap + spacing < R < thickness`; what bridges a plate's two faces is
+the ball's **diameter**, so the bound is `R < thickness/2`. Paired on 44 scenes: F1
+0,709 → 0,897, band width 5,70 → 3,31 mm, better in 38 and 44 of 44 scenes. A "valid" radius
+under the old bound gave a ball spanning 1,2–1,9× the plate. `validity_window_mm(...,
+upper="thickness")` keeps the original claim reachable so the correction stays falsifiable.
+
+**Direction-aware clustering is `ours`-only, on purpose.** Neither Wei et al. nor Zhang et al.
+specifies a clustering step, so this repo chose one for them. Filling an unspecified step with
+the standard choice is faithful; filling it with something better than the paper suggests
+would make the reimplementation beat the published method — the same fidelity failure as
+making it worse — and would leave every number unattributable. A test asserts the `lit-*`
+modules never import it.
 
 **A published constant can delete a joint type — mostly.** `lit-ransac` terminates plane
 fitting when a plane holds under `T_mpp = 2,5%` of the points (their eq. 17). A lap toe is made

@@ -516,9 +516,28 @@ dependency and publishing it. **That materially strengthens the `ours` write-up*
 dependency is a property of the problem, not a weakness of one method, and the honest framing
 is a *ladder* every method sits on rather than an accusation aimed at ours.
 
-**First measurement.** On a corner joint at L0: **F1 1,00, RMSE 0,38 mm** — inside their
-reported < 0,7 mm, on the first run, with no tuning. That is the strongest reproduction any
-of the three has produced.
+**Measured on the balanced corpus, 25 scenes per joint type, both arms:**
+
+| arm | joint | F1 | median RMSE | crease pts within 3 mm |
+|---|---|---|---|---|
+| L0 | **corner** | **0,83** | **0,51 mm** | 82% |
+| L0 | T | 0,47 | 2,82 mm | 76% |
+| L0 | butt | 0,33 | 3,14 mm | 64% |
+| L0 | lap | 0,04 | 28,5 mm | 52% |
+| L0 | edge | 0,02 | 64,7 mm | 3% |
+| L1 | corner | **0,02** | 80,1 mm | 10% |
+| L1 | T | 0,09 | 48,1 mm | 20% |
+
+**Corner reproduces the paper**: median RMSE 0,51 mm against their reported < 0,7 mm, first
+run, no tuning — the strongest reproduction any of the three has produced. 18 of 125 L0 scenes
+meet < 0,7 mm outright.
+
+**And the L0 → L1 collapse is `ours`' collapse, on the same input.** Corner goes 0,83 → 0,02
+when the component masks are withheld; `ours` goes 0,75 → 0,03. Two methods sharing nothing
+but that one input, failing by the same factor when it is removed. That is as direct a
+confirmation as this dataset can produce that **the dependency is a property of the problem,
+not a weakness of `ours`** — and it is the single most useful thing `lit-lobb` contributes to
+the thesis.
 
 On a T joint it returns **F1 0,00**, and the reason is worth recording carefully because the
 detection is not what fails. **98% of its crease points land within 3 mm of truth.** What
@@ -544,6 +563,76 @@ All three are the same request: **split a point set by direction, not by proximi
 it once, measure it on all three, and report it as a finding about the mechanism. Neither of
 the three papers could have found this — their workpieces have well-separated seams and no
 closed perimeters.
+
+#### `ours`: the validity window was wrong, and direction-aware clustering is a partial win
+
+Two results, from following the clustering question to its end. Both concern **`ours` only**
+— see the fidelity note below.
+
+**1. The upper bound of the validity window is `t/2`, not `t`.** `README §8` states the
+claim as `gap + spacing < R < thickness`, and the derivation does not support the right-hand
+side: what bridges a plate's own two faces is the ball's **diameter**, not its radius. At `R`
+just under `t` the neighbourhood is nearly `2t` across, so a point on the top face has the
+bottom face inside it — the exact failure the bound exists to prevent. Measured, a "valid"
+`R` under the old bound gave a ball spanning **1,2–1,9× the plate**.
+
+Paired on 44 T / corner / butt / lap scenes where both bounds leave the window open, changing
+nothing else:
+
+| | `R < t` | `R < t/2` | improved in |
+|---|---|---|---|
+| F1 | 0,709 | **0,897** | 38 / 44 |
+| precision | 0,583 | **0,839** | 39 / 44 |
+| band width | 5,70 mm | **3,31 mm** | 44 / 44 |
+| Chamfer | 5,05 mm | **3,68 mm** | 42 / 44 |
+
+This is the *corrected bound, derived and then measured* that the Phase 4 record asked for
+after the sweep found the usable range wider than predicted. It closes the window more often
+(44 of 70 runs against 70 of 70) — a cost of being right, since those runs were only "valid"
+because the bound was wrong. `validity_window_mm(..., upper="thickness")` keeps the original
+claim reachable so the correction stays falsifiable.
+
+**2. Direction-aware clustering: real, and not the fix that was predicted.** The recommendation
+was that it would resolve the seam-separation failure shared by three methods. It does not.
+
+| | exact seam count | mean abs. count error |
+|---|---|---|
+| `R < t`, proximity | 2,3% | 1,00 |
+| `R < t`, **directional** | **34,1%** | 1,14 |
+| `R < t/2`, proximity | 6,8% | 1,07 |
+| `R < t/2`, **directional** | 15,9% | 2,39 |
+
+It gets the count *exactly* right 15× more often at the **old** window, and **over-fragments
+when it is wrong**. Re-measured in `notebooks/03` on 50 scenes across all five types at the
+*corrected* window default: exact 8% → 10%, absolute count error 2,3 → 4,4 — the gain is gone
+and the fragmentation is not, worst on edge, whose band has no direction structure at all.
+**The window correction absorbed most of what the clustering upgrade was worth**, which is the
+right outcome: the fat, bridged band was the disease and direction-aware linking was treating
+a symptom. Off by default, revisit only if a fat-band regime returns.
+
+Two mechanisms had been conflated and the measurement separated them. Comparing the two
+points' **tangents** to each other cannot work: a tangent smoothed over its own ball blends
+straight through a sharp corner, and two *parallel* seams have identical tangents by
+construction. Testing whether the **step between them runs along both tangents** cuts both —
+a step onto a cross-run is perpendicular to the fillet it leaves, and a step across to a
+parallel fillet is perpendicular to both.
+
+And the deeper reason `ours` was never going to be fixed by clustering: **the band is one
+continuous region.** Measured on T joints under the old bound, 12–19% of band points sit in
+the middle third *between* the two fillets. There is no gap for any clustering algorithm to
+find. That is a property of the band, not of the clustering — and the window correction above
+is what actually narrows it (5,70 mm → 3,31 mm).
+
+**Fidelity note — this is not applied to any `lit-*` method, deliberately.** Neither Wei et
+al. §III-D nor Zhang et al. §3.4.3 specifies a clustering step at all; multi-seam clustering
+is this repo's addition in both (`lit_regiongrow` deviation 5, `lit_lobb` deviation 4).
+Filling an unspecified step with the standard choice is faithful; filling it with something
+better than the paper suggests would make the reimplementation **outperform the published
+method** — the same fidelity failure as making it worse, in the flattering direction — and
+would leave every number unattributable. `ours` gets the upgrade because it is ours. A test
+asserts the `lit-*` modules do not even import it. If the question is *how much of each
+method's error is clustering*, run the better splitter as a clearly labelled **diagnostic
+arm** across all seven and never quote it as a paper's result.
 
 #### The reproducibility result, and why it is the strongest thing here
 

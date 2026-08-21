@@ -54,19 +54,47 @@ except ImportError:                                    # pragma: no cover
 # the validity window
 # --------------------------------------------------------------------------------
 
-def validity_window_mm(root_gap_mm: float, spacing_mm: float, thickness_mm: float
-                       ) -> tuple[float, float]:
+def validity_window_mm(root_gap_mm: float, spacing_mm: float, thickness_mm: float,
+                       upper: str = "half_thickness") -> tuple[float, float]:
     """`(lo, hi)` bounds on the PCA radius. Empty (lo >= hi) means the method cannot work.
 
-    Straight from README §8: the ball must cross the gap and must not bridge a plate's own
-    two faces. On the reference T-joint (g = 1,1 mm, spacing = 2,7 mm, t = 8,4 mm) this is
-    roughly 3,8 – 8,4 mm, and the repo's default R = 6 mm sits inside it.
+    README §8 states the claim: the ball must cross the gap and must not bridge a plate's
+    own two faces.
 
-    The point of returning it rather than asserting it: on thin sheet the window **closes**,
-    and a baseline that has no valid radius at all is a result about the whole method class,
-    not a configuration error to be tuned away.
+        lo = root_gap + point_spacing        the ball must reach across the gap
+        hi = thickness / 2                   the BALL must not span the plate
+
+    **The upper bound is a correction, measured 2026-08-20.** The claim was written as
+    `R < thickness`, and the derivation does not support it: what bridges a plate's two
+    faces is the ball's **diameter**, not its radius. At `R` just under `t` the ball is
+    nearly `2t` across, so a point on the top face has the bottom face inside its
+    neighbourhood and the covariance is computed over both — which is exactly the failure
+    the bound exists to prevent. On this corpus a "valid" `R` under the old bound gave a ball
+    spanning 1,2–1,9x the plate.
+
+    Measured paired on 44 T / corner / butt / lap scenes where both bounds leave the window
+    open, changing nothing else:
+
+        F1          0,709 -> 0,897     better in 38 of 44 scenes
+        precision   0,583 -> 0,839     better in 39 of 44
+        band width  5,70 -> 3,31 mm    better in 44 of 44
+        Chamfer     5,05 -> 3,68 mm    better in 42 of 44
+
+    Pass `upper="thickness"` for the original claim; it is kept so the correction stays
+    falsifiable rather than being quietly absorbed.
+
+    The point of returning a window rather than asserting one: on thin sheet it **closes**,
+    and a baseline with no valid radius at all is a result about the whole method class, not
+    a configuration error to be tuned away. The corrected bound closes it more often — 44 of
+    70 runs against 70 of 70 — and that is a cost of the correction, not an argument against
+    it: those runs were previously "valid" only because the bound was wrong.
     """
-    return float(root_gap_mm) + float(spacing_mm), float(thickness_mm)
+    lo = float(root_gap_mm) + float(spacing_mm)
+    if upper == "half_thickness":
+        return lo, 0.5 * float(thickness_mm)
+    if upper == "thickness":
+        return lo, float(thickness_mm)
+    raise ValueError(f"upper must be 'half_thickness' or 'thickness', got {upper!r}")
 
 
 def mean_spacing_mm(pts: np.ndarray, sample: int = 2000, seed: int = 0) -> float:
@@ -375,9 +403,13 @@ def directional_components(pts: np.ndarray, link_mm: float, tangent_radius_mm: f
     because the quantity that distinguishes them is **direction**, and proximity never
     consults it.
 
-    Two points join only when they are within `link_mm` *and* their local tangents agree to
-    `max_turn_deg`. A cross-run meets a fillet at ~90 deg, so the bridge is cut; two parallel
-    fillets are not bridged in the first place once the ends are gone.
+    Two points join only when they are within `link_mm` **and the step between them runs
+    along both their local tangents** to within `max_turn_deg`. Testing the *edge direction*
+    rather than the two tangents against each other is what makes it work on both failure
+    modes: a step onto a cross-run is perpendicular to the fillet it leaves, and a step
+    across to a parallel fillet is perpendicular to both — while a step along either seam is
+    not. Comparing tangents to each other cuts neither, because a smoothed tangent blends
+    through a corner and two parallel seams have the same tangent by construction.
 
     **This is an upgrade to `ours`, and it is deliberately not applied to any `lit-*`
     method.** Neither Wei et al. nor Zhang et al. specifies a clustering step at all
@@ -400,14 +432,30 @@ def directional_components(pts: np.ndarray, link_mm: float, tangent_radius_mm: f
         return np.arange(len(pts))
 
     t = local_tangent(pts, tangent_radius_mm, min_neighbors)
-    # `|cos|`, not `cos`: the eigenvector sign is arbitrary, so an unsigned comparison is
-    # the only one that means anything. A point with no tangent (too few neighbours) keeps
-    # its proximity links rather than being cut loose.
-    cos = np.abs(np.einsum("ij,ij->i", t[pairs[:, 0]], t[pairs[:, 1]]))
-    have = (np.linalg.norm(t[pairs[:, 0]], axis=1) > 0.5) & \
-           (np.linalg.norm(t[pairs[:, 1]], axis=1) > 0.5)
-    keep = (~have) | (cos >= np.cos(np.radians(float(max_turn_deg))))
-    pairs = pairs[keep]
+
+    # The test is on the EDGE direction, not on the two tangents against each other.
+    #
+    # Comparing tangents fails on both cases this exists for. At a sharp corner the tangent
+    # is smoothed over its own ball, so a fillet point and a cross-run point a millimetre
+    # apart have nearly the same blended tangent and the bridge survives - measured, it did.
+    # And two PARALLEL seams have identical tangents by definition, so that test can never
+    # separate them at all.
+    #
+    # Requiring the connecting edge to run ALONG both tangents fixes both at once: a step
+    # from a fillet onto a cross-run is perpendicular to the fillet, and a step across to
+    # the parallel fillet is perpendicular to both. A step along either seam is not.
+    d = pts[pairs[:, 1]] - pts[pairs[:, 0]]
+    n = np.linalg.norm(d, axis=1)
+    e = d / np.where(n[:, None] > 1e-12, n[:, None], 1.0)
+    # `|cos|`, not `cos`: the eigenvector sign is arbitrary, so only an unsigned comparison
+    # means anything. A point with no tangent (too few neighbours) keeps its proximity links
+    # rather than being cut loose.
+    ok = np.cos(np.radians(float(max_turn_deg)))
+    have0 = np.linalg.norm(t[pairs[:, 0]], axis=1) > 0.5
+    have1 = np.linalg.norm(t[pairs[:, 1]], axis=1) > 0.5
+    a0 = (~have0) | (np.abs(np.einsum("ij,ij->i", e, t[pairs[:, 0]])) >= ok)
+    a1 = (~have1) | (np.abs(np.einsum("ij,ij->i", e, t[pairs[:, 1]])) >= ok)
+    pairs = pairs[a0 & a1]
     if len(pairs) == 0:
         return np.arange(len(pts))
 
@@ -520,7 +568,8 @@ def detect(pts: np.ndarray,
             **below the separation between two parallel seams** — a plate thickness — and
             above the band's own width, which is what makes it the sensitive knob. Defaults
             to `link_mm`.
-        max_turn_deg: how far two tangents may differ and still link. A cross-run meets a
+        max_turn_deg: how far the step between two points may lie off their own tangents
+            and still link them. A cross-run meets a
             fillet at ~90 deg, so anything well under that cuts the bridge; the default is
             set by how much a *curved* seam may turn within `link_mm`, not by the bridge.
         dbscan_eps_mm: neighbourhood for DBSCAN, default 2 x the point spacing. It must be

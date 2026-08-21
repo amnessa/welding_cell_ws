@@ -90,9 +90,36 @@ def test_the_validity_window_closes_on_thin_sheet():
     window is returned rather than asserted.
     """
     lo, hi = validity_window_mm(1.1, 2.7, 8.4)         # the repo's measured T-joint
-    assert lo < hi and lo == pytest.approx(3.8) and hi == pytest.approx(8.4)
+    assert lo < hi and lo == pytest.approx(3.8) and hi == pytest.approx(4.2)
     lo, hi = validity_window_mm(1.0, 1.0, 1.5)         # thin sheet
     assert lo >= hi, "the window must be empty, not merely narrow"
+
+
+def test_the_upper_bound_is_half_the_thickness_because_the_BALL_bridges_the_plate():
+    """A correction to `README §8`'s own claim, and it is worth a test of its own.
+
+    The claim was `R < thickness`. What bridges a plate's two faces is the ball's
+    **diameter**, so at `R` just under `t` the neighbourhood is nearly `2t` across and a
+    point on the top face has the bottom face inside it — the exact failure the bound exists
+    to prevent. Measured on this corpus, a "valid" `R` under the old bound gave a ball
+    spanning 1,2-1,9x the plate.
+
+    Paired on 44 scenes where both bounds leave the window open: F1 0,709 -> 0,897, band
+    width 5,70 -> 3,31 mm, better in 38 and 44 of 44 scenes respectively.
+    """
+    _, hi_new = validity_window_mm(0.5, 1.0, 8.0)
+    _, hi_old = validity_window_mm(0.5, 1.0, 8.0, upper="thickness")
+    assert hi_new == pytest.approx(4.0) and hi_old == pytest.approx(8.0)
+
+    # The old bound admits radii whose BALL is wider than the plate; the new one cannot.
+    assert 2 * hi_old > 8.0
+    assert 2 * hi_new <= 8.0
+
+    # It closes the window on more scenes, and that is a cost of being right, not an
+    # argument against it: those runs were "valid" only because the bound was wrong.
+    lo, hi = validity_window_mm(1.0, 1.4, 4.0)
+    assert lo >= hi
+    assert lo < validity_window_mm(1.0, 1.4, 4.0, upper="thickness")[1]
 
 
 def test_lengths_are_millimetres():
@@ -259,11 +286,18 @@ def test_chunking_does_not_change_the_answer():
 
 # --- direction-aware clustering: an upgrade to `ours`, NOT to the literature -------------
 
+def _dominant(labels, min_pts=20):
+    """Cluster labels holding at least `min_pts`, i.e. what `min_cluster_pts` would keep."""
+    counts = np.bincount(labels[labels >= 0])
+    return [k for k, c in enumerate(counts) if c >= min_pts]
+
+
 def test_directional_clustering_cuts_a_cross_run_bridge_that_proximity_cannot():
     """Two parallel runs joined at their ends — a T joint's closed contact perimeter.
 
-    Proximity sees one connected loop at any link distance, because the bridge is real
-    contact. Direction sees a ~90 deg turn at the join and cuts it.
+    D4 labels the two long fillets and excludes the short cross-runs, so the *label* is two
+    open curves while the *geometry* is one loop. Proximity sees the loop at any link
+    distance, because the bridge is real contact.
     """
     from baselines.radius_pca import connected_components, directional_components
 
@@ -278,15 +312,19 @@ def test_directional_clustering_cuts_a_cross_run_bridge_that_proximity_cannot():
     assert len(np.unique(connected_components(loop, 1.5))) == 1
     lab = directional_components(loop, link_mm=1.5, tangent_radius_mm=4.0,
                                  max_turn_deg=30.0, lateral_link_mm=4.0)
-    assert len(np.unique(lab)) >= 2
+    assert len(_dominant(lab, 50)) >= 2
 
 
-def test_direction_alone_cannot_separate_two_parallel_seams():
-    """The half a tangent test cannot touch, and the reason the lateral stage exists.
+def test_the_test_is_on_the_edge_direction_not_on_the_two_tangents():
+    """Two **parallel** seams have identical tangents, so comparing tangents cannot separate them.
 
-    Two parallel fillets have the **same** direction — they differ by a plate-thickness of
-    lateral offset, not by any angle. Measured on the corpus before the lateral stage was
-    added, direction alone split 1 of 12 T and corner scenes.
+    This is the half a tangent-versus-tangent test can never reach, and the reason the rule
+    is written on the connecting edge instead: a step across to the parallel seam is
+    perpendicular to both tangents, while a step along either seam is not.
+
+    Measured on the corpus with the tangent-versus-tangent rule, direction split 1 of 12 T
+    and corner scenes; that rule also failed the cross-run case above, because a tangent
+    smoothed over its own ball blends straight through a sharp corner.
     """
     from baselines.radius_pca import directional_components, local_tangent
 
@@ -296,12 +334,15 @@ def test_direction_alone_cannot_separate_two_parallel_seams():
     both = np.vstack([a, b])
 
     tan = local_tangent(both, radius_mm=5.0)
-    cos = np.abs(tan[:len(a)] @ tan[len(a):].T)
-    assert np.median(cos) > 0.99                       # identical direction, so no angle to cut
+    assert np.median(np.abs(tan[:len(a)] @ tan[len(a):].T)) > 0.99   # no angle to cut
 
-    # Proximity links them at 4 mm; the lateral stage is what separates them.
-    assert len(np.unique(directional_components(both, 4.0, 5.0, lateral_link_mm=1.0))) == 2
-    assert len(np.unique(directional_components(both, 4.0, 5.0, lateral_link_mm=6.0))) == 1
+    lab = directional_components(both, link_mm=4.0, tangent_radius_mm=5.0)
+    dom = _dominant(lab, 50)
+    assert len(dom) == 2
+    # ...and each dominant cluster is one of the two lines, not a mixture.
+    for k in dom:
+        ys = both[lab == k][:, 1]
+        assert np.ptp(ys) < 0.5
 
 
 def test_the_directional_switch_is_off_by_default_and_the_literature_never_sees_it():
@@ -310,8 +351,9 @@ def test_the_directional_switch_is_off_by_default_and_the_literature_never_sees_
     Neither Wei et al. nor Zhang et al. specifies a clustering step, so this repo chose one
     for them (`lit_regiongrow` deviation 5, `lit_lobb` deviation 4). Filling an unspecified
     step with the standard choice is faithful; filling it with a better one would make the
-    reimplementation beat the published method, which is the same failure as making it worse.
-    So `ours` gets the upgrade and the `lit-*` modules must not even import it.
+    reimplementation beat the published method, which is the same failure as making it
+    worse, and it would leave every number unattributable. So `ours` gets the upgrade and
+    the `lit-*` modules must not even import it.
     """
     import inspect
 
