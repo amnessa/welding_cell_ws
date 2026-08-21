@@ -24,6 +24,12 @@ ladder), so the harness makes the choice explicit and per-method:
     lit-ransac      ~40 mm weld-seam band (their PointNet++)         truth seams (band)
     lit-regiongrow  per-surface masks + derived crop (their FastSAM) cloud.npz:face_id
     lit-lobb        per-component masks (their K-Net)                cloud.npz:object_id
+    lit-ppf         weld-box crop (their Faster R-CNN)               truth seams (band)
+
+`lit-ppf` additionally consumes NORMALS - the first method here that does. Its faithful
+condition estimates them from the cloud (their PCL pipeline); `normals="exact"` through
+`method_kw` supplies the generator's analytic normals instead, which is the normal-oracle
+rung, and the delta between the two arms prices normal estimation.
 
 `L1` withholds the stage and changes nothing else. The full L0-L3 ladder adds estimated
 normals and noise; here `noise_scale` is the noise axis and normals are not yet estimated
@@ -185,6 +191,16 @@ def _run_lit_regiongrow(prep: PreparedScene, seed: int, oracle: bool, view: str,
     return r.polylines, {"n_regions": r.n_regions}
 
 
+def _run_lit_ppf(prep: PreparedScene, seed: int, oracle: bool, view: str, ns: float,
+                 normals: str = "estimate"):
+    from .lit_ppf import detect
+    c = prep.cloud(view, ns)
+    r = detect(c["xyz"], normals=normals,
+               normals_xyz=c["normals"] if normals == "exact" else None,
+               segmentation_mask=prep.oracle("band", view, ns) if oracle else None)
+    return r.polylines, {"n_planes": len(r.planes), "normals": normals}
+
+
 def _run_lit_lobb(prep: PreparedScene, seed: int, oracle: bool, view: str, ns: float):
     from .lit_lobb import detect
     c = prep.cloud(view, ns)
@@ -251,6 +267,10 @@ REGISTRY: dict[str, MethodSpec] = {
                                  oracle_name="surfaces"),
     "lit-lobb": MethodSpec("lit-lobb", _run_lit_lobb, randomised=False,
                            oracle_name="objects"),
+    # DETERMINISTIC as published - grid sampling, Hough voting, DBSCAN, farthest-pair
+    # corners; no stage draws a random number. The plan grouped it with lit-ransac as
+    # randomised on its RANSAC-alternative framing; reading the paper corrects that.
+    "lit-ppf": MethodSpec("lit-ppf", _run_lit_ppf, randomised=False, oracle_name="band"),
     "fake-oracle": MethodSpec("fake-oracle", fake_oracle, randomised=True,
                               oracle_name=None),
 }

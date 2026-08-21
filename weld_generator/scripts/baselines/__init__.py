@@ -18,6 +18,11 @@ generator exists is to put a number under them instead of an RViz screenshot.
                  of IEEE T-ASE 22 (2025) 75. Bounding-box flatness, tanh activation,
                  binary K-means, polynomial fit. Its coarse stage is K-Net **component**
                  masks - i.e. `object_id`, the same input `ours` calls an oracle
+    lit_ppf      `lit-ppf` - Wang et al., Sci. Rep. 14 (2024) 21137. PPF-coplanarity
+                 planes, orthogonal-pair Hough voting, farthest-pair corners. As
+                 published it is DETERMINISTIC (the plan's "randomised" assumption came
+                 from its RANSAC-alternative framing), and it is the first implemented
+                 method that consumes normals - the L2 rung becomes real here
     metrics      Chamfer, precision/recall, lateral error, band width, and RMSE / ME on a
                  matched path - the literature's own metric, the only one a paper's
                  reported accuracy can be checked against
@@ -42,6 +47,8 @@ from .harness import (REGISTRY, MethodSpec, PreparedScene, fake_oracle, prepare,
                       run_matrix, spread)
 from .lit_lobb import (LobbResult, activate, detect as lit_lobb_detect,
                        kmeans_1d_binary, lobb_features, part_labels_oracle)
+from .lit_ppf import (PPFPlane, PPFResult, detect as lit_ppf_detect, opp_vote, ppf,
+                      ppf_planes)
 from .lit_ransac import (LitRansacResult, LitRansacSeam, Plane,
                          detect as lit_ransac_detect, multi_plane_fit,
                          seam_region_oracle, surface_intersection_crop,
@@ -63,6 +70,7 @@ __all__ = [
     "seam_region_oracle", "surface_labels_oracle", "surface_intersection_crop",
     "lit_regiongrow_detect", "RegionGrowResult", "local_pca", "region_grow",
     "two_surface_edges",
+    "lit_ppf_detect", "PPFResult", "PPFPlane", "ppf", "ppf_planes", "opp_vote",
     "lit_lobb_detect", "LobbResult", "lobb_features", "activate", "kmeans_1d_binary",
     "part_labels_oracle",
     "run_matrix", "prepare", "spread", "REGISTRY", "MethodSpec", "PreparedScene",

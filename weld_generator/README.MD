@@ -59,8 +59,11 @@ Two notebooks, both of which need a **kernel restart** after you change `weldgen
   advisor's seed box plots for `lit-ransac`, the measured zero spread of the deterministic
   three, the noise axis as a multiplier on the derived σ_z, and EMD as the metric that sees
   coverage failure.
+- `notebooks/08_lit_ppf.ipynb` — `lit-ppf` (Wang et al. 2024): the local vote read
+  correctly, the paper's own RANSAC contradiction, the estimate-vs-exact normal arms, and
+  the coverage refinement — coplanar seams come back as proxies whose error is O(root gap).
 
-All five are entries in the seven-method Phase 4 comparison; see `notes/dataset_plan.md` §4
+All six are entries in the seven-method Phase 4 comparison; see `notes/dataset_plan.md` §4
 and **Baselines** below.
 
 ---
@@ -93,13 +96,13 @@ weldgen/         the generator - trimesh + NumPy only, no simulator import (D9)
 scripts/         evaluation, NOT part of the generator (Phase 4)
   baselines/         radius_pca.py (`ours`), lit_ransac.py (Yi et al. 2026),
                      lit_regiongrow.py (Wei et al. 2024),
-                     lit_lobb.py (Zhang et al. 2025), harness.py (the repeat
-                     harness), metrics.py, dataset.py
+                     lit_lobb.py (Zhang et al. 2025), lit_ppf.py (Wang et al.
+                     2024), harness.py (the repeat harness), metrics.py, dataset.py
 
 configs/         phase1, phase2, phase2_fixture, phase3, phase3_raster,
                  bench_{T,corner,butt,lap,edge}  <- the balanced benchmark corpus,
                  smoke, reference_tjoint, playground
-tests/           262 tests: geometry, determinism, schema conformance, ISO limits, viz,
+tests/           271 tests: geometry, determinism, schema conformance, ISO limits, viz,
                  the Phase 2 joint-type gate, the Phase 3 visibility gate, and the
                  migrated baseline
 notes/           the plan, the handoff, and the standards PDFs
@@ -385,6 +388,7 @@ as a novel extractor — the contribution is the dataset and the comparison
 | `lit_ransac.py` | `lit-ransac` — Yi et al., *Automation in Construction* 183 (2026) 106792: improved multi-plane RANSAC, plane intersections, endpoints by projection, torch pose from the dihedral | a weld-region segmentation (their PointNet++) |
 | `lit_regiongrow.py` | `lit-regiongrow` — Wei et al., arXiv:2408.10710 (2024): curvature-seeded region growing, then the edge points that span two grown surfaces | per-**surface** masks (their FastSAM) |
 | `lit_lobb.py` | `lit-lobb` — Zhang et al., *RCIM* 95 (2025) 102987 with the LOBB descriptor of *IEEE T-ASE* 22 (2025) 75: bounding-box flatness, tanh activation, binary K-means, polynomial fit | per-**component** masks (their K-Net) |
+| `lit_ppf.py` | `lit-ppf` — Wang et al., *Sci. Rep.* 14 (2024) 21137: PPF-coplanarity planes, orthogonal-pair Hough voting, farthest-pair corners. **Deterministic as published**, and the first method here that consumes normals | a weld-box crop (their Faster R-CNN) |
 
 **The three literature methods have three different coarse stages, and they are not
 interchangeable.** One method wants a weld-seam band, one wants per-surface masks, one wants

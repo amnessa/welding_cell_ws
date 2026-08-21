@@ -186,7 +186,7 @@ concession.
 |---|---|---|
 | `ours` | radius-PCA curvature + nearest-point midpoint | the robot pipeline (`README §8`) |
 | `lit-ransac` | improved RANSAC multi-plane fitting → plane intersection lines → inliers projected onto the weld vector for endpoints → dihedral for torch pose | Yi et al., *Automation in Construction* 2026 |
-| `lit-ppf` | point-pair-feature coplanarity + voting for orthogonal plane pairs and their intersections; explicitly proposed as a RANSAC alternative on grounds of speed and threshold sensitivity | *Scientific Reports* 2024 fusion paper |
+| `lit-ppf` | PPF-coplanarity planes → orthogonal-pair local Hough voting (eqs. 21–23) → feature points by the distance component → farthest-pair corners; proposed as a RANSAC alternative, **and deterministic as published** | Wang et al., *Sci. Rep.* 14 (2024) 21137 |
 | `lit-regiongrow` | region growing seeded at the smoothest point by δ = λ₀/(λ₀+λ₁+λ₂), then least-squares fit of near-edge points | *Coarse-to-Fine Detection of Multiple Seams* |
 | `lit-lobb` | K-Net **component** segmentation → edge pixels where two masks meet → ROI by shape extension → LOBB bounding-box flatness → tanh activation → binary K-means → polynomial fit | Zhang et al., *RCIM* 95 (2025) 102987, with the LOBB descriptor of *IEEE T-ASE* 22 (2025) 75 |
 | `lit-pcaslice` | PCA-based adaptive slicing with the slicing direction determined from the data, centreline per slice | *3D vision-based intersecting pipe welding path planning* |
@@ -1258,10 +1258,33 @@ splitting is the fix); and `surface_variation` was rebatched to ~100× the origi
       advisor's "transport cost"). It is the metric that *sees* the coverage failure Chamfer
       forgives: a perfectly-placed 10% stub scores Chamfer ≈ its offset but EMD ≈ L/2. Off
       by default (O(n³)); a table column, not an inner loop
-- [ ] `lit-ppf` — randomised; runs through the repeat harness from its first execution,
-      never outside it. It consumes **normals**, which no implemented method does — the L2
-      rung (normals estimated, not read from the generator) becomes meaningful there and the
-      harness needs an `estimated_normals` switch when it lands
+- [x] **`lit-ppf` — IMPLEMENTED 2026-08-21.** Wang et al., Sci. Rep. 14 (2024) 21137;
+      `scripts/baselines/lit_ppf.py`, 9 tests, `notebooks/08_lit_ppf.ipynb`. Ran through
+      `run_matrix` from its first execution, as committed. Three corrections to what this
+      plan assumed about it:
+      1. **It is deterministic as published** — grid sampling, Hough voting, DBSCAN,
+         farthest-pair corners; no stage draws a random number. The "randomised" grouping
+         came from its RANSAC-alternative *framing*, not its method. Registry carries
+         `randomised=False`; zero seed-spread measured on real scenes.
+      2. **The paper contradicts itself about RANSAC**: the prose proposes PPF instead of
+         RANSAC; its own Algorithm 1 says the C++ implementation used RANSAC. The prose (the
+         stated contribution) is what is implemented, and the contradiction is recorded.
+      3. It consumes **normals** — first method that does. The estimate-vs-exact arms are in
+         the harness (`method_kw`); measured price of estimation: F1 0,91 → 0,59 (butt),
+         1,00 → 0,44 (edge), 0,66 → 0,41 (T), and normal estimation dominates runtime 4-7×.
+- [x] **`lit-ppf` first measurement, 15 scenes/type through the harness.** L0/exact-normals
+      F1: butt **0,91**, edge **1,00**, corner 0,67, T 0,66, lap 0,49. L1 collapses to
+      precision ~0,1 with 23–36 predicted seams — the universal plate-border phantom. And
+      the headline: **the coverage prediction refines rather than holds.** Butt and edge
+      are NOT zero — butt through the root-gap walls (`lit-ransac`'s loophole), edge through
+      the merged flush-plane × big-face corner (survives single view at F1 0,91, so not a
+      hidden-face artifact). But the proxy's error is **O(root gap)** — largest-gap edge
+      scenes read RMSE ≈ g/2–g; butt RMSE correlates with gap at 0,55 and with thickness at
+      0,05. So `lit-ppf` expresses coplanar seams *only as gap-conditioned proxies*:
+      invisible at this corpus's gaps (≤ 2,8 mm vs 3 mm tolerance), unbounded in principle,
+      degrading silently — a worse failure mode than returning nothing, and measurable only
+      because the gap is a sampled axis. Caveat: all corpus edge plates are ~1,5 mm thin;
+      no thick-plate edge test exists yet
 - [ ] `lit-pcaslice`, `lit-modelreg` — last, and both may slip to Phase 6
 - [ ] **Metrics:** Chamfer distance as primary (cheap, standard, report it everywhere);
       Sinkhorn / EMD as secondary (more principled, much slower — the advisor's "transport cost";
@@ -1298,9 +1321,10 @@ a number for how much each method depends on segmentation it does not publish ab
    nominal. *Done — see the step-1 record above.*
 3. **Write down every input `ours` consumes.** That list defines the ladder levels.
 4. `lit-regiongrow` *(done — see §4)*, then `lit-lobb`.
-5. `lit-ransac` *(done — see §4)*, then the repeat harness, then `lit-ppf`. The order is
-   forced: `lit-ransac`'s seed spread is 0,00–0,96 on a fixed scene, so a harness that reports
-   one draw reports noise.
+5. `lit-ransac` *(done — see §4)*, then the repeat harness *(done — `harness.py`,
+   `notebooks/07`)*, then `lit-ppf` *(done — see the checklist above; deterministic as
+   published, contra this plan's grouping)*. The order was forced: `lit-ransac`'s seed
+   spread is 0,00–0,96 on a fixed scene, so a harness that reports one draw reports noise.
 6. `lit-pcaslice`, `lit-modelreg`.
 
 **A corpus that can support these comparisons does not exist yet.** `out/phase3` holds 44
