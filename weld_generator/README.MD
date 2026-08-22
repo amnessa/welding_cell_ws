@@ -62,8 +62,15 @@ Two notebooks, both of which need a **kernel restart** after you change `weldgen
 - `notebooks/08_lit_ppf.ipynb` — `lit-ppf` (Wang et al. 2024): the local vote read
   correctly, the paper's own RANSAC contradiction, the estimate-vs-exact normal arms, and
   the coverage refinement — coplanar seams come back as proxies whose error is O(root gap).
+- `notebooks/09_lit_pcaslice.ipynb` — `lit-pcaslice` (Wang et al. 2026): the slicing
+  direction from the data, the two-seams-one-mask failure pinned, and the per-instance
+  oracle named for what it is — instance segmentation of the seam-separation problem.
+- `notebooks/10_lit_modelreg.ipynb` — `lit-modelreg` (Fang & Tian 2024): the seam
+  transferred, never detected; CAD-by-construction from `scene.json`; registration error
+  as the whole of the error; and the symmetric-counterpart failure outside the
+  roughly-positioned envelope.
 
-All six are entries in the seven-method Phase 4 comparison; see `notes/dataset_plan.md` §4
+All eight are entries in the seven-method Phase 4 comparison; see `notes/dataset_plan.md` §4
 and **Baselines** below.
 
 ---
@@ -97,12 +104,14 @@ scripts/         evaluation, NOT part of the generator (Phase 4)
   baselines/         radius_pca.py (`ours`), lit_ransac.py (Yi et al. 2026),
                      lit_regiongrow.py (Wei et al. 2024),
                      lit_lobb.py (Zhang et al. 2025), lit_ppf.py (Wang et al.
-                     2024), harness.py (the repeat harness), metrics.py, dataset.py
+                     2024), lit_pcaslice.py (Wang et al. 2026), lit_modelreg.py
+                     (Fang & Tian 2024), harness.py (the repeat harness),
+                     metrics.py, dataset.py
 
 configs/         phase1, phase2, phase2_fixture, phase3, phase3_raster,
                  bench_{T,corner,butt,lap,edge}  <- the balanced benchmark corpus,
                  smoke, reference_tjoint, playground
-tests/           271 tests: geometry, determinism, schema conformance, ISO limits, viz,
+tests/           282 tests: geometry, determinism, schema conformance, ISO limits, viz,
                  the Phase 2 joint-type gate, the Phase 3 visibility gate, and the
                  migrated baseline
 notes/           the plan, the handoff, and the standards PDFs
@@ -389,6 +398,12 @@ as a novel extractor — the contribution is the dataset and the comparison
 | `lit_regiongrow.py` | `lit-regiongrow` — Wei et al., arXiv:2408.10710 (2024): curvature-seeded region growing, then the edge points that span two grown surfaces | per-**surface** masks (their FastSAM) |
 | `lit_lobb.py` | `lit-lobb` — Zhang et al., *RCIM* 95 (2025) 102987 with the LOBB descriptor of *IEEE T-ASE* 22 (2025) 75: bounding-box flatness, tanh activation, binary K-means, polynomial fit | per-**component** masks (their K-Net) |
 | `lit_ppf.py` | `lit-ppf` — Wang et al., *Sci. Rep.* 14 (2024) 21137: PPF-coplanarity planes, orthogonal-pair Hough voting, farthest-pair corners. **Deterministic as published**, and the first method here that consumes normals | a weld-box crop (their Faster R-CNN) |
+| `lit_pcaslice.py` | `lit-pcaslice` — Wang et al., *Welding in the World* (2026): PCA-adaptive slicing, per-slice geometric centres, cubic B-spline path. The per-slice centre cannot survive two seams in one strip, so the coarse stage is structural | **per-instance** weld masks (their YOLO11 + DeepLab) |
+| `lit_modelreg.py` | `lit-modelreg` — Fang & Tian, *RCIM* 89 (2024) 102772: a basic model (CAD-by-construction from `scene.json`) registered by CPD; the seam is **transferred, never detected**. Constitutively L0 — the ladder's top rung | the model itself, plus model-derived target features |
+
+**All seven methods are now implemented** — `ours` plus six literature reimplementations —
+each tested against known geometry, each run through the repeat harness with its own
+paper's coarse stage, and each with an executed notebook.
 
 **The three literature methods have three different coarse stages, and they are not
 interchangeable.** One method wants a weld-seam band, one wants per-surface masks, one wants

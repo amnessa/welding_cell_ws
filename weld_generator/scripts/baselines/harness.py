@@ -25,6 +25,9 @@ ladder), so the harness makes the choice explicit and per-method:
     lit-regiongrow  per-surface masks + derived crop (their FastSAM) cloud.npz:face_id
     lit-lobb        per-component masks (their K-Net)                cloud.npz:object_id
     lit-ppf         weld-box crop (their Faster R-CNN)               truth seams (band)
+    lit-pcaslice    PER-INSTANCE weld masks (their YOLO11+DeepLab)   truth seams, one band
+                                                                     per seam
+    lit-modelreg    the basic model itself (CAD-by-construction)     scene.json + truth
 
 `lit-ppf` additionally consumes NORMALS - the first method here that does. Its faithful
 condition estimates them from the cloud (their PCL pipeline); `normals="exact"` through
@@ -225,6 +228,35 @@ def _coarsen(poly: np.ndarray, step_mm: float) -> np.ndarray:
     return np.column_stack([np.interp(t, cum, poly[:, k]) for k in range(3)])
 
 
+def _run_lit_pcaslice(prep: PreparedScene, seed: int, oracle: bool, view: str, ns: float):
+    from .lit_pcaslice import detect
+    from .lit_ransac import seam_region_oracle
+    c = prep.cloud(view, ns)
+    masks = None
+    if oracle:
+        # One band PER TRUTH SEAM - their YOLO boxes each weld instance separately, and
+        # the per-slice geometric centre cannot survive two seams in one strip.
+        masks = [seam_region_oracle(c["xyz"], [g], end_margin_mm=0.0) for g in prep.gt]
+    r = detect(c["xyz"], instance_masks=masks, seed=seed)
+    return r.polylines, {"n_instances": r.params["n_instances"]}
+
+
+def _run_lit_modelreg(prep: PreparedScene, seed: int, oracle: bool, view: str, ns: float,
+                      mode: str = "nonrigid", target_features: str = "oracle",
+                      init: str = "near"):
+    # `oracle` (the harness flag) is ignored: the model IS the oracle, constitutively -
+    # there is no L1 arm for a method whose seam arrives from CAD. Its own two arms are
+    # `target_features` ("oracle" = the paper's model-derived target features; "dense" =
+    # raw surfaces, where the slide failures live) and `init` ("near" = the paper's
+    # roughly-positioned envelope; "global" = outside it, where near-symmetric assemblies
+    # register onto their symmetric counterpart).
+    from .lit_modelreg import detect
+    c = prep.cloud(view, ns)
+    r = detect(c["xyz"], prep.scene, prep.gt, mode=mode, target_features=target_features,
+               init=init)
+    return r.polylines, {"reg_scale": r.s, "mode": mode, "target_features": target_features}
+
+
 def fake_oracle(prep: PreparedScene, seed: int, oracle: bool, view: str, ns: float,
                 sigma_mm: float = 0.3, p_phantom: float = 0.0, p_miss: float = 0.0):
     """Ground truth plus known noise — the predictor the harness is validated against.
@@ -271,6 +303,14 @@ REGISTRY: dict[str, MethodSpec] = {
     # corners; no stage draws a random number. The plan grouped it with lit-ransac as
     # randomised on its RANSAC-alternative framing; reading the paper corrects that.
     "lit-ppf": MethodSpec("lit-ppf", _run_lit_ppf, randomised=False, oracle_name="band"),
+    # Path pipeline deterministic; MSAC (seeded) feeds only the torch posture, which the
+    # Phase 4 metrics do not score. Flip the flag if pose metrics land.
+    "lit-pcaslice": MethodSpec("lit-pcaslice", _run_lit_pcaslice, randomised=False,
+                               oracle_name="band"),
+    # Deterministic EM from a PCA init. `oracle_name="model"` is a statement, not a mask:
+    # the method is constitutively L0-with-CAD and has no L1 arm.
+    "lit-modelreg": MethodSpec("lit-modelreg", _run_lit_modelreg, randomised=False,
+                               oracle_name="model"),
     "fake-oracle": MethodSpec("fake-oracle", fake_oracle, randomised=True,
                               oracle_name=None),
 }

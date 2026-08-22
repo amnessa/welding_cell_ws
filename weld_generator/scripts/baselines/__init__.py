@@ -23,6 +23,14 @@ generator exists is to put a number under them instead of an RViz screenshot.
                  published it is DETERMINISTIC (the plan's "randomised" assumption came
                  from its RANSAC-alternative framing), and it is the first implemented
                  method that consumes normals - the L2 rung becomes real here
+    lit_pcaslice `lit-pcaslice` - Wang et al., Welding in the World (2026). PCA-adaptive
+                 slicing, per-slice geometric centres, cubic B-spline path. Per-INSTANCE
+                 coarse stage (YOLO11 boxes each weld separately) - the single-strip
+                 assumption is structural, and the harness supplies it as such
+    lit_modelreg `lit-modelreg` - Fang & Tian, RCIM 89 (2024) 102772. A basic model
+                 (CAD-by-construction from scene.json) registered onto the scan by CPD;
+                 the seam is TRANSFERRED, never detected. Every number is L0-with-CAD -
+                 the top rung of the oracle ladder, held by a real published method
     metrics      Chamfer, precision/recall, lateral error, band width, and RMSE / ME on a
                  matched path - the literature's own metric, the only one a paper's
                  reported accuracy can be checked against
@@ -47,6 +55,11 @@ from .harness import (REGISTRY, MethodSpec, PreparedScene, fake_oracle, prepare,
                       run_matrix, spread)
 from .lit_lobb import (LobbResult, activate, detect as lit_lobb_detect,
                        kmeans_1d_binary, lobb_features, part_labels_oracle)
+from .lit_modelreg import ModelRegResult, build_model, cpd_similarity
+from .lit_modelreg import detect as lit_modelreg_detect
+from .lit_pcaslice import PCASliceResult, bspline_path
+from .lit_pcaslice import detect as lit_pcaslice_detect
+from .lit_pcaslice import pca_centerline
 from .lit_ppf import (PPFPlane, PPFResult, detect as lit_ppf_detect, opp_vote, ppf,
                       ppf_planes)
 from .lit_ransac import (LitRansacResult, LitRansacSeam, Plane,
@@ -71,6 +84,8 @@ __all__ = [
     "lit_regiongrow_detect", "RegionGrowResult", "local_pca", "region_grow",
     "two_surface_edges",
     "lit_ppf_detect", "PPFResult", "PPFPlane", "ppf", "ppf_planes", "opp_vote",
+    "lit_pcaslice_detect", "PCASliceResult", "pca_centerline", "bspline_path",
+    "lit_modelreg_detect", "ModelRegResult", "build_model", "cpd_similarity",
     "lit_lobb_detect", "LobbResult", "lobb_features", "activate", "kmeans_1d_binary",
     "part_labels_oracle",
     "run_matrix", "prepare", "spread", "REGISTRY", "MethodSpec", "PreparedScene",

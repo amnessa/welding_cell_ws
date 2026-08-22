@@ -1285,7 +1285,48 @@ splitting is the fix); and `surface_variation` was rebatched to ~100× the origi
       degrading silently — a worse failure mode than returning nothing, and measurable only
       because the gap is a sampled axis. Caveat: all corpus edge plates are ~1,5 mm thin;
       no thick-plate edge test exists yet
-- [ ] `lit-pcaslice`, `lit-modelreg` — last, and both may slip to Phase 6
+- [x] **`lit-pcaslice` — IMPLEMENTED 2026-08-21.** Wang et al., *Welding in the World*
+      (2026); `scripts/baselines/lit_pcaslice.py`, 6 tests, `notebooks/09_lit_pcaslice.ipynb`.
+      Its coarse stage is **per-instance** (YOLO11 boxes each weld separately), and that is
+      structural, not convenience: the per-slice *geometric centre* of a strip holding two
+      seams is the midpoint of neither — `ours`' mid-surface failure, reached through a
+      different mechanism. So the harness L0 supplies one band per truth seam, and L1
+      (whole cloud, one instance) is a broken-assumption arm by construction. Path pipeline
+      deterministic; MSAC feeds only the (unscored) torch posture. First numbers: with the
+      per-instance oracle it is near-ceiling on straight seams (F1 0,95–1,0) — as the plan
+      predicted, it earns its seat at Phase 6, where seams curve. **Its YOLO stage is worth
+      naming in the comparison: it is instance segmentation of the seam-separation problem
+      itself — the exact problem `ours`, `lit-regiongrow` and `lit-lobb` are stopped by —
+      solved in 2D before the cloud is touched**
+- [x] **`lit-modelreg` — IMPLEMENTED 2026-08-21, and the open item is resolved.** Fang &
+      Tian, *RCIM* 89 (2024) 102772; `scripts/baselines/lit_modelreg.py`, 5 tests,
+      `notebooks/10_lit_modelreg.ipynb`. The open item asked whether it is implementable
+      without the original CAD assets: **yes — `scene.json` (dims, `T_world_part`,
+      `T_world_joint`) is a sufficient CAD source**, verified by a test that overlays the
+      rebuilt model on the scan and roundtrips the seam to 1e-9 — **and it is still
+      constitutively L0-with-CAD**, because the model's seam IS the stored truth. Every
+      number it emits carries that label; it anchors the top of the oracle ladder with a
+      real published method. Classical CPD stands in for their Bayesian CPD (same eq.-3
+      mechanism; the priors are a robustness refinement), and three findings came from
+      building it:
+      1. **CPD's σ² must start from nearest-neighbour residuals**, not the all-pairs mean —
+         the textbook init made the first E-step uniform and collapsed the scale to 0,14
+         from a start already within 2,7°.
+      2. **The paper's edge features are load-bearing.** Registering dense surfaces lets a
+         lap stack slide ~5 mm along its overlap (faces dominate the correspondence mass;
+         only plate ends resist). Their W is the workpiece's *edges*, and both sides of
+         their registration are model-derived ("identical workpieces") — a stage a
+         scan-only pipeline lacks, supplied here as an oracle like every other method's
+         learned stage, with `target_features="dense"` as the withheld arm.
+      3. **Outside the roughly-positioned envelope, near-symmetric assemblies register onto
+         their symmetric counterpart** — the seam lands a plate-length away (119 mm
+         measured on an edge joint). The paper's workstation setting never faces this, and
+         the same coarse-positioning assumption is already in this plan as D26.
+      First numbers (15/type, `L0-oracle`, `init="near"`): T 1,00 / corner 1,00 /
+      butt 0,98 / lap 0,99 at RMSE 0,5–1,6 mm — the registration floor — with edge and one
+      lap at ~5 mm: thin flush stacks whose coinciding edges leave a slide direction soft.
+      **The residual IS registration error, which is the plot only this method can
+      produce**
 - [ ] **Metrics:** Chamfer distance as primary (cheap, standard, report it everywhere);
       Sinkhorn / EMD as secondary (more principled, much slower — the advisor's "transport cost";
       the meeting transcript's "synchron distance" is almost certainly this)
@@ -1325,7 +1366,9 @@ a number for how much each method depends on segmentation it does not publish ab
    `notebooks/07`)*, then `lit-ppf` *(done — see the checklist above; deterministic as
    published, contra this plan's grouping)*. The order was forced: `lit-ransac`'s seed
    spread is 0,00–0,96 on a fixed scene, so a harness that reports one draw reports noise.
-6. `lit-pcaslice`, `lit-modelreg`.
+6. `lit-pcaslice`, `lit-modelreg` *(both done — see the checklist; all seven methods are
+   now implemented, tested, and run through the repeat harness with their own papers'
+   coarse stages)*.
 
 **A corpus that can support these comparisons does not exist yet.** `out/phase3` holds 44
 scenes with **2 lap and 4 edge**, and every per-type conclusion drawn from it so far has been
@@ -1584,9 +1627,10 @@ Opened by the 2026-08-20 advisor meeting:
 - [ ] **Grade the occlusion distribution before MPS is evaluated** (D26 sampler work, plus the
       framing-fraction change already landed) — MPS is a weak task while visibility is
       near-binary
-- [ ] Verify `lit-modelreg` is implementable without the original CAD assets. If not it
-      becomes an L0 upper bound computed from generator transforms rather than a
-      reimplementation, and **must be labelled as such**
+- [x] **RESOLVED 2026-08-21** — `lit-modelreg` is implementable without the original CAD
+      assets (`scene.json` is a sufficient CAD source, verified in code), *and* it remains
+      constitutively L0-with-CAD because the model's seam is the stored truth. Both halves
+      of the item turned out true at once; the label ships with every number
 - [x] **BUILT 2026-08-20 — balanced benchmark corpus, 50 scenes per joint type.** 250
       scenes in `out/bench/<joint_type>/`, one config per type (`configs/bench_*.yaml`),
       loaded through `baselines.balanced_corpus(root, per_type=50)`. Per-type configs are not
