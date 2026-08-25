@@ -685,7 +685,36 @@ vs joint type under both conditions (4), vs controlled density (5), vs included 
 `twin_key`), vs sensor profile on the noisy single-view arm (8), and the **D19 conversion
 table as a function of g** (9 — the same detection scored against `nominal` / `root` /
 `gap_mid`, spread growing with the gap as D19 predicts). The seven-method versions are the
-same groupbys over the full batch `run_matrix` output — the remaining Phase 4 compute job.
+same groupbys over the full batch `run_matrix` output — the remaining Phase 4 compute job,
+now packaged as **`scripts/run_phase4_batch.py`**: 44 resumable chunks (~10 h) covering the
+seven-method coverage table at 50/type under both conditions, every L1 arm, the noise table
+at σ×{1, 2} on the single view, the ladder extras (`lit-ppf` exact normals, `lit-modelreg`
+dense-features and global-init arms), and the fixture twins for all seven methods.
+`--list` prints the chunk plan with estimates; one `csv.gz` per chunk, skip-if-exists, so a
+crash costs only the chunk in flight; `phase4_batch.csv.gz` is the concatenation every plot
+reads.
+
+Three headlines from the executed run (all 250 scenes, `ours`):
+
+- **Plot 7 is the strongest single figure the project now owns.** Fixture on vs off, 40
+  twin-paired seeds: precision **0,74–0,90 → 0,13–0,24**, band width **2–4 mm → 73–191 mm**,
+  recall held. The D12 prediction — that a large fraction of published seam-extraction
+  performance is an artifact of pre-isolated workpieces — now has a number: one fixture
+  plane in the scene costs a curvature method ~4–6× of its precision, because nothing in a
+  point-cloud-only method knows `role`.
+- **Both conditions, both tasks, side by side** (the confirmed checklist item): under
+  `full_exterior`, lap holds the phantom correction at corpus scale (F1 0,77, precision
+  0,68 over 50 scenes) while **edge stays at 0,29** — confirming the advisor text's parting
+  sentence: the failure that survives the exterior condition is the real one; a flush edge
+  is a boundary feature and curvature does not fire on it. Under `single_view` precision
+  *rises* everywhere (0,80–0,89) while recall roughly halves — the camera removes
+  false-positive surface faster than it removes seam.
+- **The corrected window closes in 143 of 250 scenes** at ρ = 0,5 — most of the corpus is
+  thin sheet by the method's own admission criterion: plot 2's method-class finding, stated
+  at corpus scale.
+- **Plot 9, quantified:** the D19 curve-choice spread grows 0,03 → 0,15 → 0,42 → **0,98 mm**
+  across the gap bins (0–0,5 / 0,5–1 / 1–2 / 2–5 mm). At the largest gaps the definitional
+  crack is the size of the method differences the field publishes.
 
 #### The reproducibility result, and why it is the strongest thing here
 
