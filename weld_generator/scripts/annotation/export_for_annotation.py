@@ -75,13 +75,26 @@ Thank you! You will mark weld seams on {n} point-cloud scenes. About 3 minutes e
 
 ## How to click (CloudCompare)
 
-1. Open the scene's `.ply`.
-2. `Tools > Point picking > Point list picking`.
+**One file per seam - never the whole scene in one list.** Each saved file is scored as a
+single seam; two seams in one list would be scored as one zigzag.
+
+1. Open the scene's `.ply` and select the cloud in the DB tree.
+2. `Tools > Point picking > Point list picking`. A small toolbar appears at the TOP OF THE
+   3D VIEW while the tool is active - saving happens there, not in the File menu.
 3. Click 4-10 points ALONG one seam, IN ORDER, end to end. Precision matters more than
-   point count; add clicks where the line bends.
-4. Save the list as `scene_NN_seam0.txt` (disk icon in the picking toolbar).
-5. Clear, repeat for further seams on the same scene: `_seam1`, `_seam2`, ...
-6. Mark every seam you believe is to be welded - that judgement is part of the study.
+   point count; add clicks where the line bends. Zoom in before clicking.
+4. Press the **disk icon in that overlay toolbar** ("export list to an ASCII file") and
+   save as `scene_NN_seam0.txt`.
+5. Press the **reset/clear icon** in the same toolbar, click the next seam, save as
+   `_seam1.txt`, and so on.
+6. Close the tool (green check) and open the next scene.
+7. Mark every seam you believe is to be welded - that judgement is part of the study.
+
+If you end up in the generic `File > Save` dialog instead (e.g. after exporting the
+list to a new cloud), choose **"ASCII cloud"** as the format - never "CloudCompare
+entities" (.bin) and never a mesh format - and keep the `scene_NN_seamK.txt` name. If you
+closed the picking tool before saving, select the cloud and re-open Point list picking -
+the existing list is re-imported and the disk icon will export it.
 
 ## Joint type per scene
 

@@ -29,7 +29,7 @@ Annotator roles (`--role`, recorded per annotator directory in the output):
 
 Usage:
     python scripts/annotation/score_annotations.py \\
-        --annotations out/annotation/annotations/anil --role briefed \\
+        --annotations out/annotation/annotations/briefed_user --role briefed \\
         --annotations out/annotation/annotations/me   --role demo
 """
 
@@ -56,7 +56,14 @@ def parse_pointlist(path: Path) -> np.ndarray:
     has at least three.
     """
     pts = []
-    for line in path.read_text().splitlines():
+    try:
+        text = path.read_text()
+    except UnicodeDecodeError:                          # a binary export - warn upstream
+        return np.zeros((0, 3))
+    if text.lstrip().startswith("ply"):                 # ASCII ply: parse the body only
+        head, _, body = text.partition("end_header")
+        text = body
+    for line in text.splitlines():
         nums = re.findall(r"[-+]?\d+\.?\d*(?:[eE][-+]?\d+)?", line)
         if len(nums) >= 3:
             pts.append([float(v) for v in nums[-3:]])
@@ -64,14 +71,25 @@ def parse_pointlist(path: Path) -> np.ndarray:
 
 
 def load_annotations(folder: Path) -> dict[str, list[np.ndarray]]:
+    """Every `scene_NN_seamK.*` point list in the folder, grouped by scene.
+
+    CloudCompare's save dialog appends whichever extension its chosen format likes
+    (`.txt`, `.asc`, `.xyz`, `.csv`, ASCII `.ply`), and an annotator should not lose a
+    seam to a filename - so any of those parse. Unparseable or short files are WARNED
+    about, never silently dropped: a skipped file would otherwise score as a selection
+    miss against the annotator.
+    """
     out: dict[str, list[np.ndarray]] = {}
-    for f in sorted(folder.glob("scene_*_seam*.txt")):
+    for f in sorted(folder.iterdir()):
         m = re.match(r"(scene_\d+)_seam(\d+)", f.stem)
-        if not m:
+        if not m or f.suffix.lower() not in (".txt", ".asc", ".xyz", ".csv", ".ply"):
             continue
         poly = parse_pointlist(f)
         if len(poly) >= 2:
             out.setdefault(m.group(1), []).append(poly)
+        else:
+            print(f"  [warn] {f.name}: fewer than 2 parseable points - not scored "
+                  f"(binary export? re-save as ASCII cloud)")
     return out
 
 
