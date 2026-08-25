@@ -234,6 +234,14 @@ def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict
         cloud = sample_scene_surface(slabs, density, g4)
         cloud["visible_from_cam"] = _visible(cloud["xyz"], cloud["normals"])
 
+    # The Task 1 input condition (plan §Phase 4, "HPR: part of the condition, not part of
+    # any method"): a perfect multi-view SCAN returns the exterior, never the buried
+    # face-to-face interface a CAD-built cloud contains. Computed once here, analytically
+    # (the generator knows the slabs), deterministic, identical for every method - so no
+    # method carries an exteriority gate of its own.
+    from .visibility import exterior_scan_subsampled
+    cloud["exterior"] = exterior_scan_subsampled(cloud["xyz"], cloud["normals"], slabs)
+
     # --- seams ------------------------------------------------------------------
     density_per_mm = 10.0
     arrays: dict[str, np.ndarray] = {}

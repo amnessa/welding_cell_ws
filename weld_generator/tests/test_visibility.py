@@ -460,3 +460,66 @@ def test_skipped_seeds_are_recorded_in_the_index():
         assert r["skip_detail"] and r["seed"] is not None
     for r in emitted:
         assert r["n_primary"] <= r["n_weldable"]
+
+
+# --- the Task 1 input condition ---------------------------------------------------------
+
+def _plate(dims, T=None):
+    from weldgen.geom import Slab
+    Tm = np.eye(4) if T is None else T
+    return Slab(id="p", role="workpiece", object_id=0, dims_mm=tuple(dims), T_world_part=Tm)
+
+
+def test_exterior_scan_separates_the_slit_from_the_wedge():
+    """The distinction one-parameter HPR measurably cannot draw, drawn analytically.
+
+    Two horizontal plates 1 mm apart: the facing surfaces are reachable only through the
+    slit, at grazing the cone excludes — interior. A point on the top surface, or at the
+    root of an open 90-deg wedge, escapes along its own normal — exterior. HPR at
+    radius_factor 100 / 1 000 / 10 000 gets one of the two wrong every time (55% of the
+    corridor deleted, 38% of the interface kept, everything kept, respectively); this is
+    the measured reason `exterior_scan` is analytic and generation-time.
+    """
+    from weldgen.geom import Slab
+    from weldgen.visibility import exterior_scan
+
+    lo = _plate((100.0, 100.0, 8.0))
+    hiT = np.eye(4)
+    hiT[2, 3] = 9.0                                    # 1 mm slit between the plates
+    hi = Slab(id="q", role="workpiece", object_id=1, dims_mm=(100.0, 100.0, 8.0),
+              T_world_part=hiT)
+
+    pts = np.array([[0.0, 0.0, 4.0],                   # top face of the lower plate: SLIT
+                    [30.0, 0.0, 4.0],                  # deep in the slit too
+                    [0.0, 0.0, 13.0],                  # top of the upper plate: open sky
+                    [49.0, 0.0, 4.0]])                 # slit floor, 1 mm from the mouth
+    nrm = np.array([[0.0, 0, 1], [0.0, 0, 1], [0.0, 0, 1], [0.0, 0, 1]])
+    ext = exterior_scan(pts, nrm, [lo, hi])
+    assert not ext[0] and not ext[1], "slit-buried faces must be interior"
+    assert ext[2], "open surface must be exterior"
+    assert ext[3], "a point within ~a slit-width of the mouth is scannable"
+
+
+def test_the_flag_is_stored_and_the_camera_never_sees_an_interior_point():
+    """On the backfilled corpus: `visible_from_cam` implies `exterior` (a real camera is
+    one of the viewpoints the multi-view union contains), and a lap scene's buried
+    interface is gone from the `full_exterior` condition."""
+    import sys
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "scripts"))
+    from baselines import balanced_corpus, cloud_for, load_scene
+
+    try:
+        corpus = balanced_corpus(
+            pathlib.Path(__file__).resolve().parents[1] / "out" / "bench", per_type=50)
+    except (ValueError, FileNotFoundError, NotADirectoryError):
+        pytest.skip("no balanced corpus")
+    scene, arrays = load_scene(corpus["lap"][0])
+    if "cloud.npz:exterior" not in arrays:
+        pytest.skip("corpus not yet backfilled with the exterior flag")
+
+    ext = arrays["cloud.npz:exterior"]
+    vis = arrays["cloud.npz:visible_from_cam"]
+    assert (vis & ~ext).mean() < 0.005
+    full = cloud_for(scene, arrays, view="full")["xyz"]
+    fx = cloud_for(scene, arrays, view="full_exterior")["xyz"]
+    assert len(fx) < len(full)                          # the buried interface left the input

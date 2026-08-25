@@ -34,9 +34,21 @@ condition estimates them from the cloud (their PCL pipeline); `normals="exact"` 
 `method_kw` supplies the generator's analytic normals instead, which is the normal-oracle
 rung, and the delta between the two arms prices normal estimation.
 
-`L1` withholds the stage and changes nothing else. The full L0-L3 ladder adds estimated
-normals and noise; here `noise_scale` is the noise axis and normals are not yet estimated
-(no implemented method consumes them — revisit at `lit-ppf`, which does).
+`L1` withholds the stage and changes nothing else. `noise_scale` is the noise axis, and
+`lit-ppf` carries the estimate-vs-exact normal arms.
+
+The input conditions (plan §Phase 4, "HPR: part of the condition, not part of any method")
+------------------------------------------------------------------------------------------
+    condition       view=            meaning
+    full_exterior   "full_exterior"  perfect multi-view scan (exterior flag) - Task 1
+    single_view     "single"         one shot (visible_from_cam)             - Task 2
+    full geometry   "full"           CAD cloud incl. buried interior faces   - truth only;
+                                     kept ONLY to reproduce the literature's own
+                                     evaluation condition, never this project's
+
+The exterior flag is computed once at generation time, analytically, identical for every
+method - so no method carries an exteriority gate of its own, and the interior-face false
+positives of CAD-built clouds stop confounding the comparison
 
 The noise axis
 --------------
@@ -162,9 +174,9 @@ class MethodSpec:
     oracle_name: str | None = None        # which coarse stage L0 supplies
 
 
-def _run_ours(prep: PreparedScene, seed: int, oracle: bool, view: str, ns: float):
+def _run_ours(prep: PreparedScene, seed: int, oracle: bool, view: str, ns: float,
+              rho: float = 0.5):
     from .radius_pca import detect, validity_window_mm
-    rho = 0.5
     c = prep.cloud(view, ns)
     lo, hi = validity_window_mm(prep.facts["root_gap_mm"], 1.0 / np.sqrt(rho),
                                 prep.facts["t_min_mm"])
@@ -341,7 +353,7 @@ def _score(spec: MethodSpec, pred, gt, tol_mm: float) -> dict[str, Any]:
 
 
 def run_matrix(prepared: list[PreparedScene], methods=None, seeds=range(30),
-               verify_seeds: int = 3, oracle: bool = True, view: str = "full",
+               verify_seeds: int = 3, oracle: bool = True, view: str = "full_exterior",
                noise_scale: float = 0.0, tol_mm: float = 3.0, method_kw=None,
                progress: bool = False):
     """Every method x scene x seed, as a long dataframe ready for box plots.

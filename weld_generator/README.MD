@@ -65,12 +65,16 @@ Two notebooks, both of which need a **kernel restart** after you change `weldgen
 - `notebooks/09_lit_pcaslice.ipynb` — `lit-pcaslice` (Wang et al. 2026): the slicing
   direction from the data, the two-seams-one-mask failure pinned, and the per-instance
   oracle named for what it is — instance segmentation of the seam-separation problem.
+- `notebooks/11_first_results.ipynb` — the plan's nine "first real results" plots on the
+  balanced corpus: gap, thickness, occlusion, joint type (both conditions), density,
+  dihedral, fixture on/off on the paired twin corpus, sensor profile, and the D19
+  conversion table as a function of g.
 - `notebooks/10_lit_modelreg.ipynb` — `lit-modelreg` (Fang & Tian 2024): the seam
   transferred, never detected; CAD-by-construction from `scene.json`; registration error
   as the whole of the error; and the symmetric-counterpart failure outside the
   roughly-positioned envelope.
 
-All eight are entries in the seven-method Phase 4 comparison; see `notes/dataset_plan.md` §4
+All nine are entries in the seven-method Phase 4 comparison; see `notes/dataset_plan.md` §4
 and **Baselines** below.
 
 ---
@@ -111,7 +115,7 @@ scripts/         evaluation, NOT part of the generator (Phase 4)
 configs/         phase1, phase2, phase2_fixture, phase3, phase3_raster,
                  bench_{T,corner,butt,lap,edge}  <- the balanced benchmark corpus,
                  smoke, reference_tjoint, playground
-tests/           282 tests: geometry, determinism, schema conformance, ISO limits, viz,
+tests/           284 tests: geometry, determinism, schema conformance, ISO limits, viz,
                  the Phase 2 joint-type gate, the Phase 3 visibility gate, and the
                  migrated baseline
 notes/           the plan, the handoff, and the standards PDFs
@@ -404,6 +408,17 @@ as a novel extractor — the contribution is the dataset and the comparison
 **All seven methods are now implemented** — `ours` plus six literature reimplementations —
 each tested against known geometry, each run through the repeat harness with its own
 paper's coarse stage, and each with an executed notebook.
+
+**The input conditions are fixed, and exteriority is a condition, not a gate.** A per-point
+`exterior` flag — perfect multi-view scan reachability, computed analytically at generation
+time from the slabs under the sensor's grazing cone — is stored in `cloud.npz`. Task 1 runs
+on `full_exterior`, Task 2 on `single_view`; the full CAD cloud including buried interior
+faces is truth only, never a method input. No method carries an exteriority gate of its
+own. Measured consequence on `ours`/lap: precision 0,53 → 0,68, band width 5,8 → 3,1 mm,
+recall held — the mid-lap phantoms were a CAD-cloud artifact, and they leave with it.
+(Single-parameter HPR measurably cannot draw this line on plate assemblies — the corridor
+vs slit trade-off is documented in `visibility.exterior_scan`'s docstring — which is why
+the stored flag is analytic; `hpr_exterior` remains for runtime no-CAD contexts.)
 
 **The three literature methods have three different coarse stages, and they are not
 interchangeable.** One method wants a weld-seam band, one wants per-surface masks, one wants

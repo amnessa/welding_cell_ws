@@ -111,9 +111,14 @@ def cloud_for(scene: dict, arrays: dict, view: str = "full", noisy: bool = False
     """The point set a baseline is allowed to see.
 
     Args:
-        view: `"full"` = the whole surface sample (the 360° CAD-cloud condition most of the
-            literature actually evaluates on); `"single"` = only `visible_from_cam`, which
-            is what a sensor returns.
+        view: `"full_exterior"` = every point a **perfect multi-view scan** could return
+            (`exterior == True`) — **the Task 1 input condition**. `"single"` = only
+            `visible_from_cam` — one shot, Task 2. `"full"` = the whole surface sample
+            including buried interior faces: the 360° CAD-cloud condition the literature
+            evaluates on, kept for exactly that comparison — but per the plan, full
+            geometry is **truth only, never a method input** in this project's own
+            conditions. The interior-face false positives it produces are an artifact of
+            CAD-built clouds, not of reality.
         noisy: apply the analytic stereo model. The realisation is not stored (SCHEMA.md
             §5.1), so it is recomputed here - deterministic in `noise_model.seed`.
 
@@ -136,9 +141,20 @@ def cloud_for(scene: dict, arrays: dict, view: str = "full", noisy: bool = False
         # Sensor dropout is deliberately NOT part of `visible_from_cam` (it is geometry,
         # SCHEMA.md §5.2), so the single-view arm has to apply both to be honest.
         m = m & valid if noisy else m
-        return {"xyz": xyz[m], "normals": normals[m], "object_id": object_id[m],
-                "valid": valid[m]}
-    return {"xyz": xyz, "normals": normals, "object_id": object_id, "valid": valid}
+    elif view == "full_exterior":
+        if "cloud.npz:exterior" not in arrays:
+            raise KeyError(
+                "this scene predates the `exterior` flag - run the backfill "
+                "(scratchpad/backfill_exterior.py) or regenerate")
+        m = arrays["cloud.npz:exterior"]
+        m = m & valid if noisy else m
+    elif view == "full":
+        m = np.ones(len(xyz), dtype=bool)
+        m = m & valid if noisy else m
+    else:
+        raise ValueError(f'view must be "full_exterior", "single" or "full", got {view!r}')
+    return {"xyz": xyz[m], "normals": normals[m], "object_id": object_id[m],
+            "valid": valid[m]}
 
 
 def ground_truth(scene: dict, arrays: dict, curve: str = "nominal",

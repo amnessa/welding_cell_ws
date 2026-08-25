@@ -634,6 +634,59 @@ asserts the `lit-*` modules do not even import it. If the question is *how much 
 method's error is clustering*, run the better splitter as a clearly labelled **diagnostic
 arm** across all seven and never quote it as a paper's result.
 
+#### HPR became the condition, not a gate — and then the condition became analytic
+
+Implemented 2026-08-21 exactly as the plan directs: **no method gained an exteriority
+gate.** The generator computes a per-point `exterior` flag once, at generation time, stored
+in `cloud.npz` beside `visible_from_cam` (SCHEMA §5.1), and the harness's `view=` axis
+carries the three conditions:
+
+| condition | input | meaning |
+|---|---|---|
+| `full_exterior` | `exterior == True` | perfect multi-view scan — **Task 1** (the default) |
+| `single_view` | `visible_from_cam == True` | one shot — **Task 2** |
+| full geometry | — | truth only, **never a method input**; kept solely to reproduce the literature's own CAD-cloud evaluation condition |
+
+**One correction to the plan's own sketch, made by measurement: the stored flag is
+analytic, not HPR.** Single-parameter HPR cannot draw the line the definition names on
+plate assemblies — at `radius_factor` 100 its conservative hull deletes **55% of the
+concave fillet-root corridor**; at 1 000 the corridor survives but **38% of the lap
+interface is sighted through its ~1 mm slit**; at 10 000 the occlusion test keeps
+everything; and gating the middle setting by incidence still leaked 93%, because the
+hull's per-view visibility is itself dishonest at that radius. The quantity the definition
+actually names is **reachability under a sensor's grazing limit**, and at generation time
+that is exact: a point is exterior iff some ray within the grazing cone (70°, the same
+quantity as the noise model's `grazing_dropout_deg`) of its outward normal escapes every
+slab — `visibility.exterior_scan`, built on the existing `ray_hits_slab`, 0,1 s per scene,
+zero tuning parameters beyond the sensor's own limit. Validated: buried lap interface
+kept **0,000**, open-face seam corridor kept **0,98–1,00**, groove walls graded by depth
+against gap exactly as a scanner would see them, and `visible_from_cam ⇒ exterior` at
+<0,5% tolerance. `hpr_exterior` remains in `visibility.py` for the runtime no-CAD context
+it was written for, with its measured limitation now documented.
+
+The corpus is backfilled (`out/bench`, content hashes and index updated in place;
+`scratchpad/backfill_exterior.py` is deterministic and idempotent), and new generations
+carry the flag natively.
+
+**The predicted consequence, measured.** `ours` on lap, full geometry → `full_exterior`:
+precision **0,53 → 0,68**, F1 **0,61 → 0,77**, band width **5,8 → 3,1 mm**, recall held
+(0,999 → 0,975). The mid-lap phantoms leave with the interface that produced them —
+*"correct, not a loss"*, as the advisor text says: they were an artifact of feeding CAD
+clouds. What remains of the lap failure is the real one, no longer confounded.
+
+#### The nine "first real results" plots — produced
+
+All nine, on the balanced corpus for `ours`, in `notebooks/11_first_results.ipynb`: error
+vs root gap (1), vs thickness with the window-closing marker (2 — plus the corrected `t/2`
+bound in `nb03`), vs `occluded_fraction` (3 — the plot only constructed truth can draw),
+vs joint type under both conditions (4), vs controlled density (5), vs included angle (6),
+**fixture on/off on paired seeds** (7 — a fixture twin corpus now exists at
+`out/bench_fx`, same configs and seed ranges with `fixture_present: true`, paired on
+`twin_key`), vs sensor profile on the noisy single-view arm (8), and the **D19 conversion
+table as a function of g** (9 — the same detection scored against `nominal` / `root` /
+`gap_mid`, spread growing with the gap as D19 predicts). The seven-method versions are the
+same groupbys over the full batch `run_matrix` output — the remaining Phase 4 compute job.
+
 #### The reproducibility result, and why it is the strongest thing here
 
 The advisor asked for box plots because RANSAC is randomised. The size of the effect is larger
@@ -1192,8 +1245,10 @@ midpoint of the predicted window, density controlled at 0,5 pts/mm².
       direction-gated linking, DBSCAN) each won on the case they targeted and lost more
       elsewhere: corpus F1 went 0,64 → 0,16 and 0,64 → 0,43. Kept in
       `scratchpad/radius_pca_experimental.py`
-- [ ] `ours`: HPR exteriority gate — `detect(..., exterior=...)` is wired; not yet used in an
-      evaluation arm
+- [x] `ours`: ~~HPR exteriority gate~~ — **superseded 2026-08-21**: exteriority became the
+      **condition** (`full_exterior`, stored per point at generation time, identical for
+      every method — see §4's HPR entry). `detect(..., exterior=...)` remains wired but no
+      longer has a role; no method carries its own gate
 
 **First numbers, and they are not flattering.** Median by joint type, full / single view:
 
@@ -1327,10 +1382,17 @@ splitting is the fix); and `surface_variation` was rebatched to ~100× the origi
       lap at ~5 mm: thin flush stacks whose coinciding edges leave a slide direction soft.
       **The residual IS registration error, which is the plot only this method can
       produce**
-- [ ] **Metrics:** Chamfer distance as primary (cheap, standard, report it everywhere);
-      Sinkhorn / EMD as secondary (more principled, much slower — the advisor's "transport cost";
-      the meeting transcript's "synchron distance" is almost certainly this)
-- [ ] Evaluate on the **full-visibility** and **single-view** variants separately and report both
+- [x] **CONFIRMED — Metrics:** Chamfer primary (in `evaluate`/`evaluate_band`, reported
+      everywhere) and **EMD secondary** (`metrics.emd_mm`, exact assignment on 256-pt
+      resamples — the advisor's "transport cost"). EMD earned its seat empirically: it is
+      the only metric of the three that prices coverage gaps (two half-seams leaving a
+      10 mm hole: Chamfer 0,91 — indistinguishable from a full seam — EMD 3,17). Demo and
+      table in `notebooks/07_repeats.ipynb`
+- [x] **CONFIRMED — both conditions evaluated separately and reported.** Now under the
+      corrected condition names (see the HPR entry below): `full_exterior` (Task 1) and
+      `single_view` (Task 2), side by side per joint type in
+      `notebooks/11_first_results.ipynb`, with `view=` a first-class axis of
+      `harness.run_matrix`
 
 ### Protocol additions from the 2026-08-20 meeting
 

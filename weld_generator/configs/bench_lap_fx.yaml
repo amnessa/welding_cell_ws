@@ -1,0 +1,10 @@
+# Fixture twin of bench_lap: identical in every sampled respect except the fixture.
+# Same seed ranges as bench_lap at generation time, so `twin_key` pairs the arms and
+# plot 7 (fixture on/off, paired seeds) is a groupby - D12.
+name: bench_lap
+joint_type: [lap]
+seam_shape: line
+prep: square
+fixture_present: true
+sampling_mode: area_uniform
+sensor_profiles: [d435i, stereo_good, stereo_poor]

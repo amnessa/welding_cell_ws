@@ -653,6 +653,7 @@ regenerable — you can reproduce any single scene from its id alone.
 | `object_id` | uint8 | (N,) | §2.1; fixture = 255 |
 | `face_id` | uint8 | (N,) | index into `faces[]` — free per-point face segmentation |
 | `visible_from_cam` | bool | (N,) | Phase 3 ray-cast result (D6) — geometry only, see below |
+| `exterior` | bool | (N,) | **perfect multi-view scan reachability** — True where some ray within the sensor grazing cone (70°) of the outward normal escapes every slab. Computed analytically at generation time, once, identical for all methods. This is the Task 1 input condition (`full_exterior`); the full cloud including interior faces is **truth only, never a method input** |
 
 **The noisy cloud is not stored.** `xyz` is the exact sample; the sensor realization is
 produced by the released, versioned function

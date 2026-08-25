@@ -192,6 +192,100 @@ def hpr_exterior(points: np.ndarray, n_views: int = 30, radius_factor: float = 1
     return exterior
 
 
+def exterior_scan(points: np.ndarray, normals: np.ndarray, slabs,
+                  grazing_deg: float = 70.0, n_dirs: int = 16, seed: int = 0
+                  ) -> np.ndarray:
+    """Per-point exteriority of a **perfect multi-view scan** — the Task 1 input condition.
+
+    Task 1 says *"varsayalım ki sen bunu mükemmel taradın"* — and a perfect scan of a
+    physical assembly returns the exterior, never the buried face-to-face interface inside
+    a lap joint, because no sensor can reach it. The full-geometry cloud contains those
+    faces only because it was built from CAD, so the honest method input is this flag
+    (plan §Phase 4: "HPR: part of the condition, not part of any method").
+
+    **Analytic, not HPR — and that is a measured decision, not a preference.** HPR cannot
+    draw this line with one parameter on plate assemblies: at `radius_factor = 100` its
+    conservative hull deletes 55% of the concave fillet-root corridor; at 1 000 the
+    corridor survives but 38% of the lap interface is sighted through its ~1 mm slit; at
+    10 000 the occlusion test keeps everything; and gating the 1 000 setting by incidence
+    still leaked 93%, because the hull's per-view "visibility" is itself dishonest at that
+    radius. The quantity the definition actually names is REACHABILITY UNDER A SENSOR'S
+    GRAZING LIMIT, and at generation time that is exact: a point is exterior iff some ray
+    within `grazing_deg` of its outward normal escapes every slab (`ray_hits_slab`).
+    `hpr_exterior` stays above for the runtime, no-CAD context it was written for.
+
+    The cone does the physically right thing in a groove: a wall point at depth `d` in a
+    gap of width `g` escapes only if `atan(g/d)` clears the grazing limit, so shallow wall
+    points are scannable and deep ones are not — with no parameter beyond the sensor's own
+    grazing angle (the noise model's `grazing_dropout_deg` is the same quantity).
+
+    Directions are a deterministic cone fan (`seed` fixes the azimuth phase); `n_dirs`
+    rays at the cone's half-angle plus the normal itself. Exact per ray; the only
+    approximation is the fan's angular resolution.
+    """
+    p = np.asarray(points, dtype=float)
+    n = np.asarray(normals, dtype=float)
+    if len(p) == 0:
+        return np.zeros(0, dtype=bool)
+
+    # a fan of unit directions: the outward normal, plus n_dirs rays tilted to the cone
+    # half-angle around it. Escape anywhere in the cone implies scannability there.
+    rng = np.random.default_rng(seed)
+    phase = rng.uniform(0.0, 2.0 * np.pi)
+    tilts = np.deg2rad([grazing_deg * 0.55, grazing_deg * 0.95])
+    az = np.linspace(0.0, 2.0 * np.pi, max(4, n_dirs // 2), endpoint=False) + phase
+
+    # per-point orthonormal frame around the normal
+    up = np.where(np.abs(n[:, 2:3]) < 0.9, [[0.0, 0.0, 1.0]], [[1.0, 0.0, 0.0]])
+    u = np.cross(n, up)
+    u /= np.maximum(np.linalg.norm(u, axis=1, keepdims=True), 1e-12)
+    v = np.cross(n, u)
+
+    origins = p + n * SURFACE_EPS_MM
+    far = np.full(len(p), 1e9)
+    exterior = ~_blocked(origins, n, far, slabs)
+    for tilt in tilts:
+        ct, st = np.cos(tilt), np.sin(tilt)
+        for a in az:
+            d = ct * n + st * (np.cos(a) * u + np.sin(a) * v)
+            todo = ~exterior
+            if not todo.any():
+                return exterior
+            exterior[todo] |= ~_blocked(origins[todo], d[todo], far[todo], slabs)
+    return exterior
+
+
+def _blocked(origins, dirs, t_max, slabs) -> np.ndarray:
+    hit = np.zeros(len(origins), dtype=bool)
+    for s in slabs:
+        hit |= ray_hits_slab(origins, dirs, t_max, s)
+    return hit
+
+
+def exterior_scan_subsampled(points, normals, slabs, voxel_mm: float = 2.0, **kw
+                             ) -> np.ndarray:
+    """`exterior_scan` on a voxel subsample, propagated by nearest neighbour.
+
+    The exact form is cheap enough that this mostly buys the writer a constant factor; it
+    picks one REAL point per voxel (so its normal is real too) and every full point
+    inherits from its nearest subsample neighbour, which lies on the same face at 2 mm
+    against plate thicknesses of 1,5 mm and up.
+    """
+    from scipy.spatial import cKDTree
+
+    p = np.asarray(points, dtype=float)
+    if len(p) < 4:
+        return np.ones(len(p), dtype=bool)
+    keys = np.floor(p / float(voxel_mm)).astype(np.int64)
+    keys -= keys.min(axis=0)
+    dims = keys.max(axis=0) + 1
+    flat = (keys[:, 0] * int(dims[1]) + keys[:, 1]) * int(dims[2]) + keys[:, 2]
+    _, first = np.unique(flat, return_index=True)
+    ext = exterior_scan(p[first], np.asarray(normals)[first], slabs, **kw)
+    _, idx = cKDTree(p[first]).query(p, k=1, workers=-1)
+    return ext[idx]
+
+
 def _fibonacci_sphere(n: int) -> np.ndarray:
     """`n` roughly equidistant directions — deterministic, no RNG draw.
 
