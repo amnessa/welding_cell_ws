@@ -1506,11 +1506,46 @@ number, not silently corrected for.
 
 Cheap now that the infrastructure exists. Potentially the figure that carries the paper.
 
+**Toolchain built 2026-08-22** (`scripts/annotation/`, validated by a fake annotator of
+known error in `tests/test_annotation.py` — injected 0,8 mm sigma, one planted miss, one
+planted phantom, all recovered before any real click flows through):
+
+- `export_for_annotation.py` — stratified seeded sample (default 4/type = 20 scenes),
+  exported as anonymous ASCII PLYs of the **`full_exterior`** cloud (the annotator sees
+  what a perfect scan sees — Task 1's own input). **No truth ships in the export
+  directory**; the id↔scene manifest stays outside it. `BRIEFING.md` is generated into the
+  export: the fifteen-minute brief, per-joint-type reference text, and (briefed arm only)
+  the joint type per scene — the advisor protocol that constrains *selection* and isolates
+  *localization*.
+- The GUI is **CloudCompare itself**, deliberately: LWSNet's labels were drawn in
+  CloudCompare, so the annotator must use the same tool or the measured floor is not the
+  literature's. Protocol: `Tools > Point picking > Point list picking`, 4–10 ordered
+  clicks per seam, saved as `scene_NN_seamK.txt`.
+- `score_annotations.py` — scores clicks against analytic truth with a 15 mm match
+  acceptance gate (the uncapped harness matcher absorbed a planted 60 mm phantom — a
+  method's bad answer must be scored, an annotator's must be counted as a phantom).
+  Outputs: **selection** (missed / extra, needs welding knowledge) separated from
+  **localization** (lateral RMSE of accepted matches, needs none); the floor per joint
+  type; **which D19 curve the human actually clicked** (nominal / root / gap-mid — a
+  finding on its own); and `annotator_model.json`, the measured perturbation model the
+  LWSNet training experiment needs.
+
+**The contamination rule is enforced in code**, not by discipline: annotator roles are
+`demo` / `briefed` / `unbriefed`, and `demo` — the generator's author showing the task —
+is excluded from every headline aggregate automatically (their clicks measure
+self-reproduction, not annotation). The agreed workflow: the author annotates as `demo` to
+brief Anıl; **Anıl (briefed) is the measurement**; a second, unbriefed annotator, if one
+materialises, prices the expertise term as (unbriefed − briefed). Per the advisor note,
+the paper says "briefed engineering student, a reasonable proxy for whoever labelled
+WeldJoint-PCD" — no credentials claimed.
+
 - [ ] Hand-label 20–30 tier-1 scenes in CloudCompare, the way LWSNet did
-- [ ] Measure annotation against analytic truth → **the label-noise floor of the existing literature**
-- [ ] **Get a second annotator if at all possible.** Then report LWSNet-style intra-rater consistency
-      *and* actual accuracy side by side — that makes the precision-vs-accuracy point visually
-      instead of rhetorically
+      *(export ready: `python scripts/annotation/export_for_annotation.py`)*
+- [ ] Measure annotation against analytic truth → **the label-noise floor of the existing
+      literature** *(scorer ready)*
+- [ ] **Get a second annotator if at all possible.** Then report LWSNet-style intra-rater
+      consistency *and* actual accuracy side by side — the precision-vs-accuracy point made
+      visually instead of rhetorically
 - [ ] Compare the floor against the ~0.6 mm RMSE these papers report
 
 **Effort:** 1–2 days (plus recruiting the second annotator).

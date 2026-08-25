@@ -65,6 +65,10 @@ Two notebooks, both of which need a **kernel restart** after you change `weldgen
 - `notebooks/09_lit_pcaslice.ipynb` — `lit-pcaslice` (Wang et al. 2026): the slicing
   direction from the data, the two-seams-one-mask failure pinned, and the per-instance
   oracle named for what it is — instance segmentation of the seam-separation problem.
+- `notebooks/12_seven_methods.ipynb` — the seven-method comparison, every figure a
+  groupby over the batch job's csv: the coverage table, both tasks side by side, the seed
+  box plots with the measured-zero-spread column, the L0→L1 price of each paper's
+  unpublished stage, the noise table, the fixture ablation, and the ladder extras.
 - `notebooks/11_first_results.ipynb` — the plan's nine "first real results" plots on the
   balanced corpus: gap, thickness, occlusion, joint type (both conditions), density,
   dihedral, fixture on/off on the paired twin corpus, sensor profile, and the D19
@@ -74,7 +78,7 @@ Two notebooks, both of which need a **kernel restart** after you change `weldgen
   as the whole of the error; and the symmetric-counterpart failure outside the
   roughly-positioned envelope.
 
-All nine are entries in the seven-method Phase 4 comparison; see `notes/dataset_plan.md` §4
+All ten are entries in the seven-method Phase 4 comparison; see `notes/dataset_plan.md` §4
 and **Baselines** below.
 
 ---
@@ -104,7 +108,12 @@ weldgen/         the generator - trimesh + NumPy only, no simulator import (D9)
   writer.py          scene.json / cloud.npz / seams.npz / index.jsonl
   cli.py             `python -m weldgen generate | verify`
 
-scripts/         evaluation, NOT part of the generator (Phase 4)
+scripts/         evaluation, NOT part of the generator (Phases 4-5)
+  run_phase4_batch.py   the batch job: 44 resumable chunks -> one csv.gz every
+                        comparison plot reads (notebooks/12)
+  annotation/           Phase 5: export scenes for CloudCompare hand-labelling
+                        (no truth ships), score clicks against analytic truth,
+                        emit the annotator perturbation model
   baselines/         radius_pca.py (`ours`), lit_ransac.py (Yi et al. 2026),
                      lit_regiongrow.py (Wei et al. 2024),
                      lit_lobb.py (Zhang et al. 2025), lit_ppf.py (Wang et al.
@@ -115,7 +124,7 @@ scripts/         evaluation, NOT part of the generator (Phase 4)
 configs/         phase1, phase2, phase2_fixture, phase3, phase3_raster,
                  bench_{T,corner,butt,lap,edge}  <- the balanced benchmark corpus,
                  smoke, reference_tjoint, playground
-tests/           284 tests: geometry, determinism, schema conformance, ISO limits, viz,
+tests/           287 tests: geometry, determinism, schema conformance, ISO limits, viz,
                  the Phase 2 joint-type gate, the Phase 3 visibility gate, and the
                  migrated baseline
 notes/           the plan, the handoff, and the standards PDFs
