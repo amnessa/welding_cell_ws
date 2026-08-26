@@ -85,6 +85,16 @@ def load_annotations(folder: Path) -> dict[str, list[np.ndarray]]:
         if not m or f.suffix.lower() not in (".txt", ".asc", ".xyz", ".csv", ".ply"):
             continue
         poly = parse_pointlist(f)
+        if len(poly) > 2000:
+            # A click list is 4-30 points. Hundreds of thousands means the WHOLE SCENE
+            # cloud was exported - the save dialog had the cloud selected in the DB tree,
+            # not the picked-points list. Scoring it would treat the cloud's storage order
+            # as a kilometres-long zigzag polyline and die of memory (measured: 800k
+            # points -> OOM kill). Refuse loudly; the clicks were never saved.
+            print(f"  [warn] {f.name}: {len(poly)} points - this is a WHOLE-CLOUD export,"
+                  f" not a click list. Re-save from the Point list picking tool's own"
+                  f" disk icon (overlay toolbar at the top of the 3D view). SKIPPED.")
+            continue
         if len(poly) >= 2:
             out.setdefault(m.group(1), []).append(poly)
         else:
