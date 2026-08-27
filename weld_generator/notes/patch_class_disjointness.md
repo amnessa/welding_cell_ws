@@ -165,11 +165,16 @@ near-AND-parallel test alone.
 The taxonomy discussion resolved into `PARAMETERS.md` §3.4 and a derived per-scene field
 `joint.iso_17659_term`. The load-bearing points:
 
-- **The parallel joint is not dropped — it IS our edge class.** The flush stack satisfies
-  edge joint (3.14) at α = 0° and, at total overlap, parallel joint (3.8, US "edge
-  joint" per Annex A); the standard's own two entries are non-disjoint at 0° and the
-  scene records both. The D31 lap clearance is exactly ISO's lap/parallel line: 3.9
-  "à recouvrement" (partial) vs 3.8 "à recouvrement total".
+- **The parallel joint (3.8) is EXCLUDED, and our edge joint keeps its name** (corrected
+  ruling 2026-08-27, superseding this section's first draft, which conflated the two).
+  The distinction is not overlap fraction but where the join happens: a parallel joint
+  is bonded over its entire faying surface (3.4) — explosive cladding is the standard's
+  own example — so its join is an AREA, not a curve, and there is no seam for a
+  seam-extraction method to find. Excluded by problem definition. Our edge class sits
+  at α = 0° inside edge joint 3.14's 0–30° band and is correctly named as-is; 3.13/3.14
+  partition edge-contact at 30° with no gap and no overlap. The D31 lap clearance still
+  reads straight from the standard: 3.9 is partial overlap ("en se recouvrant
+  partiellement"), full overlap is 3.8 and out of scope.
 - Non-90° T scenes are the standard's **angle joint (3.12)** — named in the derived
   field, stratification keeps `type: "T"`.
 - Clause 5 ("type of joint is determined by the number, dimensions and relative

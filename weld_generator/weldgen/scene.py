@@ -150,7 +150,7 @@ def _iso_17659_term(joint_type: str, included_angle_deg: float) -> str:
     return {"corner": "corner joint (3.13)",
             "butt": "butt joint (3.7)",
             "lap": "lap joint (3.9)",
-            "edge": "edge joint (3.14) / parallel joint (3.8)"}[joint_type]
+            "edge": "edge joint (3.14)"}[joint_type]
 
 
 def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
@@ -429,12 +429,14 @@ def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict
             "in_plane_yaw_deg": spec.in_plane_yaw_deg,   # D28, Phase 6a
             # ISO 17659 term, derived (clause 5: "the type of joint is determined by
             # the number, dimensions and relative orientation of the parts"). `type`
-            # above stays the topological/US name the pipeline stratifies on; this is
-            # the standard's own word for what was sampled: a T away from ~90 deg is
-            # the standard's angle joint (3.12, US "skewed T"), our edge class is the
-            # flush stack the standard covers as edge joint (3.14, at 0 deg) and - at
-            # total overlap - parallel joint (3.8, US "edge joint", Annex A); lap is
-            # guaranteed partial overlap (3.9) by the D31 clearance.
+            # above stays the name the pipeline stratifies on; this is the standard's
+            # own word for what was sampled: a T away from ~90 deg is the angle joint
+            # (3.12, US "skewed T"); our edge class sits at alpha = 0 inside the edge
+            # joint's 0-30 deg band (3.14); lap is guaranteed PARTIAL overlap (3.9,
+            # "en se recouvrant partiellement") by the D31 clearance. The parallel
+            # joint (3.8, total overlap, e.g. explosive cladding) is excluded from the
+            # dataset outright: its join is an area bond, not a linear seam, so there
+            # is no seam curve to construct - outside the problem definition.
             "iso_17659_term": _iso_17659_term(joint_type, spec.included_angle_deg),
             # D32: candidate other-types when this scene is class-boundary stratum
             # material; null in disjoint and pre-D31 corpora.

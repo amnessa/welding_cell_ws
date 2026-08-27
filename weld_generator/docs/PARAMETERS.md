@@ -363,15 +363,26 @@ the standard's text (all quotations below are from the PDF, by sub-clause):
 | `T` otherwise | angle joint (3.12, US "skewed T") | "one part meets the other at an acute angle" — what D18's included-angle sampling produces away from 90° |
 | `corner` | corner joint (3.13) | "meet at their edges at an angle greater than 30°"; our 60–120° preparation range (ISO 9692-1) is a subset of 17659's 30–135° fillet examples (18.35) |
 | `butt` | butt joint (3.7) | |
-| `lap` | lap joint (3.9) | "parts lie parallel … and overlap" — **partial** overlap ("à recouvrement"), guaranteed by the D31 clearance bands |
-| `edge` | edge joint (3.14) / parallel joint (3.8) | the flush stack sits at α = 0° of 3.14's 0–30° range, and at total overlap equally satisfies 3.8 ("à recouvrement **total**", US "edge joint" per Annex A) — the standard's own two entries are non-disjoint at 0°, so the scene records both |
+| `lap` | lap joint (3.9) | "parts lie parallel … and overlap" — **partial** overlap ("en se recouvrant **partiellement**"), guaranteed by the D31 clearance bands; full overlap is 3.8 and excluded (below) |
+| `edge` | edge joint (3.14) | "meet at their edges at an angle of 0° to 30°" — the flush stack sits at α = 0° inside that band, so the class is correctly named as-is. 3.13/3.14 partition the edge-contact family at 30° with no gap and no overlap: the corner/edge disjointness is the standard's, not ours |
 
 Each scene carries the derived `joint.iso_17659_term`, so every type name in a figure is
-the standard's, not ours. **Excluded types, stated rather than left to be noticed:** the
-cruciform (3.11), multiple (3.15) and cross (3.16) joints are multi-part assemblies
-outside the two-part scope; ISO edge-joint openings above 0° (3.14 allows up to 30°) are
-not generated — the stacked construction is parallel by design (D23 caps the relative
-tilt at 0,4°).
+the standard's, not ours. **Excluded types, stated rather than left to be noticed:**
+
+- **Parallel joint (3.8** — "en se recouvrant **totalement**", e.g. explosive cladding**)**
+  is excluded **because its join is an area bond over the whole faying surface (3.4),
+  not a linear seam** — there is no seam curve for a generator to construct or for a
+  method to find. Outside the problem definition, not outside the sampling budget.
+- Cruciform (3.11), multiple (3.15) and cross (3.16) joints — multi-part assemblies
+  outside the two-part scope.
+- ISO edge-joint openings above 0° (3.14 allows up to 30°) are not yet generated — the
+  stacked construction is parallel by design (D23 caps the relative tilt at 0,4°); the
+  0–30° band is recorded as future scope, since 3.14 makes the opening a genuine
+  parameter where the layout currently pins a constant.
+
+The word for the lap contact region is the standard's **faying surface (3.4)**: the D31
+contact-polygon rule reads as "every boundary segment of the faying surface contributed
+by the upper part's outline is a lap toe".
 
 **Naming collision, resolved by documentation:** ISO 17659 ref. 21 uses *included angle*
 for the **groove** opening. Our `included_angle_deg` is the angle between the *parts*
