@@ -112,6 +112,13 @@ Table 1, p. 17. `aA` = actual throat thickness. **[ISO]**
 
 **The throat `aA` is an input we must choose.** ISO 5817 does not set it — it is a design
 parameter. **[ours]** `aA = 0,7 · min(t_A, t_B)`, the mitre-fillet relation `a = z/√2` with
+the caveat that `z/√2` is the **90° mitre**: at the D18 included-angle extremes (60°/120°)
+the true mitre throat is `z·cos(φ/2)` with `φ` the fillet's own corner angle, up to ±25%
+off the constant — and the two fillets of one tilted T differ from each other. The
+constant is kept because 5817 leaves `aA` to the designer and a per-scene recompute is
+always possible from the stored value; the angle-dependence is stated here so nobody
+mistakes 0,7 for a standards requirement at non-right angles. It feeds the no. 617 gap
+limit at ~0,1–0,3·aA, so the induced error in a gap *limit* is sub-millimetre.
 leg length `z` taken equal to the thinner plate. Recorded per scene in
 `fit.throat_thickness_mm` so anyone can recompute the limits under a different assumption.
 
