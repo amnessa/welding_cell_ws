@@ -169,7 +169,12 @@ Objects are listed in `objects[]`. Each has:
   in `objects[]` order; **the fixture is always `255`**, so workpiece ids stay
   contiguous from 0 no matter how many parts a scene has.
 - `primitive` — the shape family, from the §2.2 registry. Parts are **plain slabs through
-  Phase 5**; `swept_slab`, `cylinder` and `tube` arrive in Phase 6.
+  Phase 5**; `prism` arrives in Phase 6a (D28 outlines); `swept_slab`, `cylinder` and
+  `tube` arrive in Phase 6b.
+- `outline_uv`, `outline_shape` — **prism only**: the CCW convex outline in the part's
+  local u-v plane, and the D28 vocabulary entry it was sampled from. The prism is that
+  polygon extruded over `w in [-t/2, +t/2]`; `dims_mm` stays `[L, W, t]` as the outline's
+  bounding dims, so pose- and size-level consumers of the slab layout keep working.
 
 **The fixture is optional (D12).** A scene contains at most one `role: "fixture"` object.
 When absent, `joint.contact_mode` is `"free"` and no `object_id` 255 appears in the cloud.
@@ -195,6 +200,7 @@ special case.
 | Primitive | Local axes | Face names |
 |---|---|---|
 | `slab` (Phases 1–2, and the fixture) | `u` = length `L`, `v` = width `W`, `w` = thickness `t` | `+u` `-u` `+v` `-v` `+w` `-w` |
+| `prism` (Phase 6a, D28 outlines) | `u`, `v` = outline plane, `w` = thickness `t` | `+w` `-w` (the caps — deliberately the slab's broad-face names, so `±w`-based classification is untouched), `s0` … `s{k-1}` (side rectangles; `s0` spans outline vertices 0→1, which the layouts pin as the seam-bearing edge) |
 | `swept_slab` (Phase 6, curved plate) | `u` = sweep parameter, `v` = width, `w` = thickness | `+u` `-u` (end caps), `+v` `-v` (lateral swept), `+w` `-w` (broad offset surfaces) |
 | `cylinder` / `tube` (Phase 6) | `w` = axis | `lateral+` (outer), `lateral-` (inner, tube only), `+w` `-w` (caps) |
 

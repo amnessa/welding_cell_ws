@@ -124,6 +124,77 @@ def slab_edge_points(dims_mm, T_world_part, step_mm: float = 4.0) -> np.ndarray:
     return P @ T[:3, :3].T + T[:3, 3]
 
 
+def _poly_contains(o: np.ndarray, q: np.ndarray) -> np.ndarray:
+    """Point-in-convex-CCW-polygon, vectorised over query rows."""
+    inside = np.ones(len(q), dtype=bool)
+    k = len(o)
+    cen = o.mean(axis=0)
+    for i in range(k):
+        a, b = o[i], o[(i + 1) % k]
+        e = b - a
+        n2 = np.array([e[1], -e[0]])
+        if float((cen - a) @ n2) < 0:
+            n2 = -n2
+        inside &= (q - a) @ n2 >= -1e-9
+    return inside
+
+
+def prism_surface_points(outline_uv, thickness, T_world_part,
+                         step_mm: float = 6.0) -> np.ndarray:
+    """`slab_surface_points` for a Phase 6a prism: grid the caps inside the outline,
+    grid each side rectangle. Rebuilt from the schema fields (`outline_uv`,
+    `thickness_mm`), so the baseline still consumes nothing but scene.json."""
+    o = np.asarray(outline_uv, dtype=float)
+    t2 = float(thickness) / 2.0
+    T = np.asarray(T_world_part, dtype=float)
+    pts = []
+    gu = np.arange(o[:, 0].min(), o[:, 0].max() + 1e-9, step_mm)
+    gv = np.arange(o[:, 1].min(), o[:, 1].max() + 1e-9, step_mm)
+    uu, vv = np.meshgrid(gu, gv)
+    q = np.column_stack([uu.ravel(), vv.ravel()])
+    q = q[_poly_contains(o, q)]
+    for w in (t2, -t2):
+        pts.append(np.column_stack([q, np.full(len(q), w)]))
+    ws = np.arange(-t2, t2 + 1e-9, step_mm)
+    if len(ws) < 2:
+        ws = np.array([-t2, t2])
+    k = len(o)
+    for i in range(k):
+        a, b = o[i], o[(i + 1) % k]
+        L = float(np.linalg.norm(b - a))
+        n = max(2, int(np.ceil(L / step_mm)) + 1)
+        ts = np.linspace(0.0, 1.0, n)[:, None]
+        seg = a + ts * (b - a)
+        for w in ws:
+            pts.append(np.column_stack([seg, np.full(n, w)]))
+    P = np.vstack(pts)
+    return P @ T[:3, :3].T + T[:3, 3]
+
+
+def prism_edge_points(outline_uv, thickness, T_world_part,
+                      step_mm: float = 4.0) -> np.ndarray:
+    """`slab_edge_points` for a prism: both cap boundaries plus the vertical corners.
+    Same reasoning as the slab version - the edges are what resists a slide."""
+    o = np.asarray(outline_uv, dtype=float)
+    t2 = float(thickness) / 2.0
+    T = np.asarray(T_world_part, dtype=float)
+    pts = []
+    k = len(o)
+    nv = max(2, int(np.ceil(2 * t2 / step_mm)) + 1)
+    ws = np.linspace(-t2, t2, nv)[:, None]
+    for i in range(k):
+        a, b = o[i], o[(i + 1) % k]
+        L = float(np.linalg.norm(b - a))
+        n = max(2, int(np.ceil(L / step_mm)) + 1)
+        ts = np.linspace(0.0, 1.0, n)[:, None]
+        seg = a + ts * (b - a)
+        for w in (-t2, t2):
+            pts.append(np.column_stack([seg, np.full(n, w)]))
+        pts.append(np.column_stack([np.repeat(a[None, :], nv, axis=0), ws]))
+    P = np.vstack(pts)
+    return P @ T[:3, :3].T + T[:3, 3]
+
+
 def build_model(scene: dict, gt_world: list, step_mm: float = 6.0,
                 edges_only: bool = True) -> tuple[np.ndarray, list, np.ndarray]:
     """The basic model in the JOINT frame: `(W_points, P_seams, T_world_joint)`.
@@ -141,7 +212,14 @@ def build_model(scene: dict, gt_world: list, step_mm: float = 6.0,
         if o.get("role") != "workpiece":
             continue
         Tp = inv @ np.asarray(o["T_world_part"], dtype=float)
-        if edges_only:
+        if o.get("primitive", "slab") == "prism":
+            if edges_only:
+                clouds.append(prism_edge_points(
+                    o["outline_uv"], o["thickness_mm"], Tp, min(step_mm, 4.0)))
+            else:
+                clouds.append(prism_surface_points(
+                    o["outline_uv"], o["thickness_mm"], Tp, step_mm))
+        elif edges_only:
             clouds.append(slab_edge_points(o["dims_mm"], Tp, min(step_mm, 4.0)))
         else:
             clouds.append(slab_surface_points(o["dims_mm"], Tp, step_mm))

@@ -66,6 +66,14 @@ class JointSpec:
     #: corner / butt / edge, whose parts share an edge and get their D28 diversity from
     #: outlines instead.
     in_plane_yaw_deg: float = 0.0
+    #: D28 (Phase 6a): polygon outlines for the joints that share an EDGE (corner, butt,
+    #: edge). Canonical-frame vertices from `layouts.sample_outline` - base (seam) edge
+    #: from (-L/2, 0) to (+L/2, 0), body in v in [0, depth] - which each layout maps into
+    #: the part's own centred local frame. None keeps the part a rectangular slab.
+    outline_A: tuple | None = None
+    outline_B: tuple | None = None
+    outline_shape_A: str | None = None
+    outline_shape_B: str | None = None
 
     #: The included angle each joint type takes as its nominal, i.e. the angle at which
     #: part B is undeflected. NOT all 90: a butt joint is coplanar (180) and a lap or

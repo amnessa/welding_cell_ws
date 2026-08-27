@@ -1671,25 +1671,75 @@ bias flatters precisely the plane-based methods under comparison.
       both plates. Replaced with the exact 2-D clip (`Slab.face_clip_line`), with the gap
       slack applied only to line-constant coordinates — both halves of that rule earned by
       measured failures (63 deleted toes; then seams overhanging by exactly the slack)
-- [ ] **Polygon outlines** for all five joint types, from the D28 vocabulary
-- [ ] Update the D4 verification function — face enumeration currently assumes 6 faces per slab
-- [ ] Update the `faceRef` naming scheme for polygonal parts (`A:side_3` rather than `A:+u`),
-      and check the `w`-is-thickness invariant survives
-- [ ] Seam-support constraint (D27) still holds: the along-seam extent is pinned by the seam;
-      yaw and outline vary everything else
-- [ ] Regenerate `smoke`, `reference_tjoint` stays pinned as the regression fixture
-- [ ] Add an anti-shortcut check to CI: **the distribution of angles between each seam and the
-      nearest non-seam boundary edge must be approximately uniform**, not concentrated at 0°
-      and 90°. This is the test that the prior is actually gone
+- [x] **Polygon outlines** — IMPLEMENTED 2026-08-27 as `geom.Prism`: a convex polygon in
+      the part's u-v plane extruded along `w`, so **the w-is-thickness invariant survives
+      by construction**. Duck-typed to the Slab face interface (`face_names`, `face_plane`,
+      `face_clip_line`, `closest_on_face`, `face_extent_along`, `contains`, `mesh`), so
+      accessibility, sampling, visibility and scene assembly all dispatch through the part
+      and never ask "which of six faces". Two measured bugs on the way in: the parallel-branch
+      clip slack compared an edge-length-scaled distance (a 3 mm offset read as 300 — every
+      corner scene lost all its seams), and the coplanar run was taken from hull extents,
+      which a sheared parallelogram overhangs at both ends (fixed by clipping the centreline
+      against each face polygon with `gap/2` slack; pinned by test). Where the outlines
+      apply resolved AGAINST the mechanism table's "dictated by joint type" and FOR the
+      checklist's "all five": **B is outlined in every joint type** (its seam-bearing edge
+      stays pinned straight and full-length by the layout mapping), because B co-rotates
+      with the seam on T/lap and yaw can therefore never decorrelate B's own top/end edges
+      — the corpus gate measured that residue directly. A stays rectangular for T/lap (yaw
+      already decorrelates it, and the yaw support bound is defined on A's rectangle).
+      Vocabulary `trapezoid / parallelogram / triangle / quad / convex-pentagon` at weights
+      0.10/0.10/0.25/0.30/0.25 — deliberately non-uniform, because trapezoid and
+      parallelogram keep a long far edge exactly parallel to the seam (their identity;
+      D28's own vocabulary lists them) and a uniform draw put ~35% of free-edge length in
+      the 0–10° bin. Drawn from `seam_curve` after the yaw draw: outline-off corpora
+      reproduce bit-identically, outline-on is a free twin (pinned by test)
+- [x] Update the D4 verification function — face enumeration generalised to
+      `part.face_names()`; the coplanar in-plane basis (A's own axes for a slab)
+      generalised to each face-polygon edge direction and its in-plane perpendicular
+- [x] `faceRef` naming — prism caps keep the slab's `±w` names (so the `BROAD_FACES`
+      seam-classification logic is untouched), sides are `s0..s{k-1}` with `s0` the
+      seam edge by construction; schema pattern extended, `primitive: "prism"` +
+      `outline_uv`/`outline_shape` added to `objects[]`, `part_geometry_id` =
+      `prism_<shape>_<k>x<L>x<W>x<t>` (so 6a already makes the D11 split a genuine
+      geometry split, as the patch hoped). Per-point `face_id` bases are cumulative,
+      `== 6*i` for all-slab scenes — content hashes unchanged
+- [x] Seam-support (D27) holds: every outline pins the seam edge at full length from
+      (−L/2, 0) to (+L/2, 0) and reaches full depth, so `L` and `W` keep meaning what
+      they meant for a slab; the outline redistributes area, it does not shrink the part
+- [x] Regenerate `smoke` (12/12, yaw on; `polygon_outlines: true` is a no-op for its
+      T-only draw), `reference_tjoint` stays pinned. `configs/bench6a_*.yaml` are ready
+      for the Phase 4 re-run: same per-type seed ranges, both mechanisms on
+- [x] Anti-shortcut check: `scripts/qa_d28_gate.py` — corpus-level, exit-coded.
+      **Statistic:** the length-weighted distribution of angles between each primary seam
+      and every FREE boundary edge of both parts, where joint-constrained edges (the
+      seam-BEARING ones and the seam-TERMINATING end edges) are excluded by nearness to
+      the seam segment alone. Two earlier statistics measured their own artefacts and are
+      recorded in the script so they are not rebuilt: "nearest edge excluding
+      near-and-parallel" is always won by a terminating end edge (~90°, 43/62 seams), and
+      "nearest edge excluding all near edges" is won by whatever sits just past the cutoff
+      (winners' distances clustered at 12.0–12.5 mm against a 12 mm threshold — a metric
+      measuring its own exclusion boundary)
 
-**Gate:** the seam-to-boundary angle histogram is flat. If it spikes at 0/90°, the shortcut is
-still present and Phase 4 numbers remain biased.
+**Gate:** PASSED 2026-08-27 on a 90-scene trial corpus (`bench6a` configs, both mechanisms):
+terminal-bin mass 0.33 vs 0.22 uniform, inside the 2× tolerance, all five joint types
+spread. The gate also caught two generator bugs the unit tests could not: **lap yaw was
+silently dead** (the support bound tested the contact strip's y = 0 edge, which IS A's
+boundary edge, so any tilt halved its chord and every lap pinned to 0° — 21/40 bench seeds;
+fixed by testing the primary fillet's leading-toe line and the centreline instead, and only
+the centreline when B overspans A), and the uniform outline vocabulary rebuilt the very 0°
+spike it was meant to break. Only sampled corpora exercise these paths with the layouts'
+own geometry — which is the argument for a corpus gate over unit tests stated by the patch,
+now with two measurements behind it.
 
-**Then:** re-run Phase 4. Expect `lit-ransac` and `lit-ppf` precision to drop — that drop is
-the measurement of how much the axis-alignment prior was worth, and is worth reporting as a
-figure in its own right.
+**Then:** re-run Phase 4 (deferred by decision 2026-08-27; three steps, no new code):
+(1) generate the corpus — `python -m weldgen generate --config configs/bench6a_<type>.yaml`
+per type with the bench seed ranges, plus the `_fx` twins if the fixture chunks are wanted;
+(2) `python scripts/run_phase4_batch.py --corpus out/bench6a` (flag added for this);
+(3) re-execute notebook 12 against the new `phase4_batch.csv.gz`. Expect `lit-ransac` and
+`lit-ppf` precision to drop — that drop is the measurement of how much the axis-alignment
+prior was worth, and is worth reporting as a figure in its own right.
 
-**Effort:** 3 days.
+**Effort:** 3 days (spent: yaw 1 day, outlines + gate 1 day).
 
 ---
 

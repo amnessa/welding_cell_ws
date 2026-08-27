@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .geom import SLAB_FACES, Slab
+from .geom import SLAB_FACES, Prism, Slab
 
 
 def sample_slab_surface(
@@ -29,29 +29,34 @@ def sample_slab_surface(
 
     Returns arrays keyed `xyz`, `normals`, `object_id`, `face_id`.
     """
-    L, W, t = (float(v) for v in slab.dims_mm)
-    half = np.array([L, W, t]) / 2.0
+    is_slab = isinstance(slab, Slab)
+    if is_slab:
+        L, W, t = (float(v) for v in slab.dims_mm)
+        half = np.array([L, W, t]) / 2.0
 
     xyz, normals, face_ids = [], [], []
-    for local_id, name in enumerate(SLAB_FACES):
+    for local_id, name in enumerate(slab.face_names()):
         area = slab.face_area(name)
         n_pts = int(round(density_per_mm2 * area))
         if n_pts <= 0:
             continue
 
-        axis = "uvw".index(name[1])
-        sign = 1.0 if name[0] == "+" else -1.0
-        others = [i for i in range(3) if i != axis]
+        if is_slab:
+            axis = "uvw".index(name[1])
+            sign = 1.0 if name[0] == "+" else -1.0
+            others = [i for i in range(3) if i != axis]
 
-        # Uniform in the face's own 2D parametrisation.
-        uv = rng.random((n_pts, 2))
-        local = np.empty((n_pts, 3))
-        local[:, axis] = sign * half[axis]
-        local[:, others[0]] = (uv[:, 0] * 2.0 - 1.0) * half[others[0]]
-        local[:, others[1]] = (uv[:, 1] * 2.0 - 1.0) * half[others[1]]
+            # Uniform in the face's own 2D parametrisation.
+            uv = rng.random((n_pts, 2))
+            local = np.empty((n_pts, 3))
+            local[:, axis] = sign * half[axis]
+            local[:, others[0]] = (uv[:, 0] * 2.0 - 1.0) * half[others[0]]
+            local[:, others[1]] = (uv[:, 1] * 2.0 - 1.0) * half[others[1]]
 
-        world = (slab.T_world_part @ np.column_stack(
-            [local, np.ones(n_pts)]).T)[:3].T
+            world = (slab.T_world_part @ np.column_stack(
+                [local, np.ones(n_pts)]).T)[:3].T
+        else:
+            world = _sample_prism_face(slab, name, n_pts, rng)
         xyz.append(world)
         normals.append(np.tile(slab.face_normal(name), (n_pts, 1)))
         face_ids.append(np.full(n_pts, face_id_base + local_id, dtype=np.uint8))
@@ -70,6 +75,42 @@ def sample_slab_surface(
     }
 
 
+def _sample_prism_face(prism: Prism, name: str, n_pts: int,
+                       rng: np.random.Generator) -> np.ndarray:
+    """Area-uniform world-frame sample of one prism face.
+
+    Caps: fan triangulation from vertex 0, triangle chosen area-weighted, then a uniform
+    barycentric draw (the standard fold `u+v>1 -> 1-u, 1-v`). Sides: the rectangle draw.
+    Draw order per face is fixed (one selection vector, one (n,2) uv block), so the
+    content hash covers it exactly as it covers the slab path.
+    """
+    t2 = prism.thickness / 2.0
+    o = prism.outline_uv
+    if name in ("+w", "-w"):
+        v0 = o[0]
+        tri = np.array([[v0, o[i], o[i + 1]] for i in range(1, len(o) - 1)])
+        e1, e2 = tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]
+        areas = 0.5 * np.abs(e1[:, 0] * e2[:, 1] - e1[:, 1] * e2[:, 0])
+        pick = rng.random(n_pts)
+        idx = np.searchsorted(np.cumsum(areas) / areas.sum(), pick)
+        idx = np.clip(idx, 0, len(tri) - 1)
+        uv = rng.random((n_pts, 2))
+        fold = uv.sum(axis=1) > 1.0
+        uv[fold] = 1.0 - uv[fold]
+        a, b, c = tri[idx, 0], tri[idx, 1], tri[idx, 2]
+        p2 = a + uv[:, :1] * (b - a) + uv[:, 1:] * (c - a)
+        w = t2 if name == "+w" else -t2
+        local = np.column_stack([p2, np.full(n_pts, w)])
+    else:
+        k = int(name[1:])
+        a2, b2 = o[k], o[(k + 1) % len(o)]
+        uv = rng.random((n_pts, 2))
+        p2 = a2 + uv[:, :1] * (b2 - a2)
+        local = np.column_stack([p2, (uv[:, 1] * 2.0 - 1.0) * t2])
+    T = prism.T_world_part
+    return local @ T[:3, :3].T + T[:3, 3]
+
+
 def sample_scene_surface(
     slabs: list[Slab],
     density_per_mm2: float,
@@ -80,10 +121,11 @@ def sample_scene_surface(
     `visible_from_cam` is emitted all-True here; `scene.py` overwrites it with the Phase 3
     ray-cast result. The field exists in both cases so the array layout never changes (D6).
     """
-    parts = [
-        sample_slab_surface(s, density_per_mm2, rng, face_id_base=6 * i)
-        for i, s in enumerate(slabs)
-    ]
+    parts = []
+    base = 0
+    for s in slabs:
+        parts.append(sample_slab_surface(s, density_per_mm2, rng, face_id_base=base))
+        base += len(s.face_names())    # == 6*i for all-slab scenes: hashes unchanged
     out = {k: np.concatenate([p[k] for p in parts]) for k in parts[0]}
     out["visible_from_cam"] = np.ones(len(out["xyz"]), dtype=bool)
     return out

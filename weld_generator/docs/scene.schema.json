@@ -51,7 +51,7 @@
     },
     "faceRef": {
       "type": "string",
-      "pattern": "^[A-Z]:([+-][uvw]|lateral[+-])$",
+      "pattern": "^[A-Z]:([+-][uvw]|lateral[+-]|s\\d+)$",
       "description": "<object_id>:<face_name>, per SCHEMA.md 2.2. Primitive face registry only - D17 procedural features were withdrawn 2026-08-15."
     }
   },
@@ -304,6 +304,7 @@
           "primitive": {
             "enum": [
               "slab",
+              "prism",
               "swept_slab",
               "cylinder",
               "tube"
@@ -334,6 +335,23 @@
           },
           "T_world_part": {
             "$ref": "#/$defs/mat4"
+          },
+          "outline_uv": {
+            "type": "array",
+            "minItems": 3,
+            "items": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": {
+                "type": "number"
+              }
+            },
+            "description": "Prism only - CCW convex outline in the part's local u-v plane; w spans +-thickness/2 (the w-is-thickness invariant survives D28 outlines)."
+          },
+          "outline_shape": {
+            "type": "string",
+            "description": "Prism only - D28 vocabulary entry the outline was sampled from."
           }
         }
       }

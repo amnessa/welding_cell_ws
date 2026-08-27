@@ -37,6 +37,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # D28 (Phase 6a): in-plane yaw of B for T and lap. Off by default so every config and
     # corpus generated before Phase 6a reproduces bit-identically; new configs opt in.
     "in_plane_yaw": False,
+    # D28, Phase 6a - polygon outlines for the edge-sharing joints (corner, butt, edge).
+    # Same contract as in_plane_yaw: draws come from the `seam_curve` substream, so
+    # corpora generated with this off reproduce bit-identically and an enabled
+    # regeneration differs only in the outlines - a free twin.
+    "polygon_outlines": False,
     "plate_width_mm": [50.0, 250.0],
     "thickness_mm": [1.0, 12.0],
     "dissimilar_thickness_p": 0.30,
@@ -129,6 +134,7 @@ GEOMETRY_KEYS = (
     "joint_type", "seam_shape", "prep", "plate_length_mm", "plate_width_mm",
     "thickness_mm", "dissimilar_thickness_p", "included_angle_deg", "min_overlap_frac",
     "in_plane_yaw",
+    "polygon_outlines",
     "stack_offset_frac", "edge_max_thickness_mm", "stacked_max_beta_deg",
     "edge_equal_width_p",
     "quality_mix", "root_gap_mm", "root_gap_over_range_mm",
@@ -362,6 +368,25 @@ def sample_joint(cfg: dict[str, Any], streams: Streams
         if max_yaw > 0.0:
             yaw = float(streams["seam_curve"].uniform(-max_yaw, max_yaw))
 
+    # D28 - the other half: polygon outlines. Part B gets one for EVERY joint type: its
+    # seam-bearing edge (bottom for T/corner, leading edge for lap/butt, flush edge for
+    # edge) is pinned straight and full-length by the layout mapping, and every other
+    # boundary splays. Yaw alone cannot do this for T/lap - B co-rotates with the seam,
+    # so a rectangular B keeps its top edge systematically parallel and its end edges
+    # systematically perpendicular, which the corpus gate measured as a persistent 0/90
+    # spike. Part A is outlined only for the edge-sharing joints (corner, butt, edge):
+    # for T/lap the yaw draw already decorrelates A's edges from the seam, and the yaw
+    # support bound is defined on A's rectangle. Draw order within `seam_curve` is fixed
+    # (yaw, then A's outline, then B's), so each mechanism stays a free twin.
+    outline_A = outline_B = None
+    shape_A = shape_B = None
+    if bool(cfg.get("polygon_outlines", False)):
+        from .layouts import sample_outline
+        g_sc = streams["seam_curve"]
+        if joint_type in ("corner", "butt", "edge"):
+            shape_A, outline_A = sample_outline(g_sc, L_A, W_A)
+        shape_B, outline_B = sample_outline(g_sc, L_B, H_B)
+
     spec = JointSpec(
         L_A=L_A, W_A=W_A, t_A=t_A,
         L_B=L_B, H_B=H_B, t_B=t_B,
@@ -372,6 +397,8 @@ def sample_joint(cfg: dict[str, Any], streams: Streams
         included_angle_deg=alpha,
         stack_offset_mm=None if stack_offset is None else stack_offset * H_B,
         in_plane_yaw_deg=yaw,
+        outline_A=outline_A, outline_B=outline_B,
+        outline_shape_A=shape_A, outline_shape_B=shape_B,
     )
     # Store what the joint ACTUALLY satisfies, not what was aimed for (PARAMETERS §2.5).
     return spec, classify_quality(t_min, h, beta, gap, throat), joint_type

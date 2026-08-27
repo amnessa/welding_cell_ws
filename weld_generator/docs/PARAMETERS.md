@@ -310,13 +310,40 @@ stiffeners on the slabs; it was **withdrawn 2026-08-15** as decoration dressed a
 | Phase | Primitives generated | What varies |
 |---|---|---|
 | 1 – 5 | `slab` only | dimensions: `L`, `W`, `t` |
-| 6 | `+ swept_slab`, `cylinder`, `tube` | genuine shape — curved plates, pipe-on-plate, cylinder-on-cylinder |
+| 6a | `+ prism` (convex polygon × thickness) | in-plane orientation (yaw) and boundary shape (outlines) — D28 |
+| 6b | `+ swept_slab`, `cylinder`, `tube` | genuine shape — curved plates, pipe-on-plate, cylinder-on-cylinder |
 | 9 | scanned MDF workpieces | genuine shape, plus saw kerf, edge break, warp and paint texture |
 
 The consequence to state rather than hide: **over Phases 1–5 the D11 split holds out
 _dimensions_, not geometry.** Both are legitimate held-out axes; only one of them is what
 "held-out geometry" sounds like. `SCHEMA.md` §5.4 carries the same caveat at the point where
-`part_geometry_id` is defined, so a reader meets it wherever they enter.
+`part_geometry_id` is defined, so a reader meets it wherever they enter. From Phase 6a the
+caveat weakens: `part_geometry_id` varies by outline shape as well as dimensions.
+
+### 3.3 Anti-shortcut measure — D28 (Phase 6a, 2026-08-27)
+
+**We deliberately broke the axis-alignment prior.** Through Phase 5 every seam ran parallel
+to a plate boundary edge, because rectangular parts were placed at orthogonal in-plane
+orientations — so "find a long straight boundary, the seam is parallel to it" was a valid
+heuristic on the dataset, and every Phase 4 number was measured under it. Two mechanisms
+remove it, both off by default and enabled together in the `bench6a` presets:
+
+| Mechanism | Applies to | Sampling |
+|---|---|---|
+| In-plane yaw of B about A's face normal | T, lap | uniform over the per-scene supported range (chord bound in `layouts.max_supported_yaw_deg`) |
+| Polygon outlines (`prism` primitive) | part B in **all five** joint types; part A in corner / butt / edge | `trapezoid 0.10 / parallelogram 0.10 / triangle 0.25 / quad 0.30 / convex-pentagon 0.25`, seam edge pinned straight and full-length |
+
+B is outlined even where yaw applies because B co-rotates with the seam — yaw can never
+decorrelate B's own top and end edges from it. The vocabulary weights are deliberately
+non-uniform: trapezoid and parallelogram keep a far edge exactly parallel to the seam (their
+identity), and a uniform draw measurably rebuilt the 0° spike. Both mechanisms draw from the
+`seam_curve` substream, so pre-6a corpora reproduce bit-identically and enabling either
+yields an exact ablation twin.
+
+**Verification is corpus-level, not per scene:** `scripts/qa_d28_gate.py` gates the
+length-weighted distribution of seam-to-free-boundary-edge angles (joint-constrained edges
+excluded) against concentration at 0/90°. Passed 2026-08-27 at 0.33 terminal-bin mass vs
+0.22 uniform.
 
 Real irregularity is what the Phase 9 scans are for, and it is not something a feature
 vocabulary reproduces honestly — a modelled chamfer is a clean bevel; a real edge break is

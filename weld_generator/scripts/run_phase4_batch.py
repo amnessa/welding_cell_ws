@@ -127,9 +127,10 @@ def stream(dirs, spec, per_type_cap=None):
     return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
 
 
-def fixture_pairs(bench_dirs, facts, per_type):
+def fixture_pairs(bench_dirs, facts, per_type, corpus_root):
+    fx_root = corpus_root.parent / (corpus_root.name + "_fx")
     fx_dirs = [d for jt in ("T", "corner", "butt", "lap", "edge")
-               for d in scene_dirs(ROOT / "out" / "bench_fx" / jt)]
+               for d in scene_dirs(fx_root / jt)]
     fx_facts = [scene_facts(json.loads((d / "scene.json").read_text())) for d in fx_dirs]
     by_key = {f["twin_key"]: d for f, d in zip(fx_facts, fx_dirs)}
     off, on, per = [], [], {}
@@ -149,9 +150,13 @@ def main():
     ap.add_argument("--only", default=None,
                     help="run only chunks whose group or name contains this")
     ap.add_argument("--list", action="store_true")
+    ap.add_argument("--corpus", default=str(ROOT / "out" / "bench"),
+                    help="benchmark corpus root (per-joint-type subdirs); the fixture "
+                         "chunks read its sibling '<corpus>_fx' for the twins")
     args = ap.parse_args()
 
-    corpus = balanced_corpus(ROOT / "out" / "bench", per_type=50)
+    corpus_root = Path(args.corpus)
+    corpus = balanced_corpus(corpus_root, per_type=50)
     dirs = [d for jt in ("T", "corner", "butt", "lap", "edge")
             for d in corpus[jt][: args.per_type]]
     facts = [scene_facts(json.loads((d / "scene.json").read_text())) for d in dirs]
@@ -184,7 +189,8 @@ def main():
         print(f"[run ] {c['name']}", flush=True)
         tc = time.time()
         if c.get("fixture"):
-            off, on = fixture_pairs(dirs, facts, per_type=min(8, args.per_type))
+            off, on = fixture_pairs(dirs, facts, per_type=min(8, args.per_type),
+                                    corpus_root=corpus_root)
             a = stream(off, c)
             b = stream(on, c)
             a["fixture"], b["fixture"] = False, True

@@ -37,7 +37,7 @@ from typing import Any, Iterable, Iterator, Sequence
 
 import numpy as np
 
-from .geom import SLAB_FACES, Plane, Slab, dihedral_deg, intersect_planes
+from .geom import Plane, Slab, dihedral_deg, intersect_planes
 
 #: Default accessibility parameters. Mirrors configs/*.yaml and scene.json's
 #: `accessibility` block, which is stored so every rejection is reproducible.
@@ -266,8 +266,8 @@ def enumerate_candidates(
         for j, B in enumerate(parts):
             if j <= i:
                 continue
-            for fa in SLAB_FACES:
-                for fb in SLAB_FACES:
+            for fa in A.face_names():
+                for fb in B.face_names():
                     ref = tuple(sorted((f"{A.id}:{fa}", f"{B.id}:{fb}")))
                     c = _judge(A, fa, B, fb, ref, parts, solids, access, samples_along)
                     if c is not None:
@@ -448,19 +448,8 @@ def d19_curves(A: Slab, fa: str, B: Slab, fb: str,
 
 
 def _closest_on_face(part: Slab, face: str, pts: np.ndarray) -> np.ndarray:
-    """Closest point on the finite rectangular face patch (not its infinite plane)."""
-    half = np.asarray(part.dims_mm, dtype=float) / 2.0
-    axis = "uvw".index(face[1])
-    sign = 1.0 if face[0] == "+" else -1.0
-    T = part.T_world_part
-    R, t = T[:3, :3], T[:3, 3]
-    local = (np.asarray(pts) - t) @ R
-    target = local.copy()
-    target[:, axis] = sign * half[axis]
-    for k in range(3):
-        if k != axis:
-            target[:, k] = np.clip(target[:, k], -half[k], half[k])
-    return target @ R.T + t
+    """Closest point on the finite face patch (not its infinite plane) — part-delegated."""
+    return part.closest_on_face(face, pts)
 
 
 def _plane_basis(n: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -505,9 +494,28 @@ def _coplanar_candidate(A: Slab, fa: str, B: Slab, fb: str, ref: tuple[str, str]
     #     survived as separate seams.
     # A's own axes rotate with A, so they are pose-invariant and stay aligned with the
     # rectangular faces whose extents we are comparing.
-    R = A.T_world_part[:3, :3]
-    face_axis = "uvw".index(fa[1])
-    in_plane = [R[:, k] for k in range(3) if k != face_axis]
+    # For a prism face the same idea holds edge by edge: a polygon face has no two
+    # canonical axes, but its own boundary edges are the pose-invariant directions the
+    # rectangle's axes were standing in for. Each edge direction and its in-plane
+    # perpendicular is a candidate axis - the pair whose extents are cleanly disjoint is
+    # found exactly as before (for the matched seam edges of a butt or edge joint, that
+    # is the seam edge's perpendicular), and the widest shared run still wins.
+    if isinstance(A, Slab):
+        R = A.T_world_part[:3, :3]
+        face_axis = "uvw".index(fa[1])
+        in_plane = [R[:, k] for k in range(3) if k != face_axis]
+    else:
+        V = A.face_vertices(fa)
+        in_plane = []
+        for i in range(len(V)):
+            e = V[(i + 1) % len(V)] - V[i]
+            ln = float(np.linalg.norm(e))
+            if ln < 1e-9:
+                continue
+            e = e / ln
+            for cand in (e, np.cross(n, e)):
+                if not any(abs(float(cand @ have)) > 1.0 - 1e-6 for have in in_plane):
+                    in_plane.append(cand)
 
     best = None
     for axis in in_plane:
@@ -535,6 +543,28 @@ def _coplanar_candidate(A: Slab, fa: str, B: Slab, fb: str, ref: tuple[str, str]
     axis, other, gap, mid, lo, hi = best
     origin = -pa.d * n                                 # a point on the shared plane
     base = origin + (mid - float(origin @ axis)) * axis
+
+    # For rectangles the face extent along the seam IS the seam edge's own span, so the
+    # extent intersection above already ends the run where the edges end. A prism's hull
+    # extent can overhang its seam edge (a sheared parallelogram sticks out past both
+    # ends), so the run is additionally clipped against each face polygon along the
+    # candidate line. The line sits mid-gap, `gap/2` outside both outlines, which is
+    # exactly what `face_clip_line`'s slack expresses: parallel boundary edges (the seam
+    # edge itself) tolerate the offset, non-parallel ones (the receding legs) clip the
+    # run exactly where the outline stops facing the gap.
+    for part, face in ((A, fa), (B, fb)):
+        if isinstance(part, Slab):
+            continue
+        clip = part.face_clip_line(face, base, other,
+                                   slack_mm=gap / 2.0 + access["contact_tol_mm"])
+        if clip is None:
+            return None
+        c0 = clip[0] + float(base @ other)
+        c1 = clip[1] + float(base @ other)
+        lo, hi = max(lo, c0), min(hi, c1)
+    if hi - lo <= 1e-9:
+        return None
+
     p0 = base + (lo - float(base @ other)) * other
     p1 = base + (hi - float(base @ other)) * other
 
@@ -702,16 +732,6 @@ def _line_separation(A: Slab, fa: str, B: Slab, fb: str,
 
 
 def _distance_to_face_patch(part: Slab, face: str, pts: np.ndarray) -> np.ndarray:
-    """Distance from points to the finite rectangular face patch (not its plane)."""
-    half = np.asarray(part.dims_mm, dtype=float) / 2.0
-    axis = "uvw".index(face[1])
-    sign = 1.0 if face[0] == "+" else -1.0
-    T = part.T_world_part
-    R, t = T[:3, :3], T[:3, 3]
-    local = (np.asarray(pts) - t) @ R          # world -> part local
-    target = local.copy()
-    target[:, axis] = sign * half[axis]
-    for k in range(3):
-        if k != axis:
-            target[:, k] = np.clip(target[:, k], -half[k], half[k])
-    return np.linalg.norm(local - target, axis=1)
+    """Distance from points to the finite face patch (not its plane) — part-delegated."""
+    q = np.atleast_2d(np.asarray(pts, dtype=float))
+    return np.linalg.norm(q - part.closest_on_face(face, q), axis=1)

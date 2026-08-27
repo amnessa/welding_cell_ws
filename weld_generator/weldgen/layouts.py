@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .geom import Slab, rot_x, rot_z, translate
+from .geom import Prism, Slab, rot_x, rot_z, translate
 from .joints import JointSpec
 
 JOINT_TYPES = ("T", "corner", "butt", "lap", "edge")
@@ -38,6 +38,115 @@ def build(spec: JointSpec, joint_type: str, T_world_joint: np.ndarray) -> list[S
     return fn(spec, T_world_joint)
 
 
+#: D28 outline vocabulary (patch_phase6). `rectangle` is what you get with outlines OFF,
+#: so the sampler draws only the shapes that break the axis-alignment prior. Trapezoid
+#: and parallelogram keep a far edge exactly parallel to the seam - they are in D28's
+#: own vocabulary, so they stay - but they are deliberately a minority (2 of 5): the
+#: corpus gate showed the parallel far edge is often the nearest free boundary edge, so
+#: a vocabulary dominated by those two rebuilds the 0-degree spike it was meant to break.
+OUTLINE_SHAPES = ("trapezoid", "parallelogram", "triangle", "quad", "convex")
+
+
+def _is_convex_ccw(verts: np.ndarray) -> bool:
+    v = np.asarray(verts, dtype=float)
+    k = len(v)
+    for i in range(k):
+        a, b, c = v[i], v[(i + 1) % k], v[(i + 2) % k]
+        e1, e2 = b - a, c - b
+        if e1[0] * e2[1] - e1[1] * e2[0] <= 1e-9:   # 2-D cross, NumPy-2 safe
+            return False
+    return True
+
+
+def sample_outline(rng: np.random.Generator, L: float, depth: float
+                   ) -> tuple[str, tuple[tuple[float, float], ...]]:
+    """One D28 outline in the canonical frame: seam edge (-L/2,0)->(L/2,0), body upward.
+
+    The seam-bearing edge is pinned at full length - it is the one boundary the joint
+    type constrains - and every shape reaches `depth`, so the part's sampled width keeps
+    meaning what it meant for a slab (the outline redistributes area, it does not shrink
+    the part). All draws come from the caller's stream (`seam_curve` via `sample_joint`),
+    so outline-off corpora reproduce bit-identically and an outline-enabled regeneration
+    is a free twin, exactly like yaw.
+    """
+    # Deliberately non-uniform: trapezoid and parallelogram keep a long far edge
+    # exactly parallel to the seam (their identity), and the corpus gate showed a
+    # uniform vocabulary puts ~35% of free-edge length in the 0-10 degree bin. They
+    # stay in the vocabulary as D28 lists them, as a minority.
+    shape = str(rng.choice(OUTLINE_SHAPES, p=[0.10, 0.10, 0.25, 0.30, 0.25]))
+    base = [(-L / 2.0, 0.0), (L / 2.0, 0.0)]
+    if shape == "trapezoid":
+        a = float(rng.uniform(0.15, 0.55)) * float(rng.choice([-1.0, 1.0])) * L
+        b = float(rng.uniform(0.15, 0.55)) * float(rng.choice([-1.0, 1.0])) * L
+        u_l, u_r = -L / 2.0 + a, L / 2.0 - b
+        if u_r - u_l < 0.2 * L:                       # keep a real far edge
+            mid = 0.5 * (u_l + u_r)
+            u_l, u_r = mid - 0.1 * L, mid + 0.1 * L
+        verts = base + [(u_r, depth), (u_l, depth)]
+    elif shape == "parallelogram":
+        sh = float(rng.uniform(0.25, 0.65)) * float(rng.choice([-1.0, 1.0])) * L
+        verts = base + [(L / 2.0 + sh, depth), (-L / 2.0 + sh, depth)]
+    elif shape == "triangle":
+        verts = base + [(float(rng.uniform(-0.4, 0.4)) * L, depth)]
+    elif shape == "quad":
+        # General convex quadrilateral: the far edge is TILTED (one end at full depth,
+        # the other well short of it), so unlike the trapezoid nothing up there is
+        # parallel to the seam.
+        verts = None
+        for _ in range(8):
+            d_lo = float(rng.uniform(0.55, 0.85)) * depth
+            u_r = L / 2.0 - float(rng.uniform(-0.2, 0.35)) * L
+            u_l = -L / 2.0 + float(rng.uniform(-0.2, 0.35)) * L
+            if bool(rng.random() < 0.5):
+                cand = base + [(u_r, depth), (u_l, d_lo)]
+            else:
+                cand = base + [(u_r, d_lo), (u_l, depth)]
+            if _is_convex_ccw(np.asarray(cand)):
+                verts = cand
+                break
+        if verts is None:                             # pragma: no cover - ~never after 8
+            verts = base + [(0.3 * L, depth), (-0.4 * L, 0.7 * depth)]
+            shape = "quad"
+    else:                                             # general convex pentagon
+        verts = None
+        for _ in range(8):                            # deterministic redraws, same stream
+            u_r = L / 2.0 + float(rng.uniform(-0.05, 0.3)) * L
+            d_r = float(rng.uniform(0.35, 0.75)) * depth
+            u_m = float(rng.uniform(-0.3, 0.3)) * L
+            u_l = -L / 2.0 - float(rng.uniform(-0.05, 0.3)) * L
+            d_l = float(rng.uniform(0.35, 0.75)) * depth
+            cand = base + [(u_r, d_r), (u_m, depth), (u_l, d_l)]
+            if _is_convex_ccw(np.asarray(cand)):
+                verts = cand
+                break
+        if verts is None:                             # pragma: no cover - ~never after 8
+            verts = base + [(L / 2.0, depth), (-L / 2.0, depth)]
+            shape = "trapezoid"
+    return shape, tuple((float(u), float(v)) for u, v in verts)
+
+
+def _outline_local(outline, depth: float, seam_at_plus_v: bool) -> np.ndarray:
+    """Canonical outline -> the part's centred local u-v frame.
+
+    The layouts place CENTRED slabs, so the prism reuses the exact same transform chains
+    by living in the same centred coordinates: the canonical body [0, depth] maps onto
+    [-depth/2, +depth/2] with the seam edge landing on whichever side the layout welds.
+    A mirrored mapping flips the winding; `Prism.__post_init__` restores CCW.
+    """
+    o = np.asarray(outline, dtype=float)
+    if seam_at_plus_v:
+        return np.column_stack([o[:, 0], depth / 2.0 - o[:, 1]])
+    return np.column_stack([o[:, 0], o[:, 1] - depth / 2.0])
+
+
+def _part_B(spec: JointSpec, T_B: np.ndarray, seam_at_plus_v: bool):
+    if spec.outline_B is None:
+        return Slab("B", "workpiece", 1, (spec.L_B, spec.H_B, spec.t_B), T_B)
+    return Prism("B", "workpiece", 1,
+                 _outline_local(spec.outline_B, spec.H_B, seam_at_plus_v),
+                 spec.t_B, T_B, shape=spec.outline_shape_B)
+
+
 def _standing_B(spec: JointSpec, T: np.ndarray, y0: float, z0: float,
                 joint_type: str) -> Slab:
     """A plate standing on edge, its near face at y0 and its bottom at z0.
@@ -46,12 +155,13 @@ def _standing_B(spec: JointSpec, T: np.ndarray, y0: float, z0: float,
     local +w (thickness) onto joint -Y — mapping Y->Z and Z->Y at once would be a
     reflection. So `B:+w` is the near face and `B:-w` the far one.
     """
-    return Slab("B", "workpiece", 1, (spec.L_B, spec.H_B, spec.t_B),
-                T
-                @ translate(spec.length_offset_mm, y0, z0)
-                @ rot_x(spec.tilt_deg(joint_type))
-                @ translate(0.0, spec.t_B / 2.0, spec.H_B / 2.0)
-                @ rot_x(90.0))
+    T_B = (T
+           @ translate(spec.length_offset_mm, y0, z0)
+           @ rot_x(spec.tilt_deg(joint_type))
+           @ translate(0.0, spec.t_B / 2.0, spec.H_B / 2.0)
+           @ rot_x(90.0))
+    # local +v is height, so the welded (bottom) edge is the -v side
+    return _part_B(spec, T_B, seam_at_plus_v=False)
 
 
 def _flat_B(spec: JointSpec, T: np.ndarray, y_centre: float, z_centre: float,
@@ -68,21 +178,27 @@ def _flat_B(spec: JointSpec, T: np.ndarray, y_centre: float, z_centre: float,
     """
     tilt = spec.tilt_deg(joint_type)
     if pivot is None:
-        return Slab("B", "workpiece", 1, (spec.L_B, spec.H_B, spec.t_B),
-                    T @ translate(spec.length_offset_mm, y_centre, z_centre)
-                      @ rot_x(tilt))
-    pivot_y, pivot_z = pivot
-    return Slab("B", "workpiece", 1, (spec.L_B, spec.H_B, spec.t_B),
-                T
-                @ translate(spec.length_offset_mm, pivot_y, pivot_z)
-                @ rot_x(tilt)
-                @ translate(0.0, y_centre - pivot_y, z_centre - pivot_z))
+        T_B = (T @ translate(spec.length_offset_mm, y_centre, z_centre)
+                 @ rot_x(tilt))
+    else:
+        pivot_y, pivot_z = pivot
+        T_B = (T
+               @ translate(spec.length_offset_mm, pivot_y, pivot_z)
+               @ rot_x(tilt)
+               @ translate(0.0, y_centre - pivot_y, z_centre - pivot_z))
+    # edge joint welds B's +v edge (flush at y=0); butt welds the -v edge across the gap
+    return _part_B(spec, T_B, seam_at_plus_v=(joint_type == "edge"))
 
 
 def _base_A(spec: JointSpec, T: np.ndarray, y_centre: float) -> Slab:
     """Part A, lying flat with its `+w` face on the plane z = 0."""
-    return Slab("A", "workpiece", 0, (spec.L_A, spec.W_A, spec.t_A),
-                T @ translate(0.0, y_centre, -spec.t_A / 2.0))
+    T_A = T @ translate(0.0, y_centre, -spec.t_A / 2.0)
+    if spec.outline_A is None:
+        return Slab("A", "workpiece", 0, (spec.L_A, spec.W_A, spec.t_A), T_A)
+    # every outlined joint (corner, butt, edge) welds A's +v edge (the one at y = 0)
+    return Prism("A", "workpiece", 0,
+                 _outline_local(spec.outline_A, spec.W_A, seam_at_plus_v=True),
+                 spec.t_A, T_A, shape=spec.outline_shape_A)
 
 
 def _yawed(T: np.ndarray, yaw_deg: float, px: float, py: float) -> np.ndarray:
@@ -121,11 +237,27 @@ def max_supported_yaw_deg(spec: JointSpec, joint_type: str,
         cy = spec.linear_misalignment_mm + spec.t_B / 2.0
         ax = (-spec.L_A / 2.0 + margin_mm, spec.L_A / 2.0 - margin_mm)
         ay = (-spec.W_A / 2.0 + margin_mm, spec.W_A / 2.0 - margin_mm)
+        off_hi = max(0.0, width / 2.0 - margin_mm)
+        offs = (-off_hi, 0.0, off_hi)                  # both fillet lines are interior
     elif joint_type == "lap":
-        width = float(spec.stack_offset_mm or 0.0)
+        # The contact strip is A intersect B: y in [-min(overlap, W_A), 0]. Its y=0 edge
+        # IS A's boundary edge - the A-side toe candidate - and a chord through a
+        # boundary point in any tilted direction is half-length, so testing that edge
+        # pinned every lap to yaw 0 (measured: 21 of 40 bench seeds). What the bound
+        # must protect is the PRIMARY lap fillet, B's leading toe at the strip's other
+        # edge, which is interior whenever B does not overspan A; the A-edge toe just
+        # shortens under yaw and D4's exact clip records whatever run survives. When B
+        # overspans A (overlap >= W_A) both strip edges are A's own boundary, so only
+        # the centreline is testable.
+        width = min(float(spec.stack_offset_mm or 0.0), spec.W_A)
         cy = -width / 2.0
         ax = (-spec.L_A / 2.0 + margin_mm, spec.L_A / 2.0 - margin_mm)
         ay = (-spec.W_A + margin_mm, -margin_mm)       # A occupies y in [-W_A, 0]
+        off_lo = max(0.0, width / 2.0 - margin_mm)
+        if float(spec.stack_offset_mm or 0.0) < spec.W_A:
+            offs = (-off_lo, 0.0)                      # leading toe + centreline
+        else:
+            offs = (0.0,)
     else:
         return 0.0
     cx = spec.length_offset_mm
@@ -152,7 +284,7 @@ def max_supported_yaw_deg(spec: JointSpec, joint_type: str,
         for sgn in (+1.0, -1.0):
             a = np.radians(sgn * th)
             n = np.array([-np.sin(a), np.cos(a)])      # across-seam direction
-            for off in (-width / 2.0, 0.0, width / 2.0):
+            for off in offs:
                 if chord(cx + off * n[0], cy + off * n[1], a) < need:
                     ok = False
                     break

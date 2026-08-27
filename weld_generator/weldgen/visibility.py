@@ -20,7 +20,7 @@ from __future__ import annotations
 import numpy as np
 
 from .camera import in_frustum, project
-from .geom import Slab
+from .geom import Prism, Slab
 
 #: Ray origins are lifted this far off the surface along the normal before casting, so a
 #: point never occludes itself with its own face. Small next to any plate thickness, large
@@ -58,6 +58,37 @@ def ray_hits_slab(origins: np.ndarray, directions: np.ndarray, t_max: np.ndarray
         & ~outside.any(axis=1)
 
 
+def ray_hits_convex(origins: np.ndarray, directions: np.ndarray, t_max: np.ndarray,
+                    part) -> np.ndarray:
+    """`ray_hits_slab` for any convex part exposing `halfspaces()` (the Prism).
+
+    Same interval clip, over the part's face half-planes in world frame instead of the
+    box's three local axis pairs. Slabs keep their dedicated local-frame path bit-for-bit.
+    """
+    ns, ds = part.halfspaces()
+    o = np.asarray(origins, dtype=float)
+    d = np.asarray(directions, dtype=float)
+
+    fo = o @ ns.T + ds[None, :]                    # signed distance to each face plane
+    fd = d @ ns.T                                  # rate of change along the ray
+    with np.errstate(divide="ignore", invalid="ignore"):
+        t_hit = -fo / fd
+    parallel = np.abs(fd) < 1e-12
+    outside = parallel & (fo > 0.0)
+    # entering half-space (fd < 0) bounds t from below; exiting bounds from above
+    t_near = np.where(parallel | (fd > 0), -np.inf, t_hit).max(axis=1)
+    t_far = np.where(parallel | (fd < 0), np.inf, t_hit).min(axis=1)
+    return (t_near <= t_far) & (t_far > 0.0) & (t_near < np.asarray(t_max)) \
+        & ~outside.any(axis=1)
+
+
+def ray_hits_part(origins, directions, t_max, part) -> np.ndarray:
+    """Dispatch: exact local-frame clip for slabs, half-space clip for prisms."""
+    if isinstance(part, Slab):
+        return ray_hits_slab(origins, directions, t_max, part)
+    return ray_hits_convex(origins, directions, t_max, part)
+
+
 def occluded(points: np.ndarray, cam_pos: np.ndarray, slabs, normals=None) -> np.ndarray:
     """True where the straight line from a point to the camera passes through a part."""
     p = np.asarray(points, dtype=float)
@@ -70,7 +101,7 @@ def occluded(points: np.ndarray, cam_pos: np.ndarray, slabs, normals=None) -> np
 
     hit = np.zeros(len(p), dtype=bool)
     for s in slabs:
-        hit |= ray_hits_slab(p, d, dist, s)
+        hit |= ray_hits_part(p, d, dist, s)
     return hit
 
 
@@ -258,7 +289,7 @@ def exterior_scan(points: np.ndarray, normals: np.ndarray, slabs,
 def _blocked(origins, dirs, t_max, slabs) -> np.ndarray:
     hit = np.zeros(len(origins), dtype=bool)
     for s in slabs:
-        hit |= ray_hits_slab(origins, dirs, t_max, s)
+        hit |= ray_hits_part(origins, dirs, t_max, s)
     return hit
 
 

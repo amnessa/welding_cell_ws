@@ -13,7 +13,7 @@ from . import GENERATOR_VERSION, SCHEMA_VERSION
 from .accessibility import d19_curves, enumerate_candidates
 from .camera import intrinsics, sample_pose, standoff_for_framing
 from .config import SENSOR_PROFILES, geometry_config, sample_joint
-from .geom import SLAB_FACES, Slab, approach_dir, rot_x, rot_y, rot_z, translate
+from .geom import Prism, Slab, approach_dir, rot_x, rot_y, rot_z, translate
 from .hashing import config_id, twin_key
 from .layouts import build as build_layout
 from .rng import Streams
@@ -106,11 +106,12 @@ def _assert_watertight(slabs: list[Slab]) -> None:
 def _faces_block(slabs: list[Slab]) -> list[dict[str, Any]]:
     """Flat scene-wide face registry. Index IS the per-point `face_id` (SCHEMA.md §2.3)."""
     out = []
-    for i, s in enumerate(slabs):
-        for j, name in enumerate(SLAB_FACES):
+    fid = 0
+    for s in slabs:
+        for name in s.face_names():
             plane = s.face_plane(name)
             out.append({
-                "face_id": 6 * i + j,
+                "face_id": fid,
                 "ref": f"{s.id}:{name}",
                 "object": s.id,
                 "name": name,
@@ -118,6 +119,7 @@ def _faces_block(slabs: list[Slab]) -> list[dict[str, Any]]:
                 "surface": None,
                 "area_mm2": float(s.face_area(name)),
             })
+            fid += 1
     return out
 
 
@@ -380,12 +382,16 @@ def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict
         "objects": [
             {
                 "id": s.id, "role": s.role, "object_id": s.object_id,
-                "primitive": "slab",
+                "primitive": "slab" if isinstance(s, Slab) else "prism",
                 "dims_mm": [float(v) for v in s.dims_mm],
                 "thickness_mm": float(s.thickness_mm),
                 "part_geometry_id": s.part_geometry_id,
                 "mesh": None,
                 "T_world_part": [[float(v) for v in row] for row in s.T_world_part],
+                **({} if isinstance(s, Slab) else {
+                    "outline_uv": [[float(u), float(v)] for u, v in s.outline_uv],
+                    "outline_shape": s.shape,
+                }),
             }
             for s in slabs
         ],

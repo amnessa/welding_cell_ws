@@ -20,3 +20,6 @@ sensor_profiles: [d435i]
 # quality level and the fixture would not reproduce the measured geometry.
 linear_misalignment_mm: [0.0, 0.0]
 angular_misalignment_deg: [0.0, 0.0]
+in_plane_yaw: true
+polygon_outlines: true
+
