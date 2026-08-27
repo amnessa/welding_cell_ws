@@ -28,6 +28,98 @@ from .joints import JointSpec
 
 JOINT_TYPES = ("T", "corner", "butt", "lap", "edge")
 
+#: D31 - two boundary features are "the same edge" only when near-parallel. An edge
+#: crossing a clearance band at an angle is overhang, not a class-ambiguous meeting;
+#: same logic (near AND parallel) the D28 gate uses for seam-bearing edges.
+AMBIGUITY_PARALLEL_DEG = 10.0
+
+
+def class_clearance_mm(spec: JointSpec) -> float:
+    """D31 clearance: the flat surface an intended fillet weld needs beside a contact
+    line. ISO 17659 separates the classes by where the parts meet - on a face (T 3.10,
+    lap 3.9) or at their edges (corner 3.13, edge 3.14) - and the clearance
+    operationalises "meets the face": leg length (ISO 17659 3.21) is z ~= t of the
+    thinner member, so 2t keeps room for a fillet on the outer side."""
+    return 2.0 * min(spec.t_A, spec.t_B)
+
+
+def _seg_seg_dist_2d(a0, a1, b0, b1) -> float:
+    """Min distance between two 2-D segments (sampled - plate-scale tolerances)."""
+    ts = np.linspace(0.0, 1.0, 17)[:, None]
+    pa = a0[None, :] * (1 - ts) + a1[None, :] * ts
+    d = b1 - b0
+    L2 = float(d @ d)
+    u = np.clip((pa - b0[None, :]) @ d / max(L2, 1e-12), 0.0, 1.0)
+    return float(np.linalg.norm(pa - (b0[None, :] + u[:, None] * d[None, :]),
+                                axis=1).min())
+
+
+def class_ambiguity(spec: JointSpec, joint_type: str) -> list[str]:
+    """D31: which OTHER joint types this sampled configuration resembles.
+
+    Empty for a cleanly in-class configuration. Non-empty routes the seed either to
+    rejection (`class_disjoint` corpora) or to the D32 class-boundary stratum
+    (`class_boundary_stratum` corpora), where the scene records `ambiguous_with`.
+
+    The tests are near-AND-parallel throughout: a boundary meeting counts only when the
+    two features run within `AMBIGUITY_PARALLEL_DEG` of each other AND within the D31
+    clearance `c = 2*min(t_A, t_B)`. Corner needs no test (ruled 2026-08-27): B past A's
+    edge IS the class definition (ISO 17659 3.13), the seam stays at the corner. Butt has
+    no bordering class.
+    """
+    c = class_clearance_mm(spec)
+    out: list[str] = []
+
+    if joint_type == "T":
+        # B's contact centreline (yawed segment) vs A's four boundary edges: running
+        # near-parallel within c of one is the corner-like configuration. End-overhang
+        # is allowed - a crossing at an angle never triggers the parallel gate.
+        yaw = np.radians(spec.in_plane_yaw_deg)
+        d = np.array([np.cos(yaw), np.sin(yaw)])
+        pc = np.array([spec.length_offset_mm,
+                       spec.linear_misalignment_mm + spec.t_B / 2.0])
+        p0, p1 = pc - d * spec.L_B / 2.0, pc + d * spec.L_B / 2.0
+        hx, hy = spec.L_A / 2.0, spec.W_A / 2.0
+        edges = [(np.array([-hx, -hy]), np.array([hx, -hy]), 0.0),
+                 (np.array([-hx, hy]), np.array([hx, hy]), 0.0),
+                 (np.array([-hx, -hy]), np.array([-hx, hy]), 90.0),
+                 (np.array([hx, -hy]), np.array([hx, hy]), 90.0)]
+        for e0, e1, edge_ang in edges:
+            rel = abs(((np.degrees(yaw) - edge_ang) + 90.0) % 180.0 - 90.0)
+            if rel < AMBIGUITY_PARALLEL_DEG                     and _seg_seg_dist_2d(p0, p1, e0, e1) < c:
+                out.append("corner")
+                break
+
+    elif joint_type == "lap":
+        overlap = float(spec.stack_offset_mm or 0.0)
+        near_parallel = abs(spec.in_plane_yaw_deg) < AMBIGUITY_PARALLEL_DEG
+        if near_parallel and overlap < c:
+            out.append("edge")                       # the lap-with-a-lip case
+        elif near_parallel and overlap <= spec.W_A + c                 and abs(overlap - spec.W_A) < c:
+            out.append("edge")                       # flush at A's FAR edge instead
+        elif near_parallel:
+            # end-edge coincidence: B's ends vs A's ends (parallel at yaw ~ 0)
+            for be in (spec.length_offset_mm - spec.L_B / 2.0,
+                       spec.length_offset_mm + spec.L_B / 2.0):
+                if min(abs(be - spec.L_A / 2.0), abs(be + spec.L_A / 2.0)) < c:
+                    out.append("edge")
+                    break
+
+    elif joint_type == "edge":
+        # The welded edge is exactly flush by construction; every NON-welded pair must
+        # clear by c so each boundary is unambiguously flush-seam or lap toe.
+        if abs(spec.W_A - spec.H_B) > 1e-9 and abs(spec.W_A - spec.H_B) < c:
+            out.append("lap")                        # far edges nearly (not exactly) flush
+        else:
+            for be in (spec.length_offset_mm - spec.L_B / 2.0,
+                       spec.length_offset_mm + spec.L_B / 2.0):
+                d_end = min(abs(be - spec.L_A / 2.0), abs(be + spec.L_A / 2.0))
+                if 1e-9 < d_end < c:
+                    out.append("lap")
+                    break
+
+    return out
+
 
 def build(spec: JointSpec, joint_type: str, T_world_joint: np.ndarray) -> list[Slab]:
     """Place parts A and B for `joint_type`."""

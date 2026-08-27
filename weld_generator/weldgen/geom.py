@@ -201,21 +201,48 @@ class Slab:
         p_loc = (np.asarray(point, dtype=float) - c) @ R
         d_loc = np.asarray(direction, dtype=float) @ R
         axis = "uvw".index(name[1])
-        lo, hi = -np.inf, np.inf
-        for k in range(3):
-            if k == axis:
-                continue                                # the face's own normal axis
+        in_face = [k for k in range(3) if k != axis]
+
+        def axis_interval(k):
             if abs(d_loc[k]) < 1e-12:
                 if abs(p_loc[k]) > half[k] + float(slack_mm) + 1e-9:
-                    return None
-                continue
+                    return None                         # parallel and outside the slack
+                return (-np.inf, np.inf)
             a = (-half[k] - p_loc[k]) / d_loc[k]
             b = (half[k] - p_loc[k]) / d_loc[k]
-            lo = max(lo, min(a, b))
-            hi = min(hi, max(a, b))
-        if hi - lo <= 1e-9 or not np.isfinite(lo) or not np.isfinite(hi):
+            return (min(a, b), max(a, b))
+
+        ivs = {k: axis_interval(k) for k in in_face}
+        if any(v is None for v in ivs.values()):
             return None
-        return float(lo), float(hi)
+        lo = max(v[0] for v in ivs.values())
+        hi = min(v[1] for v in ivs.values())
+        if hi - lo > 1e-9 and np.isfinite(lo) and np.isfinite(hi):
+            return float(lo), float(hi)
+
+        # NEAR-parallel waiver. The parallel branch above covers a line that holds a
+        # coordinate exactly constant; with D28 yaw AND angular misalignment both
+        # nonzero, a toe line drifts out of the face plane at ~sin(beta) per mm - not
+        # constant, so the interval branch ran instead and quietly deleted the A-side
+        # toe of every yawed misaligned lap. The waiver: an axis whose violation stays
+        # within the slack OVER THE RUN THE OTHER AXES ALLOW imposes no clip. The run is
+        # never EXTENDED (that was the measured slack-in-interval-axes pathology: the
+        # overhang grows as slack/|d| and the separation gate measures it); a constraint
+        # is only dropped where its breach is bounded by the same tolerance that decides
+        # adjacency.
+        if float(slack_mm) <= 0.0:
+            return None
+        for k in in_face:
+            others = [ivs[j] for j in in_face if j != k]
+            olo = max([v[0] for v in others], default=-np.inf)
+            ohi = min([v[1] for v in others], default=np.inf)
+            if ohi - olo <= 1e-9 or not np.isfinite(olo) or not np.isfinite(ohi):
+                continue
+            c0 = p_loc[k] + olo * d_loc[k]
+            c1 = p_loc[k] + ohi * d_loc[k]
+            if max(abs(c0), abs(c1)) <= half[k] + float(slack_mm) + 1e-9:
+                return float(olo), float(ohi)
+        return None
 
     def face_extent_along(self, name: str, direction: np.ndarray) -> tuple[float, float]:
         """Projected span of a face onto a world `direction`, as (min, max).
@@ -389,8 +416,8 @@ class Prism:
         origin, e1, e2, poly = self._face_frame(name)
         p2 = np.array([float((point - origin) @ e1), float((point - origin) @ e2)])
         d2 = np.array([float(direction @ e1), float(direction @ e2)])
-        lo, hi = -np.inf, np.inf
         k = len(poly)
+        cons = []                       # (num, den) with inward-positive unit normals
         for i in range(k):
             a, b = poly[i], poly[(i + 1) % k]
             e = b - a
@@ -399,21 +426,43 @@ class Prism:
             # orient toward the polygon interior using its centroid
             if float((poly.mean(axis=0) - a) @ n2) < 0:
                 n2 = -n2
-            num = float((a - p2) @ n2)
-            den = float(d2 @ n2)
-            if abs(den) < 1e-12:
-                # inward-positive signed distance is -num; outside beyond the slack
-                if num > float(slack_mm) + 1e-9:
-                    return None
-                continue
-            s_ = num / den
-            if den > 0:
-                lo = max(lo, s_)
-            else:
-                hi = min(hi, s_)
-        if hi - lo <= 1e-9 or not np.isfinite(lo) or not np.isfinite(hi):
+            cons.append((float((a - p2) @ n2), float(d2 @ n2)))
+
+        def clip(skip: int | None):
+            lo, hi = -np.inf, np.inf
+            for j, (num, den) in enumerate(cons):
+                if j == skip:
+                    continue
+                if abs(den) < 1e-12:
+                    if num > float(slack_mm) + 1e-9:
+                        return None     # parallel and outside the slack
+                    continue
+                s_ = num / den
+                if den > 0:
+                    lo = max(lo, s_)
+                else:
+                    hi = min(hi, s_)
+            if hi - lo <= 1e-9 or not np.isfinite(lo) or not np.isfinite(hi):
+                return None
+            return lo, hi
+
+        got = clip(None)
+        if got is not None:
+            return float(got[0]), float(got[1])
+        # near-parallel waiver: same rule and same reasoning as the slab clip above -
+        # drop (never extend past) one constraint whose breach stays within the slack
+        # over the run the remaining constraints allow.
+        if float(slack_mm) <= 0.0:
             return None
-        return float(lo), float(hi)
+        for j, (num, den) in enumerate(cons):
+            got = clip(j)
+            if got is None:
+                continue
+            # inward signed distance along the run; breach is where it goes negative
+            worst = min(-num + got[0] * den, -num + got[1] * den)
+            if worst >= -(float(slack_mm) + 1e-9):
+                return float(got[0]), float(got[1])
+        return None
 
     def closest_on_face(self, name: str, pts: np.ndarray) -> np.ndarray:
         """Closest point on the finite face patch, for each query point."""

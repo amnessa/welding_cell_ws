@@ -1743,6 +1743,41 @@ prior was worth, and is worth reporting as a figure in its own right.
 
 ---
 
+# D31 / D32 — Joint classes disjoint by construction (implemented 2026-08-27)
+
+Full text in `notes/patch_class_disjointness.md`; summary of what landed:
+
+- **D31 clearance** `c = 2·min(t_A, t_B)` keeps the T/corner and lap/edge borders empty,
+  near-AND-parallel throughout (a boundary meeting counts only within ~10° of parallel
+  AND within `c`). T overhang stays; corner needs no band; lap forbids both flush
+  configurations and end coincidence. Behind `class_disjoint` (off by default - the
+  checks consume no stream draws, so pre-D31 corpora reproduce bit-identically; enabled
+  in `bench6a_*` and `smoke`).
+- **Edge is the combined configuration**: lap toes in-class
+  (`ALLOWED_CLASSES_DISJOINT`), cross-run demotion off for lap AND edge - the number of
+  lap seams is a property of the outlines (contact-polygon rule; D4 already derived the
+  approach sides). Underside toes carry a distinct `underside` flag; the harness scores
+  single-view against `gt_for_scoring(view)`, which drops them there and nowhere else.
+- **D32 stratum**: `class_boundary_stratum` inverts acceptance; `configs/amb_lap.yaml`
+  and `amb_T.yaml` sample the forbidden bands, scenes record `joint.ambiguous_with`,
+  excluded from the main splits, reserved for the Phase 4 class-boundary analysis.
+- **ISO 17659 alignment**: derived `joint.iso_17659_term` per scene;
+  `PARAMETERS.md` §3.4 carries the verified mapping (angle joint 3.12 for non-90° T,
+  edge = 3.14/3.8 - the parallel joint is our edge class, not a dropped type), the
+  clause 5 citation, and the stated exclusions (3.11/3.15/3.16, edge openings > 0°).
+- **Regression found and fixed on the way**: yaw × angular-misalignment coupling made
+  toe lines NEAR-parallel to their generating face instead of exactly parallel, and the
+  Phase 6a exact clip's slack (parallel-branch only) silently deleted the A-side toe of
+  every yawed misaligned lap. Fixed with a near-parallel waiver: a clip constraint is
+  dropped - never extended - where its breach stays within the slack over the run the
+  other constraints allow. Pre-6a corpora were never affected (no yaw, exact
+  parallelism).
+- **Phase 4 consequence, restated:** edge ground truth grows and lap seam counts rise
+  *by definition*; pre/post-D31 per-type numbers are not comparable. Fold into the
+  deferred re-run.
+
+---
+
 # Phase 6b — Curved seams, non-planar primitives, grooves
 
 - [ ] **Seam sampler** driven by the D29 configuration table, not by curve families

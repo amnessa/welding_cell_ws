@@ -1,0 +1,15 @@
+# D32 class-boundary stratum - the T/corner border. The band needs the contact line
+# near-parallel within c of A's boundary edge, so the width and misalignment draws are
+# pinned to ranges that reach it; yaw stays off (the band requires near-parallel).
+name: amb_T
+joint_type: [T]
+seam_shape: line
+prep: square
+fixture_present: false
+sampling_mode: area_uniform
+sensor_profiles: [d435i, stereo_good, stereo_poor]
+plate_width_mm: [100.0, 130.0]
+linear_misalignment_mm: [38.0, 62.0]
+class_disjoint: true
+class_boundary_stratum: true
+polygon_outlines: true

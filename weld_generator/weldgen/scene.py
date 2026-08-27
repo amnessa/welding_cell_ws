@@ -39,6 +39,23 @@ class NoSeamsFound(SceneRejected):
     """
 
 
+class AmbiguousClassConfiguration(SceneRejected):
+    """D31: the sampled configuration sits inside a class-boundary band.
+
+    A T whose contact line runs near-parallel within the clearance of A's boundary is
+    locally a corner; a lap whose overlap is under the clearance is an edge joint with a
+    lip. Disjoint corpora skip these seeds; the D32 stratum presets keep ONLY them.
+    """
+
+
+class ClassBoundaryMiss(SceneRejected):
+    """D32 stratum preset: the seed fell OUTSIDE every class-boundary band.
+
+    The stratum inverts the D31 acceptance - it exists to sample the forbidden bands, so
+    a cleanly in-class configuration is the rejection here.
+    """
+
+
 class NoVisibleSeams(SceneRejected):
     """Every weldable seam is hidden from the camera, so tier 1 omits the scene.
 
@@ -123,6 +140,19 @@ def _faces_block(slabs: list[Slab]) -> list[dict[str, Any]]:
     return out
 
 
+def _iso_17659_term(joint_type: str, included_angle_deg: float) -> str:
+    """The BS EN ISO 17659:2004 name for the sampled configuration, by sub-clause."""
+    if joint_type == "T":
+        # 3.10 says "approximately right angles" without a number; 10 deg is our
+        # recorded tolerance, and beyond it the standard's term is the angle joint.
+        return ("T-joint (3.10)" if abs(included_angle_deg - 90.0) <= 10.0
+                else "angle joint (3.12)")
+    return {"corner": "corner joint (3.13)",
+            "butt": "butt joint (3.7)",
+            "lap": "lap joint (3.9)",
+            "edge": "edge joint (3.14) / parallel joint (3.8)"}[joint_type]
+
+
 def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
     """Generate one scene. Returns `(scene_json, arrays)`.
 
@@ -130,6 +160,22 @@ def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict
     """
     streams = Streams(seed)
     spec, quality_level, joint_type = sample_joint(cfg, streams)
+
+    # --- D31 / D32: class-boundary acceptance (no stream draws consumed) ----------
+    class_disjoint = bool(cfg.get("class_disjoint", False))
+    ambiguous: list[str] = []
+    if class_disjoint or bool(cfg.get("class_boundary_stratum", False)):
+        from .layouts import class_ambiguity
+        ambiguous = class_ambiguity(spec, joint_type)
+    if bool(cfg.get("class_boundary_stratum", False)):
+        if not ambiguous:
+            raise ClassBoundaryMiss(
+                f"joint_type={joint_type!r} seed={seed}: configuration is cleanly "
+                f"in-class; the D32 stratum keeps only class-boundary seeds")
+    elif class_disjoint and ambiguous:
+        raise AmbiguousClassConfiguration(
+            f"joint_type={joint_type!r} seed={seed}: configuration resembles "
+            f"{ambiguous} within the D31 clearance; disjoint corpora skip it")
 
     # --- placement, substream 3 -------------------------------------------------
     # Fixture presence, pose and dims live here (not in substream 0) so that turning the
@@ -186,7 +232,8 @@ def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict
     # real seam reachable when the gap is large on thin sheet.
     access["contact_tol_mm"] = float(
         np.clip(min(tol, max(0.95 * t_min, 1.1 * separation)), 0.5, 12.0))
-    cands = enumerate_candidates(slabs, access, joint_type=joint_type)
+    cands = enumerate_candidates(slabs, access, joint_type=joint_type,
+                                 class_disjoint=class_disjoint)
 
     # --- camera, substream 5 -----------------------------------------------------
     # Sampled BEFORE the cloud, because `camera_raster` needs the pose to know its own
@@ -292,6 +339,12 @@ def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict
             # Reachability and taxonomy, split apart: `weldable` above is "a torch can
             # reach it", this is "and it is a weld this joint type declares as its own".
             "matches_joint_type": bool(c.matches_joint_type),
+            # D31: a lap toe whose torch axis points below the stack plane. Reachable in
+            # a positioner (stays weldable), invisible from any viewpoint above the
+            # table - the single-view arm scores these separately. Null for non-toe
+            # seams, where the notion has no meaning.
+            "underside": (bool(appr @ T_world_joint[:3, 2] < 0.0)
+                          if c.seam_class == "lap_toe" else None),
             "sampled": {"array": f"seam_{i}", "density_per_mm": density_per_mm, "n": n},
             # Per seam, not per scene: one seam of a joint can be fully visible while the
             # other is entirely hidden behind the standing plate, and averaging that away
@@ -374,6 +427,18 @@ def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict
             "contact_mode": contact_mode,    # D12: "free" iff no fixture
             "included_angle_deg": spec.included_angle_deg,
             "in_plane_yaw_deg": spec.in_plane_yaw_deg,   # D28, Phase 6a
+            # ISO 17659 term, derived (clause 5: "the type of joint is determined by
+            # the number, dimensions and relative orientation of the parts"). `type`
+            # above stays the topological/US name the pipeline stratifies on; this is
+            # the standard's own word for what was sampled: a T away from ~90 deg is
+            # the standard's angle joint (3.12, US "skewed T"), our edge class is the
+            # flush stack the standard covers as edge joint (3.14, at 0 deg) and - at
+            # total overlap - parallel joint (3.8, US "edge joint", Annex A); lap is
+            # guaranteed partial overlap (3.9) by the D31 clearance.
+            "iso_17659_term": _iso_17659_term(joint_type, spec.included_angle_deg),
+            # D32: candidate other-types when this scene is class-boundary stratum
+            # material; null in disjoint and pre-D31 corpora.
+            "ambiguous_with": ambiguous if ambiguous else None,
             "stack_offset_mm": spec.stack_offset_mm,
             "prep": cfg["prep"],
         },

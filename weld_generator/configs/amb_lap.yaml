@@ -1,0 +1,16 @@
+# D32 class-boundary stratum - the lap/edge border. Inherits bench_lap's shape but
+# narrows the overlap draw into the forbidden band (overlap < c = 2*min(t)) and INVERTS
+# the D31 acceptance: only in-band seeds emit, each recording joint.ambiguous_with.
+# Excluded from the main D11 splits; used only for the Phase 4 class-boundary analysis.
+name: amb_lap
+joint_type: [lap]
+seam_shape: line
+prep: square
+fixture_present: false
+sampling_mode: area_uniform
+sensor_profiles: [d435i, stereo_good, stereo_poor]
+stack_offset_frac: [0.01, 0.12]
+class_disjoint: true
+class_boundary_stratum: true
+in_plane_yaw: true
+polygon_outlines: true

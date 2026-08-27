@@ -166,6 +166,26 @@
           "minimum": -90.0,
           "maximum": 90.0,
           "description": "D28 (Phase 6a): rotation of B about the contact-face normal; T and lap only, 0 elsewhere. Not dihedral."
+        },
+        "ambiguous_with": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "enum": [
+              "T",
+              "corner",
+              "butt",
+              "lap",
+              "edge"
+            ]
+          },
+          "description": "D32 - candidate other joint types for a class-boundary stratum scene; null in disjoint and pre-D31 corpora."
+        },
+        "iso_17659_term": {
+          "type": "string",
+          "description": "Derived BS EN ISO 17659:2004 name with sub-clause for the sampled configuration; `type` stays the topological/US name the pipeline stratifies on."
         }
       },
       "required": [
@@ -588,6 +608,13 @@
             "minimum": 0,
             "maximum": 1,
             "description": "Fraction the sensor actually returns: in_frame AND unoccluded, and equal to mean(seam_<i>_visible). The tier-1 omission policy tests this against min_visible_fraction."
+          },
+          "underside": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "D31 - lap toe whose torch axis points below the stack plane: weldable in a positioner, invisible from above the table; the single-view arm scores these separately. Null for non-toe seams."
           }
         },
         "allOf": [

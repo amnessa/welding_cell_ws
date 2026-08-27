@@ -29,7 +29,13 @@ def validator():
 
 @pytest.fixture(scope="module")
 def cfg():
-    return load_config(str(ROOT / "configs" / "smoke.yaml"))
+    c = load_config(str(ROOT / "configs" / "smoke.yaml"))
+    # The D31 acceptance gate is exercised in test_class_disjointness; here it is
+    # disabled because the canonical seed 8412337 is (correctly) a class-boundary
+    # rejection under it - at ~80 deg yaw its contact line hugs A's end edge within
+    # the clearance - and a rejected seed has no scene to validate.
+    c["class_disjoint"] = False
+    return c
 
 
 @pytest.mark.parametrize("seed", SEEDS)
@@ -42,7 +48,18 @@ def test_scene_validates(validator, cfg, seed):
 @pytest.mark.parametrize("preset", ["phase1.yaml", "smoke.yaml", "reference_tjoint.yaml"])
 def test_every_preset_validates(validator, preset):
     cfg = load_config(str(ROOT / "configs" / preset))
-    scene, _ = generate_scene(cfg, 8412337)
+    # A preset may reject seeds (NoVisibleSeams, the D31 bands - smoke's canonical seed
+    # is a correct corner-like rejection); the claim here is that whatever a preset DOES
+    # emit validates, so walk to the first emitted scene.
+    from weldgen.scene import SceneRejected
+    scene = None
+    for seed in [8412337, 1, 2, 3, 4, 5, 6, 7]:
+        try:
+            scene, _ = generate_scene(cfg, seed)
+            break
+        except SceneRejected:
+            continue
+    assert scene is not None, f"{preset} emitted nothing in the seed budget"
     errors = sorted(validator.iter_errors(scene), key=lambda e: list(e.path))
     assert not errors, "\n".join(f"{list(e.path)}: {e.message}" for e in errors[:5])
 

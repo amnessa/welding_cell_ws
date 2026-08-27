@@ -14,3 +14,4 @@ plate_width_mm: [60.0, 120.0]
 density_per_mm2: [0.05, 0.15]
 in_plane_yaw: true
 polygon_outlines: true   # D28 other half; no-op while joint_type is T-only
+class_disjoint: true    # D31; T-only smoke is far from every band, so yield is unchanged

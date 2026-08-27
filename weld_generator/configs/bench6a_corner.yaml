@@ -17,3 +17,5 @@ sensor_profiles: [d435i, stereo_good, stereo_poor]
 # twin of the bench corpus via the seam_curve substream.
 in_plane_yaw: true
 polygon_outlines: true
+# D31 - classes disjoint by construction (clearance bands + combined-edge semantics)
+class_disjoint: true

@@ -159,7 +159,8 @@ def cloud_for(scene: dict, arrays: dict, view: str = "full", noisy: bool = False
 
 def ground_truth(scene: dict, arrays: dict, curve: str = "nominal",
                  primary_only: bool = True, min_visible_fraction: float | None = None,
-                 include_rejected: bool = False) -> list[np.ndarray]:
+                 include_rejected: bool = False,
+                 with_underside: bool = False) -> list[np.ndarray]:
     """Truth polylines for one scene.
 
     Args:
@@ -171,10 +172,14 @@ def ground_truth(scene: dict, arrays: dict, curve: str = "nominal",
             single-view arm — the lower toe of a lap joint is visible from **no** viewpoint
             above the table, so scoring recall against it charges a baseline for missing
             something no sensor could see.
+        with_underside: also return the per-seam D31 `underside` flags (the structural,
+            visibility-independent statement of the same lap-lower-toe fact), as
+            `(curves, flags)` — the harness filters single-view scoring targets on them.
     """
     if curve not in CURVES:
         raise ValueError(f"curve must be one of {CURVES}, got {curve!r}")
     out = []
+    undersides = []
     for s in scene["seams"]:
         if not s["weldable"] and not include_rejected:
             continue
@@ -189,7 +194,8 @@ def ground_truth(scene: dict, arrays: dict, curve: str = "nominal",
         key = s["sampled"]["array"]
         suffix = "" if curve == "nominal" else f"_{curve}"
         out.append(arrays[f"seams.npz:{key}{suffix}"].astype(float))
-    return out
+        undersides.append(bool(s.get("underside")))
+    return (out, undersides) if with_underside else out
 
 
 def scene_facts(scene: dict) -> dict[str, Any]:

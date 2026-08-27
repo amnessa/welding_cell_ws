@@ -349,6 +349,36 @@ Real irregularity is what the Phase 9 scans are for, and it is not something a f
 vocabulary reproduces honestly — a modelled chamfer is a clean bevel; a real edge break is
 not.
 
+### 3.4 Joint taxonomy against BS EN ISO 17659:2004
+
+The standard's clause 5 states the principle the whole D-series rests on: *"the type of
+joint is determined by the number, dimensions and relative orientation of the parts to be
+joined"* — joint type as a function of geometry, which is precisely the claim under D22's
+face-type derivation, D27's dimension constraints and the D31 clearance. Verified against
+the standard's text (all quotations below are from the PDF, by sub-clause):
+
+| `joint.type` (ours, US usage) | ISO 17659 term | Note |
+|---|---|---|
+| `T` at 90°±10° | T-joint (3.10) | "parts meet at approximately right angles" |
+| `T` otherwise | angle joint (3.12, US "skewed T") | "one part meets the other at an acute angle" — what D18's included-angle sampling produces away from 90° |
+| `corner` | corner joint (3.13) | "meet at their edges at an angle greater than 30°"; our 60–120° preparation range (ISO 9692-1) is a subset of 17659's 30–135° fillet examples (18.35) |
+| `butt` | butt joint (3.7) | |
+| `lap` | lap joint (3.9) | "parts lie parallel … and overlap" — **partial** overlap ("à recouvrement"), guaranteed by the D31 clearance bands |
+| `edge` | edge joint (3.14) / parallel joint (3.8) | the flush stack sits at α = 0° of 3.14's 0–30° range, and at total overlap equally satisfies 3.8 ("à recouvrement **total**", US "edge joint" per Annex A) — the standard's own two entries are non-disjoint at 0°, so the scene records both |
+
+Each scene carries the derived `joint.iso_17659_term`, so every type name in a figure is
+the standard's, not ours. **Excluded types, stated rather than left to be noticed:** the
+cruciform (3.11), multiple (3.15) and cross (3.16) joints are multi-part assemblies
+outside the two-part scope; ISO edge-joint openings above 0° (3.14 allows up to 30°) are
+not generated — the stacked construction is parallel by design (D23 caps the relative
+tilt at 0,4°).
+
+**Naming collision, resolved by documentation:** ISO 17659 ref. 21 uses *included angle*
+for the **groove** opening. Our `included_angle_deg` is the angle between the *parts*
+(D18) and keeps its schema name for corpus stability; the Phase 6b groove field is
+committed now as `groove_included_angle_deg` so the collision never reaches a figure
+caption.
+
 ---
 
 ## 4. Sensor — a stereo model with named profiles (D16)

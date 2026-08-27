@@ -25,7 +25,12 @@ SEEDS = [8412337, 99, 123456789]
 
 @pytest.fixture(scope="module")
 def cfg():
-    return load_config(str(ROOT / "configs" / "smoke.yaml"))
+    c = load_config(str(ROOT / "configs" / "smoke.yaml"))
+    # D31 acceptance is exercised in test_class_disjointness; disabled here because the
+    # canonical seed 8412337 is (correctly) a class-boundary rejection under it, and a
+    # rejected seed has no arrays to hash.
+    c["class_disjoint"] = False
+    return c
 
 
 @pytest.mark.parametrize("seed", SEEDS)
@@ -46,6 +51,7 @@ def test_separate_processes_agree(cfg):
         "from weldgen.scene import generate_scene;"
         "from weldgen.hashing import content_hash;"
         f"cfg=load_config({str(ROOT / 'configs' / 'smoke.yaml')!r});"
+        "cfg['class_disjoint']=False;"
         f"print([content_hash(*generate_scene(cfg,s)) for s in {SEEDS}])"
     )
     runs = [

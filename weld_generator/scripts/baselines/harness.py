@@ -93,7 +93,18 @@ class PreparedScene:
     arrays: dict
     facts: dict
     gt: list
+    #: D31 per-gt underside flags, parallel to `gt`. Detection inputs and oracles always
+    #: see the full gt; only single-view SCORING drops underside toes (invisible from
+    #: any above-table viewpoint - charging a method for missing them measures nothing).
+    gt_underside: list = field(default_factory=list)
     _cache: dict = field(default_factory=dict)
+
+    def gt_for_scoring(self, view: str) -> list:
+        if view == "single" and self.gt_underside and any(self.gt_underside):
+            kept = [g for g, u in zip(self.gt, self.gt_underside) if not u]
+            if kept:
+                return kept
+        return self.gt
 
     def cloud(self, view: str = "full", noise_scale: float = 0.0) -> dict:
         key = ("cloud", view, float(noise_scale))
@@ -145,10 +156,12 @@ def prepare(scene_dirs, primary_only: bool = True) -> list[PreparedScene]:
     out = []
     for d in scene_dirs:
         scene, arrays = load_scene(d)
-        gt = ground_truth(scene, arrays, primary_only=primary_only)
+        gt, undersides = ground_truth(scene, arrays, primary_only=primary_only,
+                                      with_underside=True)
         if not gt:
             continue
-        out.append(PreparedScene(Path(d), scene, arrays, scene_facts(scene), gt))
+        out.append(PreparedScene(Path(d), scene, arrays, scene_facts(scene), gt,
+                                 gt_underside=undersides))
     return out
 
 
@@ -385,7 +398,8 @@ def run_matrix(prepared: list[PreparedScene], methods=None, seeds=range(30),
                        "t_min_mm": prep.facts["t_min_mm"],
                        "root_gap_mm": prep.facts["root_gap_mm"],
                        "sec": time.time() - t0, **aux}
-                row.update(_score(spec, pred, gt=prep.gt, tol_mm=tol_mm))
+                row.update(_score(spec, pred, gt=prep.gt_for_scoring(view),
+                                  tol_mm=tol_mm))
                 rows.append(row)
         if progress and (si + 1) % 10 == 0:
             print(f"  {si + 1}/{len(prepared)} scenes", flush=True)

@@ -81,12 +81,21 @@ DEFAULT_ACCESS: dict[str, Any] = {
 #:                thickness at the ends are not seams.
 #:
 #: A corner joint carries two: the inside fillet and the outside edge-to-edge weld.
+#:
+#: D31 amends the edge row under `class_disjoint`: an edge scene is a STACK, and a stack
+#: necessarily also presents lap-suitable boundaries (the narrower part's far edge over
+#: the wider part's face) - edge-only is not constructible, lap-only is (the clearance
+#: bands forbid flush edges in lap scenes). So disjoint corpora let edge declare the
+#: union and its lap toes become in-class.
 ALLOWED_CLASSES: dict[str, frozenset[str]] = {
     "T":      frozenset({"fillet"}),
     "corner": frozenset({"fillet", "edge"}),
     "butt":   frozenset({"butt"}),
     "lap":    frozenset({"lap_toe"}),
     "edge":   frozenset({"edge"}),
+}
+ALLOWED_CLASSES_DISJOINT: dict[str, frozenset[str]] = {
+    **ALLOWED_CLASSES, "edge": frozenset({"edge", "lap_toe"}),
 }
 
 #: Slab faces that are BROAD (the two large faces); everything else is an edge face.
@@ -249,11 +258,19 @@ def enumerate_candidates(
     access: dict[str, Any] | None = None,
     samples_along: int = 5,
     joint_type: str | None = None,
+    class_disjoint: bool = False,
 ) -> list[Candidate]:
     """Every inter-object face pair, decided on geometry alone (D4 + D13).
 
     Returns candidates sorted by the documented seam ordering (SCHEMA.md §2.7): weldable
     first, then by canonical face-pair string, then by start point.
+
+    `class_disjoint` (D31) switches the classification semantics for the stacked joints:
+    edge scenes declare the union (lap toes in-class, see `ALLOWED_CLASSES_DISJOINT`) and
+    the cross-run demotion is not applied to lap/edge - the off-direction boundary runs
+    ARE the contact-polygon toes the combined configuration legitimises, and the number
+    of lap seams becomes a property of the outlines, not of the joint type. Default off,
+    so corpora generated before D31 reproduce with their original seam sets.
     """
     access = dict({**DEFAULT_ACCESS, **(access or {})})
     solids = list(parts)
@@ -290,7 +307,8 @@ def enumerate_candidates(
     # both, and the gap between those two numbers is itself a result: how often a declared
     # joint type under-describes its own scene.
     if joint_type is not None:
-        allowed = ALLOWED_CLASSES.get(joint_type)
+        registry = ALLOWED_CLASSES_DISJOINT if class_disjoint else ALLOWED_CLASSES
+        allowed = registry.get(joint_type)
         if allowed is not None:
             for c in out:
                 c.matches_joint_type = c.seam_class in allowed
@@ -299,7 +317,9 @@ def enumerate_candidates(
     # `primary`, not merely `weldable`. Ordered before the class pass, a short-but-wide
     # plate let its own out-of-class lap toes outvote the edge weld and delete it; leaving
     # off-class seams weldable would let them vote again by another route.
-    _drop_cross_runs(out, frozenset(p.id for p in parts if p.role == "workpiece"), access)
+    if not (class_disjoint and joint_type in ("lap", "edge")):
+        _drop_cross_runs(out, frozenset(p.id for p in parts
+                                        if p.role == "workpiece"), access)
 
     out.sort(key=lambda c: (
         not c.primary, not c.weldable, c.face_pair[0], c.face_pair[1],

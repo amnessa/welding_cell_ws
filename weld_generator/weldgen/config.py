@@ -42,6 +42,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # corpora generated with this off reproduce bit-identically and an enabled
     # regeneration differs only in the outlines - a free twin.
     "polygon_outlines": False,
+    # D31 - joint classes disjoint by construction: the clearance bands reject seeds
+    # whose configuration resembles another class, and classification switches to the
+    # combined-edge semantics (lap toes in-class for edge scenes, no cross-run demotion
+    # for the stacked joints). Off by default so pre-D31 corpora reproduce exactly.
+    "class_disjoint": False,
+    # D32 - the class-boundary stratum: INVERT the D31 acceptance so only in-band seeds
+    # emit, each recording `joint.ambiguous_with`. Used by the amb_* presets only.
+    "class_boundary_stratum": False,
     "plate_width_mm": [50.0, 250.0],
     "thickness_mm": [1.0, 12.0],
     "dissimilar_thickness_p": 0.30,
@@ -135,6 +143,8 @@ GEOMETRY_KEYS = (
     "thickness_mm", "dissimilar_thickness_p", "included_angle_deg", "min_overlap_frac",
     "in_plane_yaw",
     "polygon_outlines",
+    "class_disjoint",
+    "class_boundary_stratum",
     "stack_offset_frac", "edge_max_thickness_mm", "stacked_max_beta_deg",
     "edge_equal_width_p",
     "quality_mix", "root_gap_mm", "root_gap_over_range_mm",
