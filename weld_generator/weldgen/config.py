@@ -34,6 +34,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     #: to the SHARED run instead of always spanning the full plate. This floor keeps the
     #: overlap from collapsing to nothing.
     "min_overlap_frac": 0.6,
+    # D28 (Phase 6a): in-plane yaw of B for T and lap. Off by default so every config and
+    # corpus generated before Phase 6a reproduces bit-identically; new configs opt in.
+    "in_plane_yaw": False,
     "plate_width_mm": [50.0, 250.0],
     "thickness_mm": [1.0, 12.0],
     "dissimilar_thickness_p": 0.30,
@@ -125,6 +128,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
 GEOMETRY_KEYS = (
     "joint_type", "seam_shape", "prep", "plate_length_mm", "plate_width_mm",
     "thickness_mm", "dissimilar_thickness_p", "included_angle_deg", "min_overlap_frac",
+    "in_plane_yaw",
     "stack_offset_frac", "edge_max_thickness_mm", "stacked_max_beta_deg",
     "edge_equal_width_p",
     "quality_mix", "root_gap_mm", "root_gap_over_range_mm",
@@ -339,6 +343,25 @@ def sample_joint(cfg: dict[str, Any], streams: Streams
     slack = (1.0 - float(cfg["min_overlap_frac"])) * min(L_A, L_B)
     length_offset = float(g0.uniform(-slack, slack)) if slack > 0.0 else 0.0
 
+    # D28 - in-plane yaw, drawn from the (previously unused) `seam_curve` substream so
+    # every other stream's draws are untouched: corpora generated with yaw off reproduce
+    # bit-identically, and a yaw-enabled regeneration differs ONLY in yaw - a free twin.
+    # The range is support-limited per scene (the footprint must stay on A), which is the
+    # patch's open item resolved: full range where the dims allow it, honestly narrower
+    # where they do not, and the realised bound is recorded in the scene.
+    yaw = 0.0
+    if bool(cfg.get("in_plane_yaw", False)) and joint_type in ("T", "lap"):
+        from .layouts import max_supported_yaw_deg
+        _probe = JointSpec(L_A=L_A, W_A=W_A, t_A=t_A, L_B=L_B, H_B=H_B, t_B=t_B,
+                           length_offset_mm=length_offset, root_gap_mm=gap,
+                           linear_misalignment_mm=h, angular_misalignment_deg=beta,
+                           included_angle_deg=alpha,
+                           stack_offset_mm=None if stack_offset is None
+                           else stack_offset * H_B)
+        max_yaw = max_supported_yaw_deg(_probe, joint_type)
+        if max_yaw > 0.0:
+            yaw = float(streams["seam_curve"].uniform(-max_yaw, max_yaw))
+
     spec = JointSpec(
         L_A=L_A, W_A=W_A, t_A=t_A,
         L_B=L_B, H_B=H_B, t_B=t_B,
@@ -348,6 +371,7 @@ def sample_joint(cfg: dict[str, Any], streams: Streams
         angular_misalignment_deg=beta,
         included_angle_deg=alpha,
         stack_offset_mm=None if stack_offset is None else stack_offset * H_B,
+        in_plane_yaw_deg=yaw,
     )
     # Store what the joint ACTUALLY satisfies, not what was aimed for (PARAMETERS §2.5).
     return spec, classify_quality(t_min, h, beta, gap, throat), joint_type

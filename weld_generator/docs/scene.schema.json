@@ -160,6 +160,12 @@
             "square"
           ],
           "description": "ISO 9692-1 preparation class. Only square preparation is generated in Phases 1-6; PARAMETERS 5.0's result is scoped to it."
+        },
+        "in_plane_yaw_deg": {
+          "type": "number",
+          "minimum": -90.0,
+          "maximum": 90.0,
+          "description": "D28 (Phase 6a): rotation of B about the contact-face normal; T and lap only, 0 elsewhere. Not dihedral."
         }
       },
       "required": [

@@ -371,6 +371,7 @@ def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict
             "quality_level": quality_level,
             "contact_mode": contact_mode,    # D12: "free" iff no fixture
             "included_angle_deg": spec.included_angle_deg,
+            "in_plane_yaw_deg": spec.in_plane_yaw_deg,   # D28, Phase 6a
             "stack_offset_mm": spec.stack_offset_mm,
             "prep": cfg["prep"],
         },

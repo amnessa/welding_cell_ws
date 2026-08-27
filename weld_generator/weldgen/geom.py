@@ -147,6 +147,58 @@ class Slab:
         L, W, t = self.dims_mm
         return 2.0 * (L * W + W * t + L * t)
 
+    def face_clip_line(self, name: str, point: np.ndarray, direction: np.ndarray,
+                       slack_mm: float = 0.0) -> tuple[float, float] | None:
+        """Parameter interval of the line `point + s*direction` over THIS face's rectangle.
+
+        The exact 2-D clip: the line is dropped into the slab's local frame, the face's
+        own normal coordinate is ignored (at `g > 0` the seam line is offset from the face
+        along its normal by construction - D19 defines `nominal` on the *extended*
+        planes), and the interval is where the two IN-FACE coordinates lie within the
+        face's half-extents. `None` when the line never crosses that footprint.
+
+        `slack_mm` loosens ONLY the containment test of a coordinate the line holds
+        constant - never the interval arithmetic. Both halves of that sentence were
+        earned the hard way: with zero slack, a lap toe dies the moment the gap opens
+        (its line lies exactly `g` outside the edge face that generates it, always in a
+        constant coordinate - the offset is along the OTHER plane's normal, which this
+        face cannot vary along); with slack applied to the interval axes as well, every
+        seam overhangs its plate by the slack, the separation gate samples the overhang,
+        and measures a "separation" exactly equal to the slack it was granted. The caller
+        passes the same `contact_tol_mm` that decides adjacency; the two questions are
+        the same question.
+
+        This replaces `face_extent_along` at the seam-clipping site because that method
+        is a 1-D shadow: the projection of a rectangle's corners onto the seam direction.
+        At in-plane yaw 0 the shadow equals the true overlap and the difference is
+        invisible - which is exactly how an axis-aligned shortcut survives in a codebase
+        (D28). At yaw != 0 the shadow overhangs the rectangle's actual chord, the clipped
+        segment extends past real support, and the separation gate then rejects the whole
+        pair: a 13-degree yawed T-joint lost both fillets to a 4 mm "separation" measured
+        at sample points that were off both plates.
+        """
+        half = np.asarray(self.dims_mm, dtype=float) / 2.0
+        R = self.T_world_part[:3, :3]
+        c = self.T_world_part[:3, 3]
+        p_loc = (np.asarray(point, dtype=float) - c) @ R
+        d_loc = np.asarray(direction, dtype=float) @ R
+        axis = "uvw".index(name[1])
+        lo, hi = -np.inf, np.inf
+        for k in range(3):
+            if k == axis:
+                continue                                # the face's own normal axis
+            if abs(d_loc[k]) < 1e-12:
+                if abs(p_loc[k]) > half[k] + float(slack_mm) + 1e-9:
+                    return None
+                continue
+            a = (-half[k] - p_loc[k]) / d_loc[k]
+            b = (half[k] - p_loc[k]) / d_loc[k]
+            lo = max(lo, min(a, b))
+            hi = min(hi, max(a, b))
+        if hi - lo <= 1e-9 or not np.isfinite(lo) or not np.isfinite(hi):
+            return None
+        return float(lo), float(hi)
+
     def face_extent_along(self, name: str, direction: np.ndarray) -> tuple[float, float]:
         """Projected span of a face onto a world `direction`, as (min, max).
 

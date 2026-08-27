@@ -442,6 +442,10 @@ regenerable — you can reproduce any single scene from its id alone.
     "quality_level": "C",         // ISO 5817 level the sampled defects satisfy — PARAMETERS.md §3
     "contact_mode": "flat",       // free | flat | on_edge | propped;  "free" ⟺ no fixture (D12)
     "included_angle_deg": 90.0,   // D18 — DESIGN nominal, ISO 9692-1. NOT a defect, NOT dihedral_deg
+    "in_plane_yaw_deg": 23.8,     // D28 (Phase 6a) — rotation of B about the contact-face normal,
+                                  // T and lap only; 0 elsewhere and in pre-6a corpora. NOT dihedral:
+                                  // it rotates the seam within A's face, breaking the
+                                  // seam-parallel-to-plate-edge prior. Support-bounded per scene
     "stack_offset_mm": null,      // D18 — lap/edge only; lap: 0 < offset < L, edge: 0. null otherwise
     "prep": "square"              // ISO 9692-1 preparation class; "square" for all of Phases 1–6
   },

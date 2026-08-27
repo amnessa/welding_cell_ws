@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .geom import Slab, rot_x, translate
+from .geom import Slab, rot_x, rot_z, translate
 from .joints import JointSpec
 
 JOINT_TYPES = ("T", "corner", "butt", "lap", "edge")
@@ -85,10 +85,92 @@ def _base_A(spec: JointSpec, T: np.ndarray, y_centre: float) -> Slab:
                 T @ translate(0.0, y_centre, -spec.t_A / 2.0))
 
 
+def _yawed(T: np.ndarray, yaw_deg: float, px: float, py: float) -> np.ndarray:
+    """`T` with an in-plane rotation about the vertical line through `(px, py)` (D28).
+
+    The pivot is the CONTACT footprint's centroid, so the support constraint stays a
+    rotation of a fixed rectangle rather than a rotation plus a drift.
+    """
+    if abs(yaw_deg) < 1e-12:
+        return T
+    return (T @ translate(px, py, 0.0) @ rot_z(yaw_deg) @ translate(-px, -py, 0.0))
+
+
+def max_supported_yaw_deg(spec: JointSpec, joint_type: str,
+                          margin_mm: float = 1.0, step_deg: float = 0.5,
+                          min_run_frac: float = 0.5) -> float:
+    """Largest |yaw| keeping a supported seam run of at least `min_run_frac` its length.
+
+    Two wrong bounds preceded this one, both caught by the D28 gate they were built to
+    serve. Requiring B's full footprint on A returned 0 for every scene with L_B > L_A -
+    a configuration the layouts explicitly allow at yaw 0, clipping the seam to the shared
+    run. Requiring the *clipped* footprint's corners on A returned 0 whenever B overhangs
+    both ends, because a rectangle already touching both walls cannot rotate - yet
+    physically a small yaw just changes where the overhang falls. The criterion that
+    matches the existing yaw-0 semantics (the `length_offset` clamp, `min_overlap_frac`)
+    is about the SEAM, not the footprint: the chord of A's face along the yawed seam
+    direction, through the contact centroid, must stay at least `min_run_frac` of
+    `min(L_A, L_B)` - for the centreline and for both edges of the contact strip, so a
+    wide lap overlap cannot hang half off the side of A.
+
+    Scanned at `step_deg`; the largest angle before the first failure is returned. D27
+    holds: the seam length remains pinned by the supported run.
+    """
+    if joint_type == "T":
+        width = spec.t_B
+        cy = spec.linear_misalignment_mm + spec.t_B / 2.0
+        ax = (-spec.L_A / 2.0 + margin_mm, spec.L_A / 2.0 - margin_mm)
+        ay = (-spec.W_A / 2.0 + margin_mm, spec.W_A / 2.0 - margin_mm)
+    elif joint_type == "lap":
+        width = float(spec.stack_offset_mm or 0.0)
+        cy = -width / 2.0
+        ax = (-spec.L_A / 2.0 + margin_mm, spec.L_A / 2.0 - margin_mm)
+        ay = (-spec.W_A + margin_mm, -margin_mm)       # A occupies y in [-W_A, 0]
+    else:
+        return 0.0
+    cx = spec.length_offset_mm
+    need = float(min_run_frac) * min(spec.L_A, spec.L_B)
+
+    def chord(px, py, th_rad):
+        d = np.array([np.cos(th_rad), np.sin(th_rad)])
+        ts = []
+        for k, (lo_, hi_) in enumerate((ax, ay)):
+            if abs(d[k]) < 1e-12:
+                if not (lo_ <= (px, py)[k] <= hi_):
+                    return 0.0
+                ts.append((-np.inf, np.inf))
+            else:
+                a, b = (lo_ - (px, py)[k]) / d[k], (hi_ - (px, py)[k]) / d[k]
+                ts.append((min(a, b), max(a, b)))
+        t0 = max(ts[0][0], ts[1][0])
+        t1 = min(ts[0][1], ts[1][1])
+        return max(0.0, t1 - t0)
+
+    best = 0.0
+    for th in np.arange(0.0, 90.0 + step_deg, step_deg):
+        ok = True
+        for sgn in (+1.0, -1.0):
+            a = np.radians(sgn * th)
+            n = np.array([-np.sin(a), np.cos(a)])      # across-seam direction
+            for off in (-width / 2.0, 0.0, width / 2.0):
+                if chord(cx + off * n[0], cy + off * n[1], a) < need:
+                    ok = False
+                    break
+            if not ok:
+                break
+        if not ok:
+            break
+        best = th
+    return float(min(best, 90.0))
+
+
 def _layout_T(spec: JointSpec, T: np.ndarray) -> list[Slab]:
     """B stands in the MIDDLE of A. Two fillets, one per side of B."""
     A = _base_A(spec, T, y_centre=0.0)
-    B = _standing_B(spec, T, y0=spec.linear_misalignment_mm,
+    Ty = _yawed(T, spec.in_plane_yaw_deg,
+                spec.length_offset_mm,
+                spec.linear_misalignment_mm + spec.t_B / 2.0)
+    B = _standing_B(spec, Ty, y0=spec.linear_misalignment_mm,
                     z0=spec.root_gap_mm, joint_type="T")
     return [A, B]
 
@@ -147,7 +229,8 @@ def _layout_lap(spec: JointSpec, T: np.ndarray) -> list[Slab]:
     """
     A = _base_A(spec, T, y_centre=-spec.W_A / 2.0)
     overlap = spec.stack_offset_mm
-    B = _flat_B(spec, T,
+    Ty = _yawed(T, spec.in_plane_yaw_deg, spec.length_offset_mm, -overlap / 2.0)
+    B = _flat_B(spec, Ty,
                 y_centre=spec.H_B / 2.0 - overlap,
                 z_centre=spec.root_gap_mm + spec.t_B / 2.0,
                 joint_type="lap",

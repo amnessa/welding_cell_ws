@@ -344,14 +344,20 @@ def _judge(A: Slab, fa: str, B: Slab, fb: str, ref: tuple[str, str],
     if hit is None:                                            # pragma: no cover
         return None
     point, direction = hit
-    a_lo, a_hi = A.face_extent_along(fa, direction)
-    b_lo, b_hi = B.face_extent_along(fb, direction)
-    lo, hi = max(a_lo, b_lo), min(a_hi, b_hi)
+    # Exact 2-D clip against each face's rectangle (see `face_clip_line`): the previous
+    # 1-D corner-projection clip equals this at in-plane yaw 0 and overhangs real support
+    # at any other yaw, which fed the separation gate sample points off both plates and
+    # deleted the fillets of every yawed T-joint (Phase 6a / D28).
+    slack = float(access["contact_tol_mm"])
+    ia = A.face_clip_line(fa, point, direction, slack_mm=slack)
+    ib = B.face_clip_line(fb, point, direction, slack_mm=slack)
+    if ia is None or ib is None:
+        return None
+    lo, hi = max(ia[0], ib[0]), min(ia[1], ib[1])
     if hi - lo <= 1e-9:
         return None                          # the faces do not overlap along the line
-    s0 = float(point @ direction)
-    p0 = point + (lo - s0) * direction
-    p1 = point + (hi - s0) * direction
+    p0 = point + lo * direction
+    p1 = point + hi * direction
 
     # Are the two faces actually near each other along this line? Two faces on opposite
     # ends of a big plate intersect in a mathematically valid line that is nowhere near

@@ -59,6 +59,13 @@ class JointSpec:
     #: Longitudinal (along-seam) offset of B relative to A. With L_A != L_B this makes
     #: the seam clip to the SHARED run rather than always spanning the full plate.
     length_offset_mm: float = 0.0
+    #: D28 (Phase 6a): in-plane rotation of B about the contact-face normal, for the
+    #: joints that meet on a FACE (T, lap). NOT dihedral - dihedral is the fold about the
+    #: seam axis (D18); yaw rotates the seam itself within the lower part's face, so the
+    #: seam stops being systematically parallel to the base plate's boundary edges. 0 for
+    #: corner / butt / edge, whose parts share an edge and get their D28 diversity from
+    #: outlines instead.
+    in_plane_yaw_deg: float = 0.0
 
     #: The included angle each joint type takes as its nominal, i.e. the angle at which
     #: part B is undeflected. NOT all 90: a butt joint is coplanar (180) and a lap or

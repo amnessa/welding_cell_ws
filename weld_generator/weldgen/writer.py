@@ -78,6 +78,7 @@ def index_row(scene: Mapping[str, Any], digest: str) -> dict[str, Any]:
         "quality_level": scene["joint"]["quality_level"],
         "contact_mode": scene["joint"]["contact_mode"],
         "included_angle_deg": scene["joint"]["included_angle_deg"],
+        "in_plane_yaw_deg": scene["joint"].get("in_plane_yaw_deg", 0.0),
         "fixture_present": any(o["role"] == "fixture" for o in scene["objects"]),
         "t_min_mm": min(ts),
         "t_max_mm": max(ts),
