@@ -546,7 +546,8 @@
                   "ellipse",
                   "saddle",
                   "bspline",
-                  "composite"
+                  "composite",
+                  "offset"
                 ]
               }
             },

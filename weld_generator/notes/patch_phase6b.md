@@ -217,8 +217,27 @@ cone parameters stay as they are; only the apex moves, and only for `prep != "sq
    `layouts.build`); 19 tests tie every constructor back to the step-1 curve on the
    posed surfaces — the D21 watertightness budget was spent without incident (ring-
    strip topologies are watertight by construction in every cut mode).
-3. Surface-pair intersection arms for D4 (plane∩cylinder, cylinder∩cylinder) + the D37
-   mouth-apex clearance.
+3. **Arms DONE 2026-08-28** (`weldgen/verify_curved.py`); scene assembly is the
+   remaining half, and D37's mouth apex moves to step 4 where grooves make it
+   testable. What landed: `rediscover_seam` recomputes the seam from the PLACED PARTS
+   alone (poses, radii, face planes — never the record) via the step-1 factories, at
+   1e-13 against the drawn curve, and detects a 0,5 mm part perturbation — the Phase 2
+   gate, curved; `containment_residual` is the consistency half for the constructed
+   families. `curved_seam_set` emits every seam a configuration carries with
+   PER-POINT exact frames (nA/nB/approach/dihedral all vary along a curved seam:
+   73–107° on a tilted pipe, 60–137° on a saddle) — including two findings the
+   machinery forced: (a) **a swept stiffener's welds are the OFFSET curves at ±t/2**,
+   not the drawn spine (mid-material is not a weld) — new `offset` parametric kind,
+   exact positions AND tangents; (b) **an open bore CLEARS the local torch cone**
+   (measured: a 50 mm bore passes a 15 mm standoff cone), so the inner fillet is a
+   REAL weld on large pipe and the thing that forbids it on small pipe is torch-body
+   confinement — a semantic gate with the D13 precedent, parameterised as
+   `torch_clearance.bore_min_diameter_mm = 80` **[ours]**, and the verdict genuinely
+   cuts both ways across sampled radii (pinned by test). `seam_verdict` derives
+   weldable/confined_bore/toe_of_centreline/bisector_blocked with the clear fraction
+   recorded (a curved seam can be partially reachable; work-angle fallback per point
+   is a noted refinement, not yet needed — every sampled weld cleared at 1,0).
+   `ray_hits_part` now dispatches SweptSlab (AABB + exact-containment refinement).
 4. Grooves (D35 pool, D30 straight-butt-only, `groove_root` per D36).
 5. Regenerate gates: chord-error gate (D34), D28 gate re-run (curved seams enter as
    their chord direction? — resolve when the sampler exists), full suite.

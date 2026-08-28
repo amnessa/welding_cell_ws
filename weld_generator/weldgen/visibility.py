@@ -20,7 +20,7 @@ from __future__ import annotations
 import numpy as np
 
 from .camera import in_frustum, project
-from .geom import Prism, Slab, Tube
+from .geom import Prism, Slab, SweptSlab, Tube
 
 #: Ray origins are lifted this far off the surface along the normal before casting, so a
 #: point never occludes itself with its own face. Small next to any plate thickness, large
@@ -139,13 +139,60 @@ def ray_hits_tube(origins, directions, t_max, tube: Tube) -> np.ndarray:
     return out
 
 
+def ray_hits_swept(origins, directions, t_max, part: SweptSlab) -> np.ndarray:
+    """Ray-vs-SweptSlab: axis-aligned bounding-box interval, refined by containment.
+
+    A swept band has no closed-form ray intersection for spline spines, so the
+    candidate interval is the part's local AABB clip and the verdict comes from
+    sampling K points of it against `contains` (fine-spine-polyline resolution).
+    Boolean-only approximation, same caveat as the tube's interval refinement.
+    """
+    T = part.T_world_part
+    o = (np.asarray(origins, dtype=float) - T[:3, 3]) @ T[:3, :3]
+    d = np.asarray(directions, dtype=float) @ T[:3, :3]
+    t_max = np.asarray(t_max, dtype=float)
+
+    ts_g = part._grid()
+    sp = part.spine.point(ts_g)[:, :2]
+    pad = max(abs(part.offset_lo_mm), abs(part.offset_hi_mm)) + 1e-6
+    lo3 = np.array([sp[:, 0].min() - pad, sp[:, 1].min() - pad, part.z0_mm])
+    hi3 = np.array([sp[:, 0].max() + pad, sp[:, 1].max() + pad, part.z1_mm])
+
+    lo = np.full(len(o), 1e-9)
+    hi = t_max - 1e-9
+    for k in range(3):
+        with np.errstate(divide="ignore", invalid="ignore"):
+            t1 = (lo3[k] - o[:, k]) / d[:, k]
+            t2 = (hi3[k] - o[:, k]) / d[:, k]
+        par = np.abs(d[:, k]) < 1e-12
+        inside = (o[:, k] >= lo3[k]) & (o[:, k] <= hi3[k])
+        a = np.where(par, np.where(inside, -np.inf, np.inf), np.minimum(t1, t2))
+        b = np.where(par, np.where(inside, np.inf, -np.inf), np.maximum(t1, t2))
+        lo = np.maximum(lo, a)
+        hi = np.minimum(hi, b)
+    cand = hi > lo
+    out = np.zeros(len(o), dtype=bool)
+    if not cand.any():
+        return out
+    K = 9
+    fr = (np.arange(K) + 0.5) / K
+    ts = lo[cand, None] + fr[None, :] * (hi[cand] - lo[cand])[:, None]
+    pts = (np.asarray(origins, dtype=float)[cand, None, :]
+           + ts[:, :, None] * np.asarray(directions, dtype=float)[cand, None, :])
+    out[cand] = part.contains(pts.reshape(-1, 3)).reshape(-1, K).any(axis=1)
+    return out
+
+
 def ray_hits_part(origins, directions, t_max, part) -> np.ndarray:
     """Dispatch: exact local-frame clip for slabs, half-space clip for prisms,
-    analytic-interval-plus-exact-containment for tubes."""
+    analytic-interval-plus-exact-containment for tubes, AABB-plus-containment for
+    swept bands."""
     if isinstance(part, Slab):
         return ray_hits_slab(origins, directions, t_max, part)
     if isinstance(part, Tube):
         return ray_hits_tube(origins, directions, t_max, part)
+    if isinstance(part, SweptSlab):
+        return ray_hits_swept(origins, directions, t_max, part)
     return ray_hits_convex(origins, directions, t_max, part)
 
 

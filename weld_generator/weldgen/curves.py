@@ -472,6 +472,40 @@ def rounded_rect_curve(center, x_dir, y_dir, w_mm: float, h_mm: float,
     return CompositeCurve(segs, closed=True)
 
 
+@dataclass
+class OffsetCurve(_CurveBase):
+    """The in-plane parallel of a spine at signed `offset_mm` along `n̂ = ẑ × T̂`.
+
+    This is what makes a swept STIFFENER's welds exact: the drawn spine is the sweep
+    path (mid-material — not a weld), and the two fillet seams are its offsets at
+    ±t/2. A parallel curve's tangent is parallel to the spine's (for offsets inside
+    the curvature radius, which the SweptSlab guard enforces), so positions AND
+    tangents stay analytic.
+    """
+
+    spine: object
+    offset_mm: float
+
+    def __post_init__(self):
+        self.closed = bool(self.spine.closed)
+        self.t_period = float(self.spine.t_period)
+
+    def _n2(self, t):
+        tan = self.spine.tangent(t)
+        return np.column_stack([-tan[:, 1], tan[:, 0], np.zeros(len(tan))])
+
+    def point(self, t):
+        t = np.atleast_1d(np.asarray(t, dtype=float))
+        return self.spine.point(t) + self.offset_mm * self._n2(t)
+
+    def tangent(self, t):
+        return self.spine.tangent(t)
+
+    def to_parametric(self) -> dict:
+        return {"kind": "offset", "spine": self.spine.to_parametric(),
+                "offset_mm": float(self.offset_mm)}
+
+
 # ------------------------------------------------------------------ the factories
 
 
@@ -553,4 +587,6 @@ def from_parametric(d: dict):
     if k == "composite":
         return CompositeCurve([from_parametric(seg) for seg in d["segments"]],
                               closed=bool(d.get("closed", False)))
+    if k == "offset":
+        return OffsetCurve(from_parametric(d["spine"]), float(d["offset_mm"]))
     raise ValueError(f"unknown parametric kind {k!r}")

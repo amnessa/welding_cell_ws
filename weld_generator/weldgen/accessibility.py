@@ -42,7 +42,13 @@ from .geom import Plane, Slab, dihedral_deg, intersect_planes
 #: Default accessibility parameters. Mirrors configs/*.yaml and scene.json's
 #: `accessibility` block, which is stored so every rejection is reproducible.
 DEFAULT_ACCESS: dict[str, Any] = {
-    "torch_clearance": {"half_angle_deg": 30.0, "standoff_mm": 15.0},
+    "torch_clearance": {"half_angle_deg": 30.0, "standoff_mm": 15.0,
+                        # Phase 6b, [ours] with the D13 precedent (semantic, not
+                        # derivable from local geometry): a bore/cavity seam is
+                        # weldable only if the torch BODY can enter - the local cone
+                        # cannot see confinement (an open 50 mm bore clears a 15 mm
+                        # cone, measured), so the cavity's minimum width gates it.
+                        "bore_min_diameter_mm": 80.0},
     #: How far the torch may be tilted off the dihedral bisector to dodge an obstruction.
     #: 45 deg is a wide but real work-angle range; past it the arc stops reaching both
     #: members, so a seam that can only be approached beyond it stays `bisector_blocked`.
