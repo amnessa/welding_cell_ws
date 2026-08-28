@@ -539,6 +539,529 @@ class Prism:
         return m
 
 
+@dataclass
+class Tube:
+    """Circular pipe with wall thickness — the Phase 6b revolved primitive (D29 #2-#4).
+
+    Local frame per SCHEMA §2.2: **w is the axis** (`+z` local), the base end at
+    z = 0 and the top cap at z = `length_mm`. Face registry: `lateral+` (outer wall),
+    `lateral-` (inner wall), `+w` (top annulus), `-w` (the base end). `thickness_mm`
+    is the WALL — the `t` every ISO limit keys on for pipe.
+
+    The base end is optionally CUT by the surface the stub lands on (`base_cut`):
+
+      * `{"kind": "plane", "n_local": [...], "d": ...}` — a miter against a plane
+        (pipe-on-plate, tilted or not); heights solve `n·p = d` per (φ, ρ).
+      * `{"kind": "cylinder", "point_local": [...], "axis_local": [...],
+         "radius_mm": ...}` — a saddle cut against another cylinder (pipe-to-pipe);
+        heights are the exact D33 quadratic root per (φ, ρ), so the miter ring IS the
+        saddle curve, to machine precision, at every radius through the wall.
+
+    `gap_mm` retracts the cut end along +z (the root gap). Cloud points are sampled
+    ANALYTICALLY on the true surfaces — the tessellated `mesh()` exists for D21
+    checks, exports and occlusion, and carries the only chord error (D34), which
+    `max_chord_error_mm` reports.
+    """
+
+    id: str
+    role: str
+    object_id: int
+    r_outer_mm: float
+    wall_mm: float
+    length_mm: float
+    T_world_part: np.ndarray
+    base_cut: dict | None = None
+    gap_mm: float = 0.0
+
+    #: Tessellation: chord error r*(dphi)^2/8 <= _MESH_TOL_MM decides the ring count.
+    _MESH_TOL_MM = 0.05
+
+    def __post_init__(self):
+        if not (0.0 < self.wall_mm < self.r_outer_mm):
+            raise ValueError("wall must be positive and under the outer radius")
+        if self.length_mm <= 0.0:
+            raise ValueError("length must be positive")
+
+    # --- registry ---------------------------------------------------------------------
+    def face_names(self) -> tuple[str, ...]:
+        return ("lateral+", "lateral-", "+w", "-w")
+
+    @property
+    def r_inner_mm(self) -> float:
+        return self.r_outer_mm - self.wall_mm
+
+    @property
+    def thickness_mm(self) -> float:
+        return float(self.wall_mm)
+
+    @property
+    def dims_mm(self) -> tuple[float, float, float]:
+        d = 2.0 * self.r_outer_mm
+        return (d, d, float(self.length_mm))
+
+    @property
+    def part_geometry_id(self) -> str:
+        return f"tube_{2 * self.r_outer_mm}x{self.wall_mm}x{self.length_mm}"
+
+    # --- the exact base-cut height ----------------------------------------------------
+    def base_height(self, phi, radius) -> np.ndarray:
+        """Local z of the base end at `phi` and `radius` (exact; both broadcast)."""
+        phi = np.atleast_1d(np.asarray(phi, dtype=float))
+        radius = np.broadcast_to(np.asarray(radius, dtype=float), phi.shape)
+        if self.base_cut is None:
+            return np.full(len(phi), self.gap_mm)
+        x = radius * np.cos(phi)
+        y = radius * np.sin(phi)
+        cut = self.base_cut
+        if cut["kind"] == "plane":
+            n = np.asarray(cut["n_local"], dtype=float)
+            if abs(n[2]) < 1e-9:
+                raise ValueError("base-cut plane parallel to the axis")
+            z = (float(cut["d"]) - n[0] * x - n[1] * y) / n[2]
+            return z + self.gap_mm
+        if cut["kind"] == "cylinder":
+            p0 = np.asarray(cut["point_local"], dtype=float)
+            m = np.asarray(cut["axis_local"], dtype=float)
+            m = m / np.linalg.norm(m)
+            R = float(cut["radius_mm"])
+            # line (x, y, z) along +z into the main cylinder's implicit form:
+            # A z^2 + B z + C = 0 with A = 1 - m_z^2  (D33's quadratic, per radius)
+            dx = x - p0[0]
+            dy = y - p0[1]
+            dm_xy = dx * m[0] + dy * m[1]
+            # d(z) = (dx, dy, z - p0z); |d|^2 - (d.m)^2 = R^2 expands to
+            # A z^2 + B z + C with the coefficients below (C is the form evaluated
+            # at z = 0, B its z-derivative there).
+            A = 1.0 - m[2] ** 2
+            B = 2.0 * ((-p0[2]) - (dm_xy + (-p0[2]) * m[2]) * m[2])
+            C = (dx * dx + dy * dy + p0[2] * p0[2]
+                 - (dm_xy - p0[2] * m[2]) ** 2 - R * R)
+            disc = B * B - 4.0 * A * C
+            if np.any(disc <= 0.0):
+                raise ValueError("saddle cut: stub does not fully meet the cylinder")
+            # +z points AWAY from the main pipe; the stub must stop at FIRST contact,
+            # the root with the larger z.
+            return (-B + np.sqrt(disc)) / (2.0 * A) + self.gap_mm
+        raise ValueError(f"unknown base_cut kind {cut['kind']!r}")
+
+    def _base_span(self, radius: float, n: int = 720) -> tuple[float, float]:
+        h = self.base_height(np.linspace(0.0, 2.0 * np.pi, n, endpoint=False), radius)
+        return float(h.min()), float(h.max())
+
+    # --- solid queries ----------------------------------------------------------------
+    def _local(self, points: np.ndarray) -> np.ndarray:
+        T = self.T_world_part
+        return (np.atleast_2d(np.asarray(points, dtype=float)) - T[:3, 3]) @ T[:3, :3]
+
+    def contains(self, points: np.ndarray, tol: float = 0.0) -> np.ndarray:
+        p = self._local(points)
+        rho = np.hypot(p[:, 0], p[:, 1])
+        phi = np.arctan2(p[:, 1], p[:, 0])
+        ok = (rho <= self.r_outer_mm + tol) & (rho >= self.r_inner_mm - tol) \
+            & (p[:, 2] <= self.length_mm + tol)
+        if ok.any():
+            base = self.base_height(phi[ok], np.clip(rho[ok], self.r_inner_mm,
+                                                     self.r_outer_mm))
+            sub = ok[ok].copy()
+            sub &= p[ok, 2] >= base - tol
+            ok[ok] = sub
+        return ok
+
+    # --- registry geometry ------------------------------------------------------------
+    def face_area(self, name: str) -> float:
+        if name == "+w":
+            return float(np.pi * (self.r_outer_mm ** 2 - self.r_inner_mm ** 2))
+        if name == "-w":
+            # slanted annulus; area to density purposes only - flat-annulus estimate
+            return float(np.pi * (self.r_outer_mm ** 2 - self.r_inner_mm ** 2))
+        r = self.r_outer_mm if name == "lateral+" else self.r_inner_mm
+        phis = np.linspace(0.0, 2.0 * np.pi, 720, endpoint=False)
+        h = np.clip(self.length_mm - self.base_height(phis, r), 0.0, None)
+        return float(r * np.mean(h) * 2.0 * np.pi)
+
+    @property
+    def surface_area_mm2(self) -> float:
+        return sum(self.face_area(n) for n in self.face_names())
+
+    def face_normal(self, name: str):
+        R = self.T_world_part[:3, :3]
+        if name == "+w":
+            return R @ np.array([0.0, 0.0, 1.0])
+        if name == "-w":
+            return R @ np.array([0.0, 0.0, -1.0])
+        raise ValueError(f"{name}: a curved face has no single normal")
+
+    def face_plane(self, name: str):
+        if name == "+w":
+            n = self.face_normal(name)
+            c = self.T_world_part @ np.array([0.0, 0.0, self.length_mm, 1.0])
+            return Plane(n=n, d=float(-n @ c[:3]))
+        return None                                       # curved / cut faces: surface
+
+    def surface_desc(self, name: str) -> dict | None:
+        """The `faces[].surface` block for the curved faces (world frame)."""
+        if name not in ("lateral+", "lateral-"):
+            return None
+        T = self.T_world_part
+        return {"kind": "cylinder",
+                "point_mm": [float(v) for v in T[:3, 3]],
+                "axis": [float(v) for v in T[:3, 2]],
+                "radius_mm": float(self.r_outer_mm if name == "lateral+"
+                                   else self.r_inner_mm),
+                "outward": name == "lateral+"}
+
+    # --- analytic surface sampling (no mesh involved: positions are exact) -----------
+    def sample_face(self, name: str, n_pts: int, rng) -> tuple[np.ndarray, np.ndarray]:
+        """(points, normals) in WORLD frame, area-uniform, exactly on the surface.
+
+        The lateral draw uses a discretised inverse CDF over φ weighted by the local
+        height span (a cut base makes the wall taller on one side): the φ DISTRIBUTION
+        carries grid error, every position is still exactly on the cylinder.
+        """
+        two_pi = 2.0 * np.pi
+        if name in ("lateral+", "lateral-"):
+            r = self.r_outer_mm if name == "lateral+" else self.r_inner_mm
+            grid = np.linspace(0.0, two_pi, 2048, endpoint=False)
+            span = np.clip(self.length_mm - self.base_height(grid, r), 1e-9, None)
+            cdf = np.concatenate([[0.0], np.cumsum(span)])
+            cdf /= cdf[-1]
+            u = rng.random(n_pts)
+            phi = np.interp(u, cdf, np.concatenate([grid, [two_pi]]))
+            z0 = self.base_height(phi, r)
+            z = z0 + rng.random(n_pts) * (self.length_mm - z0)
+            local = np.column_stack([r * np.cos(phi), r * np.sin(phi), z])
+            sign = 1.0 if name == "lateral+" else -1.0
+            n_loc = np.column_stack([sign * np.cos(phi), sign * np.sin(phi),
+                                     np.zeros(n_pts)])
+        elif name == "+w":
+            phi = rng.random(n_pts) * two_pi
+            r = np.sqrt(rng.uniform(self.r_inner_mm ** 2, self.r_outer_mm ** 2,
+                                    n_pts))
+            local = np.column_stack([r * np.cos(phi), r * np.sin(phi),
+                                     np.full(n_pts, self.length_mm)])
+            n_loc = np.tile([0.0, 0.0, 1.0], (n_pts, 1))
+        elif name == "-w":
+            phi = rng.random(n_pts) * two_pi
+            r = np.sqrt(rng.uniform(self.r_inner_mm ** 2, self.r_outer_mm ** 2,
+                                    n_pts))
+            z = self.base_height(phi, r)
+            local = np.column_stack([r * np.cos(phi), r * np.sin(phi), z])
+            n_loc = np.tile([0.0, 0.0, -1.0], (n_pts, 1))    # nominal; cut face ~ -w
+        else:
+            raise ValueError(name)
+        T = self.T_world_part
+        return local @ T[:3, :3].T + T[:3, 3], n_loc @ T[:3, :3].T
+
+    # --- mesh (D21 / D34) -------------------------------------------------------------
+    def _n_phi(self) -> int:
+        dphi = np.sqrt(8.0 * self._MESH_TOL_MM / self.r_outer_mm)
+        return max(48, int(np.ceil(2.0 * np.pi / dphi)))
+
+    @property
+    def max_chord_error_mm(self) -> float:
+        return float(self.r_outer_mm * (2.0 * np.pi / self._n_phi()) ** 2 / 8.0)
+
+    def mesh(self) -> trimesh.Trimesh:
+        n = self._n_phi()
+        phis = np.linspace(0.0, 2.0 * np.pi, n, endpoint=False)
+        ro, ri, L = self.r_outer_mm, self.r_inner_mm, self.length_mm
+        rings = [np.column_stack([ro * np.cos(phis), ro * np.sin(phis),
+                                  self.base_height(phis, ro)]),         # outer base
+                 np.column_stack([ro * np.cos(phis), ro * np.sin(phis),
+                                  np.full(n, L)]),                      # outer top
+                 np.column_stack([ri * np.cos(phis), ri * np.sin(phis),
+                                  np.full(n, L)]),                      # inner top
+                 np.column_stack([ri * np.cos(phis), ri * np.sin(phis),
+                                  self.base_height(phis, ri)])]         # inner base
+        verts = np.vstack(rings)
+        faces = []
+        for a in range(4):                                # strip a -> a+1, closed loop
+            b = (a + 1) % 4
+            for i in range(n):
+                j = (i + 1) % n
+                faces.append([a * n + i, a * n + j, b * n + j])
+                faces.append([a * n + i, b * n + j, b * n + i])
+        m = trimesh.Trimesh(vertices=verts, faces=np.asarray(faces), process=False)
+        if m.volume < 0:                                  # orient outward
+            m.invert()
+        m.apply_transform(self.T_world_part)
+        return m
+
+
+@dataclass
+class SweptSlab:
+    """A band offset from a spine curve, extruded in local z — Phase 6b (D29 #5-#7).
+
+    `spine` is a `weldgen.curves` object living in the local z = 0 plane. The solid is
+    the offset band `[offset_lo, offset_hi]` about it (offsets measured along
+    `n̂(s) = ẑ × T̂(s)`, the left of travel), extruded over `z ∈ [z0, z1]`. One
+    primitive, three configurations:
+
+      * #5 rect tube on plate — CLOSED spine (the rounded rectangle, which is the
+        step-1 seam), band `[-wall, 0]`: the spine surface IS the outer wall.
+      * #6 swept stiffener — open spine, band `[-t/2, +t/2]`, standing (z1 > z0 > 0).
+      * #7 curved butt — open arc spine, two flat one-sided bands either side of it.
+
+    Face registry (SCHEMA §2.2 `swept_slab`): `+w` / `-w` are the offset surfaces at
+    `offset_hi` / `offset_lo` (the BROAD faces — thickness = the band width, so the
+    w-is-thickness invariant survives), `+v` / `-v` the top/bottom caps, and `+u` /
+    `-u` the end caps of an open spine (absent for a closed one).
+
+    Positions and normals on every face are ANALYTIC (spine point + exact tangent
+    normal), so cloud samples carry no chord error; the tessellated mesh (D21/D34,
+    occlusion) is the only discretised object, at a pitch chosen from the offset
+    curvature, and `contains` resolves against a fine spine polyline — a boolean-only
+    approximation, documented where the tube's interval refinement is.
+    """
+
+    id: str
+    role: str
+    object_id: int
+    spine: object
+    offset_lo_mm: float
+    offset_hi_mm: float
+    z0_mm: float
+    z1_mm: float
+    T_world_part: np.ndarray
+
+    _MESH_TOL_MM = 0.05
+    _N_FINE = 2048
+
+    def __post_init__(self):
+        if self.offset_hi_mm - self.offset_lo_mm <= 0.0:
+            raise ValueError("band width must be positive")
+        if self.z1_mm - self.z0_mm <= 0.0:
+            raise ValueError("height must be positive")
+        # self-intersection guard: 1 - kappa*offset must stay positive at both edges
+        sp = self._speed_kappa()[1]
+        for o in (self.offset_lo_mm, self.offset_hi_mm):
+            if np.min(1.0 - sp * o) <= 0.05:
+                raise ValueError("offset exceeds the spine's curvature radius")
+
+    # --- spine machinery --------------------------------------------------------------
+    def _grid(self):
+        return np.linspace(0.0, self.spine.t_period, self._N_FINE,
+                           endpoint=not self.spine.closed)
+
+    def _speed_kappa(self):
+        """(speed, signed curvature) on the fine grid — numeric, boolean/weight use
+        only; face positions never touch it."""
+        if not hasattr(self, "_sk"):
+            ts = self._grid()
+            h = self.spine.t_period * 1e-6
+            p_plus = self.spine.point(ts + h)
+            p_minus = self.spine.point(ts - h)
+            d1 = (p_plus - p_minus) / (2.0 * h)
+            d2 = (p_plus + p_minus - 2.0 * self.spine.point(ts)) / (h * h)
+            speed = np.linalg.norm(d1[:, :2], axis=1)
+            cross = d1[:, 0] * d2[:, 1] - d1[:, 1] * d2[:, 0]
+            with np.errstate(divide="ignore", invalid="ignore"):
+                kappa = cross / np.clip(speed, 1e-12, None) ** 3
+            self._sk = (speed, np.nan_to_num(kappa))
+        return self._sk
+
+    def _normal2(self, ts):
+        tan = self.spine.tangent(ts)
+        return np.column_stack([-tan[:, 1], tan[:, 0], np.zeros(len(tan))])
+
+    def offset_point(self, ts, offset: float) -> np.ndarray:
+        """Exact point on the offset surface at spine parameter(s) `ts` (local, z=0)."""
+        ts = np.atleast_1d(np.asarray(ts, dtype=float))
+        return self.spine.point(ts) + offset * self._normal2(ts)
+
+    # --- registry ---------------------------------------------------------------------
+    def face_names(self) -> tuple[str, ...]:
+        base = ("+w", "-w", "+v", "-v")
+        return base if self.spine.closed else base + ("+u", "-u")
+
+    @property
+    def thickness_mm(self) -> float:
+        return float(self.offset_hi_mm - self.offset_lo_mm)
+
+    @property
+    def dims_mm(self) -> tuple[float, float, float]:
+        pts = self.spine.point(self._grid())
+        return (float(np.ptp(pts[:, 0])), float(np.ptp(pts[:, 1])),
+                float(self.z1_mm - self.z0_mm))
+
+    @property
+    def part_geometry_id(self) -> str:
+        kind = self.spine.to_parametric()["kind"]
+        return (f"swept_{kind}_{self.spine.length_mm:.6g}x"
+                f"{self.thickness_mm:.6g}x{self.z1_mm - self.z0_mm:.6g}")
+
+    def face_area(self, name: str) -> float:
+        speed, kappa = self._speed_kappa()
+        ds = self.spine.t_period / self._N_FINE
+        H = self.z1_mm - self.z0_mm
+        if name in ("+w", "-w"):
+            o = self.offset_hi_mm if name == "+w" else self.offset_lo_mm
+            return float(np.sum(speed * np.abs(1.0 - kappa * o)) * ds * H)
+        if name in ("+v", "-v"):
+            w = np.zeros_like(speed)
+            for o0, o1 in [(self.offset_lo_mm, self.offset_hi_mm)]:
+                w = speed * ((o1 - o0) - kappa * (o1 ** 2 - o0 ** 2) / 2.0)
+            return float(abs(np.sum(w) * ds))
+        return float(self.thickness_mm * H)                    # end caps
+
+    @property
+    def surface_area_mm2(self) -> float:
+        return sum(self.face_area(n) for n in self.face_names())
+
+    def face_plane(self, name: str):
+        return None if name in ("+w", "-w") else self._cap_plane(name)
+
+    def _cap_plane(self, name: str):
+        R = self.T_world_part[:3, :3]
+        t = self.T_world_part[:3, 3]
+        if name in ("+v", "-v"):
+            n = R @ np.array([0.0, 0.0, 1.0 if name == "+v" else -1.0])
+            z = self.z1_mm if name == "+v" else self.z0_mm
+            c = R @ np.array([0.0, 0.0, z]) + t
+            return Plane(n=n, d=float(-n @ c))
+        ts = self.spine.t_period if name == "+u" else 0.0
+        tan = self.spine.tangent([ts])[0]
+        sign = 1.0 if name == "+u" else -1.0
+        n = R @ (sign * tan)
+        c = R @ self.spine.point([ts])[0] + t
+        return Plane(n=n, d=float(-n @ c))
+
+    def surface_desc(self, name: str) -> dict | None:
+        if name not in ("+w", "-w"):
+            return None
+        o = self.offset_hi_mm if name == "+w" else self.offset_lo_mm
+        return {"kind": "offset_extrusion",
+                "spine": self.spine.to_parametric(),
+                "offset_mm": float(o),
+                "z0_mm": float(self.z0_mm), "z1_mm": float(self.z1_mm),
+                "T_world_part": [[float(v) for v in row]
+                                 for row in self.T_world_part]}
+
+    # --- analytic sampling ------------------------------------------------------------
+    def sample_face(self, name: str, n_pts: int, rng) -> tuple[np.ndarray, np.ndarray]:
+        speed, kappa = self._speed_kappa()
+        ts_grid = self._grid()
+
+        def draw_ts(weights, n):
+            cdf = np.concatenate([[0.0], np.cumsum(np.clip(weights, 1e-12, None))])
+            cdf /= cdf[-1]
+            return np.interp(rng.random(n), cdf,
+                             np.linspace(0.0, self.spine.t_period, len(cdf)))
+
+        if name in ("+w", "-w"):
+            o = self.offset_hi_mm if name == "+w" else self.offset_lo_mm
+            ts = draw_ts(speed * np.abs(1.0 - kappa * o), n_pts)
+            z = rng.uniform(self.z0_mm, self.z1_mm, n_pts)
+            local = self.offset_point(ts, o)
+            local[:, 2] = z
+            n2 = self._normal2(ts) * (1.0 if name == "+w" else -1.0)
+            n_loc = n2
+        elif name in ("+v", "-v"):
+            ts = draw_ts(speed, n_pts)                        # band-width ~ uniform
+            o = rng.uniform(self.offset_lo_mm, self.offset_hi_mm, n_pts)
+            local = self.spine.point(ts) + o[:, None] * self._normal2(ts)
+            local[:, 2] = self.z1_mm if name == "+v" else self.z0_mm
+            n_loc = np.tile([0.0, 0.0, 1.0 if name == "+v" else -1.0], (n_pts, 1))
+        elif name in ("+u", "-u"):
+            ts = np.full(n_pts, self.spine.t_period if name == "+u" else 0.0)
+            o = rng.uniform(self.offset_lo_mm, self.offset_hi_mm, n_pts)
+            z = rng.uniform(self.z0_mm, self.z1_mm, n_pts)
+            local = self.spine.point(ts) + o[:, None] * self._normal2(ts)
+            local[:, 2] = z
+            tan = self.spine.tangent(ts)
+            n_loc = tan * (1.0 if name == "+u" else -1.0)
+        else:
+            raise ValueError(name)
+        T = self.T_world_part
+        return local @ T[:3, :3].T + T[:3, 3], n_loc @ T[:3, :3].T
+
+    # --- solid queries (fine-polyline resolution: boolean use only) -------------------
+    def _poly(self):
+        if not hasattr(self, "_pl"):
+            ts = self._grid()
+            self._pl = (ts, self.spine.point(ts)[:, :2])
+        return self._pl
+
+    def contains(self, points: np.ndarray, tol: float = 0.0) -> np.ndarray:
+        T = self.T_world_part
+        p = (np.atleast_2d(np.asarray(points, dtype=float)) - T[:3, 3]) @ T[:3, :3]
+        ok_z = (p[:, 2] >= self.z0_mm - tol) & (p[:, 2] <= self.z1_mm + tol)
+        out = np.zeros(len(p), dtype=bool)
+        if not ok_z.any():
+            return out
+        ts, poly = self._poly()
+        q = p[ok_z, :2]
+        # nearest spine vertex (fine grid), then signed offset via the local normal
+        best = np.empty(len(q), dtype=int)
+        step = 200000 // max(len(poly), 1) + 1
+        for i0 in range(0, len(q), step):
+            d2 = ((q[i0:i0 + step, None, :] - poly[None, :, :]) ** 2).sum(-1)
+            best[i0:i0 + step] = np.argmin(d2, axis=1)
+        near_ts = ts[best]
+        n2 = self._normal2(near_ts)[:, :2]
+        off = np.einsum("ij,ij->i", q - poly[best], n2)
+        ok = (off >= self.offset_lo_mm - tol) & (off <= self.offset_hi_mm + tol)
+        if not self.spine.closed:
+            interior = (best > 0) & (best < len(poly) - 1)
+            ok &= interior
+        out[ok_z] = ok
+        return out
+
+    # --- mesh (D21 / D34) -------------------------------------------------------------
+    def _n_stations(self) -> int:
+        speed, kappa = self._speed_kappa()
+        k_off = max(float(np.max(np.abs(kappa / (1.0 - kappa * self.offset_hi_mm)))),
+                    float(np.max(np.abs(kappa / (1.0 - kappa * self.offset_lo_mm)))),
+                    1e-6)
+        d_arc = np.sqrt(8.0 * self._MESH_TOL_MM / k_off)
+        n = int(np.ceil(self.spine.length_mm / d_arc))
+        return max(64, n)
+
+    @property
+    def max_chord_error_mm(self) -> float:
+        speed, kappa = self._speed_kappa()
+        n = self._n_stations()
+        d_arc = self.spine.length_mm / n
+        k_off = max(float(np.max(np.abs(kappa))), 1e-9)
+        return float(k_off * d_arc ** 2 / 8.0)
+
+    def mesh(self) -> trimesh.Trimesh:
+        n = self._n_stations()
+        s_vals = self.spine.arclengths(n)
+        ts = self.spine.t_at_arclength(s_vals)
+        lo = self.offset_point(ts, self.offset_lo_mm)
+        hi = self.offset_point(ts, self.offset_hi_mm)
+        rings = []
+        for base, z in ((lo, self.z0_mm), (hi, self.z0_mm),
+                        (hi, self.z1_mm), (lo, self.z1_mm)):
+            ring = base.copy()
+            ring[:, 2] = z
+            rings.append(ring)
+        verts = np.vstack(rings)
+        faces = []
+        m_seg = n if self.spine.closed else n - 1
+        for a in range(4):
+            b = (a + 1) % 4
+            for i in range(m_seg):
+                j = (i + 1) % n
+                faces.append([a * n + i, a * n + j, b * n + j])
+                faces.append([a * n + i, b * n + j, b * n + i])
+        if not self.spine.closed:                            # end caps
+            for i, flip in ((0, False), (n - 1, True)):
+                quad = [0 * n + i, 1 * n + i, 2 * n + i, 3 * n + i]
+                tri1 = [quad[0], quad[1], quad[2]]
+                tri2 = [quad[0], quad[2], quad[3]]
+                if flip:
+                    tri1 = tri1[::-1]
+                    tri2 = tri2[::-1]
+                faces += [tri1, tri2]
+        m = trimesh.Trimesh(vertices=verts, faces=np.asarray(faces), process=False)
+        if m.volume < 0:
+            m.invert()
+        m.apply_transform(self.T_world_part)
+        return m
+
+
 def intersect_planes(pa: Plane, pb: Plane, tol: float = 1e-9):
     """Exact line of intersection of two planes.
 

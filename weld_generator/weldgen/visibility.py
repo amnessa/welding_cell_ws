@@ -20,7 +20,7 @@ from __future__ import annotations
 import numpy as np
 
 from .camera import in_frustum, project
-from .geom import Prism, Slab
+from .geom import Prism, Slab, Tube
 
 #: Ray origins are lifted this far off the surface along the normal before casting, so a
 #: point never occludes itself with its own face. Small next to any plate thickness, large
@@ -82,10 +82,70 @@ def ray_hits_convex(origins: np.ndarray, directions: np.ndarray, t_max: np.ndarr
         & ~outside.any(axis=1)
 
 
+def ray_hits_tube(origins, directions, t_max, tube: Tube) -> np.ndarray:
+    """Ray-vs-tube: analytic outer-cylinder interval, refined by exact containment.
+
+    The candidate interval (inside the outer cylinder, within the axial slab) is a
+    closed-form quadratic. A tube is not convex - the bore and a cut base carve it -
+    so hits inside the candidate interval are confirmed by sampling K points of the
+    interval against the EXACT `contains` (bore and cut evaluated analytically). The
+    only approximation is interval sub-sampling: a solid sliver narrower than 1/K of
+    the candidate interval can be missed, which perturbs occlusion booleans only -
+    never a label.
+    """
+    T = tube.T_world_part
+    o = (np.asarray(origins, dtype=float) - T[:3, 3]) @ T[:3, :3]
+    d = np.asarray(directions, dtype=float) @ T[:3, :3]
+    t_max = np.asarray(t_max, dtype=float)
+
+    a = d[:, 0] ** 2 + d[:, 1] ** 2
+    b = 2.0 * (o[:, 0] * d[:, 0] + o[:, 1] * d[:, 1])
+    c0 = o[:, 0] ** 2 + o[:, 1] ** 2 - tube.r_outer_mm ** 2
+    lo = np.full(len(o), np.inf)
+    hi = np.full(len(o), -np.inf)
+    par = a < 1e-12
+    with np.errstate(divide="ignore", invalid="ignore"):
+        disc = b * b - 4.0 * a * c0
+        root = np.sqrt(np.clip(disc, 0.0, None))
+        lo = np.where(~par & (disc > 0.0), (-b - root) / (2.0 * a), lo)
+        hi = np.where(~par & (disc > 0.0), (-b + root) / (2.0 * a), hi)
+    inside_par = par & (c0 < 0.0)
+    lo = np.where(inside_par, -np.inf, lo)
+    hi = np.where(inside_par, np.inf, hi)
+    # axial slab: base can only cut upward from the lowest base height
+    zmin = tube._base_span(tube.r_inner_mm)[0]
+    zmin = min(zmin, tube._base_span(tube.r_outer_mm)[0])
+    with np.errstate(divide="ignore", invalid="ignore"):
+        t1 = (zmin - o[:, 2]) / d[:, 2]
+        t2 = (tube.length_mm - o[:, 2]) / d[:, 2]
+    zpar = np.abs(d[:, 2]) < 1e-12
+    zlo = np.where(zpar, np.where((o[:, 2] >= zmin) & (o[:, 2] <= tube.length_mm),
+                                  -np.inf, np.inf), np.minimum(t1, t2))
+    zhi = np.where(zpar, np.where((o[:, 2] >= zmin) & (o[:, 2] <= tube.length_mm),
+                                  np.inf, -np.inf), np.maximum(t1, t2))
+    lo = np.maximum(np.maximum(lo, zlo), 1e-9)
+    hi = np.minimum(np.minimum(hi, zhi), t_max - 1e-9)
+    cand = hi > lo
+    out = np.zeros(len(o), dtype=bool)
+    if not cand.any():
+        return out
+    K = 9
+    fr = (np.arange(K) + 0.5) / K
+    ts = lo[cand, None] + fr[None, :] * (hi[cand] - lo[cand])[:, None]
+    pts = (np.asarray(origins, dtype=float)[cand, None, :]
+           + ts[:, :, None] * np.asarray(directions, dtype=float)[cand, None, :])
+    hit = tube.contains(pts.reshape(-1, 3)).reshape(-1, K).any(axis=1)
+    out[cand] = hit
+    return out
+
+
 def ray_hits_part(origins, directions, t_max, part) -> np.ndarray:
-    """Dispatch: exact local-frame clip for slabs, half-space clip for prisms."""
+    """Dispatch: exact local-frame clip for slabs, half-space clip for prisms,
+    analytic-interval-plus-exact-containment for tubes."""
     if isinstance(part, Slab):
         return ray_hits_slab(origins, directions, t_max, part)
+    if isinstance(part, Tube):
+        return ray_hits_tube(origins, directions, t_max, part)
     return ray_hits_convex(origins, directions, t_max, part)
 
 

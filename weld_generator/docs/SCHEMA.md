@@ -604,6 +604,23 @@ regenerable — you can reproduce any single scene from its id alone.
 - **`parametric` is the truth; `sampled` is a convenience.** The parametric form is what
   makes "10 dots per mm, or 50 if someone asks" real — resampling needs no regeneration.
   If the two ever disagree, `parametric` wins.
+- **Curved seams (Phase 6b, D33).** `parametric.kind` extends to `arc`, `circle`,
+  `ellipse` (plane∩cylinder), `saddle` (cylinder∩cylinder, branch-parametrized
+  quadratic), `composite` (chained exact segments — the tube-on-plate rounded
+  rectangle), and `bspline` (**constructed input only**, never a fitted intersection —
+  the swept configurations draw the seam first and sweep the part along it). Per-kind
+  parameters are written by `weldgen.curves.to_parametric` and rebuilt by
+  `from_parametric`; every position and tangent is analytic, so D1's exactness claim
+  carries over unqualified. Conventions: `closed: true` marks full intersection curves;
+  the arclength coordinate `s` wraps at `length_mm` and `s = 0` is the curve's own
+  parameter origin (φ = 0 in the stored frame) — endpoint-based rules (tacks, MPS) use
+  the wrap convention instead of endpoints. `length_mm` is total arclength.
+  `dihedral_deg` becomes a `{min, max, mean}` summary on curved seams, with the
+  per-sample array stored as `seams.npz:seam_<i>_dihedral`. Non-planar faces populate
+  `faces[].surface` (cylinders: `{kind, axis, point_mm, radius_mm}`, written by the
+  Phase 6b constructors), and `cloud.max_chord_error_mm` records the worst tessellation
+  chord error (D34, gated ≤ 0,25 mm — the label never carries it, only the sampled
+  input does).
 - **`visible_from_cam` is geometry, not sensor yield.** Framed, in range, front-facing,
   unoccluded — and nothing else. Grazing-incidence dropout is *not* in the mask: a steeply
   viewed surface is visible, the stereo matcher simply fails on it. That is a sensor effect

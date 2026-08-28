@@ -1607,29 +1607,43 @@ when they discover it themselves.
 
 ---
 
-## D29 — Curved seams are sampled as workpiece configurations, not as curves
+## D29 — Curved seams are drawn from curve families that admit a two-part realization
+*(amended 2026-08-28; originally framed artifact-first, which was the reverse of D3 —
+the inversion the whole generator is named for. Same seven cases, same parameters,
+renamed by what they produce rather than by what produces them.)*
 
 "Arcs, C-shapes, S-shapes, closed curves" is shape-driven and unbounded — there is no
-principled stopping point and no defence against "why not also helices?"
+principled stopping point and no defence against "why not also helices?" The bound is a
+**realizability condition**, stated directly rather than smuggled in via an artifact list:
 
-D3 already gives the answer: seams are constructed, so sample the **artifact** and take
-whatever seam it produces. The vocabulary is then finite because the artifact vocabulary is
-finite, and every entry is industrially motivated rather than arbitrary.
+> **The seam curve is drawn from families that admit a two-part realization.** A curve
+> is realizable if it lies on the intersection of two constructible surfaces, or if it
+> can serve as the sweep path of a plate profile.
 
-| # | Configuration | Seam geometry | Joint type |
-|---|---|---|---|
-| 1 | plate on plate | line | T, corner, lap |
-| 2 | pipe perpendicular on plate | circle | T |
-| 3 | pipe at an angle on plate | ellipse | T |
-| 4 | pipe-to-pipe intersection | saddle curve (Viviani-like) | T or butt |
-| 5 | rectangular tube on plate | closed rounded rectangle | T |
-| 6 | swept (curved) plate on plate | arc / spline | T, lap |
-| 7 | two curved plates edge to edge | arc | butt |
+An arbitrary 3-D spline is not realizable — no two simple solids meet along it. A
+*planar* spline is, because a plate can be swept along it. So the vocabulary is finite
+for a geometric reason, not a curated one:
 
-Seven configurations cover essentially every curved seam in the collected literature — the
-intersecting-pipe path planning work, nozzle welds, stiffener perimeters. Anything outside
-this list is out of scope by construction, which is a defensible sentence in a way that "we
-stopped adding spline types" is not.
+| # | Curve family | Parameters drawn | Realization (derived FROM the curve) | Joint type |
+|---|---|---|---|---|
+| 1 | line | endpoints | plate placement (Phases 1–6a) | T, corner, butt, lap, edge |
+| 2 | circle in the base plane | centre, radius | pipe ⊥ plate: radius = r, axis = plane normal | T |
+| 3 | ellipse in the base plane | centre, semi-axes, orientation | tilted pipe: radius = semi-minor, tilt = arccos(b/a), axis in the normal–major plane | T |
+| 4 | cylinder–cylinder saddle | `R, r, θ, offset` | exactly the two pipes — the family's parameters ARE the pipe parameters, and its closed-form parametrization is the D33 quadratic (a family evaluation, not a solver) | T |
+| 5 | closed rounded rectangle | w, h, corner radius | rectangular tube: the curve IS the outer wall | T |
+| 6 | planar arc / spline | control points / radius+span | swept plate: the curve IS the sweep path | T |
+| 7 | planar arc | radius, span | curved butt: the curve IS the gap centreline | butt |
+
+In every row the curve parameters are the artifact parameters — sampling "a pipe-on-plate
+configuration" and sampling "a circle" are the same draw — so the equivalence to the old
+configuration table is exact and the industrial motivation (nozzle welds, stiffener
+perimeters, intersecting-pipe path planning) is unchanged. What the reframe buys:
+
+- **Surface∩surface leaves the generation path.** The parts are derived from the drawn
+  curve; the intersection machinery appears only in the D4 *verification* arms, where it
+  independently rediscovers what construction placed — the same Phase 2 gate as always.
+- **D3 holds unqualified across all phases**: one architectural principle instead of two
+  that look like they disagree at Phase 6.
 
 ---
 
@@ -1783,7 +1797,8 @@ Full text in `notes/patch_class_disjointness.md`; summary of what landed:
 
 # Phase 6b — Curved seams, non-planar primitives, grooves
 
-- [ ] **Seam sampler** driven by the D29 configuration table, not by curve families
+- [x] **Seam sampler** — `weldgen/d29.py`, drawing from the D29 curve families under the
+      realizability condition (amended framing, 2026-08-28)
 - [ ] **Part constructors:** swept plates, pipe-on-plate, pipe-to-pipe, rectangular tube on plate
 - [ ] **Groove preparations (D24, restricted by D30)** — straight butt seams only. ISO 9692-1
       makes the choice thickness-driven and citable, so the sampler picks the preparation from

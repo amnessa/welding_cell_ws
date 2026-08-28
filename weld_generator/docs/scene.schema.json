@@ -157,9 +157,12 @@
         },
         "prep": {
           "enum": [
-            "square"
+            "square",
+            "single_bevel",
+            "single_V",
+            "single_U"
           ],
-          "description": "ISO 9692-1 preparation class. Only square preparation is generated in Phases 1-6; PARAMETERS 5.0's result is scoped to it."
+          "description": "ISO 9692-1 preparation class, drawn from valid_preps(t) (D35) - thickness and preparation are correlated by design. Square-prep-only claims (PARAMETERS 5.0) are scoped to prep == 'square'. Grooves apply to straight butt seams only (D30)."
         },
         "in_plane_yaw_deg": {
           "type": "number",
@@ -539,19 +542,50 @@
                 "enum": [
                   "line",
                   "arc",
-                  "bspline"
+                  "circle",
+                  "ellipse",
+                  "saddle",
+                  "bspline",
+                  "composite"
                 ]
               }
-            }
+            },
+            "description": "Exact form of the seam (D1/D33): line, arc, circle, ellipse (plane-cylinder), saddle (cylinder-cylinder, branch-parametrized quadratic), bspline (CONSTRUCTED input only, never a fitted intersection). Per-kind parameters as written by weldgen.curves.to_parametric; weldgen.curves.from_parametric rebuilds the curve."
           },
           "length_mm": {
             "type": "number",
-            "exclusiveMinimum": 0
+            "exclusiveMinimum": 0,
+            "description": "Total arclength; `closed` disambiguates closed curves (Phase 6b schema ruling)."
           },
           "dihedral_deg": {
-            "type": "number",
-            "minimum": 0,
-            "maximum": 180
+            "oneOf": [
+              {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 180
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "min",
+                  "max",
+                  "mean"
+                ],
+                "properties": {
+                  "min": {
+                    "type": "number"
+                  },
+                  "max": {
+                    "type": "number"
+                  },
+                  "mean": {
+                    "type": "number"
+                  }
+                },
+                "description": "Curved seams (Phase 6b): the dihedral varies along the curve; the per-sample array lives in seams.npz as seam_<i>_dihedral and this summarises it."
+              }
+            ]
           },
           "seam_class": {
             "enum": [
@@ -622,6 +656,10 @@
               "null"
             ],
             "description": "D31 - lap toe whose torch axis points below the stack plane: weldable in a positioner, invisible from above the table; the single-view arm scores these separately. Null for non-toe seams."
+          },
+          "closed": {
+            "type": "boolean",
+            "description": "Phase 6b: true for full intersection curves (circle/ellipse/saddle). The arclength coordinate `s` wraps at length_mm; s = 0 is the curve's own parameter origin (phi = 0 in the stored frame), and endpoint-based rules (tacks, MPS) use the wrap convention instead of endpoints. Absent/false for open curves and lines."
           }
         },
         "allOf": [
@@ -845,6 +883,11 @@
         "n_points": {
           "type": "integer",
           "minimum": 1
+        },
+        "max_chord_error_mm": {
+          "type": "number",
+          "minimum": 0,
+          "description": "D34 - worst-case tessellation chord error over all curved faces (~ R*dtheta^2/8), gated at <= 0.25 mm (an order of magnitude under the 2.5 mm Phase 5 annotation floor). 0 for all-planar scenes. The LABEL never carries this - it comes from the parametric form; only the sampled input does."
         }
       }
     },
