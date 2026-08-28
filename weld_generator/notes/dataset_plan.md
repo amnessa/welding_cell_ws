@@ -1660,9 +1660,12 @@ bias flatters precisely the plane-based methods under comparison.
       A's face along the yawed seam direction must keep ≥ 50% of `min(L_A, L_B)` (the same
       philosophy as the `length_offset` clamp; two earlier bounds — full footprint on A,
       clipped footprint corners on A — each pinned a quarter of scenes at 0° and were
-      caught by the gate they were built to serve). Off by default (`in_plane_yaw: false`);
-      `configs/smoke.yaml` enables it and `out/smoke` is regenerated at 12/12 yield with
-      yaw spanning ±80°
+      caught by the gate they were built to serve). Off by default (`in_plane_yaw: false`).
+      AMENDED 2026-08-27: the range is the **full circle**, uniform over the per-scene
+      feasible set of [−180°, 180°) (grid + jitter, `layouts.feasible_yaw_deg`) — θ and
+      θ+180° are different configurations, so folding to ±90° halved the diversity for
+      free; D31 separately rejects the flush-coincidence angles the full circle newly
+      exposes (lap yaw ≈ 180° is always edge-flush)
 - [x] **Update the D4 verification function** — and this was a *finding*, not housekeeping:
       the seam clip was a 1-D shadow (`face_extent_along`, corner projection onto the seam
       direction), which equals the true overlap at yaw 0 and overhangs it at any other yaw

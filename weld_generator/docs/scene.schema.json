@@ -163,8 +163,8 @@
         },
         "in_plane_yaw_deg": {
           "type": "number",
-          "minimum": -90.0,
-          "maximum": 90.0,
+          "minimum": -180.0,
+          "maximum": 180.0,
           "description": "D28 (Phase 6a): rotation of B about the contact-face normal; T and lap only, 0 elsewhere. Not dihedral."
         },
         "ambiguous_with": {
@@ -186,6 +186,13 @@
         "iso_17659_term": {
           "type": "string",
           "description": "Derived BS EN ISO 17659:2004 name with sub-clause for the sampled configuration; `type` stays the topological/US name the pipeline stratifies on."
+        },
+        "iso_9692_ref": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Derived ISO 9692-1:2013 preparation sub-clause the sampled geometry satisfies (square prep); null where the standard has no row (lap, out-of-scope thickness)."
         }
       },
       "required": [

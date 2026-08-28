@@ -89,6 +89,42 @@ def test_edge_bands_apply_to_the_non_welded_pairs_only():
     assert class_ambiguity(ends, "edge") == ["lap"]
 
 
+def test_lap_at_yaw_180_is_always_flush_and_rejected():
+    """Rotating B by 180 about the strip centroid maps its leading edge exactly onto
+    A's welded edge - the flush configuration - so laps cannot take yaw near 180."""
+    assert class_ambiguity(_spec("lap", in_plane_yaw_deg=180.0), "lap") == ["edge"]
+    assert class_ambiguity(_spec("lap", in_plane_yaw_deg=175.0), "lap") == ["edge"]
+    assert class_ambiguity(_spec("lap", in_plane_yaw_deg=160.0), "lap") == []
+
+
+def test_yaw_is_sampled_over_the_full_circle():
+    """D28 amendment (ruled 2026-08-27): uniform over the feasible set of the full
+    circle, not a +-bound - theta and theta+180 are different configurations."""
+    from weldgen.layouts import feasible_yaw_deg, sample_yaw_deg
+    spec = _spec("T", L_A=400.0, W_A=400.0, L_B=120.0)
+    angles = feasible_yaw_deg(spec, "T")
+    assert angles.min() < -170.0 and angles.max() > 170.0
+    rng = np.random.default_rng(0)
+    draws = [sample_yaw_deg(spec, "T", rng) for _ in range(300)]
+    assert min(draws) < -120.0 and max(draws) > 120.0     # far beyond the old +-90
+    assert sum(1 for d in draws if abs(d) > 90.0) > 50    # the new half is populated
+
+
+def test_iso_derived_fields_map_by_sub_clause():
+    from weldgen.scene import _iso_17659_term, _iso_9692_ref
+    assert _iso_17659_term("T", 90.0) == "T-joint (3.10)"
+    assert _iso_17659_term("T", 72.0) == "angle joint (3.12)"
+    assert _iso_17659_term("edge", 0.0) == "edge joint (3.14)"
+    assert _iso_9692_ref("T", 90.0, 8.0, "square") == "3.1.1/4.1.1"
+    assert _iso_9692_ref("T", 65.0, 8.0, "square") == "3.1.3/4.1.2"
+    assert _iso_9692_ref("T", 90.0, 1.8, "square") is None      # Table 3 wants t > 2
+    assert _iso_9692_ref("butt", 180.0, 3.0, "square") == "1.2.1"
+    assert _iso_9692_ref("butt", 180.0, 6.0, "square") == "2.1"
+    assert _iso_9692_ref("butt", 180.0, 10.0, "square") is None
+    assert _iso_9692_ref("edge", 0.0, 1.5, "square") == "1.1"
+    assert _iso_9692_ref("lap", 0.0, 6.0, "square") is None
+
+
 def test_corner_and_butt_have_no_bands():
     assert class_ambiguity(_spec("corner"), "corner") == []
     assert class_ambiguity(_spec("butt"), "butt") == []

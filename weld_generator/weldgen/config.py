@@ -362,21 +362,22 @@ def sample_joint(cfg: dict[str, Any], streams: Streams
     # D28 - in-plane yaw, drawn from the (previously unused) `seam_curve` substream so
     # every other stream's draws are untouched: corpora generated with yaw off reproduce
     # bit-identically, and a yaw-enabled regeneration differs ONLY in yaw - a free twin.
-    # The range is support-limited per scene (the footprint must stay on A), which is the
-    # patch's open item resolved: full range where the dims allow it, honestly narrower
-    # where they do not, and the realised bound is recorded in the scene.
+    # The range is the FULL CIRCLE (ruled 2026-08-27), uniform over the per-scene
+    # feasible set: yaw theta and theta+180 are different configurations (B's body points
+    # the other way), and the feasible set need not be one contiguous interval, so the
+    # draw is a grid-cell index plus an in-cell jitter rather than a +-bound uniform.
+    # Support stays honest per scene, and D31 separately rejects the flush-coincidence
+    # angles (a lap at yaw ~ 180 lands B's leading edge exactly on A's welded edge).
     yaw = 0.0
     if bool(cfg.get("in_plane_yaw", False)) and joint_type in ("T", "lap"):
-        from .layouts import max_supported_yaw_deg
+        from .layouts import sample_yaw_deg
         _probe = JointSpec(L_A=L_A, W_A=W_A, t_A=t_A, L_B=L_B, H_B=H_B, t_B=t_B,
                            length_offset_mm=length_offset, root_gap_mm=gap,
                            linear_misalignment_mm=h, angular_misalignment_deg=beta,
                            included_angle_deg=alpha,
                            stack_offset_mm=None if stack_offset is None
                            else stack_offset * H_B)
-        max_yaw = max_supported_yaw_deg(_probe, joint_type)
-        if max_yaw > 0.0:
-            yaw = float(streams["seam_curve"].uniform(-max_yaw, max_yaw))
+        yaw = sample_yaw_deg(_probe, joint_type, streams["seam_curve"])
 
     # D28 - the other half: polygon outlines. Part B gets one for EVERY joint type: its
     # seam-bearing edge (bottom for T/corner, leading edge for lap/butt, flush edge for

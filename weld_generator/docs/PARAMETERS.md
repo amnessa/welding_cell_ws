@@ -337,7 +337,7 @@ remove it, both off by default and enabled together in the `bench6a` presets:
 
 | Mechanism | Applies to | Sampling |
 |---|---|---|
-| In-plane yaw of B about A's face normal | T, lap | uniform over the per-scene supported range (chord bound in `layouts.max_supported_yaw_deg`) |
+| In-plane yaw of B about A's face normal | T, lap | **full circle** (ruled 2026-08-27): uniform over the per-scene FEASIBLE SET of [−180°, 180°) (`layouts.feasible_yaw_deg`, 1° grid + jitter) — θ and θ+180° are different configurations, and the set need not be contiguous. D31 separately rejects the flush-coincidence angles (a lap at yaw ≈ 180° lands B's leading edge exactly on A's welded edge) |
 | Polygon outlines (`prism` primitive) | part B in **all five** joint types; part A in corner / butt / edge | `trapezoid 0.10 / parallelogram 0.10 / triangle 0.25 / quad 0.30 / convex-pentagon 0.25`, seam edge pinned straight and full-length |
 
 B is outlined even where yaw applies because B co-rotates with the seam — yaw can never
@@ -374,7 +374,11 @@ the standard's text (all quotations below are from the PDF, by sub-clause):
 | `edge` | edge joint (3.14) | "meet at their edges at an angle of 0° to 30°" — the flush stack sits at α = 0° inside that band, so the class is correctly named as-is. 3.13/3.14 partition the edge-contact family at 30° with no gap and no overlap: the corner/edge disjointness is the standard's, not ours |
 
 Each scene carries the derived `joint.iso_17659_term`, so every type name in a figure is
-the standard's, not ours. **Excluded types, stated rather than left to be noticed:**
+the standard's, not ours — and the derived `joint.iso_9692_ref`, the ISO 9692-1
+preparation sub-clause the geometry satisfies (`3.1.1/4.1.1` at 70–100°, `3.1.3/4.1.2`
+over the widened 60–120°, `1.2.1`/`2.1` for butt by thickness, `1.1` for edge; `null`
+where the standard has no row — lap, and thicknesses outside a row's scope — which is
+itself the honest record). **Excluded types, stated rather than left to be noticed:**
 
 - **Parallel joint (3.8** — "en se recouvrant **totalement**", e.g. explosive cladding**)**
   is excluded **because its join is an area bond over the whole faying surface (3.4),

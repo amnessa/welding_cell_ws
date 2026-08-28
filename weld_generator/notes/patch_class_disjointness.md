@@ -53,18 +53,14 @@ uses to identify seam-bearing edges, applied at generation time. Reject (route t
 stratum) when violated.
 
 **Lap vs edge:** the parts must not share (or nearly share) a common edge. Edge joints are
-flush by construction (`stack_offset = 0`, unchanged). For lap the forbidden bands are:
-
-- `overlap < c` — B's leading edge nearly flush with A's welded edge (the lip case)
-- `|overlap − W_A| < c` — B's leading edge hovering over A's **far** edge (the same flush
-  configuration on the other side; only applies when `overlap ≤ W_A + c` — beyond that B
-  cleanly overspans and A's far edge sits mid-face under B)
-- end-edge coincidence: no end edge of one part within `c` of a near-parallel end edge of
-  the other (near-AND-parallel, like the T rule — an end edge crossing the band at an
-  angle is not a flush candidate)
-
-Where parallel faces would put two edges within `c`, either resample the offending offset
-or use the D28 yaw to break the coincidence — yaw for lap already exists.
+flush by construction (`stack_offset = 0`, unchanged). For lap the test is generic under
+full-circle yaw (amended 2026-08-27, when the yaw range became the whole circle): **no
+boundary edge of B's yawed footprint may run near-parallel within `c` of a boundary edge
+of A.** This subsumes the first draft's three yaw-0 special cases — `overlap < c` (the
+lip), `|overlap − W_A| < c` (flush at A's far edge), and end-edge coincidence — and
+catches what they could not: at yaw ≈ 180° the rotation about the strip centroid lands
+B's leading edge exactly on A's welded edge, so laps genuinely cannot take yaw within
+~10° of 180 (pinned by test). An edge crossing a band at an angle is never flush.
 
 **Corner needs no clearance (ruled 2026-08-27):** the seam stays at the corner. B past
 A's edge IS the class definition (§3.13, parts meeting at their edges), so the existing

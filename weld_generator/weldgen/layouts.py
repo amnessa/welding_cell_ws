@@ -91,19 +91,49 @@ def class_ambiguity(spec: JointSpec, joint_type: str) -> list[str]:
                 break
 
     elif joint_type == "lap":
+        # Generic under full-circle yaw: any boundary edge of B's YAWED footprint
+        # running near-parallel within c of a boundary edge of A is a flush-coincidence
+        # (edge-like) configuration. This subsumes the three yaw-0 special cases of the
+        # first draft (overlap < c, flush at A's far edge, end coincidence) and catches
+        # what the special cases could not: at yaw ~ 180 the rotation about the strip
+        # centroid lands B's leading edge exactly on A's welded edge - always flush, so
+        # laps genuinely cannot take yaw within ~10 deg of 180.
         overlap = float(spec.stack_offset_mm or 0.0)
-        near_parallel = abs(spec.in_plane_yaw_deg) < AMBIGUITY_PARALLEL_DEG
-        if near_parallel and overlap < c:
-            out.append("edge")                       # the lap-with-a-lip case
-        elif near_parallel and overlap <= spec.W_A + c                 and abs(overlap - spec.W_A) < c:
-            out.append("edge")                       # flush at A's FAR edge instead
-        elif near_parallel:
-            # end-edge coincidence: B's ends vs A's ends (parallel at yaw ~ 0)
-            for be in (spec.length_offset_mm - spec.L_B / 2.0,
-                       spec.length_offset_mm + spec.L_B / 2.0):
-                if min(abs(be - spec.L_A / 2.0), abs(be + spec.L_A / 2.0)) < c:
+        if spec.outline_B is not None:
+            o = np.asarray(spec.outline_B, dtype=float)
+            fp = np.column_stack([o[:, 0] + spec.length_offset_mm,
+                                  o[:, 1] - overlap])
+        else:
+            x0, x1 = (spec.length_offset_mm - spec.L_B / 2.0,
+                      spec.length_offset_mm + spec.L_B / 2.0)
+            fp = np.array([[x0, -overlap], [x1, -overlap],
+                           [x1, spec.H_B - overlap], [x0, spec.H_B - overlap]])
+        yaw = np.radians(spec.in_plane_yaw_deg)
+        R = np.array([[np.cos(yaw), -np.sin(yaw)], [np.sin(yaw), np.cos(yaw)]])
+        pivot = np.array([spec.length_offset_mm, -overlap / 2.0])
+        fp = (fp - pivot) @ R.T + pivot
+        hx = spec.L_A / 2.0
+        a_edges = [(np.array([-hx, 0.0]), np.array([hx, 0.0])),
+                   (np.array([-hx, -spec.W_A]), np.array([hx, -spec.W_A])),
+                   (np.array([-hx, 0.0]), np.array([-hx, -spec.W_A])),
+                   (np.array([hx, 0.0]), np.array([hx, -spec.W_A]))]
+        k = len(fp)
+        done = False
+        for i in range(k):
+            b0, b1 = fp[i], fp[(i + 1) % k]
+            e = b1 - b0
+            ang_b = np.degrees(np.arctan2(e[1], e[0]))
+            for a0, a1 in a_edges:
+                ea = a1 - a0
+                ang_a = np.degrees(np.arctan2(ea[1], ea[0]))
+                rel = abs(((ang_b - ang_a) + 90.0) % 180.0 - 90.0)
+                if rel < AMBIGUITY_PARALLEL_DEG \
+                        and _seg_seg_dist_2d(b0, b1, a0, a1) < c:
                     out.append("edge")
+                    done = True
                     break
+            if done:
+                break
 
     elif joint_type == "edge":
         # The welded edge is exactly flush by construction; every NON-welded pair must
@@ -324,36 +354,10 @@ def max_supported_yaw_deg(spec: JointSpec, joint_type: str,
     Scanned at `step_deg`; the largest angle before the first failure is returned. D27
     holds: the seam length remains pinned by the supported run.
     """
-    if joint_type == "T":
-        width = spec.t_B
-        cy = spec.linear_misalignment_mm + spec.t_B / 2.0
-        ax = (-spec.L_A / 2.0 + margin_mm, spec.L_A / 2.0 - margin_mm)
-        ay = (-spec.W_A / 2.0 + margin_mm, spec.W_A / 2.0 - margin_mm)
-        off_hi = max(0.0, width / 2.0 - margin_mm)
-        offs = (-off_hi, 0.0, off_hi)                  # both fillet lines are interior
-    elif joint_type == "lap":
-        # The contact strip is A intersect B: y in [-min(overlap, W_A), 0]. Its y=0 edge
-        # IS A's boundary edge - the A-side toe candidate - and a chord through a
-        # boundary point in any tilted direction is half-length, so testing that edge
-        # pinned every lap to yaw 0 (measured: 21 of 40 bench seeds). What the bound
-        # must protect is the PRIMARY lap fillet, B's leading toe at the strip's other
-        # edge, which is interior whenever B does not overspan A; the A-edge toe just
-        # shortens under yaw and D4's exact clip records whatever run survives. When B
-        # overspans A (overlap >= W_A) both strip edges are A's own boundary, so only
-        # the centreline is testable.
-        width = min(float(spec.stack_offset_mm or 0.0), spec.W_A)
-        cy = -width / 2.0
-        ax = (-spec.L_A / 2.0 + margin_mm, spec.L_A / 2.0 - margin_mm)
-        ay = (-spec.W_A + margin_mm, -margin_mm)       # A occupies y in [-W_A, 0]
-        off_lo = max(0.0, width / 2.0 - margin_mm)
-        if float(spec.stack_offset_mm or 0.0) < spec.W_A:
-            offs = (-off_lo, 0.0)                      # leading toe + centreline
-        else:
-            offs = (0.0,)
-    else:
+    geo = _yaw_support_geometry(spec, joint_type, margin_mm, min_run_frac)
+    if geo is None:
         return 0.0
-    cx = spec.length_offset_mm
-    need = float(min_run_frac) * min(spec.L_A, spec.L_B)
+    ax, ay, cx, cy, offs, need = geo
 
     def chord(px, py, th_rad):
         d = np.array([np.cos(th_rad), np.sin(th_rad)])
@@ -386,6 +390,108 @@ def max_supported_yaw_deg(spec: JointSpec, joint_type: str,
             break
         best = th
     return float(min(best, 90.0))
+
+
+def _yaw_support_geometry(spec: JointSpec, joint_type: str, margin_mm: float,
+                          min_run_frac: float):
+    """`(ax, ay, cx, cy, offs, need)` for the seam-support chord test, or None.
+
+    `offs` are STRIP-FIXED offsets: `pivot + off * n(theta)` with a continuous
+    `n(theta) = (-sin, cos)` follows the rotating contact strip, so the same off means
+    the same physical line (the leading toe, the centreline) at every yaw - including
+    past 90 deg, where a folded angle would silently test the wrong side.
+    """
+    if joint_type == "T":
+        width = spec.t_B
+        cy = spec.linear_misalignment_mm + spec.t_B / 2.0
+        ax = (-spec.L_A / 2.0 + margin_mm, spec.L_A / 2.0 - margin_mm)
+        ay = (-spec.W_A / 2.0 + margin_mm, spec.W_A / 2.0 - margin_mm)
+        off_hi = max(0.0, width / 2.0 - margin_mm)
+        offs = (-off_hi, 0.0, off_hi)                  # both fillet lines are interior
+    elif joint_type == "lap":
+        # The contact strip is A intersect B: y in [-min(overlap, W_A), 0]. Its y=0 edge
+        # IS A's boundary edge - the A-side toe candidate - and a chord through a
+        # boundary point in any tilted direction is half-length, so testing that edge
+        # pinned every lap to yaw 0 (measured: 21 of 40 bench seeds). What the bound
+        # must protect is the PRIMARY lap fillet, B's leading toe at the strip's other
+        # edge, which is interior whenever B does not overspan A; the A-edge toe just
+        # shortens under yaw and D4's exact clip records whatever run survives. When B
+        # overspans A (overlap >= W_A) both strip edges are A's own boundary, so only
+        # the centreline is testable.
+        width = min(float(spec.stack_offset_mm or 0.0), spec.W_A)
+        cy = -width / 2.0
+        ax = (-spec.L_A / 2.0 + margin_mm, spec.L_A / 2.0 - margin_mm)
+        ay = (-spec.W_A + margin_mm, -margin_mm)       # A occupies y in [-W_A, 0]
+        off_lo = max(0.0, width / 2.0 - margin_mm)
+        if float(spec.stack_offset_mm or 0.0) < spec.W_A:
+            offs = (-off_lo, 0.0)                      # leading toe + centreline
+        else:
+            offs = (0.0,)
+    else:
+        return None
+    cx = spec.length_offset_mm
+    need = float(min_run_frac) * min(spec.L_A, spec.L_B)
+    return ax, ay, cx, cy, offs, need
+
+
+#: Grid pitch for the full-circle feasible-yaw scan. The support criterion is smooth at
+#: plate scale, and every accepted configuration is re-verified downstream by the D4
+#: clip and separation gates, so a borderline jitter can only cost a rejected seed,
+#: never a wrong scene.
+YAW_GRID_DEG = 1.0
+
+
+def feasible_yaw_deg(spec: JointSpec, joint_type: str,
+                     margin_mm: float = 1.0, min_run_frac: float = 0.5) -> np.ndarray:
+    """All grid angles in [-180, 180) keeping the supported seam run (full circle, D28).
+
+    The feasible set need not be a contiguous +-interval: a long narrow A supports the
+    seam near 0 and near 180 but not sideways, and yaw 180 is a genuinely different
+    configuration from 0 (B's body points the other way), which is why the range is the
+    circle and not a folded half."""
+    geo = _yaw_support_geometry(spec, joint_type, margin_mm, min_run_frac)
+    if geo is None:
+        return np.zeros(0)
+    ax, ay, cx, cy, offs, need = geo
+
+    def chord(px, py, th_rad):
+        d = np.array([np.cos(th_rad), np.sin(th_rad)])
+        ts = []
+        for k, (lo_, hi_) in enumerate((ax, ay)):
+            if abs(d[k]) < 1e-12:
+                if not (lo_ <= (px, py)[k] <= hi_):
+                    return 0.0
+                ts.append((-np.inf, np.inf))
+            else:
+                a, b = (lo_ - (px, py)[k]) / d[k], (hi_ - (px, py)[k]) / d[k]
+                ts.append((min(a, b), max(a, b)))
+        t0 = max(ts[0][0], ts[1][0])
+        t1 = min(ts[0][1], ts[1][1])
+        return max(0.0, t1 - t0)
+
+    out = []
+    for th in np.arange(-180.0, 180.0, YAW_GRID_DEG):
+        a = np.radians(th)
+        n = np.array([-np.sin(a), np.cos(a)])
+        if all(chord(cx + off * n[0], cy + off * n[1], a) >= need for off in offs):
+            out.append(th)
+    return np.asarray(out, dtype=float)
+
+
+def sample_yaw_deg(spec: JointSpec, joint_type: str,
+                   rng: np.random.Generator) -> float:
+    """Uniform over the feasible set of the FULL circle (two draws: cell + jitter).
+
+    Consumes no draws when the set is empty, matching the pre-360 behaviour where a
+    zero bound consumed none - so the per-seed draw sequence stays deterministic and
+    the outline draws that follow are untouched on exactly the same seeds."""
+    angles = feasible_yaw_deg(spec, joint_type)
+    if len(angles) == 0:
+        return 0.0
+    idx = int(rng.integers(len(angles)))
+    jitter = float(rng.uniform(-YAW_GRID_DEG / 2.0, YAW_GRID_DEG / 2.0))
+    yaw = float(angles[idx]) + jitter
+    return float((yaw + 180.0) % 360.0 - 180.0)
 
 
 def _layout_T(spec: JointSpec, T: np.ndarray) -> list[Slab]:

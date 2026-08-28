@@ -183,9 +183,11 @@ described as something more.
 
 ## Open items opened by this patch
 
-- [ ] Pick the yaw range for T and lap — full 0–360° with a seam-support constraint, or a
-      restricted range. Full range is more honest; check it does not make the lower plate
-      absurdly large to keep support
+- [x] Pick the yaw range for T and lap — RESOLVED 2026-08-27, in two steps: first
+      per-scene support-limited ±90°, then (ruled with D31 in place) the **full circle**,
+      uniform over the per-scene feasible set. No lower-plate inflation was needed: the
+      support bound is per-scene and honest, and D31 rejects the flush-coincidence
+      angles (lap yaw ≈ 180°) that the full circle newly exposes
 - [ ] Decide whether polygon outlines are convex-only. Concave outlines add re-entrant corners
       (strong hard negatives) but complicate the face registry and watertightness
 - [ ] Pipe-to-pipe: pin the parametric form for the saddle curve before implementing, since

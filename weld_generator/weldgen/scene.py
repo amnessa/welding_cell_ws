@@ -153,6 +153,36 @@ def _iso_17659_term(joint_type: str, included_angle_deg: float) -> str:
             "edge": "edge joint (3.14)"}[joint_type]
 
 
+def _iso_9692_ref(joint_type: str, included_angle_deg: float, t_min: float,
+                  prep: str) -> str | None:
+    """The ISO 9692-1:2013 preparation sub-clause the sampled geometry falls under.
+
+    Square preparation only (Phase 6b extends this with the groove table). Recording the
+    sub-clause per scene is the plan's own instruction from the 9692-1 review: the
+    60-120 deg fillet range is [ISO], but it is the union of two rows, and which row a
+    scene satisfies is a stratification axis Phase 4 gets for free. None where the
+    standard has no row for the geometry - lap (no 9692-1 lap preparation exists; the
+    overlap is [ours]) and thicknesses outside a row's scope - which is itself the
+    honest record.
+    """
+    if prep != "square":
+        return None
+    if joint_type in ("T", "corner"):
+        if t_min <= 2.0:
+            return None                       # Table 3 requires t1, t2 > 2
+        return ("3.1.1/4.1.1" if 70.0 <= included_angle_deg <= 100.0
+                else "3.1.3/4.1.2")           # the widened 60-120 rows
+    if joint_type == "butt":
+        if t_min <= 4.0:
+            return "1.2.1"                    # t <= 4, welded from one side
+        if t_min <= 8.0:
+            return "2.1"                      # t <= 8, welded from both sides
+        return None                           # square prep beyond 8 mm has no row
+    if joint_type == "edge":
+        return "1.1"                          # raised edges, t <= 2 (enforced upstream)
+    return None                               # lap
+
+
 def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
     """Generate one scene. Returns `(scene_json, arrays)`.
 
@@ -438,6 +468,9 @@ def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict
             # dataset outright: its join is an area bond, not a linear seam, so there
             # is no seam curve to construct - outside the problem definition.
             "iso_17659_term": _iso_17659_term(joint_type, spec.included_angle_deg),
+            # ISO 9692-1 preparation sub-clause, derived - see _iso_9692_ref.
+            "iso_9692_ref": _iso_9692_ref(joint_type, spec.included_angle_deg,
+                                          min(spec.t_A, spec.t_B), cfg["prep"]),
             # D32: candidate other-types when this scene is class-boundary stratum
             # material; null in disjoint and pre-D31 corpora.
             "ambiguous_with": ambiguous if ambiguous else None,
