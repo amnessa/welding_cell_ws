@@ -238,6 +238,23 @@ cone parameters stay as they are; only the apex moves, and only for `prep != "sq
    recorded (a curved seam can be partially reachable; work-angle fallback per point
    is a noted refinement, not yet needed — every sampled weld cleared at 1,0).
    `ray_hits_part` now dispatches SweptSlab (AABB + exact-containment refinement).
+
+   **Scene assembly DONE 2026-08-28** (`weldgen/scene_curved.py`): a curved scene is a
+   SCENE — same `(scene_json, arrays)` contract, same writer, same schema (validated
+   per family), same content hash, generated through `weldgen generate` when a preset
+   sets `seam_families` (`configs/curved_smoke.yaml`; `out/curved_smoke` at 14 seeds,
+   10 emitted across five families). Stream mapping keeps the D3 order legible:
+   `seam_curve` draws the family and curve, `joint_config` the realization's nuisance
+   dims, `placement` a z-preserving pose (fixture off), camera/surface/noise as in the
+   plate pipeline. The generation gate runs BEFORE emission (rediscovery ≤ 1e-6 mm for
+   #2–#4, consistency residual for #5–#7, chord ≤ 0,25 mm for D34; a failure raises,
+   never emits). Emitted seams carry world-frame `parametric` (`transform_parametric`,
+   valid under z-preserving poses — the offset kind refuses anything else), `closed`,
+   per-sample `seam_<i>_dihedral` arrays backing `{min,max,mean}` summaries (scalar
+   when constant, so plate consumers keep reading numbers), per-point
+   tangent/approach/nA/nB, `clear_fraction`, and the D22 negatives (bores, toes).
+   Pinned by test: bit-reproducibility, and the D1 receipt at FILE level — the stored
+   parametric block resamples into the stored `seams.npz` arrays.
 4. Grooves (D35 pool, D30 straight-butt-only, `groove_root` per D36).
 5. Regenerate gates: chord-error gate (D34), D28 gate re-run (curved seams enter as
    their chord direction? — resolve when the sampler exists), full suite.

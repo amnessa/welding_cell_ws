@@ -196,6 +196,14 @@
             "null"
           ],
           "description": "Derived ISO 9692-1:2013 preparation sub-clause the sampled geometry satisfies (square prep); null where the standard has no row (lap, out-of-scope thickness)."
+        },
+        "seam_family": {
+          "type": "string",
+          "description": "Phase 6b: the D29 curve family this scene realises (circle, ellipse, saddle, rounded_rect, swept_path, arc_butt); absent for the plate pipeline."
+        },
+        "realization": {
+          "type": "object",
+          "description": "Phase 6b: the artifact parameters DERIVED from the drawn curve (D29 curve-first) - pipe radii/axes, tube dims, band offsets."
         }
       },
       "required": [
@@ -244,6 +252,10 @@
             "standoff_mm": {
               "type": "number",
               "exclusiveMinimum": 0
+            },
+            "bore_min_diameter_mm": {
+              "type": "number",
+              "description": "Phase 6b [ours], D13-precedent semantic gate: a bore/cavity seam is weldable only if the cavity admits the torch BODY - the local cone cannot see confinement (an open 50 mm bore clears a 15 mm cone, measured)."
             }
           }
         },
@@ -382,6 +394,10 @@
           "outline_shape": {
             "type": "string",
             "description": "Prism only - D28 vocabulary entry the outline was sampled from."
+          },
+          "params": {
+            "type": "object",
+            "description": "Phase 6b primitives: the exact solid parameters (tube: r_outer/wall/length/base_cut/gap; swept_slab: spine parametric (part-local) + offsets + z-range). Slabs and prisms carry theirs in dims_mm/outline_uv instead."
           }
         }
       }
@@ -520,7 +536,8 @@
               "no_contact",
               "too_short",
               "toe_of_centreline",
-              "wrong_class_for_joint"
+              "wrong_class_for_joint",
+              "confined_bore"
             ],
             "description": "Why this candidate is not weldable. `wrong_class_for_joint` is RETIRED as of 2.3.0 - off-class seams now carry matches_joint_type: false and stay weldable. The member is kept so the enum remains append-only; nothing emits it."
           },
@@ -661,6 +678,13 @@
           "closed": {
             "type": "boolean",
             "description": "Phase 6b: true for full intersection curves (circle/ellipse/saddle). The arclength coordinate `s` wraps at length_mm; s = 0 is the curve's own parameter origin (phi = 0 in the stored frame), and endpoint-based rules (tacks, MPS) use the wrap convention instead of endpoints. Absent/false for open curves and lines."
+          },
+          "clear_fraction": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Phase 6b: fraction of seam samples whose torch cone clears every part - a curved seam can be partially reachable. Null for plate seams (their verdict is all-or-nothing at the candidate level)."
           }
         },
         "allOf": [

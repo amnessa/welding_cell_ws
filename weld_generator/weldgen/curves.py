@@ -556,6 +556,52 @@ def saddle_from_cylinders(branch_origin, branch_axis, branch_radius_mm: float,
     return curve
 
 
+def transform_parametric(d: dict, T: np.ndarray) -> dict:
+    """The parametric dict of the same curve after the rigid transform `T`.
+
+    Points map affinely, direction fields rotate. Used to store seam curves in WORLD
+    coordinates while construction works in the joint frame. NOTE the `offset` kind's
+    in-plane normal is defined via the local z axis, so `T` must preserve z-up
+    (rotation about z plus translation) - exactly the pose family fixture-free curved
+    scenes use; anything else raises rather than silently bending the offset.
+    """
+    R = np.asarray(T, dtype=float)[:3, :3]
+    t = np.asarray(T, dtype=float)[:3, 3]
+
+    def pt(v):
+        return [float(x) for x in (R @ np.asarray(v, dtype=float) + t)]
+
+    def vec(v):
+        return [float(x) for x in (R @ np.asarray(v, dtype=float))]
+
+    k = d["kind"]
+    out = dict(d)
+    if k in ("circle", "ellipse", "arc"):
+        out["center_mm"] = pt(d["center_mm"])
+        out["u_dir"] = vec(d["u_dir"])
+        out["v_dir"] = vec(d["v_dir"])
+    elif k == "line":
+        out["p0_mm"] = pt(d["p0_mm"])
+        out["p1_mm"] = pt(d["p1_mm"])
+    elif k == "saddle":
+        for key in ("branch_origin_mm", "main_point_mm"):
+            out[key] = pt(d[key])
+        for key in ("branch_axis", "u_dir", "v_dir", "main_axis"):
+            out[key] = vec(d[key])
+    elif k == "bspline":
+        out["control_mm"] = [pt(row) for row in d["control_mm"]]
+    elif k == "composite":
+        out["segments"] = [transform_parametric(seg, T) for seg in d["segments"]]
+    elif k == "offset":
+        z_img = R @ np.array([0.0, 0.0, 1.0])
+        if abs(float(z_img[2]) - 1.0) > 1e-9:
+            raise ValueError("offset curves only transform under z-preserving poses")
+        out["spine"] = transform_parametric(d["spine"], T)
+    else:
+        raise ValueError(f"unknown parametric kind {k!r}")
+    return out
+
+
 def from_parametric(d: dict):
     """Rebuild a curve from its seam-block JSON (the consumer-side inverse)."""
     k = d["kind"]

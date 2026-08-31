@@ -41,11 +41,14 @@ def cmd_generate(args: argparse.Namespace) -> int:
     """
     cfg = load_config(args.config)
     cid = config_id(cfg)
+    gen = generate_scene
+    if cfg.get("seam_families"):
+        from .scene_curved import generate_curved_scene as gen   # Phase 6b, D29
     rows, skipped = [], []
     for i in range(args.n):
         seed = args.seed0 + i
         try:
-            scene, arrays = generate_scene(cfg, seed)
+            scene, arrays = gen(cfg, seed)
         except SceneRejected as e:
             # Recorded in the index, not just printed: the omission policy conditions the
             # dataset unevenly across joint types, so what it dropped has to stay queryable.

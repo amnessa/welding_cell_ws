@@ -127,7 +127,8 @@ def _band_normal(band: SweptSlab, ts: np.ndarray, side: float) -> np.ndarray:
     return n2 @ T[:3, :3].T
 
 
-def curved_seam_set(built: dict[str, Any], n: int = 96) -> list[dict[str, Any]]:
+def curved_seam_set(built: dict[str, Any], n: int = 96,
+                    density_per_mm: float | None = None) -> list[dict[str, Any]]:
     """Every seam a realized configuration carries, with per-point exact frames.
 
     Each entry: `{curve, role, ts, points, tangent, nA, nB, approach, dihedral_deg}`
@@ -146,7 +147,15 @@ def curved_seam_set(built: dict[str, Any], n: int = 96) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
 
     def entry(curve, role, nA_fn, nB_fn):
-        ts = np.linspace(0.0, curve.t_period, n, endpoint=not curve.closed)
+        if density_per_mm is not None:
+            # arclength-uniform at the requested density - the emission grid, matching
+            # `sample(density)`'s point count and the `_s` array convention
+            ts = curve.t_at_arclength(curve.arclengths(
+                max(3, int(round(curve.length_mm * density_per_mm)))
+                if curve.closed else
+                max(2, int(round(curve.length_mm * density_per_mm)) + 1)))
+        else:
+            ts = np.linspace(0.0, curve.t_period, n, endpoint=not curve.closed)
         pts = curve.point(ts)
         nA = nA_fn(ts, pts)
         nB = nB_fn(ts, pts)

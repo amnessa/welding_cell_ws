@@ -50,6 +50,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # D32 - the class-boundary stratum: INVERT the D31 acceptance so only in-band seeds
     # emit, each recording `joint.ambiguous_with`. Used by the amb_* presets only.
     "class_boundary_stratum": False,
+    # Phase 6b - D29 curve families for curved scenes. None keeps the plate pipeline;
+    # a list of family ids (2..7) routes generation through scene_curved.
+    "seam_families": None,
     "plate_width_mm": [50.0, 250.0],
     "thickness_mm": [1.0, 12.0],
     "dissimilar_thickness_p": 0.30,
@@ -145,6 +148,7 @@ GEOMETRY_KEYS = (
     "polygon_outlines",
     "class_disjoint",
     "class_boundary_stratum",
+    "seam_families",
     "stack_offset_frac", "edge_max_thickness_mm", "stacked_max_beta_deg",
     "edge_equal_width_p",
     "quality_mix", "root_gap_mm", "root_gap_over_range_mm",

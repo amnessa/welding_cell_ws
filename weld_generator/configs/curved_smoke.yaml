@@ -1,0 +1,9 @@
+# Phase 6b smoke - one scene per D29 curve family (2-7), the plate pipeline's smoke
+# counterpart for curved scenes. Family 1 (line) lives in the plate presets.
+name: curved_smoke
+seam_families: [2, 3, 4, 5, 6, 7]
+seam_shape: line          # overridden per scene by the family's own shape
+prep: square
+fixture_present: false
+sampling_mode: area_uniform
+sensor_profiles: [d435i, stereo_good, stereo_poor]
