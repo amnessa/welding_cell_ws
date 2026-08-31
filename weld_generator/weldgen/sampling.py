@@ -29,6 +29,26 @@ def sample_slab_surface(
 
     Returns arrays keyed `xyz`, `normals`, `object_id`, `face_id`.
     """
+    if hasattr(slab, "sample_face"):
+        # Phase 6b primitives (Tube / SweptSlab / PreparedSlab) sample their own
+        # faces analytically - positions exactly on the true surfaces, D34's chord
+        # error stays in the mesh. Same registry contract: per-face draw order,
+        # cumulative face ids.
+        xyz, normals, face_ids = [], [], []
+        for local_id, name in enumerate(slab.face_names()):
+            n_pts = int(round(density_per_mm2 * slab.face_area(name)))
+            if n_pts <= 0:
+                continue
+            pts, nrm = slab.sample_face(name, n_pts, rng)
+            xyz.append(pts)
+            normals.append(nrm)
+            face_ids.append(np.full(n_pts, face_id_base + local_id, dtype=np.uint8))
+        xyz = np.vstack(xyz).astype(np.float32)
+        return {"xyz": xyz,
+                "normals": np.vstack(normals).astype(np.float32),
+                "object_id": np.full(len(xyz), slab.object_id, dtype=np.uint8),
+                "face_id": np.concatenate(face_ids)}
+
     is_slab = isinstance(slab, Slab)
     if is_slab:
         L, W, t = (float(v) for v in slab.dims_mm)

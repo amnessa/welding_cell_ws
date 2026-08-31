@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .geom import Prism, Slab, rot_x, rot_z, translate
+from .geom import PreparedSlab, Prism, Slab, rot_x, rot_z, translate
 from .joints import JointSpec
 
 JOINT_TYPES = ("T", "corner", "butt", "lap", "edge")
@@ -526,6 +526,36 @@ def _layout_corner(spec: JointSpec, T: np.ndarray) -> list[Slab]:
     return [A, B]
 
 
+def _grooved_butt(spec: JointSpec, T: np.ndarray) -> list[Slab]:
+    """D35 butt with an edge preparation: PreparedSlab pair (D30: straight only).
+
+    A's prepared edge sits at y = 0 with material at y <= 0, exactly the local frame
+    the primitive defines; B is the same primitive rotated 180 about z so its
+    preparation faces A across the root gap. Equal thickness (forced by the sampler).
+    `h` still offsets B vertically (ISO 5817 no. 5071). Single-bevel prepares A only;
+    B stays a square Slab - ref 1.9.1's asymmetric preparation.
+    """
+    g = dict(spec.groove)
+    prep_dict = {"kind": spec.prep, "bevel_deg": g["bevel_deg_per_side"],
+                 "root_face_mm": g["root_face_mm"]}
+    if spec.prep == "single_U":
+        prep_dict["radius_mm"] = g["radius_mm"]
+    A = PreparedSlab("A", "workpiece", 0, spec.L_A, spec.W_A, spec.t_A,
+                     prep_dict, T)
+    if spec.prep == "single_bevel":
+        B = Slab("B", "workpiece", 1, (spec.L_B, spec.H_B, spec.t_B),
+                 T @ translate(spec.length_offset_mm,
+                               spec.root_gap_mm + spec.H_B / 2.0,
+                               spec.linear_misalignment_mm - spec.t_B / 2.0))
+    else:
+        B = PreparedSlab("B", "workpiece", 1, spec.L_B, spec.H_B, spec.t_B,
+                         dict(prep_dict),
+                         T @ translate(spec.length_offset_mm, spec.root_gap_mm,
+                                       spec.linear_misalignment_mm)
+                         @ rot_z(180.0))
+    return [A, B]
+
+
 def _layout_butt(spec: JointSpec, T: np.ndarray) -> list[Slab]:
     """Coplanar plates, edge to edge across the gap. `h` offsets B vertically.
 
@@ -537,6 +567,8 @@ def _layout_butt(spec: JointSpec, T: np.ndarray) -> list[Slab]:
     has one centreline, on the flush side, which is the physical answer: the other side is
     a step, and ISO 9692-1 treats it as a transition rather than a second weld.
     """
+    if spec.prep != "square":
+        return _grooved_butt(spec, T)
     A = _base_A(spec, T, y_centre=-spec.W_A / 2.0)
     z_centre = -spec.t_A + spec.t_B / 2.0 + spec.linear_misalignment_mm
     B = _flat_B(spec, T,

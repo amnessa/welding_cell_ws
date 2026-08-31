@@ -200,6 +200,7 @@ special case.
 | Primitive | Local axes | Face names |
 |---|---|---|
 | `slab` (Phases 1–2, and the fixture) | `u` = length `L`, `v` = width `W`, `w` = thickness `t` | `+u` `-u` `+v` `-v` `+w` `-w` |
+| `prepared_slab` (Phase 6b, D35 grooves) | `u` = length (seam direction), `v` = width with the prepared edge at v = 0, `w` = thickness (top at w = 0) | `+u` `-u` ends, `-v` back, `+w` `-w` broad, and the ISO 17659 preparation faces: `root` (root face), `fusion` (fusion face), `radius` (single-U's curved run; plane null, cylinder surface). Grooved seams store `seam_<i>_grooveroot` (the root-face-top gap centreline) IN PLACE of the D19 `_root`/`_gapmid` pair, which is square-prep only (D36). |
 | `prism` (Phase 6a, D28 outlines) | `u`, `v` = outline plane, `w` = thickness `t` | `+w` `-w` (the caps — deliberately the slab's broad-face names, so `±w`-based classification is untouched), `s0` … `s{k-1}` (side rectangles; `s0` spans outline vertices 0→1, which the layouts pin as the seam-bearing edge) |
 | `swept_slab` (Phase 6, curved plate) | `u` = sweep parameter, `v` = width, `w` = thickness | `+u` `-u` (end caps), `+v` `-v` (lateral swept), `+w` `-w` (broad offset surfaces) |
 | `cylinder` / `tube` (Phase 6) | `w` = axis | `lateral+` (outer), `lateral-` (inner, tube only), `+w` `-w` (caps) |

@@ -53,6 +53,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # Phase 6b - D29 curve families for curved scenes. None keeps the plate pipeline;
     # a list of family ids (2..7) routes generation through scene_curved.
     "seam_families": None,
+    # D35 (Phase 6b) - groove preparations for butt joints, drawn from valid_preps(t).
+    # Off by default: pre-6b corpora reproduce bit-identically (the draws ride the
+    # seam_curve substream after the outline draws, like every 6-series mechanism).
+    "groove_preps": False,
     "plate_width_mm": [50.0, 250.0],
     "thickness_mm": [1.0, 12.0],
     "dissimilar_thickness_p": 0.30,
@@ -149,6 +153,7 @@ GEOMETRY_KEYS = (
     "class_disjoint",
     "class_boundary_stratum",
     "seam_families",
+    "groove_preps",
     "stack_offset_frac", "edge_max_thickness_mm", "stacked_max_beta_deg",
     "edge_equal_width_p",
     "quality_mix", "root_gap_mm", "root_gap_over_range_mm",
@@ -205,6 +210,74 @@ def angular_misalignment_limit(level: str) -> float:
     unconstrained so we double C.
     """
     return {"D": 4.0, "C": 2.0, "B": 1.0}[level]
+
+
+def valid_preps(t: float) -> tuple[list[str], dict[str, str]]:
+    """The ISO 9692-1 preparations valid at thickness `t` (D35), with their rows.
+
+    Row values verified against the PDF text: 1.3 single-V (3 < t <= 10:
+    40-60 deg included, b <= 4, c <= 2); 1.5 single-V broad root (5-40: ~60 deg,
+    b 1-4, c 2-4); 1.9.1 single-bevel (3 < t <= 10: beta 35-60 deg, b 2-4, c 1-2);
+    1.6/2.6 single-U (t > 12: beta 8-12 deg, b 1-3, c ~4-5, R 6-9). "square" stays in
+    the pool where valid - PARAMETERS 5.0's headline lives there. Thickness and
+    preparation are correlated BY DESIGN; state it in the paper.
+    """
+    refs = {"square": "1.2.1/2.1", "single_bevel": "1.9.1",
+            "single_V": "1.3" if t <= 10.0 else "1.5",
+            "single_U": "1.6/2.6"}
+    if t <= 4.0:
+        pool = ["square"]
+    elif t <= 8.0:
+        pool = ["square", "single_bevel", "single_V"]
+    elif t <= 10.0:
+        pool = ["single_bevel", "single_V"]
+    elif t <= 12.0:
+        pool = ["single_V"]
+    else:
+        pool = ["single_V", "single_U"]
+    return pool, refs
+
+
+def sample_groove(g, t: float) -> tuple[str, dict | None, float | None]:
+    """One D35 draw at thickness `t`: `(prep, groove_dict, row_gap_mm)`.
+
+    The root gap for a grooved joint comes from ITS row's `b` range - the fillet
+    no. 617 machinery does not govern groove preparation - so the returned gap
+    overrides the earlier draw when a groove is selected.
+    """
+    pool, refs = valid_preps(t)
+    prep = str(g.choice(pool))
+    if prep == "square":
+        return prep, None, None
+    if prep == "single_bevel":
+        beta = float(g.uniform(35.0, 60.0))
+        b = float(g.uniform(2.0, 4.0))
+        c = float(g.uniform(1.0, 2.0))
+        groove = {"kind": prep, "groove_included_angle_deg": beta,
+                  "bevel_deg_per_side": beta, "root_face_mm": c,
+                  "radius_mm": None, "iso_ref": refs[prep]}
+    elif prep == "single_V":
+        if t <= 10.0:
+            alpha = float(g.uniform(40.0, 60.0))
+            b = float(g.uniform(1.0, 4.0))
+            c = float(g.uniform(0.5, 2.0))
+        else:
+            alpha = float(g.uniform(58.0, 62.0))       # row 1.5: alpha ~ 60
+            b = float(g.uniform(1.0, 4.0))
+            c = float(g.uniform(2.0, 4.0))
+        groove = {"kind": prep, "groove_included_angle_deg": alpha,
+                  "bevel_deg_per_side": alpha / 2.0, "root_face_mm": c,
+                  "radius_mm": None, "iso_ref": refs[prep]}
+    else:                                              # single_U
+        beta = float(g.uniform(8.0, 12.0))
+        b = float(g.uniform(1.0, 3.0))
+        c = float(g.uniform(4.0, 5.0))
+        r_cap = (t - c - 1.0) / (1.0 - np.sin(np.radians(beta)))
+        radius = float(g.uniform(6.0, min(9.0, max(6.01, r_cap))))
+        groove = {"kind": prep, "groove_included_angle_deg": 2.0 * beta,
+                  "bevel_deg_per_side": beta, "root_face_mm": c,
+                  "radius_mm": radius, "iso_ref": refs[prep]}
+    return prep, groove, b
 
 
 def classify_quality(t_min: float, h: float, beta: float, gap: float,
@@ -402,6 +475,21 @@ def sample_joint(cfg: dict[str, Any], streams: Streams
             shape_A, outline_A = sample_outline(g_sc, L_A, W_A)
         shape_B, outline_B = sample_outline(g_sc, L_B, H_B)
 
+    # D35 - groove preparation for butt joints, after the outline draws on the same
+    # substream. A groove forces equal thickness (the 9692-1 rows assume it; the
+    # dissimilar-thickness transition joint is a different preparation family) and
+    # takes its root gap from ITS row's b range, overriding the 617-driven draw.
+    prep = "square"
+    groove = None
+    if bool(cfg.get("groove_preps", False)) and joint_type == "butt":
+        prep, groove, row_gap = sample_groove(streams["seam_curve"],
+                                              min(t_A, t_B))
+        if prep != "square":
+            t_B = t_A
+            t_min = t_A
+            throat = 0.7 * t_min
+            gap = row_gap
+
     spec = JointSpec(
         L_A=L_A, W_A=W_A, t_A=t_A,
         L_B=L_B, H_B=H_B, t_B=t_B,
@@ -414,6 +502,7 @@ def sample_joint(cfg: dict[str, Any], streams: Streams
         in_plane_yaw_deg=yaw,
         outline_A=outline_A, outline_B=outline_B,
         outline_shape_A=shape_A, outline_shape_B=shape_B,
+        prep=prep, groove=groove,
     )
     # Store what the joint ACTUALLY satisfies, not what was aimed for (PARAMETERS §2.5).
     return spec, classify_quality(t_min, h, beta, gap, throat), joint_type

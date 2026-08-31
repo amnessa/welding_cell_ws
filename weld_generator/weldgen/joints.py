@@ -74,6 +74,13 @@ class JointSpec:
     outline_B: tuple | None = None
     outline_shape_A: str | None = None
     outline_shape_B: str | None = None
+    #: D35 (Phase 6b): ISO 9692-1 preparation class for BUTT joints, drawn from
+    #: `valid_preps(t)`. "square" is Phase 1-6a's implicit value; the groove dict
+    #: carries the row parameters (groove_included_angle_deg per the naming decision
+    #: reserving `included_angle_deg` for the PART angle, root_face_mm, radius_mm for
+    #: single_U, and the 9692-1 row in iso_ref). D30: straight butt seams only.
+    prep: str = "square"
+    groove: dict | None = None
 
     #: The included angle each joint type takes as its nominal, i.e. the angle at which
     #: part B is undeflected. NOT all 90: a butt joint is coplanar (180) and a lap or

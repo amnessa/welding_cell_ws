@@ -338,6 +338,9 @@ def _judge(A: Slab, fa: str, B: Slab, fb: str, ref: tuple[str, str],
            parts: Sequence[Slab], solids: Sequence[Slab],
            access: dict[str, Any], samples_along: int) -> Candidate | None:
     pa, pb = A.face_plane(fa), B.face_plane(fb)
+    if pa is None or pb is None:
+        return None                    # curved faces (a U-groove's radius) have no
+                                       # plane pair; the curved arms own those seams
     na, nb = pa.n, pb.n
     cross = float(np.linalg.norm(np.cross(na, nb)))
 
@@ -553,7 +556,12 @@ def _coplanar_candidate(A: Slab, fa: str, B: Slab, fb: str, ref: tuple[str, str]
             gap, mid = a0 - b1, 0.5 * (b1 + a0)
         else:
             continue                                   # the faces overlap on this axis
-        if gap > access["contact_tol_mm"]:
+        # Coplanar adjacency has its OWN tolerance when set: a groove's MOUTH is far
+        # wider than its root gap (a 50 deg V on 8 mm plate opens ~9 mm at the top),
+        # and stretching contact_tol itself would re-open the thin-sheet wrap-around
+        # hole it was capped to close. The wider bound applies only here, where the
+        # in-plane gap is measured - never to the intersecting-pair separation gate.
+        if gap > access.get("coplanar_gap_tol_mm", access["contact_tol_mm"]):
             continue                                   # too far apart to be a joint
         other = np.cross(n, axis)
         (c0, c1) = A.face_extent_along(fa, other)

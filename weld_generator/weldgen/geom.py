@@ -1062,6 +1062,413 @@ class SweptSlab:
         return m
 
 
+@dataclass
+class PreparedSlab:
+    """A plate with an ISO 9692-1 edge preparation on its seam edge — Phase 6b step 4.
+
+    Local frame like the butt plate it replaces: `u` = length (the seam direction),
+    `v` = width with the PREPARED edge at v = 0 and material at v <= 0, `w` = thickness
+    with the top face at w = 0 and material down to w = -t (grooves are welded from
+    the top). The prepared edge is a MONOTONE profile `v_edge(w)`:
+
+      * `single_V`     — root face of height `c`, then a straight fusion face receding
+                         at `bevel_deg` from vertical (α/2 of the V's included angle;
+                         each plate carries half the V).
+      * `single_bevel` — same profile with the FULL angle on this plate (its partner
+                         stays a square Slab; 9692-1 ref 1.9.1).
+      * `single_U`     — root face, then a radius `R` sweeping from horizontal to
+                         `bevel_deg` from vertical, then the straight fusion face
+                         (refs 1.6 / 2.6). Requires t - c > R(1 - sin β).
+
+    Face registry: `+u -u` ends, `-v` back, `+w` top, `-w` bottom, and the prepared
+    faces named by ISO 17659 Table 1/2: `root` (root face, ref 4/12), `fusion` (fusion
+    face, ref E), `radius` (the U's curved run; plane None, cylinder surface desc).
+    Monotone `v_edge(w)` is what keeps `contains` EXACT in closed form, so the ray
+    dispatch can refine against it, and every planar face is a rectangle strip - the
+    slab face interface (clip, closest, extent) reduces to corner arithmetic.
+    """
+
+    id: str
+    role: str
+    object_id: int
+    length_mm: float
+    width_mm: float
+    t_mm: float
+    prep: dict                                 # kind, bevel_deg, root_face_mm[, radius_mm]
+    T_world_part: np.ndarray
+
+    _MESH_TOL_MM = 0.05
+
+    def __post_init__(self):
+        k = self.prep["kind"]
+        if k not in ("single_V", "single_bevel", "single_U"):
+            raise ValueError(f"unknown preparation {k!r}")
+        self._beta = np.radians(float(self.prep["bevel_deg"]))
+        self._c = float(self.prep["root_face_mm"])
+        if not (0.0 < self._c < self.t_mm):
+            raise ValueError("root face must be inside the thickness")
+        if k == "single_U":
+            self._R = float(self.prep["radius_mm"])
+            run = self.t_mm - self._c - self._R * (1.0 - np.sin(self._beta))
+            if run <= 0.5:
+                raise ValueError("U radius leaves no straight fusion face")
+            self._z_arc_top = -(self.t_mm - self._c) + self._R * (1.0 - np.sin(self._beta))
+            self._v_arc_top = -self._R * np.cos(self._beta)
+        else:
+            self._R = 0.0
+
+    # --- the profile ------------------------------------------------------------------
+    def v_edge(self, w) -> np.ndarray:
+        """The prepared edge's v at height(s) w (exact; w in [-t, 0])."""
+        w = np.atleast_1d(np.asarray(w, dtype=float))
+        z_root_top = -(self.t_mm - self._c)
+        out = np.zeros(len(w))
+        above = w > z_root_top
+        if self.prep["kind"] in ("single_V", "single_bevel"):
+            out[above] = -(w[above] - z_root_top) * np.tan(self._beta)
+        else:
+            arc = above & (w <= self._z_arc_top)
+            hi = w > self._z_arc_top
+            # arc: centre at (v=0, w=z_root_top + R) in the profile plane, radius R:
+            # v = -sqrt(R^2 - (w - (z_root_top + R))^2) for the lower quarter
+            zc = z_root_top + self._R
+            out[arc] = -np.sqrt(np.clip(self._R ** 2 - (w[arc] - zc) ** 2, 0.0, None))
+            out[hi] = self._v_arc_top - (w[hi] - self._z_arc_top) * np.tan(self._beta)
+        return out
+
+    @property
+    def mouth_v_mm(self) -> float:
+        """How far the prepared edge recedes at the top surface."""
+        return float(self.v_edge(np.array([0.0]))[0])
+
+    # --- registry ---------------------------------------------------------------------
+    def face_names(self) -> tuple[str, ...]:
+        base = ("+u", "-u", "-v", "+w", "-w", "root", "fusion")
+        return base + ("radius",) if self.prep["kind"] == "single_U" else base
+
+    @property
+    def thickness_mm(self) -> float:
+        return float(self.t_mm)
+
+    @property
+    def dims_mm(self) -> tuple[float, float, float]:
+        return (float(self.length_mm), float(self.width_mm), float(self.t_mm))
+
+    @property
+    def part_geometry_id(self) -> str:
+        return (f"prepared_{self.prep['kind'].lower()}_{self.length_mm}x"
+                f"{self.width_mm}x{self.t_mm}")
+
+    def _face_corners(self, name: str) -> np.ndarray:
+        """The 4 local corners of a PLANAR face, CCW seen from outside."""
+        L2, W, t = self.length_mm / 2.0, self.width_mm, self.t_mm
+        zr = -(t - self._c)
+        vm = self.mouth_v_mm
+        if self.prep["kind"] == "single_U":
+            z_lo, v_lo = self._z_arc_top, self._v_arc_top   # fusion starts atop the arc
+        else:
+            z_lo, v_lo = zr, 0.0
+        C = {
+            "-v": [(-L2, -W, -t), (L2, -W, -t), (L2, -W, 0.0), (-L2, -W, 0.0)],
+            "+w": [(-L2, -W, 0.0), (L2, -W, 0.0), (L2, vm, 0.0), (-L2, vm, 0.0)],
+            "-w": [(-L2, 0.0, -t), (L2, 0.0, -t), (L2, -W, -t), (-L2, -W, -t)],
+            "root": [(-L2, 0.0, -t), (L2, 0.0, -t), (L2, 0.0, zr), (-L2, 0.0, zr)],
+            "fusion": [(-L2, v_lo, z_lo), (L2, v_lo, z_lo),
+                       (L2, vm, 0.0), (-L2, vm, 0.0)],
+        }
+        if name in C:
+            return np.asarray(C[name], dtype=float)
+        raise ValueError(name)
+
+    def face_center(self, name: str) -> np.ndarray:
+        if name == "radius":
+            mid = 0.5 * (np.pi / 2.0 - self._beta)
+            zc = -(self.t_mm - self._c) + self._R
+            local = np.array([0.0, -self._R * np.sin(mid),
+                              zc - self._R * np.cos(mid)])
+            T = self.T_world_part
+            return T[:3, :3] @ local + T[:3, 3]
+        return self.face_vertices(name).mean(axis=0)   # face_vertices is world
+
+    def face_vertices(self, name: str) -> np.ndarray:
+        """World corners of a planar face (the coplanar arm's in-plane basis source).
+
+        End caps return their bounding rectangle - only edge DIRECTIONS are consumed
+        from this, and the bevel notch does not change them.
+        """
+        if name in ("+u", "-u"):
+            x = np.copysign(self.length_mm / 2.0, 1.0 if name == "+u" else -1.0)
+            local = np.array([[x, -self.width_mm, -self.t_mm],
+                              [x, 0.0, -self.t_mm],
+                              [x, 0.0, 0.0],
+                              [x, -self.width_mm, 0.0]])
+        elif name == "radius":
+            raise ValueError("the radius face is not planar")
+        else:
+            local = self._face_corners(name)
+        T = self.T_world_part
+        return local @ T[:3, :3].T + T[:3, 3]
+
+    def face_plane(self, name: str):
+        R = self.T_world_part[:3, :3]
+        tr = self.T_world_part[:3, 3]
+        if name == "radius":
+            return None
+        if name in ("+u", "-u"):
+            n_loc = np.array([1.0 if name == "+u" else -1.0, 0.0, 0.0])
+            p_loc = np.array([np.copysign(self.length_mm / 2.0, n_loc[0]), 0.0, 0.0])
+        else:
+            corners = self._face_corners(name)
+            e1 = corners[1] - corners[0]
+            e2 = corners[3] - corners[0]
+            n_loc = np.cross(e1, e2)
+            n_loc /= np.linalg.norm(n_loc)
+            # orient outward: away from the material centroid
+            cen = np.array([0.0, -self.width_mm / 2.0, -self.t_mm / 2.0])
+            if float((corners[0] - cen) @ n_loc) < 0:
+                n_loc = -n_loc
+            p_loc = corners[0]
+        n = R @ n_loc
+        c = R @ p_loc + tr
+        return Plane(n=n, d=float(-n @ c))
+
+    def face_normal(self, name: str):
+        pl = self.face_plane(name)
+        if pl is None:
+            raise ValueError("the radius face has no single normal")
+        return pl.n
+
+    def face_area(self, name: str) -> float:
+        if name in ("+u", "-u"):
+            # end cap: width*t minus the groove's profile cut - numeric strip integral
+            ws = np.linspace(-self.t_mm, 0.0, 512)
+            return float(np.trapezoid(self.width_mm + self.v_edge(ws), ws))
+        if name == "radius":
+            ang = np.pi / 2.0 - self._beta
+            return float(self._R * ang * self.length_mm)
+        c = self._face_corners(name)
+        return float(np.linalg.norm(c[1] - c[0]) * np.linalg.norm(c[3] - c[0]))
+
+    @property
+    def surface_area_mm2(self) -> float:
+        return sum(self.face_area(n) for n in self.face_names())
+
+    def surface_desc(self, name: str) -> dict | None:
+        if name != "radius":
+            return None
+        T = self.T_world_part
+        zc = -(self.t_mm - self._c) + self._R
+        axis_pt = T[:3, :3] @ np.array([0.0, 0.0, zc]) + T[:3, 3]
+        return {"kind": "cylinder", "point_mm": [float(v) for v in axis_pt],
+                "axis": [float(v) for v in T[:3, 0]],
+                "radius_mm": float(self._R), "outward": False}
+
+    # --- slab face interface (rect strips: corner arithmetic) -------------------------
+    def face_extent_along(self, name: str, direction) -> tuple[float, float]:
+        d = np.asarray(direction, dtype=float)
+        T = self.T_world_part
+        if name in ("+u", "-u"):
+            ws = np.linspace(-self.t_mm, 0.0, 64)
+            pts = np.column_stack([np.full(64, np.copysign(self.length_mm / 2.0,
+                                                           1.0 if name == "+u" else -1.0)),
+                                   np.zeros(64), ws])
+            pts[:, 1] = 0.0
+            lo = np.column_stack([pts[:, 0], -np.full(64, self.width_mm), ws])
+            world = np.vstack([pts, lo]) @ T[:3, :3].T + T[:3, 3]
+        elif name == "radius":
+            phis = np.linspace(0.0, np.pi / 2.0 - self._beta, 64)
+            zc = -(self.t_mm - self._c) + self._R
+            ring = np.column_stack([np.zeros(64), -self._R * np.sin(phis),
+                                    zc - self._R * np.cos(phis)])
+            world = np.vstack([ring + [self.length_mm / 2.0, 0, 0],
+                               ring + [-self.length_mm / 2.0, 0, 0]]) \
+                @ T[:3, :3].T + T[:3, 3]
+        else:
+            world = self._face_corners(name) @ T[:3, :3].T + T[:3, 3]
+        proj = world @ d
+        return float(proj.min()), float(proj.max())
+
+    def closest_on_face(self, name: str, pts: np.ndarray) -> np.ndarray:
+        """Closest point on a PLANAR face patch (rect strip clamp); the radius face is
+        never a seam-bearing patch and is not supported here."""
+        corners = self._face_corners(name) if name not in ("+u", "-u") else None
+        T = self.T_world_part
+        q = (np.atleast_2d(np.asarray(pts, dtype=float)) - T[:3, 3]) @ T[:3, :3]
+        if corners is None:
+            x = np.copysign(self.length_mm / 2.0, 1.0 if name == "+u" else -1.0)
+            out = q.copy()
+            out[:, 0] = x
+            out[:, 1] = np.clip(out[:, 1], -self.width_mm, self.v_edge(
+                np.clip(out[:, 2], -self.t_mm, 0.0)))
+            out[:, 2] = np.clip(out[:, 2], -self.t_mm, 0.0)
+        else:
+            o = corners[0]
+            e1 = corners[1] - corners[0]
+            e2 = corners[3] - corners[0]
+            L1, L2n = np.linalg.norm(e1), np.linalg.norm(e2)
+            u1, u2 = e1 / L1, e2 / L2n
+            rel = q - o
+            a = np.clip(rel @ u1, 0.0, L1)
+            b = np.clip(rel @ u2, 0.0, L2n)
+            out = o + a[:, None] * u1 + b[:, None] * u2
+        return out @ T[:3, :3].T + T[:3, 3]
+
+    def face_clip_line(self, name: str, point, direction,
+                       slack_mm: float = 0.0) -> tuple[float, float] | None:
+        """The Phase 6a exact 2-D clip, on a rectangle strip given by its corners
+        (same slack semantics, including the near-parallel waiver)."""
+        if name == "radius":
+            return None
+        corners = (self._face_corners(name) if name not in ("+u", "-u") else None)
+        T = self.T_world_part
+        p = (np.asarray(point, dtype=float) - T[:3, 3]) @ T[:3, :3]
+        d = np.asarray(direction, dtype=float) @ T[:3, :3]
+        if corners is None:
+            return None                        # end caps never carry a seam line
+        o = corners[0]
+        e1 = corners[1] - corners[0]
+        e2 = corners[3] - corners[0]
+        L1, L2n = np.linalg.norm(e1), np.linalg.norm(e2)
+        u1, u2 = e1 / L1, e2 / L2n
+        rel = p - o
+        p2 = np.array([rel @ u1, rel @ u2])
+        d2 = np.array([d @ u1, d @ u2])
+        ivs = []
+        for k, Lk in ((0, L1), (1, L2n)):
+            if abs(d2[k]) < 1e-12:
+                if p2[k] < -slack_mm - 1e-9 or p2[k] > Lk + slack_mm + 1e-9:
+                    return None
+                ivs.append((-np.inf, np.inf))
+            else:
+                a = (0.0 - p2[k]) / d2[k]
+                b = (Lk - p2[k]) / d2[k]
+                ivs.append((min(a, b), max(a, b)))
+        lo = max(v[0] for v in ivs)
+        hi = min(v[1] for v in ivs)
+        if hi - lo > 1e-9 and np.isfinite(lo) and np.isfinite(hi):
+            return float(lo), float(hi)
+        if slack_mm <= 0.0:
+            return None
+        for k, Lk in ((0, L1), (1, L2n)):
+            other = ivs[1 - k]
+            if not (np.isfinite(other[0]) and np.isfinite(other[1])
+                    and other[1] - other[0] > 1e-9):
+                continue
+            c0 = p2[k] + other[0] * d2[k]
+            c1 = p2[k] + other[1] * d2[k]
+            if min(c0, c1) >= -slack_mm - 1e-9 and max(c0, c1) <= Lk + slack_mm + 1e-9:
+                return float(other[0]), float(other[1])
+        return None
+
+    # --- solid queries ----------------------------------------------------------------
+    def contains(self, points: np.ndarray, tol: float = 0.0) -> np.ndarray:
+        T = self.T_world_part
+        q = (np.atleast_2d(np.asarray(points, dtype=float)) - T[:3, 3]) @ T[:3, :3]
+        ok = (np.abs(q[:, 0]) <= self.length_mm / 2.0 + tol) \
+            & (q[:, 1] >= -self.width_mm - tol) \
+            & (q[:, 2] >= -self.t_mm - tol) & (q[:, 2] <= tol)
+        if ok.any():
+            edge = self.v_edge(np.clip(q[ok, 2], -self.t_mm, 0.0))
+            sub = ok[ok].copy()
+            sub &= q[ok, 1] <= edge + tol
+            ok[ok] = sub
+        return ok
+
+    # --- analytic sampling ------------------------------------------------------------
+    def sample_face(self, name: str, n_pts: int, rng) -> tuple[np.ndarray, np.ndarray]:
+        L2 = self.length_mm / 2.0
+        if name in ("+u", "-u"):
+            # rejection-free: draw (v, w) in the bounding rect, keep under the profile
+            # via inverse transform on w-strips - simple grid CDF like the tube
+            ws_grid = np.linspace(-self.t_mm, 0.0, 1024)
+            widths = self.width_mm + self.v_edge(ws_grid)
+            cdf = np.concatenate([[0.0], np.cumsum(np.clip(widths, 1e-9, None))])
+            cdf /= cdf[-1]
+            w = np.interp(rng.random(n_pts), cdf, np.linspace(-self.t_mm, 0.0, 1025))
+            vmax = self.v_edge(w)
+            v = -self.width_mm + rng.random(n_pts) * (self.width_mm + vmax)
+            x = np.full(n_pts, np.copysign(L2, 1.0 if name == "+u" else -1.0))
+            local = np.column_stack([x, v, w])
+            n_loc = np.tile([np.copysign(1.0, x[0]), 0.0, 0.0], (n_pts, 1))
+        elif name == "radius":
+            phis = rng.uniform(0.0, np.pi / 2.0 - self._beta, n_pts)
+            zc = -(self.t_mm - self._c) + self._R
+            local = np.column_stack([rng.uniform(-L2, L2, n_pts),
+                                     -self._R * np.sin(phis),
+                                     zc - self._R * np.cos(phis)])
+            # the groove is CONCAVE: the arc centre sits in the void, so the outward
+            # (material -> void) normal points from the surface toward the centre
+            n_loc = np.column_stack([np.zeros(n_pts), np.sin(phis), np.cos(phis)])
+        else:
+            corners = self._face_corners(name)
+            o = corners[0]
+            e1 = corners[1] - corners[0]
+            e2 = corners[3] - corners[0]
+            a = rng.random(n_pts)
+            b = rng.random(n_pts)
+            local = o + a[:, None] * e1 + b[:, None] * e2
+            pl_n = self.face_plane(name).n     # world normal; convert to local
+            n_loc = np.tile(self.T_world_part[:3, :3].T @ pl_n, (n_pts, 1))
+        T = self.T_world_part
+        return (local @ T[:3, :3].T + T[:3, 3],
+                (n_loc @ T[:3, :3].T))
+
+    # --- mesh (D21 / D34) -------------------------------------------------------------
+    @property
+    def max_chord_error_mm(self) -> float:
+        if self.prep["kind"] != "single_U":
+            return 0.0
+        n = self._arc_n()
+        d_ang = (np.pi / 2.0 - self._beta) / n
+        return float(self._R * d_ang ** 2 / 8.0)
+
+    def _arc_n(self) -> int:
+        return max(12, int(np.ceil((np.pi / 2.0 - self._beta)
+                                   / np.sqrt(8.0 * self._MESH_TOL_MM / self._R))))
+
+    def _profile(self) -> np.ndarray:
+        """The (v, w) profile polygon, CCW, material inside."""
+        t, W, c = self.t_mm, self.width_mm, self._c
+        zr = -(t - c)
+        pts = [(0.0, -t), (0.0, zr)]                    # up the root face
+        if self.prep["kind"] == "single_U":
+            zc = zr + self._R
+            for ph in np.linspace(0.0, np.pi / 2.0 - self._beta,
+                                  self._arc_n() + 1)[1:]:
+                pts.append((-self._R * np.sin(ph), zc - self._R * np.cos(ph)))
+        pts.append((self.mouth_v_mm, 0.0))              # top of the fusion face
+        pts.append((-W, 0.0))
+        pts.append((-W, -t))
+        return np.asarray(pts, dtype=float)
+
+    def mesh(self) -> trimesh.Trimesh:
+        prof = self._profile()
+        k = len(prof)
+        L2 = self.length_mm / 2.0
+        v0 = np.column_stack([np.full(k, -L2), prof[:, 0], prof[:, 1]])
+        v1 = np.column_stack([np.full(k, L2), prof[:, 0], prof[:, 1]])
+        verts = np.vstack([v0, v1])
+        faces = []
+        for i in range(k):                              # side strips, closed profile
+            j = (i + 1) % k
+            faces.append([i, j, k + j])
+            faces.append([i, k + j, k + i])
+        # end caps: fan triangulation from the back-bottom corner works because the
+        # profile is a monotone staircase from that corner (star-shaped about it)
+        anchor = k - 1                                  # (-W, -t)
+        for i in range(k - 2):
+            a, b = i, i + 1
+            if a == anchor or b == anchor:
+                continue
+            faces.append([anchor, b, a])
+            faces.append([k + anchor, k + a, k + b])
+        m = trimesh.Trimesh(vertices=verts, faces=np.asarray(faces), process=True)
+        if m.volume < 0:
+            m.invert()
+        m.apply_transform(self.T_world_part)
+        return m
+
+
 def intersect_planes(pa: Plane, pb: Plane, tol: float = 1e-9):
     """Exact line of intersection of two planes.
 

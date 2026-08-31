@@ -1,0 +1,13 @@
+# Phase 6b step 4 - grooved butt joints (D35). The thickness range reaches past 12 mm
+# so every preparation row is reachable, single-U included; valid_preps(t) correlates
+# preparation with thickness BY DESIGN (state in the paper).
+name: grooved_butt
+joint_type: [butt]
+seam_shape: line
+prep: square
+fixture_present: false
+sampling_mode: area_uniform
+sensor_profiles: [d435i, stereo_good, stereo_poor]
+thickness_mm: [3.0, 20.0]
+groove_preps: true
+class_disjoint: true

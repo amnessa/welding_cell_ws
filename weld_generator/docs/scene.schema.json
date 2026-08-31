@@ -51,7 +51,7 @@
     },
     "faceRef": {
       "type": "string",
-      "pattern": "^[A-Z]:([+-][uvw]|lateral[+-]|s\\d+)$",
+      "pattern": "^[A-Z]:([+-][uvw]|lateral[+-]|s\\d+|root|fusion|radius)$",
       "description": "<object_id>:<face_name>, per SCHEMA.md 2.2. Primitive face registry only - D17 procedural features were withdrawn 2026-08-15."
     }
   },
@@ -204,6 +204,13 @@
         "realization": {
           "type": "object",
           "description": "Phase 6b: the artifact parameters DERIVED from the drawn curve (D29 curve-first) - pipe radii/axes, tube dims, band offsets."
+        },
+        "groove": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "D35 (Phase 6b): the ISO 9692-1 preparation drawn for a butt joint - kind, groove_included_angle_deg (the GROOVE opening; the part angle keeps included_angle_deg per the 17659 naming decision), bevel_deg_per_side, root_face_mm, radius_mm (single_U), iso_ref (the verified row). Null for square prep."
         }
       },
       "required": [
@@ -293,6 +300,10 @@
         "min_seam_length_mm": {
           "type": "number",
           "exclusiveMinimum": 0
+        },
+        "coplanar_gap_tol_mm": {
+          "type": "number",
+          "description": "D35: the coplanar arm's own adjacency bound for grooved scenes - a groove's mouth is far wider than its root gap, and contact_tol's thin-sheet cap must not stretch (it closes the wrap-around hole). Absent for square prep."
         }
       }
     },
@@ -347,6 +358,7 @@
             "enum": [
               "slab",
               "prism",
+              "prepared_slab",
               "swept_slab",
               "cylinder",
               "tube"

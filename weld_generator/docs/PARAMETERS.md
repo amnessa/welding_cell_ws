@@ -197,11 +197,25 @@ preparation from `t` rather than inventing a distribution: **[ISO]**
 
 A groove gives the butt joint **one** seam at the groove root instead of two coplanar face
 centrelines, and the groove is cut on the sampled seam line rather than the seam being read
-off the geometry afterwards — D3 applied to preparation. It needs a bevelled-edge
-primitive, which is why it travels with Phase 6's curved geometry.
+off the geometry afterwards — D3 applied to preparation.
 
-**Until then, `joint.prep` is `"square"` and §5.0's radius-PCA result keeps its
-square-preparation scope.**
+**IMPLEMENTED 2026-08-28 (Phase 6b step 4, D35):** `joint.prep` is drawn from
+`valid_preps(t)` when `groove_preps` is on — square (≤ 8 mm rows), single-bevel (1.9.1,
+3–10 mm), single-V (1.3 at ≤ 10 mm / 1.5 above), single-U (1.6/2.6, > 12 mm), row values
+verified against the PDF; single-J and double preparations stay out per D30's narrowing.
+The `PreparedSlab` primitive carries the edge profile (root face + fusion face + the U's
+radius, ISO 17659 Table 1/2 names), grooved scenes emit `groove_root` in place of the
+D19 triple (D36), the exposed centreline stays MOUTH-anchored so D4's cone verdict is
+weldable without any apex change (D37 realised by construction — the measured
+blanket-rejection risk applied to a root-anchored seam this pipeline never had), and the
+coplanar arm gets its own `coplanar_gap_tol_mm` because a groove's mouth is far wider
+than its root gap while `contact_tol`'s thin-sheet cap must not stretch. A groove forces
+equal thickness (the rows assume it) and its root gap comes from ITS row's `b` range,
+not from the fillet no. 617 machinery.
+
+**§5.0's radius-PCA result is scoped to `prep == "square"` — load-bearing now, not
+cautious: with grooves in the corpus, butt joints stop being uniformly degenerate, and
+the "empty window" claim describes the square-prep subset only.**
 
 ### 2.7 Lap and edge are the same topology at different offsets
 

@@ -20,7 +20,7 @@ from __future__ import annotations
 import numpy as np
 
 from .camera import in_frustum, project
-from .geom import Prism, Slab, SweptSlab, Tube
+from .geom import PreparedSlab, Prism, Slab, SweptSlab, Tube
 
 #: Ray origins are lifted this far off the surface along the normal before casting, so a
 #: point never occludes itself with its own face. Small next to any plate thickness, large
@@ -183,16 +183,50 @@ def ray_hits_swept(origins, directions, t_max, part: SweptSlab) -> np.ndarray:
     return out
 
 
+def _ray_aabb_refine(origins, directions, t_max, part, lo3, hi3,
+                     K: int = 9) -> np.ndarray:
+    """Shared AABB-interval clip + exact-containment refinement (boolean-only)."""
+    T = part.T_world_part
+    o = (np.asarray(origins, dtype=float) - T[:3, 3]) @ T[:3, :3]
+    d = np.asarray(directions, dtype=float) @ T[:3, :3]
+    lo = np.full(len(o), 1e-9)
+    hi = np.asarray(t_max, dtype=float) - 1e-9
+    for k in range(3):
+        with np.errstate(divide="ignore", invalid="ignore"):
+            t1 = (lo3[k] - o[:, k]) / d[:, k]
+            t2 = (hi3[k] - o[:, k]) / d[:, k]
+        par = np.abs(d[:, k]) < 1e-12
+        inside = (o[:, k] >= lo3[k]) & (o[:, k] <= hi3[k])
+        a = np.where(par, np.where(inside, -np.inf, np.inf), np.minimum(t1, t2))
+        b = np.where(par, np.where(inside, np.inf, -np.inf), np.maximum(t1, t2))
+        lo = np.maximum(lo, a)
+        hi = np.minimum(hi, b)
+    cand = hi > lo
+    out = np.zeros(len(o), dtype=bool)
+    if not cand.any():
+        return out
+    fr = (np.arange(K) + 0.5) / K
+    ts = lo[cand, None] + fr[None, :] * (hi[cand] - lo[cand])[:, None]
+    pts = (np.asarray(origins, dtype=float)[cand, None, :]
+           + ts[:, :, None] * np.asarray(directions, dtype=float)[cand, None, :])
+    out[cand] = part.contains(pts.reshape(-1, 3)).reshape(-1, K).any(axis=1)
+    return out
+
+
 def ray_hits_part(origins, directions, t_max, part) -> np.ndarray:
     """Dispatch: exact local-frame clip for slabs, half-space clip for prisms,
     analytic-interval-plus-exact-containment for tubes, AABB-plus-containment for
-    swept bands."""
+    swept bands and prepared (grooved) plates."""
     if isinstance(part, Slab):
         return ray_hits_slab(origins, directions, t_max, part)
     if isinstance(part, Tube):
         return ray_hits_tube(origins, directions, t_max, part)
     if isinstance(part, SweptSlab):
         return ray_hits_swept(origins, directions, t_max, part)
+    if isinstance(part, PreparedSlab):
+        lo3 = np.array([-part.length_mm / 2.0, -part.width_mm, -part.t_mm])
+        hi3 = np.array([part.length_mm / 2.0, 0.0, 0.0])
+        return _ray_aabb_refine(origins, directions, t_max, part, lo3, hi3)
     return ray_hits_convex(origins, directions, t_max, part)
 
 

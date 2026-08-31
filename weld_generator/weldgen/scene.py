@@ -13,7 +13,7 @@ from . import GENERATOR_VERSION, SCHEMA_VERSION
 from .accessibility import d19_curves, enumerate_candidates
 from .camera import intrinsics, sample_pose, standoff_for_framing
 from .config import SENSOR_PROFILES, geometry_config, sample_joint
-from .geom import Prism, Slab, approach_dir, rot_x, rot_y, rot_z, translate
+from .geom import PreparedSlab, Prism, Slab, approach_dir, rot_x, rot_y, rot_z, translate
 from .hashing import config_id, twin_key
 from .layouts import build as build_layout
 from .rng import Streams
@@ -120,6 +120,28 @@ def _assert_watertight(slabs: list[Slab]) -> None:
             raise ValueError(f"object {s.id} has inconsistent winding (D21)")
 
 
+def _object_entry(s) -> dict[str, Any]:
+    entry = {
+        "id": s.id, "role": s.role, "object_id": s.object_id,
+        "dims_mm": [float(v) for v in s.dims_mm],
+        "thickness_mm": float(s.thickness_mm),
+        "part_geometry_id": s.part_geometry_id,
+        "mesh": None,
+        "T_world_part": [[float(v) for v in row] for row in s.T_world_part],
+    }
+    if isinstance(s, Slab):
+        entry["primitive"] = "slab"
+    elif isinstance(s, PreparedSlab):
+        entry["primitive"] = "prepared_slab"
+        entry["params"] = {k: (float(v) if isinstance(v, (int, float)) else v)
+                           for k, v in s.prep.items()}
+    else:
+        entry["primitive"] = "prism"
+        entry["outline_uv"] = [[float(u), float(v)] for u, v in s.outline_uv]
+        entry["outline_shape"] = s.shape
+    return entry
+
+
 def _faces_block(slabs: list[Slab]) -> list[dict[str, Any]]:
     """Flat scene-wide face registry. Index IS the per-point `face_id` (SCHEMA.md §2.3)."""
     out = []
@@ -127,13 +149,16 @@ def _faces_block(slabs: list[Slab]) -> list[dict[str, Any]]:
     for s in slabs:
         for name in s.face_names():
             plane = s.face_plane(name)
+            surface = (s.surface_desc(name)
+                       if hasattr(s, "surface_desc") else None)
             out.append({
                 "face_id": fid,
                 "ref": f"{s.id}:{name}",
                 "object": s.id,
                 "name": name,
-                "plane": {"n": [float(v) for v in plane.n], "d": float(plane.d)},
-                "surface": None,
+                "plane": None if plane is None else
+                {"n": [float(v) for v in plane.n], "d": float(plane.d)},
+                "surface": surface,
                 "area_mm2": float(s.face_area(name)),
             })
             fid += 1
@@ -262,6 +287,14 @@ def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict
     # real seam reachable when the gap is large on thin sheet.
     access["contact_tol_mm"] = float(
         np.clip(min(tol, max(0.95 * t_min, 1.1 * separation)), 0.5, 12.0))
+    # D35: a groove's MOUTH is far wider than its root gap, and the coplanar arm
+    # measures adjacency at the top surface - give it its own bound (mouth + margin)
+    # WITHOUT touching contact_tol, whose thin-sheet cap closes the wrap-around hole.
+    if spec.prep != "square":
+        mouth = sum(abs(p.mouth_v_mm) for p in slabs
+                    if isinstance(p, PreparedSlab))
+        access["coplanar_gap_tol_mm"] = float(
+            1.1 * (spec.root_gap_mm + mouth) + 0.5)
     cands = enumerate_candidates(slabs, access, joint_type=joint_type,
                                  class_disjoint=class_disjoint)
 
@@ -336,11 +369,27 @@ def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict
         n = len(pts)
         ida, fa = c.face_pair[0].split(":")
         idb, fb = c.face_pair[1].split(":")
-        root, gapmid = d19_curves(by_id[ida], fa, by_id[idb], fb, c.p0, c.p1, n)
-
         arrays[f"seams.npz:seam_{i}"] = pts.astype(np.float32)
-        arrays[f"seams.npz:seam_{i}_root"] = root.astype(np.float32)
-        arrays[f"seams.npz:seam_{i}_gapmid"] = gapmid.astype(np.float32)
+        grooved_centreline = (spec.prep != "square" and c.seam_class == "butt")
+        if grooved_centreline:
+            # D36: the D19 triple is square-prep only (its derivation is the coplanar
+            # square gap); a grooved centreline instead carries `groove_root` - the
+            # gap centreline at the top of the root face, THE line a groove makes a
+            # butt joint a single seam at. Computed from the preparation the sampler
+            # drew (D3 applied to preparation), in A's own frame.
+            A_part = by_id["A"]
+            TA = A_part.T_world_part
+            local = (pts - TA[:3, 3]) @ TA[:3, :3]
+            root_local = np.column_stack([
+                local[:, 0],
+                np.full(n, spec.root_gap_mm / 2.0),
+                np.full(n, -(A_part.t_mm - float(spec.groove["root_face_mm"])))])
+            arrays[f"seams.npz:seam_{i}_grooveroot"] = (
+                root_local @ TA[:3, :3].T + TA[:3, 3]).astype(np.float32)
+        else:
+            root, gapmid = d19_curves(by_id[ida], fa, by_id[idb], fb, c.p0, c.p1, n)
+            arrays[f"seams.npz:seam_{i}_root"] = root.astype(np.float32)
+            arrays[f"seams.npz:seam_{i}_gapmid"] = gapmid.astype(np.float32)
         arrays[f"seams.npz:seam_{i}_s"] = np.linspace(
             0.0, c.length_mm, n).astype(np.float32)
         tangent = (c.p1 - c.p0) / max(c.length_mm, 1e-12)
@@ -469,30 +518,22 @@ def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict
             # is no seam curve to construct - outside the problem definition.
             "iso_17659_term": _iso_17659_term(joint_type, spec.included_angle_deg),
             # ISO 9692-1 preparation sub-clause, derived - see _iso_9692_ref.
-            "iso_9692_ref": _iso_9692_ref(joint_type, spec.included_angle_deg,
-                                          min(spec.t_A, spec.t_B), cfg["prep"]),
+            "iso_9692_ref": (spec.groove["iso_ref"] if spec.groove else
+                             _iso_9692_ref(joint_type, spec.included_angle_deg,
+                                           min(spec.t_A, spec.t_B), spec.prep)),
             # D32: candidate other-types when this scene is class-boundary stratum
             # material; null in disjoint and pre-D31 corpora.
             "ambiguous_with": ambiguous if ambiguous else None,
+            # D35: the preparation actually drawn, with its 9692-1 row; None for the
+            # square prep every phase before 6b implicitly used.
+            "groove": spec.groove,
             "stack_offset_mm": spec.stack_offset_mm,
-            "prep": cfg["prep"],
+            "prep": spec.prep,
         },
         "seam_definition": "nominal",        # D19
         "accessibility": access,
         "objects": [
-            {
-                "id": s.id, "role": s.role, "object_id": s.object_id,
-                "primitive": "slab" if isinstance(s, Slab) else "prism",
-                "dims_mm": [float(v) for v in s.dims_mm],
-                "thickness_mm": float(s.thickness_mm),
-                "part_geometry_id": s.part_geometry_id,
-                "mesh": None,
-                "T_world_part": [[float(v) for v in row] for row in s.T_world_part],
-                **({} if isinstance(s, Slab) else {
-                    "outline_uv": [[float(u), float(v)] for u, v in s.outline_uv],
-                    "outline_shape": s.shape,
-                }),
-            }
+            _object_entry(s)
             for s in slabs
         ],
         "faces": _faces_block(slabs),

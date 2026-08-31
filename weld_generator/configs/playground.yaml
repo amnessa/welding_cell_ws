@@ -2,13 +2,15 @@
 # Copied from your edits to reference_tjoint.yaml so they are not lost.
 name: playground
 # joint_type: [T, corner, butt, lap, edge]
-joint_type: edge
+joint_type: butt
 seam_shape: line
 prep: square
-fixture_present: true
+fixture_present: false
 plate_length_mm: [40.0, 400.0]
 plate_width_mm: [90.0, 120.0]
 thickness_mm: [1.0, 12.0]
+groove_preps: true
+
 dissimilar_thickness_p: 0.0
 included_angle_deg: [60.0, 120.0]
 root_gap_mm: [0.0, 2.0]

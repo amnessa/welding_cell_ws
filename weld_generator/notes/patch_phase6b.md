@@ -255,7 +255,27 @@ cone parameters stay as they are; only the apex moves, and only for `prep != "sq
    tangent/approach/nA/nB, `clear_fraction`, and the D22 negatives (bores, toes).
    Pinned by test: bit-reproducibility, and the D1 receipt at FILE level — the stored
    parametric block resamples into the stored `seams.npz` arrays.
-4. Grooves (D35 pool, D30 straight-butt-only, `groove_root` per D36).
+4. **DONE 2026-08-28.** `geom.PreparedSlab` (monotone `v_edge(w)` profile makes
+   `contains` exact in closed form; every face a plane strip except the U's radius —
+   a cylinder patch, analytic to sample; watertight, volumes exact to the analytic
+   cross-section, ISO 17659 face names root/fusion/radius), `config.valid_preps` +
+   `sample_groove` (PDF-verified rows; the U draw enforces
+   `t − c > R(1 − sin β) + 1` or the fusion face vanishes; groove gap from ITS row's
+   b range, overriding no. 617), grooved `_layout_butt` (B = the same primitive
+   rotated 180°; single-bevel keeps B square per 1.9.1), and emission per D36
+   (`groove_root` at exactly t − c below the top, D19 triple square-only — and the
+   single-bevel test pins that the mouth centreline genuinely SHIFTS off the root
+   centre, which is why the two curves must be separate). Two integration findings:
+   (a) **the coplanar arm needed its own `coplanar_gap_tol_mm`** — a 50° V on 8 mm
+   plate opens ~9 mm at the mouth, past `contact_tol`, whose thin-sheet cap must not
+   stretch (it closes the wrap-around hole); the wider bound applies only where the
+   in-plane gap is measured. (b) **D37 cost zero code**: the nominal was always
+   mouth-anchored (D19 defines it on the exposed faces), so the cone never starts
+   inside the constriction — the measured blanket-rejection applied to a
+   root-anchored seam this pipeline never had. Recorded, because "the risk was real
+   and the design already dodged it" is worth more than silence. Reachability note:
+   single-U needs t > 12, above the default thickness range — `configs/
+   grooved_butt.yaml` (t 3–20) exercises all four preparations. 17 tests.
 5. Regenerate gates: chord-error gate (D34), D28 gate re-run (curved seams enter as
    their chord direction? — resolve when the sampler exists), full suite.
 6. Phase 4 re-run — per the user's decision, after 6b completes (bench6a + bench6b in
