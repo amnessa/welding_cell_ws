@@ -276,7 +276,61 @@ cone parameters stay as they are; only the apex moves, and only for `prep != "sq
    and the design already dodged it" is worth more than silence. Reachability note:
    single-U needs t > 12, above the default thickness range — `configs/
    grooved_butt.yaml` (t 3–20) exercises all four preparations. 17 tests.
-5. Regenerate gates: chord-error gate (D34), D28 gate re-run (curved seams enter as
-   their chord direction? — resolve when the sampler exists), full suite.
+5. **DONE 2026-08-31 — gates, ruled option (b) with a mandatory caveat.** How curved
+   scenes meet the D28 anti-shortcut gate (`scripts/qa_d28_gate.py`), user-ruled:
+
+   - **Closed seams are exempt.** A closed seam's tangent sweeps every direction in
+     its plane; the axis-alignment prior is unlearnable from it. Families #2–#5 are
+     all closed, so the exemption removes most curved scenes outright.
+   - **Open curved seams (#6–#7) are REPORTED, not gated** — option (b). Their spines
+     are drawn at random, so the sampler prior D28 polices cannot arise by
+     construction; gating would test what construction guarantees. The per-point
+     statistic (stored seam tangents, each weighted `edge_length / n_samples` so a
+     seam's total weight per edge matches the plate convention) is printed so the
+     number exists for the write-up; only the plate histogram binds.
+   - **Provenance-based exclusion, implemented regardless of (a)/(b) — the user's
+     caveat: without it the printed number is WRONG.** The 12 mm nearness proxy
+     cannot catch a swept band's far edges: the longitudinal ones are offsets of the
+     seam's own spine (exactly parallel, a band-width away) and even the far vertical
+     corners have spine-pinned positions and read 90° under every possible draw — a
+     spike that means "stiffener", printed as if it meant "shortcut". Rule: a part
+     whose spine carries the seam's own rigid-motion-invariant signature (sorted
+     pairwise distances of fixed-arclength samples — pose-independent, so it works
+     across the part-local/world divide) is a **D29-derived part, and ALL its
+     boundary edges are joint-constrained**. Measured consequence: family #7 reports
+     nothing (both parts derive from the curve — no sampler-free direction exists in
+     the scene), family #6 reports seam tangents against the independent plate
+     outline (real spread, ~34% in the first bin from spines drawn along the plate's
+     long axis — an honest number the thesis can discuss).
+   - **D34 corpus sweep, BINDING**: every scene recording `cloud.max_chord_error_mm`
+     must be ≤ 0,25 mm; the same script checks it and fails the exit code on any
+     violation (curved_smoke worst: 0,0498 mm). Plate scenes don't record the field
+     (their meshes are exact) — vacuously clean.
+   - Pooled re-run: bench6a + curved_smoke → plate gate PASS (terminal mass 0,34 vs
+     0,44 allowed), D34 PASS.
+
+   **`out/bench6b` — the balanced 6b benchmark corpus** (`scripts/make_bench6b.py`),
+   user-ruled 50–70 per class, realised at 60 with families balanced INSIDE each
+   class: T = 10 each of line/circle/ellipse/saddle/rounded_rect/swept_path; butt =
+   15 line-square + 15 line-grooved (D35 draw, square draws filtered to the square
+   arm) + 30 arc (#7), i.e. 30/30 by family; corner/lap/edge = 60 line (single-family
+   classes). Layout matches `balanced_corpus` (per-type dirs + index.jsonl). Seeds
+   INTERLEAVED per source (residues modulo the class stride from base 2 000 000),
+   not blocked: `balanced_corpus` trims to the lowest N seeds, and interleaving keeps
+   every seed-sorted prefix at the intended family proportions — a Phase 4 run at
+   `per_type=50` stays balanced (measured: T 6–10 per family, butt 29/21 by family
+   at the 50 trim; exact 10/10/…, 30/15/15 at 60 — `run_phase4_batch.py` now passes
+   `--per-type` through to `balanced_corpus` so a 60-scene run uses the whole class).
+   Rejects recorded, never backfilled; manifest.json carries the recipe.
+
+   Gate run over the finished corpus: plate D28 PASS (terminal mass 0,38 vs 0,44
+   allowed), curved report populated (swept_path vs plate outline), D34 PASS
+   (worst 0,0500 mm over 80 curved scenes). One legible finding the per-mechanism
+   rows surface: the grooved arm reads `mech none` at 71% first-bin mass — a grooved
+   plate stays a rectangular `PreparedSlab` (the preparation is machined along a
+   straight edge; prism outlines deliberately do not compose with it), so the axis
+   prior is STRUCTURAL for grooved rectangles and the corpus-level pooling is what
+   absorbs it. Extending outlines to the three non-prepared edges of a PreparedSlab
+   is a possible later enhancement, not a Phase 6b need.
 6. Phase 4 re-run — per the user's decision, after 6b completes (bench6a + bench6b in
    one batch; nothing regenerates twice).

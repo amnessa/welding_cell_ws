@@ -156,7 +156,9 @@ def main():
     args = ap.parse_args()
 
     corpus_root = Path(args.corpus)
-    corpus = balanced_corpus(corpus_root, per_type=50)
+    # bench6b holds 60/class (family-balanced within class); ask balanced_corpus for
+    # whatever --per-type wants so a 60-scene run is not silently trimmed to 50
+    corpus = balanced_corpus(corpus_root, per_type=max(50, args.per_type or 0))
     dirs = [d for jt in ("T", "corner", "butt", "lap", "edge")
             for d in corpus[jt][: args.per_type]]
     facts = [scene_facts(json.loads((d / "scene.json").read_text())) for d in dirs]

@@ -366,6 +366,21 @@ length-weighted distribution of seam-to-free-boundary-edge angles (joint-constra
 excluded) against concentration at 0/90°. Passed 2026-08-27 at 0.33 terminal-bin mass vs
 0.22 uniform.
 
+**Curved scenes (Phase 6b step 5, ruled 2026-08-31).** The gate stays binding on plates
+only. Closed curved seams (families 2–5) are exempt — a closed seam's tangent sweeps every
+direction, so the prior cannot be learned from it. Open curved seams (families 6–7) get a
+per-point tangent statistic that is **reported, not gated**: their spines are drawn at
+random, so the sampler prior cannot arise by construction. Joint-constrained exclusion for
+curved parts is by **provenance, not proximity**: a part whose spine matches the seam's own
+spine (rigid-motion-invariant signature) is a D29-derived part and every one of its
+boundary edges is excluded — the nearness proxy cannot catch a band's far edges, which are
+exactly parallel (longitudinal offsets) or fixed at 90° (spine-pinned verticals) under
+every possible draw, and counting them would print "stiffener geometry" as if it were
+"sampler shortcut". Consequence: family 7 reports nothing (both parts derive from the
+curve; no sampler-free direction exists in the scene), family 6 reports its seam tangents
+against the independent plate outline. The same script also runs the **binding D34 sweep**:
+every recorded `cloud.max_chord_error_mm` ≤ 0,25 mm.
+
 Real irregularity is what the Phase 9 scans are for, and it is not something a feature
 vocabulary reproduces honestly — a modelled chamfer is a clean bevel; a real edge break is
 not.

@@ -4,7 +4,7 @@ name: playground
 
 # ---- plate pipeline --------------------------------------------------------------
 # joint_type: [T, corner, butt, lap, edge]
-joint_type: butt
+joint_type: lap
 seam_shape: line
 prep: square                    # square unless groove_preps draws one (D35)
 fixture_present: false
@@ -21,7 +21,7 @@ class_boundary_stratum: false   # D32: INVERTED acceptance - emits only near-bou
 
 # ---- Phase 6b flags --------------------------------------------------------------
 groove_preps: true              # D35: prep pool from valid_preps(t); square stays in
-# seam_families: [2, 3, 4, 5, 6, 7]
+seam_families: [ 4]
 #   Uncomment to switch to the CURVED pipeline (D29 curve-first families); the CLI and
 #   the notebooks both route on this key, and the plate-only keys above are ignored.
 #     2 pipe-on-plate set-on (circle)    3 tilted pipe (ellipse)
