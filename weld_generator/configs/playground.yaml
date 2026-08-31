@@ -1,15 +1,32 @@
 # Scratch preset for experimenting - widened ranges, nothing pinned.
-# Copied from your edits to reference_tjoint.yaml so they are not lost.
+# Notebooks 01/02 load this file; flip the flags below to inspect any Phase 6 mode.
 name: playground
+
+# ---- plate pipeline --------------------------------------------------------------
 # joint_type: [T, corner, butt, lap, edge]
 joint_type: butt
 seam_shape: line
-prep: square
+prep: square                    # square unless groove_preps draws one (D35)
 fixture_present: false
 plate_length_mm: [40.0, 400.0]
 plate_width_mm: [90.0, 120.0]
-thickness_mm: [1.0, 12.0]
-groove_preps: true
+thickness_mm: [3.0, 20.0]       # single_U needs t > 12 (rows 1.6/2.6); <= 4 is square-only
+
+# ---- Phase 6a flags --------------------------------------------------------------
+in_plane_yaw: true              # D28: full-circle yaw over the feasible set
+polygon_outlines: true          # D28: prism outlines, not only rectangles
+class_disjoint: true            # D31: clearance c = 2*min(t_A,t_B); no shared edges
+class_boundary_stratum: false   # D32: INVERTED acceptance - emits only near-boundary
+                                # scenes (see configs/amb_lap.yaml / amb_T.yaml)
+
+# ---- Phase 6b flags --------------------------------------------------------------
+groove_preps: true              # D35: prep pool from valid_preps(t); square stays in
+# seam_families: [2, 3, 4, 5, 6, 7]
+#   Uncomment to switch to the CURVED pipeline (D29 curve-first families); the CLI and
+#   the notebooks both route on this key, and the plate-only keys above are ignored.
+#     2 pipe-on-plate set-on (circle)    3 tilted pipe (ellipse)
+#     4 pipe-on-pipe (saddle)            5 rect tube on plate (rounded rect)
+#     6 curved stiffener (swept spine)   7 curved butt (arc)
 
 dissimilar_thickness_p: 0.0
 included_angle_deg: [60.0, 120.0]
@@ -17,11 +34,5 @@ root_gap_mm: [0.0, 2.0]
 quality_mix: {C: 1.0}
 density_per_mm2: [0.14, 0.14]
 sensor_profiles: [d435i]
-# Pin the defects too: the README measurement reports a square 90-degree joint, so
-# misalignments are zero. Without these the sampler would still draw beta from the
-# quality level and the fixture would not reproduce the measured geometry.
 linear_misalignment_mm: [0.0, 0.0]
 angular_misalignment_deg: [0.0, 0.0]
-in_plane_yaw: true
-polygon_outlines: true
-

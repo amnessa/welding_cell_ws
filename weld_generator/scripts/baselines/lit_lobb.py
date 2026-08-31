@@ -76,6 +76,27 @@ Deviations, and why each one exists
 4. **Multi-seam.** The paper fits one weld. Connected components before fitting, shared with
    `radius_pca.connected_components`, so a T joint's two fillets come back as two curves.
 
+Author correspondence (Yuankai Zhang, first author, 2026-08-27)
+---------------------------------------------------------------
+The three implementation choices above were put to the authors and answered in writing:
+
+1. **The oracle masks are endorsed**: supplying per-component masks from generator ground
+   truth "is equivalent to using the corresponding component masks obtained from a 2D image
+   segmentation network for testing the subsequent modules. Therefore, this treatment is
+   acceptable." So `part_labels_oracle` is an author-accepted stand-in, not a liberty.
+2. **Mean-Shift off is accepted for density-uniform data**, with the caveat that the filter
+   "is intended to further ensure the stability of weld reconstruction". That caveat is why
+   the Phase 4 write-up should report the `mean_shift=True` arm alongside the default, not
+   silently drop it: the mechanism it was built for is absent here, but its stabilising
+   side-effect is a fair thing to measure.
+3. **LOBB radius confirmed**: "The selection of the LOBB radius is not a free tuning
+   parameter" - it is set by the weld width, exactly how `LOBB_RADIUS_MM` is treated.
+4. **The closed contact perimeter is outside their §3.4.3 fit**: for the T-joint case where
+   the fillets plus the plate-end contact runs close into a loop, they answer "you may
+   consider using other curve-fitting methods, such as B-spline curves". So a B-spline
+   variant of `fit_dominant_axis` is an author-suggested EXTENSION, to be reported as a
+   separate arm - the polynomial fit stays the faithful reimplementation.
+
 Everything is **millimetres**.
 """
 
