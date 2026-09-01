@@ -190,8 +190,10 @@ clearance (the seam stays at the corner — §3.13 makes edge-meeting the class 
 and underside lap toes get a distinct `underside` label scored separately under the
 single-view condition.
 
-- [ ] Schema: `underside` flag on the seam block, `joint.ambiguous_with` — write both
-      before implementation so pre-patch scenes stay valid
-- [ ] Citation hygiene: quote ISO 17659 only by the §-numbers verified above; the
-      "extends continuously past both sides" sentence circulating in notes is an
-      interpretation, not standard text, and must not appear as a quotation
+- [x] Schema: `underside` flag on the seam block, `joint.ambiguous_with` — DONE with the
+      implementation (both optional in `scene.schema.json`, so pre-patch scenes stay
+      valid; pinned by the determinism/schema fixtures); confirmed ticked 2026-09-01
+- [x] Citation hygiene — VERIFIED 2026-09-01: the "extends continuously past both sides"
+      sentence appears nowhere outside this note (where it is flagged as interpretation);
+      `PARAMETERS.md` §3.4 quotes ISO 17659 by sub-clause number only, with the ±10°
+      T/angle threshold marked **[ours]**

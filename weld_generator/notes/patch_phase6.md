@@ -2,6 +2,12 @@
 
 *Replaces the existing Phase 6 section. Decisions continue at D28.*
 *Drafted 2026-08-27, after Phase 5 self-annotation returned 2,5 mm RMSE.*
+*Status 2026-09-01: IMPLEMENTED in full — 6a and 6b both complete. The authoritative
+tick-state with findings lives in `dataset_plan.md` (Phase 6a/6b sections) and
+`patch_phase6b.md`; the checklists below are kept as drafted, with only the open items
+resolved in place. Note D29 was AMENDED 2026-08-28 to curve-first (curve families with a
+realizability condition, parts derived from the curve) — the workpiece-configuration
+framing below is the superseded draft.*
 
 ---
 
@@ -188,10 +194,15 @@ described as something more.
       uniform over the per-scene feasible set. No lower-plate inflation was needed: the
       support bound is per-scene and honest, and D31 rejects the flush-coincidence
       angles (lap yaw ≈ 180°) that the full circle newly exposes
-- [ ] Decide whether polygon outlines are convex-only. Concave outlines add re-entrant corners
-      (strong hard negatives) but complicate the face registry and watertightness
-- [ ] Pipe-to-pipe: pin the parametric form for the saddle curve before implementing, since
-      `bspline` approximation error would enter the ground truth
-- [ ] Confirm ISO 9692-1 covers pipe-on-plate and pipe-to-pipe preparation, or find the
-      companion standard (ISO 9692-2 covers submerged arc; branch/nozzle preparation may sit
-      elsewhere) — needed before groove work extends past plate butt joints
+- [x] Decide whether polygon outlines are convex-only — DECIDED 2026-08-27: **convex
+      only** (trapezoid / parallelogram / triangle / quad / convex pentagon, non-uniform
+      weights — a uniform draw measurably rebuilt the 0° spike). Re-entrant corners were
+      not needed to break the prior; registry and watertightness stayed simple
+- [x] Pipe-to-pipe: pin the parametric form for the saddle curve — PINNED 2026-08-28
+      (D33): `SaddleCurve` is a branch-parametrised exact quadratic with
+      implicit-differentiation tangents — never a `bspline` approximation, so no fitting
+      error enters the ground truth; verified on both cylinders to ≤ 1e-6 mm
+- [x] Confirm ISO 9692-1 coverage of pipe preparation — CONFIRMED ABSENT 2026-08-28:
+      Part 1 covers plate butt preparation only (branch/nozzle preparation is elsewhere,
+      not in Part 2's submerged-arc scope either). Recorded honestly: grooves stay
+      plate-butt-only (D30) and curved scenes emit `iso_9692_ref: null`

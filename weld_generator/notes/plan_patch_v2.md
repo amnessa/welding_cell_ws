@@ -215,13 +215,24 @@ axis, it is where two of the seven methods actually live. The L0→L1 delta is a
 
 ## Open items opened by this patch
 
-- [ ] Confirm with the advisor that MPS is a **geometric proxy** and that load-path
-      correctness is explicitly out of scope
-- [ ] Decide whether Task 2 is evaluated in paper 1 or deferred. Recommendation: generate the
-      data and release the rule; scope paper 1 to Task 1 plus the seven-method comparison, and
-      keep MPS as a short section if Phase 4 runs ahead
+- [x] Confirm with the advisor that MPS is a **geometric proxy** and that load-path
+      correctness is explicitly out of scope — CONFIRMED by the advisor (recorded
+      2026-09-01); state it in the paper as a limitation, per the scope table above
+- [x] Decide whether Task 2 is evaluated in paper 1 or deferred — DECIDED 2026-09-01 per
+      the recommendation: Task 2 as a **short section** in paper 1 (advisor concurs);
+      paper 1's core stays Task 1 plus the method comparison
 - [ ] Grade the occlusion distribution before MPS is evaluated (D26 sampler work, plus the
-      framing-fraction change) — MPS is weak while visibility is near-binary
-- [ ] Verify `lit-modelreg` is implementable without the original CAD assets; if not, it
-      becomes an L0 upper bound computed from generator transforms rather than a
-      reimplementation, and must be labelled as such
+      framing-fraction change) — MPS is weak while visibility is near-binary.
+      *Still open 2026-09-01 (advisor: not settled yet); gates the MPS short section's
+      numbers, not the phase order*
+- [x] Verify `lit-modelreg` is implementable without the original CAD assets — RESOLVED
+      2026-08-21: implemented as a genuine reimplementation, with the "basic model" built
+      CAD-by-construction from `scene.json` (the paper's own premise — identical
+      structural workpieces — makes the generator's transforms the CAD); the L0-upper-
+      bound fallback labelling never triggered
+- [ ] **Candidate roster change under evaluation (opened 2026-09-01):** replace or
+      augment `lit-modelreg` with `lit-nurbs` — the line-laser 3D-curve path/posture
+      planning paper (`papers/3D curve weld seam path and posture planning based on line
+      laser sensors_compressed.pdf`) — now that the corpus has curved families. Assess
+      feasibility on area-scan clouds first; note what replacing modelreg costs (it
+      anchors the top of the oracle ladder with a published CAD-dependent method)
