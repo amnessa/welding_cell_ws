@@ -1021,10 +1021,18 @@ Effort estimates assume focused days, not calendar days.
 **Do not skip. Do not start coding first.**
 
 - [x] Write `SCHEMA.md` (§5) and `PARAMETERS.md` (§6)
-- [ ] Decide directory layout for a scene and for a release
-- [ ] Decide file formats: `.npy` for arrays, `.ply` for meshes, `.json` per scene, one
-      `index.parquet` or `.jsonl` over the release
-- [ ] Write down the naming convention for `face_pair` strings — it must be stable across joint types
+- [x] Decide directory layout for a scene and for a release — settled in Phase 1 and
+      stable since: `out/<corpus>/<scene_id>/` with `scene.json` + `.npz` payloads,
+      corpora as per-joint-type directories with an `index.jsonl` each (`writer.py`,
+      SCHEMA.md §5); confirmed ticked 2026-09-01
+- [x] Decide file formats — realised as `.npz` (compressed, multi-array) rather than bare
+      `.npy`, `.json` per scene, `index.jsonl` per corpus directory, `.ply` only where a
+      mesh export is explicitly requested (`--emit-meshes`, Phase 5 annotation export);
+      confirmed ticked 2026-09-01
+- [x] Write down the naming convention for `face_pair` strings — SCHEMA.md's faceRef
+      registry, `<part>:<face>` with `±u/±v/±w`, extended stably ever since (prism `s<i>`,
+      tube `lateral±`, prepared-slab `root/fusion/radius` — the schema pattern is the
+      contract); confirmed ticked 2026-09-01
 
 **Deliverable:** two markdown files.
 **Effort:** 0.5 day.
@@ -1799,8 +1807,12 @@ Full text in `notes/patch_class_disjointness.md`; summary of what landed:
 
 - [x] **Seam sampler** — `weldgen/d29.py`, drawing from the D29 curve families under the
       realizability condition (amended framing, 2026-08-28)
-- [ ] **Part constructors:** swept plates, pipe-on-plate, pipe-to-pipe, rectangular tube on plate
-- [ ] **Groove preparations (D24, restricted by D30)** — straight butt seams only. ISO 9692-1
+- [x] **Part constructors:** swept plates, pipe-on-plate, pipe-to-pipe, rectangular tube
+      on plate — DONE 2026-08-28 as two primitives, `geom.Tube` (base cut by the landing
+      surface, exact D33 quadratic; the miter ring IS the seam) and `geom.SweptSlab`
+      (offset band about a spine — rect tube, stiffener, and curved butt are the same
+      primitive), `constructors.build_d29` for families 2–7 (patch_phase6b step 2)
+- [x] **Groove preparations (D24, restricted by D30)** — straight butt seams only. ISO 9692-1
       makes the choice thickness-driven and citable, so the sampler picks the preparation from
       `t` rather than inventing a distribution:
 
@@ -1820,13 +1832,30 @@ Full text in `notes/patch_class_disjointness.md`; summary of what landed:
       well-defined line at the groove root, instead of the two coplanar face centrelines a
       square preparation yields. The groove is cut *on the sampled seam line*, not read off the
       geometry afterwards — D3 applied to preparation.
-- [ ] Expand `joint.prep` beyond `"square"` and re-scope `PARAMETERS.md` §5.0
-- [ ] **Surface-pair intersection** for the verification function: plane ∩ cylinder,
-      cylinder ∩ cylinder, quadric ∩ plane
-- [ ] `surface` block on non-planar faces; `bspline` parametric form pinned before starting
-- [ ] **Watertightness (D21) genuinely bites here** — swept and revolved primitives produce
-      degenerate caps and duplicated seam vertices where slabs never could. Budget for this
-      specifically; it is the item most likely to consume unplanned days
+
+      DONE 2026-08-28 as D35 (patch_phase6b step 4), with the table corrected against the
+      standard's own PDF: the realised pool is `config.valid_preps(t)` over the VERIFIED
+      rows — square (≤ 8), single-bevel 1.9.1 (4–10), single-V 1.3/1.5 (4–12 / > 12),
+      single-U 1.6+2.6 (> 12) — raised edges (1.1) dropped with the thin-sheet end, and
+      "no groove" stays in the pool. `geom.PreparedSlab` (monotone `v_edge(w)`, faces
+      named per ISO 17659), D36 `groove_root` at exactly t − c, D37 mouth-anchored at
+      zero code cost.
+- [x] Expand `joint.prep` beyond `"square"` and re-scope `PARAMETERS.md` §5.0 — DONE
+      2026-08-28: prep enum square/single_bevel/single_V/single_U, §5.0's empty-window
+      claim scoped load-bearing to `prep == "square"`
+- [x] **Surface-pair intersection** for the verification function: plane ∩ cylinder,
+      cylinder ∩ cylinder, quadric ∩ plane — DONE 2026-08-28, and per the D29 amendment
+      these live ONLY in verification (`ellipse_from_plane_cylinder`,
+      `saddle_from_cylinders`, `verify_curved.rediscover_seam` at 1e-13): generation
+      draws the curve first and derives the parts
+- [x] `surface` block on non-planar faces; `bspline` parametric form pinned before
+      starting — DONE 2026-08-28: `faces[].surface` descriptions on tube/swept faces,
+      `bspline` pinned as clamped uniform with stored control points (constructed input
+      only under D33, never a fitted approximation)
+- [x] **Watertightness (D21) genuinely bites here** — budgeted, and the budget was spent
+      without incident (2026-08-28): ring-strip topologies for the tube's cut modes and
+      the prepared slab's fan caps are watertight by construction; pinned per primitive
+      by test
 - [ ] Re-run Phase 4 → **report where the plane-intersection baseline stops working**
 
 ## Schema changes curved seams force
@@ -1864,16 +1893,23 @@ described as something more.
 
 ## Open items opened by this patch
 
-- [ ] Pick the yaw range for T and lap — full 0–360° with a seam-support constraint, or a
-      restricted range. Full range is more honest; check it does not make the lower plate
-      absurdly large to keep support
-- [ ] Decide whether polygon outlines are convex-only. Concave outlines add re-entrant corners
-      (strong hard negatives) but complicate the face registry and watertightness
-- [ ] Pipe-to-pipe: pin the parametric form for the saddle curve before implementing, since
-      `bspline` approximation error would enter the ground truth
-- [ ] Confirm ISO 9692-1 covers pipe-on-plate and pipe-to-pipe preparation, or find the
-      companion standard (ISO 9692-2 covers submerged arc; branch/nozzle preparation may sit
-      elsewhere) — needed before groove work extends past plate butt joints
+- [x] Pick the yaw range for T and lap — RULED 2026-08-27 (user): **full circle**, uniform
+      over the per-scene feasible set of [−180°, 180°) (`layouts.feasible_yaw_deg`, 1°
+      grid + jitter). The plate never needs to grow: infeasible angles are simply not in
+      the set, and D31 separately rejects the flush-coincidence angles (lap yaw ≈ 180°)
+- [x] Decide whether polygon outlines are convex-only — DECIDED 2026-08-27: **convex
+      only** (trapezoid / parallelogram / triangle / quad / convex pentagon, deliberately
+      non-uniform weights — a uniform draw measurably rebuilt the 0° spike). Re-entrant
+      corners were not needed to break the axis prior, and the face registry and
+      watertightness stayed simple
+- [x] Pipe-to-pipe: pin the parametric form for the saddle curve — PINNED 2026-08-28
+      (D33): `SaddleCurve` is a branch-parametrised exact quadratic with
+      implicit-differentiation tangents — closed form, never a `bspline` approximation,
+      so no fitting error enters the ground truth; verified on both cylinders to ≤ 1e-6 mm
+- [x] Confirm ISO 9692-1 coverage of pipe preparation — CONFIRMED ABSENT 2026-08-28: Part
+      1's rows cover plate butt preparation only; branch/nozzle preparation is not in it
+      (nor in Part 2's submerged-arc scope). Recorded honestly rather than stretched:
+      grooves stay plate-butt-only (D30) and curved scenes emit `iso_9692_ref: null`
 
 ### Phase 7 — Tack layer
 

@@ -5,9 +5,17 @@ seam geometry is computed in closed form from the placement transforms, so there
 annotator, no estimator, and no intra-rater-consistency hand-waving anywhere in the label
 path.
 
-Status: **Phase 3 complete** (five joint types, the D4 accessibility rule, fixture sampled,
-camera + visibility + analytic sensor noise).
-Plan: [`notes/dataset_plan.md`](notes/dataset_plan.md).
+Status: **Phases 1–6 complete.** Five plate joint types with the D4 accessibility rule,
+fixture, camera + visibility + analytic sensor noise (Phases 1–3); seven baseline methods
+implemented and harnessed (Phase 4 — the combined batch over the Phase 6 corpora is the
+one run still pending); the annotation study tooling with a fresh export out (Phase 5);
+and Phase 6 in both halves — 6a broke the axis-alignment shortcut and made the seam
+classes disjoint by construction, 6b added the curved seam families, non-planar
+primitives, and ISO 9692-1 groove preparations, all under the same exactness contract.
+See **Phase 6 findings** below. Plan: [`notes/dataset_plan.md`](notes/dataset_plan.md);
+Phase 6 patch notes: [`notes/patch_phase6.md`](notes/patch_phase6.md),
+[`notes/patch_class_disjointness.md`](notes/patch_class_disjointness.md),
+[`notes/patch_phase6b.md`](notes/patch_phase6b.md).
 
 ---
 
@@ -19,6 +27,11 @@ pip install -r requirements.txt
 python -m weldgen generate --config configs/phase2.yaml --n 40 --out out/phase2
 python -m weldgen verify   --out out/phase2          # re-hash every scene on disk
 python -m pytest tests/ -q
+
+# Phase 6: curved families route through the same CLI when the preset sets seam_families
+python -m weldgen generate --config configs/curved_smoke.yaml --n 14 --out out/curved_smoke
+python scripts/make_bench6b.py                       # the family-balanced 6b corpus
+python scripts/qa_d28_gate.py out/bench6a out/bench6b   # anti-shortcut + D34 gates
 ```
 
 The D12 fixture ablation is two runs over the **same seed range**, one per arm:
@@ -35,12 +48,15 @@ is bit-identical across a twin. `twin_key` pairs them:
 Two notebooks, both of which need a **kernel restart** after you change `weldgen/` —
 `sys.path.insert` will not re-import a module that is already loaded:
 
-- `notebooks/01_inspect_scene.ipynb` — the constructed ground truth: cloud, seams, the three
-  D19 curves, weldable separated from rejected.
+- `notebooks/01_inspect_scene.ipynb` — the constructed ground truth: cloud, seams, the
+  reference curves (D19 triple / D36 `groove_root` / curved per-point frames — the cell
+  detects which regime the scene is in), weldable separated from rejected. Reads
+  `configs/playground.yaml` and follows its flags; uncomment `seam_families` there and the
+  whole notebook switches to the curved pipeline.
 - `notebooks/02_inspect_visibility.ipynb` — what a single view of it returns: the mask in
   world and image space, an azimuth × elevation map of where each seam can be seen from, the
   sensor model, `area_uniform` vs `camera_raster`, and the per-joint-type yield of the
-  omission policy.
+  omission policy. Same playground-driven routing as notebook 01.
 - `notebooks/03_baselines.ipynb` — `ours` (radius-PCA) scored against constructed truth on
   the balanced corpus: both validity-window bounds on trial (the corrected `R < t/2` paired
   against the original claim), per-joint-type error, the direction-aware clustering
@@ -93,24 +109,37 @@ docs/            frozen contracts - read these before changing anything
 
 weldgen/         the generator - trimesh + NumPy only, no simulator import (D9)
   rng.py             8 named SeedSequence substreams
-  geom.py            slab primitive, face registry, exact plane algebra
+  geom.py            primitives + face registries, exact algebra: Slab, Prism (6a
+                     outlines), Tube, SweptSlab, PreparedSlab (6b)
+  curves.py          exact curve library (ellipse/arc/saddle/bspline/composite/offset):
+                     analytic positions AND tangents, arclength sampling exact-on-curve
+  d29.py             the seven-family CURVE-FIRST seam sampler (D29 as amended)
+  constructors.py    parts DERIVED from the drawn curve, families 2-7
   joints.py          JointSpec: the sampled fit-up, and tilt relative to each type's nominal
-  layouts.py         placement for the five joint types - placement ONLY, no seams
+  layouts.py         placement for the five plate joint types - placement ONLY, no seams;
+                     yaw feasibility, outline vocabulary, D31 clearance geometry
   accessibility.py   the D4/D13 rule: enumerates face pairs and rediscovers the seams
+  verify_curved.py   the curved D4 arms: rediscovery from placed parts (1e-13),
+                     containment residual, per-point weld frames, seam verdicts
   camera.py          pose sampler, pinhole intrinsics, projection (OpenCV convention)
-  visibility.py      exact ray-box occlusion, per-seam visibility, HPR exteriority
+  visibility.py      exact analytic occlusion per primitive, per-seam visibility, HPR
   noise.py           analytic stereo depth noise - params stored, realisation not
   sampling.py        area_uniform + camera_raster sampling, exact normals + face ids
-  config.py          ISO limit functions, parameter sampling, quality classification
+  config.py          ISO limit functions, parameter sampling, quality classification,
+                     valid_preps(t) - the D35 groove pool from verified 9692-1 rows
   hashing.py         canonical JSON, content hash, config_id, twin_key
-  scene.py           assembles a schema-conforming scene
+  scene.py           assembles a schema-conforming plate scene
+  scene_curved.py    the curved pipeline - same contract, writer, schema, hash
   viz.py             assembly frame, cross-sections - figures, never truth
   writer.py          scene.json / cloud.npz / seams.npz / index.jsonl
-  cli.py             `python -m weldgen generate | verify`
+  cli.py             `python -m weldgen generate | verify` (routes on `seam_families`)
 
-scripts/         evaluation, NOT part of the generator (Phases 4-5)
+scripts/         evaluation, NOT part of the generator (Phases 4-6)
   run_phase4_batch.py   the batch job: 44 resumable chunks -> one csv.gz every
                         comparison plot reads (notebooks/12)
+  qa_d28_gate.py        the corpus-level anti-shortcut gate + the binding D34 chord
+                        sweep + the reported curved statistic (see Phase 6 findings)
+  make_bench6b.py       builds out/bench6b - the family-balanced Phase 6b corpus
   annotation/           Phase 5: export scenes for CloudCompare hand-labelling
                         (no truth ships), score clicks against analytic truth,
                         emit the annotator perturbation model
@@ -122,12 +151,15 @@ scripts/         evaluation, NOT part of the generator (Phases 4-5)
                      metrics.py, dataset.py
 
 configs/         phase1, phase2, phase2_fixture, phase3, phase3_raster,
-                 bench_{T,corner,butt,lap,edge}  <- the balanced benchmark corpus,
-                 smoke, reference_tjoint, playground
-tests/           287 tests: geometry, determinism, schema conformance, ISO limits, viz,
-                 the Phase 2 joint-type gate, the Phase 3 visibility gate, and the
-                 migrated baseline
-notes/           the plan, the handoff, and the standards PDFs
+                 bench_{T,corner,butt,lap,edge}  <- the pre-6a benchmark corpus,
+                 bench6a_{...}  <- yaw + outlines + class disjoint,
+                 grooved_butt, curved_smoke, amb_lap / amb_T (the D32 stratum),
+                 smoke, reference_tjoint, playground (the notebooks' preset)
+tests/           408 tests: geometry, determinism, schema conformance, ISO limits, viz,
+                 the phase gates, the baselines, and the Phase 6 additions (outlines,
+                 class disjointness, curves, constructors, curved verification and
+                 scenes, grooves, the QA gate's curved arm)
+notes/           the plan, the patch notes, the handoff, and the standards PDFs
 papers/          literature
 ```
 
@@ -146,8 +178,9 @@ measurable.
 out/phase2/<scene_id>/
   scene.json      conforms to docs/scene.schema.json
   cloud.npz       xyz, normals, object_id, face_id, visible_from_cam
-  seams.npz       per seam: nominal, root, gapmid, arclength, tangent, approach, nA, nB,
-                  visible
+  seams.npz       per seam: nominal, arclength, tangent, approach, nA, nB, visible; plus
+                  root + gapmid (square-prep plates, D19), groove_root (grooved, D36),
+                  or the per-sample dihedral array (curved - it genuinely varies)
   scene.sha256    the content hash
 ```
 
@@ -400,7 +433,7 @@ the other direction.
 
 ## Baselines (Phase 4)
 
-Seven methods, scored against constructed truth. Two exist so far. `ours` is **not** claimed
+Seven methods, scored against constructed truth. `ours` is **not** claimed
 as a novel extractor — the contribution is the dataset and the comparison
 (`notes/dataset_plan.md` §4).
 
@@ -444,7 +477,12 @@ which makes the honest framing a *ladder every method sits on* rather than a wea
 On a corner joint it reproduces its paper: median **RMSE 0,51 mm** over 25 scenes against a
 reported < 0,7 mm, first run, no tuning. **And it collapses exactly as `ours` does when the
 masks are withheld** — F1 0,83 → 0,02, against `ours`' 0,75 → 0,03. Two methods sharing
-nothing but that one input, failing by the same factor without it.
+nothing but that one input, failing by the same factor without it. The first author
+confirmed the implementation choices in writing (2026-08-27): the oracle masks are an
+acceptable stand-in, Mean-Shift may stay off on density-uniform data (its stabilising
+side-effect is why the `mean_shift=True` arm gets reported anyway), the LOBB radius is
+weld-width-determined and not tunable, and a B-spline fit for the closed contact
+perimeter is an endorsed extension — full quotes in the `lit_lobb.py` docstring.
 
 **`lit-ransac` reproduces its paper.** Checked against §7.2.1's own metric, not ours — RMSE
 0,60 mm and ME 0,81 mm against a reported max of 0,64 and 1,16, on a T joint at the paper's
@@ -526,6 +564,92 @@ apart needs many scenes of known truth, which is the argument for this generator
 
 ---
 
+## Phase 6 findings
+
+Phase 6a made the plate corpus harder to cheat on; 6b made the seams curve. The findings
+below are the ones a reader of the numbers needs; the patch notes carry the full record.
+
+**The axis-alignment prior is broken, and breaking it was measured, not assumed (D28).**
+Through Phase 5 every seam ran parallel to a plate boundary, so "find a long straight
+edge, the seam is parallel to it" was a valid heuristic and every Phase 4 number was
+measured under it. Two mechanisms remove it: full-circle in-plane yaw (uniform over the
+per-scene *feasible set* of [−180°, 180°) — ruled full-circle deliberately, θ and θ+180°
+are different configurations) and convex polygon outlines with deliberately non-uniform
+weights — a uniform outline draw measurably rebuilt the 0° spike, because trapezoid and
+parallelogram keep a far edge parallel to the seam by identity. Verification is
+corpus-level: `qa_d28_gate.py` gates the length-weighted seam-to-free-edge angle
+histogram against terminal-bin concentration. Two earlier statistics measured their own
+artifacts (nearest-edge variants won by terminating end edges, then by the exclusion
+boundary itself) and are recorded in the script so they are not rebuilt. Also recorded:
+the lap yaw was silently dead in 21/40 seeds behind a support-bound bug, and a
+yaw × misalignment coupling deleted A-side lap toes until the near-parallel clip waiver —
+both found by measuring the corpus, neither by unit tests.
+
+**Seam classes are disjoint by construction, not by labeling (D31/D32).** Clearance
+`c = 2·min(t_A, t_B)` keeps every non-lap/edge configuration off other classes' geometry;
+lap and edge get combined-edge semantics (every suitable edge of an edge joint is a seam;
+the underside lap toe carries its own label for the single-view condition). The deliberate
+counterpart: `class_boundary_stratum` presets (`amb_lap`, `amb_T`) with *inverted*
+acceptance emit only near-boundary scenes, each recording `ambiguous_with` — the
+class-boundary material lives in its own stratum instead of leaking into training.
+
+**The taxonomy is ISO 17659's, including one exclusion.** `joint.type` stays the sampling
+vocabulary; a derived `iso_17659_term` records the standard's own word (a T away from
+~90° is the *angle joint*, 3.12; our edge class sits at α = 0 inside the edge joint's
+0–30° band). The *parallel joint* (3.8) is excluded outright: its join is an area bond
+over the faying surface, not a linear seam, so there is no seam curve to construct —
+outside the problem definition, stated rather than approximated. `iso_9692_ref` is
+likewise derived per scene, and honestly `null` where the standard has no row (branch and
+pipe preparation are not in Part 1 — which is also why grooves stay plate-butt-only, D30).
+
+**Curves are drawn first; parts are derived (D29 as amended).** A seam family is a curve
+family with a realizability condition, not a workpiece catalogue: seven families (line,
+circle, ellipse, saddle, rounded rect, drawn swept path, arc butt), every curve exact —
+closed-form quadric intersections or constructed sweeps (D33; the tolerance clause was
+proposed and *withdrawn*, because the ruled-quadric argument makes it unnecessary).
+Surface ∩ surface lives only in verification: `rediscover_seam` recomputes each seam from
+the placed parts alone at 1e-13 and detects a 0,5 mm perturbation. The only numerical
+qualification anywhere is the render mesh's chord error, gated ≤ 0,25 mm (D34) — clouds
+are sampled analytically on the true surfaces, so the gate never touches a label. Two
+findings the machinery forced: a swept stiffener's welds are the **offset curves at
+±t/2**, not the drawn spine (mid-material is not a weld); and an **open bore clears the
+local torch cone** (measured on a 50 mm bore), so what forbids the inner fillet on small
+pipe is torch-body confinement — a semantic gate, `bore_min_diameter_mm = 80` [ours].
+
+**Grooves are thickness-driven and citable (D35–D37).** The preparation pool is
+`valid_preps(t)` over PDF-verified ISO 9692-1 rows (square / single-bevel 1.9.1 /
+single-V 1.3, 1.5 / single-U 1.6+2.6), with "no groove" staying in the pool. A grooved
+centreline emits `groove_root` at exactly `t − c` below the top in place of the D19
+triple — and the single-bevel case is why they are separate curves: the mouth centreline
+provably shifts off the root centre on an asymmetric preparation. D37's blanket-rejection
+risk (a 30° cone from the root is blocked by every V ≤ 60°) was real and cost zero code:
+the nominal was always mouth-anchored. The prepared plate is a rectangle by construction —
+prism outlines do not compose with a machined straight edge — so grooved scenes carry the
+axis prior structurally; the corpus-level pooling absorbs it and the gate's per-mechanism
+rows keep it visible.
+
+**Curved scenes and the gate: exempt, report, exclude by provenance.** Closed seams are
+exempt (a closed curve's tangent sweeps every direction — the prior is unlearnable). Open
+curved seams are *reported, never gated*: their spines are drawn at random, so the
+sampler prior cannot arise by construction. And the exclusion of joint-constrained edges
+is by **provenance, not proximity**: any part derived from the seam's own spine (matched
+by a rigid-motion-invariant signature) contributes no edges at all — its longitudinal
+boundaries are exactly parallel by identity, and even its far vertical corners read 90°
+under every possible draw. Without that rule the printed histogram says "stiffener" in
+the shortcut bin — a number that means the opposite of what it says. Consequence: the
+arc-butt family reports nothing (both parts derive from the curve; no sampler-free
+direction exists in the scene), the swept-stiffener family reports its seam tangents
+against the independent plate outline.
+
+**`out/bench6b` is balanced within class, and stays balanced under trimming.** 60 scenes
+per class: T = 10 each of the six fillet-bearing families; butt = 15 square + 15 grooved
++ 30 arc; corner/lap/edge = 60 line. Seeds are *interleaved* per source (residues modulo
+the class stride), not blocked — `balanced_corpus` selects the lowest N seeds, so blocks
+would collapse any trim onto one family, while interleaving keeps every seed-sorted
+prefix at the intended proportions. All gates pass over the finished corpus.
+
+---
+
 ## Not yet implemented
 
 Fields exist in the schema and are filled with honest placeholders rather than being absent,
@@ -534,10 +658,12 @@ so the array layout never changes:
 | Field | Current value | Filled in |
 |---|---|---|
 | `tacks` | `null` | Phase 7 |
-| `joint.prep` | `"square"` — groove preparations V/U/J/bevel | Phase 6 (D24) |
-| curved seams, non-slab primitives | — | Phase 6 |
 
-Parts are plain slabs through Phase 5 (~~D17~~ withdrawn). `part_geometry_id` is
-`<primitive>_<dims>`, so the D11 split is a held-out **dimensions** split until Phase 6 —
-worth saying in the paper rather than letting "held-out geometry" imply more than it
-delivers.
+`joint.prep` and the curved families are filled as of Phase 6b. Two things remain by
+design rather than omission: the Phase 4 batch over the Phase 6 corpora (bench6a +
+bench6b in one run — pre/post-D31 lap and edge numbers are not comparable by definition,
+so the re-run replaces rather than extends the old table), and the Phase 5 annotation
+study itself (the tooling and a fresh 20-scene export from `out/bench6a` are ready under
+`out/annotation/`; the clicks are human work). The D11 split note stands: with prisms,
+tubes, swept bands and prepared slabs in the corpus, held-out geometry now means more
+than a dimensions split — but say precisely which axes are held out.
