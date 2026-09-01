@@ -1547,16 +1547,55 @@ materialises, prices the expertise term as (unbriefed − briefed). Per the advi
 the paper says "briefed engineering student, a reasonable proxy for whoever labelled
 WeldJoint-PCD" — no credentials claimed.
 
-- [ ] Hand-label 20–30 tier-1 scenes in CloudCompare, the way LWSNet did
-      *(export ready: `python scripts/annotation/export_for_annotation.py`)*
-- [ ] Measure annotation against analytic truth → **the label-noise floor of the existing
-      literature** *(scorer ready)*
-- [ ] **Get a second annotator if at all possible.** Then report LWSNet-style intra-rater
-      consistency *and* actual accuracy side by side — the precision-vs-accuracy point made
-      visually instead of rhetorically
-- [ ] Compare the floor against the ~0.6 mm RMSE these papers report
+- [x] Hand-label 20–30 tier-1 scenes in CloudCompare, the way LWSNet did — DONE
+      2026-09-01: 20 scenes (4 per joint type, drawn from `out/bench6a` — the current
+      shortcut-free plate geometry), annotated by the independent briefed annotator
+      (`annotator1`) and, as the briefing record only, by the author (`demo`)
+- [x] Measure annotation against analytic truth — DONE 2026-09-01, and **the headline
+      floor is 1,4 mm**: briefed lateral RMSE median 1,415 mm, p95 11,8 mm, endpoint
+      error median 4,2 mm; miss rate 0,20, extra rate 0,63
+      (`out/annotation/annotation_scores.csv`, perturbation model in
+      `out/annotation/annotator_model.json`)
+- [x] **Get a second annotator if at all possible** — obtained: `annotator1` is the
+      independent measurement, distinct from the author's excluded `demo` pass. Still
+      open inside this item if the side-by-side figure is wanted: the **intra-rater
+      repeat pass** (same annotator, second pass on a subset) that LWSNet-style
+      consistency needs — consistency without accuracy is the literature's number;
+      we can now show both, but only accuracy is measured so far
+- [x] Compare the floor against the ~0.6 mm RMSE these papers report — **the floor is
+      2,4× the reported accuracy**: labels drawn with the literature's own tool and
+      protocol carry 1,4 mm median lateral noise against exact truth, so a sub-millimetre
+      RMSE *measured against such labels* is below its own label noise. This is the
+      Phase 5 claim, now a number.
 
-**Effort:** 1–2 days (plus recruiting the second annotator).
+**Findings from the scored pass (2026-09-01), all in `annotation_scores.csv`:**
+
+- **Which D19 curve the annotator clicked depends on the joint type, exactly as the
+  physical crease predicts** — butt: gap_mid fits best (1,31 mm vs 3,38 nominal — the
+  human clicks the middle of the visible gap, not the face-plane intersection); T:
+  root fits best (1,28 vs 1,98 — on a fillet the click lands in the root corner).
+  Aggregated over types that structure survives (gapmid 1,16 < root 1,28 < nominal
+  1,41), but the per-type table is the honest form. D19 storing all three curves is
+  what makes this measurable at all.
+- **Selection errors are structured by class, not random**: corner missed 4 seams (the
+  second, opposed-approach seam of the pair goes unmarked), edge produced 11 extras
+  (the flush stack invites marking every visible edge), lap both misses and extras.
+  T was clean (0/0).
+- **Lap is the catastrophic class for humans too**: 8,5 mm median lateral RMSE, and
+  ~10 mm against *all three* D19 curves — the error is not "clicked a neighbouring
+  reference curve", it is "picked the wrong line entirely" (plate edge for toe). The
+  same class every Phase 4 baseline struggles with is the one humans cannot label.
+- **Endpoint judgement is ~3× worse than lateral placement** (4,2 vs 1,4 mm median) —
+  where a seam *ends* is genuinely harder to see than where it *runs*, which matters
+  for any consumer scoring recall along the arclength.
+- **The author's demo pass (1,92 mm) was WORSE than the briefed annotator (1,42 mm)** —
+  knowing where the seams are does not make clicking more precise, which strengthens
+  rather than undermines the exclusion rule: it measures a different thing, not a
+  better one.
+
+**Effort:** 1–2 days (plus recruiting the second annotator). *(Spent as planned;
+annotation restarted once — the pre-6a export was retired with its corpus, see the
+archive at `out/annotation_archived_20260901`.)*
 
 ---
 

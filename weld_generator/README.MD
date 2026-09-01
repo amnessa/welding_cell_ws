@@ -8,7 +8,9 @@ path.
 Status: **Phases 1–6 complete.** Five plate joint types with the D4 accessibility rule,
 fixture, camera + visibility + analytic sensor noise (Phases 1–3); seven baseline methods
 implemented and harnessed (Phase 4 — the combined batch over the Phase 6 corpora is the
-one run still pending); the annotation study tooling with a fresh export out (Phase 5);
+one run still pending); the annotation study measured — **the label-noise floor of the
+literature's own protocol is 1,4 mm median lateral RMSE, 2,4× the ~0,6 mm accuracy those
+papers report against such labels** (Phase 5);
 and Phase 6 in both halves — 6a broke the axis-alignment shortcut and made the seam
 classes disjoint by construction, 6b added the curved seam families, non-planar
 primitives, and ISO 9692-1 groove preparations, all under the same exactness contract.
@@ -659,11 +661,17 @@ so the array layout never changes:
 |---|---|---|
 | `tacks` | `null` | Phase 7 |
 
-`joint.prep` and the curved families are filled as of Phase 6b. Two things remain by
-design rather than omission: the Phase 4 batch over the Phase 6 corpora (bench6a +
-bench6b in one run — pre/post-D31 lap and edge numbers are not comparable by definition,
-so the re-run replaces rather than extends the old table), and the Phase 5 annotation
-study itself (the tooling and a fresh 20-scene export from `out/bench6a` are ready under
-`out/annotation/`; the clicks are human work). The D11 split note stands: with prisms,
-tubes, swept bands and prepared slabs in the corpus, held-out geometry now means more
-than a dimensions split — but say precisely which axes are held out.
+`joint.prep` and the curved families are filled as of Phase 6b. One run remains by design
+rather than omission: the Phase 4 batch over the Phase 6 corpora (bench6a + bench6b in
+one run — pre/post-D31 lap and edge numbers are not comparable by definition, so the
+re-run replaces rather than extends the old table). The Phase 5 annotation study is
+measured (20 bench6a scenes, independent briefed annotator; scores and the per-annotator
+perturbation model under `out/annotation/`) — three of its findings worth quoting: which
+D19 curve a human clicks depends on the joint type exactly as the visible crease predicts
+(gap-mid on butt, root on T), lap is the catastrophic class for humans too (8,5 mm — the
+same class every baseline struggles with is the one humans cannot label), and the
+author's own demo pass was *worse* than the briefed annotator's, which is why the
+contamination rule excludes it as a different measurement, not a better one. The D11
+split note stands: with prisms, tubes, swept bands and prepared slabs in the corpus,
+held-out geometry now means more than a dimensions split — but say precisely which axes
+are held out.
