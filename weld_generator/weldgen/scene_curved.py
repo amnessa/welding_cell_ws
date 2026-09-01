@@ -393,4 +393,7 @@ def generate_curved_scene(cfg: dict[str, Any],
         raise CurvedGateFailed(
             f"family {fam} seed {seed}: chord error {chord:.3f} mm exceeds the "
             f"D34 gate")
+    if cfg.get("emit_mps", False):        # D25, Phase 6c: derived, no random draw
+        from .mps import mps_rule
+        scene["mps"] = mps_rule(scene)
     return scene, arrays

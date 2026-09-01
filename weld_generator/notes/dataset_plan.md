@@ -1950,6 +1950,58 @@ described as something more.
       (nor in Part 2's submerged-arc scope). Recorded honestly rather than stretched:
       grooves stay plate-butt-only (D30) and curved scenes emit `iso_9692_ref: null`
 
+### Phase 6c — Task 2 / MPS package (D25, D26)
+
+*Added 2026-09-01, after the advisor confirmed MPS as a geometric proxy and Task 2 as a
+short section in paper 1 (`plan_patch_v2.md`). Sequenced BEFORE the Phase 4 re-run for
+the same reason as every other pre-batch addition: the batch is expensive and runs once,
+so anything that adds a condition to it lands first.*
+
+Placement rationale, recorded so it is not re-litigated: MPS ranks seams by **visible**
+arclength, so it cannot live in Phase 2 (pre-camera — the quantity the rule ranks by
+does not exist there). It decomposes into three pieces with three different homes, and
+only one of them is generator work:
+
+- [x] **(a) `mps_rule-0.1` as code — DONE 2026-09-01** (`weldgen/mps.py`, optional
+      schema block, flag-gated emission in both pipelines, `tests/test_mps.py` 5 tests;
+      the emission test caught the config_id shift noted below): a versioned pure function
+      over fields every `scene.json` already stores (`visible_fraction × length_mm`,
+      dihedral, seam id), so it applies **retroactively to every existing corpus with no
+      regeneration**. `weldgen/mps.py`: argmax of visible arclength over weldable seams,
+      ties by larger dihedral fold (deviation from 180°; curved seams use the stored
+      mean), then lower seam id; null below `min_len_mm` (default 10, matching
+      `min_seam_length_mm`). Closed seams need no wrap special-case here: total
+      arclength × visible fraction is well-defined either way (the wrap convention D25
+      flagged bites the *tack* rule, Phase 7, not this argmax). Schema gains an optional
+      `mps` block `{rule_version, params, seam_id, class}`; emission is **opt-in per
+      config file** (`emit_mps: true`), deliberately NOT a new `DEFAULT_CONFIG` key —
+      `config_id` hashes the resolved config, so a new default shifts every corpus's
+      scene ids (measured: bench6a_T 9a8eb697 → 825815e7 during implementation, caught
+      by the emission test and reverted). A config that sets the flag is a different
+      config and gets a different `config_id`, correctly; it is not a geometry key, so
+      `twin_key` survives it — and consumers can equally compute the block on the fly
+      from any stored scene
+- [ ] **(b) `approach_cone` camera regime (D26)** — the substantial piece, and the one
+      that resolves `plan_patch_v2.md`'s still-open occlusion-grading item: under
+      `uniform_sphere`, visibility is near-binary and MPS degenerates to "the one seam
+      that is visible at all". Implementation choice, recorded: **rejection-sample**
+      camera poses until a drawn target seam clears a visibility threshold, rather than
+      computing the full azimuth × elevation map per scene (the notebook-02 sweep is
+      minutes per scene; rejection sampling reaches the same empirical "Swiss cheese"
+      region for the cost of a few visibility evaluations). Config flag on the camera
+      substream, twin-paired with `uniform_sphere` — the paired delta measures what
+      coarse positioning is worth, same style as fixture on/off.
+      **Gate:** under `approach_cone`, the MPS margin (winner's visible arclength over
+      runner-up's) must be graded, not bimodal — that is the measurable form of "MPS
+      has teeth"
+- [ ] **(c) the Task-2 batch chunk** — each method's single-view output scored on
+      whether it returned the MPS seam (selection) plus localization on that seam;
+      lands in `run_phase4_batch.py` as its own chunk and in the paper as the decided
+      short section. No new metric code: selection is a comparison of matched seam ids,
+      localization is the existing matched-path machinery
+
+**Effort:** (a) 0,5 day; (b) 1–2 days; (c) rides the batch.
+
 ### Phase 7 — Tack layer
 
 Only meaningful after Phase 6.

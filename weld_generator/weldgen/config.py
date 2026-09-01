@@ -114,6 +114,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # than anything about the task (see scene.NoVisibleSeams). The occlusion figures are
     # still recorded on every scene that IS emitted - tier 2 uses them.
     "require_visible_seam": True,
+    # Phase 6c (D25): `emit_mps: true` in a CONFIG FILE emits the derived `mps` block.
+    # Deliberately NOT a default here: `config_id` hashes the resolved config, so a new
+    # default key would shift every existing corpus's scene ids (measured: bench6a
+    # 5b2a54f4 -> 825815e7). A config that sets the flag is a different config and gets
+    # a different config_id, correctly; it is not a geometry key (no random draw), so
+    # twin_key is unaffected, and consumers can equally call
+    # weldgen.mps.mps_rule(scene) on any stored scene.
     # A scene is omitted unless some primary seam has at least this fraction of its length
     # returned by the sensor. Deliberately LOW: "no visible seam" means essentially
     # nothing, and a seam a quarter in frame is still supervisable. A high bar here would

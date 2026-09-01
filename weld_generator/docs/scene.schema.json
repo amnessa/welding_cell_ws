@@ -735,6 +735,37 @@
         ]
       }
     },
+    "mps": {
+      "description": "D25 / Phase 6c - the Task-2 label as a VERSIONED RULE over stored per-seam fields, never stored truth. Present only when the config sets emit_mps; consumers of corpora without it call weldgen.mps.mps_rule(scene) and get the identical block. seam_id/class are null when no weldable seam clears min_len_mm of visible arclength - a legitimate single-view answer.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rule_version",
+        "params",
+        "seam_id",
+        "class"
+      ],
+      "properties": {
+        "rule_version": {
+          "type": "string"
+        },
+        "params": {
+          "type": "object"
+        },
+        "seam_id": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "class": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
     "tacks": {
       "oneOf": [
         {

@@ -582,4 +582,7 @@ def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict
             "numpy": np.__version__,
         },
     }
+    if cfg.get("emit_mps", False):        # D25, Phase 6c: derived, no random draw
+        from .mps import mps_rule
+        scene["mps"] = mps_rule(scene)
     return scene, arrays
