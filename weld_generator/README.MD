@@ -668,6 +668,18 @@ and a stored scene-global weld sequence that staggers same-class seams. Conventi
 never truth (D8): the constants are parameters, and the block is a pure function of
 stored files, computable retroactively on any corpus.
 
+Where the tack methodology comes from: these are **shop-practice conventions, not code
+requirements**, and each constant carries its attribution. The thickness-scaled spacing
+(`d_max = 33t`) and the absolute 400 mm ceiling follow the tack-spacing tables of
+**JASS 6** (Japanese Architectural Standard Specification for steel structure work) as
+reproduced in the **Kobelco welding handbook**; the tack length `clip(4t, 10, 50) mm`
+and the end-margin idea are attributed to **EN 1011-2** (attributed, not verified — we
+do not hold the standard's text); the opposite-pair sequence on closed loops and the
+staggered heat-balance ordering across seams follow the distortion-control practice
+surveyed in **Tomków, Sobota & Krajewski (2020)**, the literature anchor named by the
+dataset plan. Because every one of these numbers is a parameter of `tackrule-0.1`,
+disagreement with any source is resolved by re-running the rule, not by editing labels.
+
 `joint.prep` and the curved families are filled as of Phase 6b. One run remains by design
 rather than omission: the Phase 4 batch over the Phase 6 corpora (bench6a + bench6b in
 one run — pre/post-D31 lap and edge numbers are not comparable by definition, so the
