@@ -244,6 +244,45 @@ def generate_curved_scene(cfg: dict[str, Any],
             max(prof["min_z_mm"], cfg["standoff_mm"][0]), cfg["standoff_mm"][1]))
     T_cam = sample_pose(target, standoff, elevation, azimuth, roll)
 
+    # --- D26 / Phase 6c: approach_cone regime, opt-in - mirrors the plate pipeline:
+    # target drawn among upward-approach welds, (elevation, azimuth) rejection-sampled
+    # inside its observable region, every draw APPENDED to substream 5.
+    cam_extra: dict[str, object] = {}
+    cone_dense_i = None
+    regime = cfg.get("camera_regime")
+    if regime is not None:
+        cam_extra["regime"] = str(regime)
+    if regime == "approach_cone":
+        from .camera import approach_cone_draws
+        from .visibility import seam_visibility
+        eligible = [i for i, s in enumerate(dense)
+                    if verdicts[i][0] and s["role"] == "weld"
+                    and float(np.mean(w_vec(s["approach"])[:, 2])) > 0.0]
+        if eligible:
+            cone_dense_i = eligible[int(g5.integers(len(eligible)))]
+            s_t = dense[cone_dense_i]
+            step = max(1, len(s_t["points"]) // 120)
+            t_pts = w_pts(s_t["points"][::step]).astype(float)
+            t_app = w_vec(s_t["approach"][::step]).astype(float)
+            res = approach_cone_draws(
+                g5,
+                lambda el, az: sample_pose(target, standoff, el, az, roll),
+                lambda T: float(seam_visibility(
+                    t_pts, t_app, parts, T, K, width, height,
+                    prof["min_z_mm"]).mean()),
+                cfg["elevation_deg"],
+                float(cfg.get("approach_visibility_min", 0.5)),
+                int(cfg.get("approach_max_attempts", 40)))
+            T_cam, elevation = res["T_cam"], res["elevation_deg"]
+            cam_extra.update(
+                target_face_pair=_face_pair(built, "weld"),
+                target_visible_fraction=res["visible_fraction"],
+                approach_attempts=res["attempts"],
+                approach_cleared=res["cleared"])
+        else:
+            cam_extra.update(target_face_pair=None, target_visible_fraction=None,
+                             approach_attempts=0, approach_cleared=False)
+
     # --- cloud, substream 4 --------------------------------------------------------
     g4 = streams["surface_sample"]
     density = float(g4.uniform(*cfg["density_per_mm2"]))
@@ -257,6 +296,8 @@ def generate_curved_scene(cfg: dict[str, Any],
     # --- seam emission -------------------------------------------------------------
     arrays: dict[str, np.ndarray] = {}
     order = sorted(range(len(dense)), key=lambda i: not verdicts[i][0])
+    if cone_dense_i is not None:
+        cam_extra["target_seam_id"] = order.index(cone_dense_i)
     seam_blocks = []
     any_visible = 0.0
     for out_i, i in enumerate(order):
@@ -367,7 +408,8 @@ def generate_curved_scene(cfg: dict[str, Any],
         "tacks": None,
         "camera": {"model": "pinhole", "K": K, "width": width, "height": height,
                    "T_world_cam": [[float(v) for v in row] for row in T_cam],
-                   "standoff_mm": standoff, "elevation_deg": elevation},
+                   "standoff_mm": standoff, "elevation_deg": elevation,
+                   **cam_extra},             # D26: regime + target, opt-in configs only
         "noise_model": {"kind": "stereo_z2", "profile": profile,
                         "subpixel_px": prof["subpixel_px"],
                         "baseline_mm": prof["baseline_mm"],

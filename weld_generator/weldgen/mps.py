@@ -75,3 +75,22 @@ def mps_rule(scene: Mapping[str, Any], min_len_mm: float = MIN_LEN_MM
         "seam_id": None if best_seam is None else int(best_seam["id"]),
         "class": None if best_seam is None else str(best_seam["seam_class"]),
     }
+
+
+def mps_margin(scene: Mapping[str, Any], min_len_mm: float = MIN_LEN_MM
+               ) -> float | None:
+    """Runner-up visible arclength over the winner's, in [0, 1] — the 6c(b) gate.
+
+    0 means only one seam clears `min_len_mm`: MPS reduces to "the one seam visible
+    at all", D25's degenerate regime. Values strictly inside (0, 1) mean the argmax
+    is a genuine choice — what the `approach_cone` regime exists to produce. None
+    when no seam clears at all.
+    """
+    lens = sorted((float(s["visible_fraction"]) * float(s["length_mm"])
+                   for s in scene["seams"] if s.get("weldable")), reverse=True)
+    lens = [v for v in lens if v > float(min_len_mm)]
+    if not lens:
+        return None
+    if len(lens) == 1:
+        return 0.0
+    return lens[1] / lens[0]

@@ -111,3 +111,39 @@ def in_frustum(uv: np.ndarray, z_cam: np.ndarray, width: int, height: int,
     return ((z_cam > float(min_z_mm))
             & (uv[:, 0] >= 0.0) & (uv[:, 0] < float(width))
             & (uv[:, 1] >= 0.0) & (uv[:, 1] < float(height)))
+
+
+def approach_cone_draws(g5, pose_of, visibility_of, elevation_range,
+                        vis_min: float, max_attempts: int) -> dict:
+    """D26 `approach_cone`: rejection-sample a viewpoint inside the target seam's
+    empirically observable region.
+
+    The advisor's deployment model: the robot is coarsely positioned into the weld
+    region FIRST, so the camera is not sampling an arbitrary sphere. The observable
+    region is the notebook-02 azimuth x elevation map - "Swiss cheese", holes included -
+    and this samples it empirically for the cost of a few visibility evaluations
+    instead of computing the full map per scene: redraw (elevation, azimuth) until the
+    target seam's visible fraction clears `vis_min`, keeping the best pose seen as the
+    fallback when nothing clears within `max_attempts` (recorded as `cleared: False`,
+    never silently).
+
+    All draws come from substream 5 via `g5` and are APPENDED after the base draws
+    (SCHEMA.md 6.1), so a config without the regime reproduces bit-identically.
+    `pose_of(elevation, azimuth)` builds the candidate pose (standoff, roll and aim
+    stay at their base draws - the observable region is directional);
+    `visibility_of(T_cam)` returns the target seam's visible fraction under it.
+    """
+    best = None
+    for k in range(int(max_attempts)):
+        el = float(g5.uniform(*elevation_range))
+        az = float(g5.uniform(0.0, 360.0))
+        T = pose_of(el, az)
+        v = float(visibility_of(T))
+        if best is None or v > best[0]:
+            best = (v, el, az, T, k + 1)
+        if v >= float(vis_min):
+            return {"visible_fraction": v, "elevation_deg": el, "azimuth_deg": az,
+                    "T_cam": T, "attempts": k + 1, "cleared": True}
+    v, el, az, T, _ = best
+    return {"visible_fraction": v, "elevation_deg": el, "azimuth_deg": az,
+            "T_cam": T, "attempts": int(max_attempts), "cleared": False}

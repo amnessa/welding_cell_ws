@@ -1981,24 +1981,40 @@ only one of them is generator work:
       config and gets a different `config_id`, correctly; it is not a geometry key, so
       `twin_key` survives it — and consumers can equally compute the block on the fly
       from any stored scene
-- [ ] **(b) `approach_cone` camera regime (D26)** — the substantial piece, and the one
-      that resolves `plan_patch_v2.md`'s still-open occlusion-grading item: under
-      `uniform_sphere`, visibility is near-binary and MPS degenerates to "the one seam
-      that is visible at all". Implementation choice, recorded: **rejection-sample**
-      camera poses until a drawn target seam clears a visibility threshold, rather than
-      computing the full azimuth × elevation map per scene (the notebook-02 sweep is
-      minutes per scene; rejection sampling reaches the same empirical "Swiss cheese"
-      region for the cost of a few visibility evaluations). Config flag on the camera
-      substream, twin-paired with `uniform_sphere` — the paired delta measures what
-      coarse positioning is worth, same style as fixture on/off.
-      **Gate:** under `approach_cone`, the MPS margin (winner's visible arclength over
-      runner-up's) must be graded, not bimodal — that is the measurable form of "MPS
-      has teeth"
+- [x] **(b) `approach_cone` camera regime (D26) — DONE 2026-09-01** in BOTH pipelines
+      (`camera.approach_cone_draws`; `configs/task2_cone.yaml`;
+      `tests/test_approach_cone.py`). As implemented: a target seam is drawn among
+      upward-approach welds (a downward approach — the lap underside toe — has no
+      observable region from above the table, so drawing it would burn every attempt),
+      then (elevation, azimuth) is **rejection-sampled** until the target clears
+      `approach_visibility_min` (0,5; best-seen pose kept as a recorded fallback,
+      `cleared: false`, never silently) — reaching the notebook-02 "Swiss cheese"
+      region empirically instead of computing the map per scene. Every draw is
+      APPENDED to substream 5; the flag is opt-in per config file (the emit_mps
+      config_id lesson applied) and not a geometry key, so the same seed under
+      `uniform_sphere` is a bit-identical geometry twin (pinned by test). The camera
+      block records regime / target seam / realised target visibility / attempts.
+
+      **Gate held where grading is geometrically possible, and the exceptions are
+      findings, not failures (measured 2026-09-01, 20 seeds/class):** yield recovers
+      everywhere (corner 19/20 vs 7/20 under uniform — D26's prediction, dramatic);
+      graded MPS margins rise on edge (8/18 vs 5/14), lap (6/15 vs 3/12) and the
+      tilted pipe (5/8 — closed seams are partially visible from anywhere, so curved
+      families grade naturally). But three classes have STRUCTURALLY pinned margins no
+      camera regime can unpin: T → 0 (complementary lobes: one fillet visible at a
+      time), corner → ~1 (inside fillet and outside corner are the same physical line
+      — a standing tie the rule breaks by fold), saddle → 0 (a single weldable seam
+      once the bore is confined). The Task-2 short section should report the margin
+      distribution PER CLASS — the class-dependence of single-view ambiguity is
+      itself a result the generator can state exactly
 - [ ] **(c) the Task-2 batch chunk** — each method's single-view output scored on
       whether it returned the MPS seam (selection) plus localization on that seam;
       lands in `run_phase4_batch.py` as its own chunk and in the paper as the decided
       short section. No new metric code: selection is a comparison of matched seam ids,
-      localization is the existing matched-path machinery
+      localization is the existing matched-path machinery.
+      *Ruled 2026-09-01: this WAITS with the batch — the user runs Phase 4 once, after
+      enlarging the corpus; the chunk definition is written together with that run's
+      preparation, so the batch script changes land in one pass*
 
 **Effort:** (a) 0,5 day; (b) 1–2 days; (c) rides the batch.
 

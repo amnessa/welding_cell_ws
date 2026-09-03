@@ -221,10 +221,12 @@ axis, it is where two of the seven methods actually live. The L0→L1 delta is a
 - [x] Decide whether Task 2 is evaluated in paper 1 or deferred — DECIDED 2026-09-01 per
       the recommendation: Task 2 as a **short section** in paper 1 (advisor concurs);
       paper 1's core stays Task 1 plus the method comparison
-- [ ] Grade the occlusion distribution before MPS is evaluated (D26 sampler work, plus the
-      framing-fraction change) — MPS is weak while visibility is near-binary.
-      *Still open 2026-09-01 (advisor: not settled yet); gates the MPS short section's
-      numbers, not the phase order*
+- [x] Grade the occlusion distribution before MPS is evaluated — RESOLVED 2026-09-01 by
+      Phase 6c(b): the `approach_cone` regime grades the margin where geometry permits
+      (edge, lap, curved closed seams) and *measures* that T, corner and saddle margins
+      are structurally pinned (complementary lobes / same-corner tie / single weldable
+      seam) — so the MPS section reports per-class margin distributions rather than
+      assuming a global graded axis exists. See dataset_plan Phase 6c for the numbers
 - [x] Verify `lit-modelreg` is implementable without the original CAD assets — RESOLVED
       2026-08-21: implemented as a genuine reimplementation, with the "basic model" built
       CAD-by-construction from `scene.json` (the paper's own premise — identical

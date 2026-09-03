@@ -330,6 +330,48 @@ def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict
             max(prof["min_z_mm"], cfg["standoff_mm"][0]), cfg["standoff_mm"][1]))
     T_cam = sample_pose(target, standoff, elevation, azimuth, roll)
 
+    # --- D26 / Phase 6c: the approach_cone regime, opt-in per config file ---------
+    # Coarse positioning modelled honestly: draw a target seam, then rejection-sample
+    # (elevation, azimuth) inside its observable region. Everything is APPENDED to
+    # substream 5 after the base draws, and `camera_regime` is not a geometry key, so
+    # the uniform_sphere config on the same seed is this scene's exact twin.
+    cam_extra: dict[str, object] = {}
+    cone_target = None
+    regime = cfg.get("camera_regime")
+    if regime is not None:
+        cam_extra["regime"] = str(regime)
+    if regime == "approach_cone":
+        from .camera import approach_cone_draws
+        from .visibility import seam_visibility
+        # a seam whose approach points below the table has no observable region from
+        # a camera above it (the lap underside toe, structurally) - drawing it as the
+        # target would burn every attempt on a region that does not exist
+        eligible = [c for c in cands
+                    if c.weldable and c.p0 is not None and c.length_mm > 1e-6
+                    and float(c.approach[2]) > 0.0]
+        if eligible:
+            cone_target = eligible[int(g5.integers(len(eligible)))]
+            t_pts = sample_polyline(cone_target.p0, cone_target.p1, 1.0)
+            t_app = np.tile(cone_target.approach, (len(t_pts), 1))
+            res = approach_cone_draws(
+                g5,
+                lambda el, az: sample_pose(target, standoff, el, az, roll),
+                lambda T: float(seam_visibility(
+                    t_pts, t_app, slabs, T, K, width, height,
+                    prof["min_z_mm"]).mean()),
+                cfg["elevation_deg"],
+                float(cfg.get("approach_visibility_min", 0.5)),
+                int(cfg.get("approach_max_attempts", 40)))
+            T_cam, elevation = res["T_cam"], res["elevation_deg"]
+            cam_extra.update(
+                target_face_pair=list(cone_target.face_pair),
+                target_visible_fraction=res["visible_fraction"],
+                approach_attempts=res["attempts"],
+                approach_cleared=res["cleared"])
+        else:
+            cam_extra.update(target_face_pair=None, target_visible_fraction=None,
+                             approach_attempts=0, approach_cleared=False)
+
     def _visible(pts, nrm):
         return visible_mask(pts, nrm, slabs, T_cam, K, width, height, prof["min_z_mm"])
 
@@ -363,6 +405,8 @@ def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict
     # zero-length runs are numerical debris. Neither belongs in `seams[]`.
     ordered = [c for c in cands
                if c.p0 is not None and c.length_mm > 1e-6]   # SCHEMA.md §2.7 order
+    if cone_target is not None:
+        cam_extra["target_seam_id"] = ordered.index(cone_target)
 
     for i, c in enumerate(ordered):
         pts = sample_polyline(c.p0, c.p1, density_per_mm)
@@ -551,6 +595,7 @@ def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict
             "T_world_cam": [[float(v) for v in row] for row in T_cam],
             "standoff_mm": standoff,
             "elevation_deg": elevation,
+            **cam_extra,                      # D26: regime + target, opt-in configs only
         },
         "noise_model": {
             "kind": "stereo_z2",

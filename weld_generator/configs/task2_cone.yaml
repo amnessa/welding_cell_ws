@@ -1,0 +1,22 @@
+# Phase 6c (D26) - the Task 2 deployment condition: coarse positioning modelled as
+# the approach_cone camera regime. Pair it with an otherwise-identical config WITHOUT
+# `camera_regime` for the uniform_sphere twin - the regime is not a geometry key, so
+# the same seed gives bit-identical workpieces and seam truth under both (same
+# twin_key), and the paired delta measures what coarse positioning is worth.
+# `emit_mps: true` writes the D25 rule block the Task-2 scoring reads.
+name: task2_cone
+joint_type: [T]
+seam_shape: line
+prep: square
+fixture_present: false
+sampling_mode: area_uniform
+sensor_profiles: [d435i, stereo_good, stereo_poor]
+
+in_plane_yaw: true
+polygon_outlines: true
+class_disjoint: true
+
+camera_regime: approach_cone
+# approach_visibility_min: 0.5    # accept the first pose where the target clears this
+# approach_max_attempts: 40       # then fall back to the best pose seen (recorded)
+emit_mps: true

@@ -861,6 +861,47 @@
           "type": "number",
           "minimum": 0,
           "maximum": 90
+        },
+        "regime": {
+          "description": "D26 / Phase 6c - present only in configs that set camera_regime. approach_cone models coarse positioning: a target seam is drawn and (elevation, azimuth) is rejection-sampled inside its observable region; uniform_sphere is the stress-test sampler every earlier corpus used implicitly.",
+          "enum": [
+            "uniform_sphere",
+            "approach_cone"
+          ]
+        },
+        "target_seam_id": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "target_face_pair": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": {
+                "$ref": "#/$defs/faceRef"
+              }
+            }
+          ]
+        },
+        "target_visible_fraction": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "approach_attempts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "approach_cleared": {
+          "type": "boolean"
         }
       }
     },
