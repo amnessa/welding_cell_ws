@@ -95,6 +95,11 @@ Two notebooks, both of which need a **kernel restart** after you change `weldgen
   transferred, never detected; CAD-by-construction from `scene.json`; registration error
   as the whole of the error; and the symmetric-counterpart failure outside the
   roughly-positioned envelope.
+- `notebooks/13_inspect_tacks.ipynb` — `tackrule-0.1` (Phase 7) drawn on all five plate
+  joints and all six curved families: tacks at true length with the weld order
+  annotated, margins and thickness-scaled spacing checked against the rule's bounds,
+  the D39 closed-loop phase and per-ring antipodal pairing, the round-robin stagger,
+  and the degenerate one-tack collapse.
 
 All ten are entries in the seven-method Phase 4 comparison; see `notes/dataset_plan.md` §4
 and **Baselines** below.

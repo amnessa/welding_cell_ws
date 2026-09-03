@@ -129,6 +129,19 @@ def test_emission_is_flag_gated_like_mps():
     assert content_hash(stripped, arrays_on) == content_hash(scene_off, arrays)
 
 
+def test_member_gauge_is_the_thinner_cross_section_dimension():
+    """Regression: a curved-butt plate's `thickness_mm` is its BAND WIDTH (~80 mm,
+    the w-invariant); the material gauge is the extrusion height. Read as 92 mm, the
+    rule inverted its own bounds (d_min > d_max) and starved a long arc to one tack."""
+    scene, arrays = _scene([(500.0, False, "butt")], t=6.0)
+    for o in scene["objects"]:
+        o.update(primitive="swept_slab", thickness_mm=85.0,
+                 params={"z0_mm": -6.0, "z1_mm": 0.0})
+    b = tack_rule(scene, arrays)
+    assert b["params"]["t_mm"] == 6.0
+    assert len(b["arclength_mm"]) >= 3          # 500 mm at t=6 is a multi-tack seam
+
+
 def test_curved_closed_ring_gets_on_curve_tacks():
     cfg = load_config(str(ROOT / "configs" / "curved_smoke.yaml"))
     cfg["seam_families"] = [2]

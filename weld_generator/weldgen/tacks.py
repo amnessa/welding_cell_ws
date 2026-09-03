@@ -125,11 +125,28 @@ def _counts_closed(L: float, t: float, phase: float, p: Mapping[str, float]):
     return tack_len, [(s0 + k * L / n) % L for k in range(n)]
 
 
+def _member_gauge_mm(obj: Mapping[str, Any]) -> float:
+    """A member's MATERIAL thickness — the thinner cross-section dimension.
+
+    `thickness_mm` is the w-axis extent by the w-is-thickness invariant, which for a
+    swept band is its BAND WIDTH: correct gauge for a stiffener (band = t) and a tube
+    wall, but a curved-butt plate's band is its in-plane width (~80 mm) — its gauge is
+    the extrusion height `z1 − z0`. Found by the family-7 tack panel reading
+    "t = 92 mm, d_min > d_max": min(band, extrusion) is the gauge in every case.
+    """
+    t = float(obj["thickness_mm"])
+    if obj.get("primitive") == "swept_slab":
+        prm = obj.get("params") or {}
+        if "z0_mm" in prm and "z1_mm" in prm:
+            t = min(t, abs(float(prm["z1_mm"]) - float(prm["z0_mm"])))
+    return t
+
+
 def tack_rule(scene: Mapping[str, Any], arrays: Mapping[str, np.ndarray],
               params: Mapping[str, float] | None = None) -> dict[str, Any]:
     """The `tacks` block for one scene — a pure function of (scene.json, seams.npz)."""
     p = {**DEFAULT_PARAMS, **(params or {})}
-    thick = [o["thickness_mm"] for o in scene["objects"]
+    thick = [_member_gauge_mm(o) for o in scene["objects"]
              if o.get("role", "workpiece") == "workpiece"]
     t = float(min(thick))
 
