@@ -2020,18 +2020,56 @@ only one of them is generator work:
 
 ### Phase 7 — Tack layer
 
-Only meaningful after Phase 6.
+Only meaningful after Phase 6 — and Phase 6 is what carries it: on straight seams the
+rule is arithmetic from the endpoints (the trivial-label risk the handoff named); the
+curved and closed seams of 6b are what make the label non-trivial. If the tack
+experiment reports numbers on straight seams only, expect the question.
 
-- [ ] `tacks = place(seam, t, g, rule_params)` — versioned, released as code
-- [ ] Hard constraints: both endpoints mandatory; `d_min ≤ Δs ≤ d_max`; no tack within ~2t of a free
-      edge
-- [ ] Constants cited from Tomków, Sobota & Krajewski 2020 and the JRM literature — **no FEM**
-- [ ] Ship rule output *and* rule source; document explicitly that these are a convention, not
-      geometric ground truth (D8)
-- [ ] Sanity check: on a straight seam the output should be visibly trivial. Say so in the paper
-      before a reviewer does.
+- [x] `tacks = place(...)` — DONE 2026-09-01 as **`tackrule-0.1` (D38)**,
+      `weldgen/tacks.py`: a versioned PURE function of `(scene.json, seams.npz)` — the
+      D25/mps pattern — so it applies retroactively to every stored corpus; emission is
+      opt-in per config file (`emit_tacks: true`, the config_id lesson), and the
+      schema's frozen `tacks` shape took the additions as optional fields
+      (`tack_length_mm`, `order`), exactly the patch-bump it was frozen for.
+      The rule (user-designed, refined 2026-09-01): spacing bounds are FUNCTIONS OF
+      THICKNESS, not constants — `d_max = min(33·t, 400 mm)`, `d_min = 10·t`,
+      `t = min(t_A, t_B)` (the ISO 5817 reading); tacks are SHORT WELDS with
+      `tack_len = clip(4t, 10, 50) mm`; open seams carry an end margin
+      `max(2t, tack_len)` and collapse to ONE recorded centre tack when too short;
+      closed loops take `n = max(4, ceil(L/d_max))` rounded up to even.
+      **Weld order is stored** — ends → centre → bisect on open seams, opposite pairs
+      on closed loops, and same-class seams staggered ROUND-ROBIN in the scene-global
+      sequence (the heat-balance move). A positional half-pitch stagger was considered
+      and REJECTED: with both effective endpoints mandatory it breaks the `d_max`
+      bound the rule guarantees, and the two cannot both hold.
+- [x] Hard constraints — reconciled, not dropped: "both endpoints mandatory" survives
+      as both EFFECTIVE endpoints (at the margin) always tacked on a non-degenerate
+      open seam, with `d_min` never forcing below two; "no tack within ~2t of a free
+      edge" IS the margin (which also keeps tacks out of the run-on/run-off zone);
+      `d_min ≤ Δs ≤ d_max` holds by construction and is pinned by test.
+- [x] **D39 — the closed-loop label problem**, the D19 kind of ambiguity: any rotation
+      of a closed tack set is equally valid, so a convention is picked and RECORDED —
+      the phase derives from `sha256(scene_id, seam_id)` (deterministic, seed-free,
+      stored in `params.phase_by_seam`). Consequence for Phase 4: tack scoring must be
+      **rotation-invariant on closed seams**, or a correct set starting at 3 o'clock
+      scores as wrong. Written here so the batch prep implements it.
+- [x] Constants — **no FEM**, and provenance stated plainly: these are SHOP-PRACTICE
+      conventions, not code limits. Thickness scaling and the 400 mm ceiling
+      attributed to JASS 6 via the Kobelco handbook; `4t`/50 mm tack length attributed
+      to EN 1011-2 (**not verified against the standard's text — we do not hold it**);
+      Tomków, Sobota & Krajewski 2020 remains the literature anchor to cite (PDF not
+      in `papers/` yet — obtain before the paper cites it). Every constant is a
+      parameter of the rule: nobody argues with 33, they re-run it.
+- [x] Ship rule output *and* rule source; a convention, not geometric truth (D8) —
+      the module docstring carries the full statement; `tests/test_tacks.py` 7 tests
+      (bounds, ceiling, degenerate collapse, closed even/phased/opposite-paired,
+      stagger, flag-gated emission, on-curve tacks on a generated pipe ring).
+- [x] Sanity check: on a straight seam the output is visibly trivial — stated above
+      and to be said in the paper before a reviewer does; the curved/closed corpus is
+      the answer, not a defence.
 
-**Effort:** 3–4 days.
+**Effort:** 3–4 days. *(Landed in one, because every hard part — closed seams, exact
+arclength, the emission/hash discipline — was already built by Phases 6b/6c.)*
 
 ---
 

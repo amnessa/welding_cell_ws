@@ -654,12 +654,14 @@ prefix at the intended proportions. All gates pass over the finished corpus.
 
 ## Not yet implemented
 
-Fields exist in the schema and are filled with honest placeholders rather than being absent,
-so the array layout never changes:
-
-| Field | Current value | Filled in |
-|---|---|---|
-| `tacks` | `null` | Phase 7 |
+Every schema field is now filled by some phase — the placeholder table that lived here
+retired with Phase 7: `tacks` became `tackrule-0.1` (`weldgen/tacks.py`, D38/D39,
+emitted under `emit_tacks`), a versioned shop-practice rule over exact geometry —
+thickness-scaled spacing with the 400 mm ceiling, tacks as short welds with an end
+margin, even opposite-pair placement on closed loops with a recorded rotation phase,
+and a stored scene-global weld sequence that staggers same-class seams. Convention,
+never truth (D8): the constants are parameters, and the block is a pure function of
+stored files, computable retroactively on any corpus.
 
 `joint.prep` and the curved families are filled as of Phase 6b. One run remains by design
 rather than omission: the Phase 4 batch over the Phase 6 corpora (bench6a + bench6b in

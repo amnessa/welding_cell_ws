@@ -546,13 +546,22 @@ regenerable — you can reproduce any single scene from its id alone.
     }
   ],
 
-  "tacks": {                               // Phase 7; null until then
-    "rule_version": "tackrule-0.1",
-    "params": { "d_min_mm": 40.0, "d_max_mm": 120.0, "edge_margin_factor": 2.0 },
-    "points_mm": [[0.0,0.0,0.0], [116.0,0.0,0.0], [232.0,0.0,0.0]],
-    "seam_id": [0, 0, 0],
-    "arclength_mm": [0.0, 116.0, 232.0]
-  },
+  "tacks": {                               // Phase 7 (D38); null unless emit_tacks set
+    "rule_version": "tackrule-0.1",        // weldgen/tacks.py - versioned rule, D8:
+    "params": {                            // convention, never geometric truth; the
+      "k_max": 33.0, "d_abs_mm": 400.0,    // block is a PURE function of scene.json +
+      "k_min": 10.0, "tack_len_per_t": 4.0,// seams.npz, computable retroactively
+      "tack_len_min_mm": 10.0, "tack_len_max_mm": 50.0, "margin_per_t": 2.0,
+      "t_mm": 6.0,                         // min(t_A, t_B) - the ISO 5817 reading
+      "phase_by_seam": {"0": 0.4173}       // D39: closed loops only - rotation is
+    },                                     // sha256(scene_id, seam_id)-derived and
+    "points_mm": [[24.0,0.0,0.0], [208.0,0.0,0.0]],  // RECORDED; Phase 4 tack scoring
+    "seam_id": [0, 0],                     // must be rotation-invariant on closed seams
+    "arclength_mm": [24.0, 208.0],         // effective-end tacks sit AT the margin
+    "tack_length_mm": [24.0, 24.0],        // a tack is a short weld, clip(4t, 10, 50)
+    "order": [0, 1]                        // scene-global weld sequence: ends->centre->
+  },                                       // bisect; opposite pairs on loops; same-class
+                                           // seams interleaved round-robin (stagger)
 
   "camera": {
     "model": "pinhole",                    // no distortion in tier 1; stated, not implied
@@ -923,5 +932,5 @@ because a twin pair split across train and test leaks geometry perfectly.
 | `camera_raster` sampling mode | **implemented (Phase 3)** — D20 semantics are pinned in §5.1; `sampling_mode` is a config key and both modes are exercised by the suite |
 | `surface` block for non-planar faces | schema slot reserved; fill in Phase 6 |
 | Phase 6 `bspline` parametric form (knots, degree, control points) | slot reserved, exact encoding to be pinned before Phase 6 starts |
-| `tacks` block | `null` until Phase 7; shape frozen here so adding it is a patch bump |
+| ~~`tacks` block~~ | **FILLED 2026-09-01** (Phase 7, D38/D39): `tackrule-0.1` in `weldgen/tacks.py`, emitted under `emit_tacks`; the frozen shape took `tack_length_mm` + `order` as optional additions, the patch-bump it was frozen for |
 | Confirm the `d435i` profile against the real camera | `PARAMETERS.md` §4. Under D16 this gates only that profile's claim to match the lab hardware, not the release |

@@ -807,6 +807,22 @@
                 "type": "number",
                 "minimum": 0
               }
+            },
+            "tack_length_mm": {
+              "description": "D38: a tack is a SHORT WELD, not a point - clip(4t, 10, 50) mm, attributed to EN 1011-2 (shop practice, unverified against the standard's text).",
+              "type": "array",
+              "items": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              }
+            },
+            "order": {
+              "description": "Scene-global weld sequence rank per tack: ends -> centre -> bisect on open seams, opposite pairs on closed loops, same-class seams interleaved round-robin (the heat-balance stagger).",
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0
+              }
             }
           }
         }

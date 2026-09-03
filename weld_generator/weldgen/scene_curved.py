@@ -438,4 +438,7 @@ def generate_curved_scene(cfg: dict[str, Any],
     if cfg.get("emit_mps", False):        # D25, Phase 6c: derived, no random draw
         from .mps import mps_rule
         scene["mps"] = mps_rule(scene)
+    if cfg.get("emit_tacks", False):      # D8/D38, Phase 7: derived, no random draw
+        from .tacks import tack_rule
+        scene["tacks"] = tack_rule(scene, arrays)
     return scene, arrays
