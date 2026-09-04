@@ -11,3 +11,11 @@ sensor_profiles: [d435i, stereo_good, stereo_poor]
 thickness_mm: [3.0, 20.0]
 groove_preps: true
 class_disjoint: true
+# D28 STATUS (measured 2026-09-03): this stratum is mech-NONE and cannot currently be
+# fixed by flags — `polygon_outlines: true` only reaches square-prep draws (which the
+# bench builder filters out); a PreparedSlab is rectangular by construction, so every
+# kept scene has 100% terminal-bin mass (seams axis-aligned to its own free edges).
+# At bench6b weight (15 scenes) the pooled plate gate absorbed it (0.38 < 0.44); at
+# bench_phase4 weight (60) it tips the gate to FAIL (0.45). The real fix is a
+# prepared-slab-with-polygon-outline constructor (open item, dataset_plan Phase 8/9
+# runway); until then the release-corpus weight of this stratum is a recorded decision.

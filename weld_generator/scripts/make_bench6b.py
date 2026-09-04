@@ -26,8 +26,15 @@ not emitted — the square stratum is the `line_square` arm's job.
 
 Deterministic: a pure function of the configs referenced below and BASE_SEED.
 
+`--per-family N` overrides every source's target to N — the Phase 4 run corpus
+(2026-09-03 ruling): homogeneous per FAMILY, not per class, so T becomes the largest
+class (6 families) by design. Residues, stride and BASE_SEED are unchanged, so the
+per-family corpus is a strict superset of `bench6b` within every stratum and every
+seed-sorted prefix keeps the intended family proportions.
+
 Usage:
     python scripts/make_bench6b.py [--out out/bench6b] [--quiet]
+    python scripts/make_bench6b.py --per-family 60 --out out/bench_phase4
 """
 
 from __future__ import annotations
@@ -93,8 +100,8 @@ def _seeds(residues, stride):
         i += 1
 
 
-def build(out_root: Path, quiet: bool) -> dict:
-    manifest = {"base_seed": BASE_SEED, "classes": {}}
+def build(out_root: Path, quiet: bool, per_family: int | None = None) -> dict:
+    manifest = {"base_seed": BASE_SEED, "per_family": per_family, "classes": {}}
     for jt, sources in STRATA.items():
         stride = sum(len(res) for _, _, res, _, _ in sources)
         class_dir = out_root / jt
@@ -102,6 +109,8 @@ def build(out_root: Path, quiet: bool) -> dict:
         index = open(class_dir / "index.jsonl", "w")
         cls_manifest = {"stride": stride, "sources": {}}
         for name, loader, residues, target, keep in sources:
+            if per_family is not None:
+                target = per_family
             cfg, gen = (_plate(loader[1]) if loader[0] == "plate"
                         else _curved(loader[1]))
             emitted, attempts, t0 = 0, 0, time.time()
@@ -142,13 +151,15 @@ def build(out_root: Path, quiet: bool) -> dict:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=str(ROOT / "out" / "bench6b"))
+    ap.add_argument("--per-family", type=int, default=None,
+                    help="override every source's target to N (Phase 4 run corpus)")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
     out_root = Path(args.out)
     if out_root.exists() and any(out_root.iterdir()):
         print(f"{out_root} exists and is not empty - refusing to mix corpora")
         return 1
-    build(out_root, args.quiet)
+    build(out_root, args.quiet, per_family=args.per_family)
     print("done:", out_root)
     return 0
 

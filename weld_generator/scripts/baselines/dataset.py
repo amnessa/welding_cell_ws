@@ -160,7 +160,8 @@ def cloud_for(scene: dict, arrays: dict, view: str = "full", noisy: bool = False
 def ground_truth(scene: dict, arrays: dict, curve: str = "nominal",
                  primary_only: bool = True, min_visible_fraction: float | None = None,
                  include_rejected: bool = False,
-                 with_underside: bool = False) -> list[np.ndarray]:
+                 with_underside: bool = False,
+                 with_meta: bool = False) -> list[np.ndarray]:
     """Truth polylines for one scene.
 
     Args:
@@ -175,11 +176,15 @@ def ground_truth(scene: dict, arrays: dict, curve: str = "nominal",
         with_underside: also return the per-seam D31 `underside` flags (the structural,
             visibility-independent statement of the same lap-lower-toe fact), as
             `(curves, flags)` — the harness filters single-view scoring targets on them.
+        with_meta: instead return `(curves, meta)` where meta is one dict per curve:
+            `{id, closed, underside, seam_class}` — what Task 2 needs to map a matched
+            curve back to the seam the MPS rule named, and what D39 needs to know before
+            reporting an endpoint error (a closed ring has no endpoints).
     """
     if curve not in CURVES:
         raise ValueError(f"curve must be one of {CURVES}, got {curve!r}")
     out = []
-    undersides = []
+    meta = []
     for s in scene["seams"]:
         if not s["weldable"] and not include_rejected:
             continue
@@ -194,18 +199,39 @@ def ground_truth(scene: dict, arrays: dict, curve: str = "nominal",
         key = s["sampled"]["array"]
         suffix = "" if curve == "nominal" else f"_{curve}"
         out.append(arrays[f"seams.npz:{key}{suffix}"].astype(float))
-        undersides.append(bool(s.get("underside")))
-    return (out, undersides) if with_underside else out
+        meta.append({"id": int(s["id"]), "closed": bool(s.get("closed")),
+                     "underside": bool(s.get("underside")),
+                     "seam_class": s.get("seam_class")})
+    if with_meta:
+        return out, meta
+    if with_underside:
+        return out, [m["underside"] for m in meta]
+    return out
 
 
 def scene_facts(scene: dict) -> dict[str, Any]:
-    """The covariates every Phase 4 plot groups by, pulled out of one scene."""
-    ts = [o["thickness_mm"] for o in scene["objects"] if o["role"] == "workpiece"]
+    """The covariates every Phase 4 plot groups by, pulled out of one scene.
+
+    `t_min_mm`/`t_max_mm` are MEMBER GAUGES — the thinner cross-section dimension per
+    part, not the raw `thickness_mm` (which for a curved-butt swept band is its ~80 mm
+    in-plane band width; the tackrule-0.1 gauge bug, found 2026-09-02). `seam_family` /
+    `prep` / `primitives` are what the per-family Phase 4 corpus groups by.
+    """
+    import sys
+    from pathlib import Path as _P
+    sys.path.insert(0, str(_P(__file__).resolve().parents[2]))
+    from weldgen.tacks import _member_gauge_mm
+    ts = [_member_gauge_mm(o) for o in scene["objects"] if o["role"] == "workpiece"]
     prim = [s for s in scene["seams"] if s["weldable"] and s["matches_joint_type"]]
     return {
         "scene_id": scene["scene_id"],
         "seed": scene["seed"],
         "joint_type": scene["joint"]["type"],
+        "seam_family": scene["joint"].get("seam_family"),
+        "prep": scene["joint"].get("prep"),
+        "primitives": ",".join(sorted({o.get("primitive", "slab")
+                                       for o in scene["objects"]
+                                       if o["role"] == "workpiece"})),
         "quality_level": scene["joint"]["quality_level"],
         "included_angle_deg": scene["joint"]["included_angle_deg"],
         "root_gap_mm": scene["fit"]["root_gap_mm"],

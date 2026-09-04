@@ -72,7 +72,8 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from .dataset import cloud_for, ground_truth, load_scene, scene_facts
-from .metrics import evaluate, evaluate_band, matched_path_errors
+from .metrics import (evaluate, evaluate_band, match_seams, matched_path_errors,
+                      path_error_mm)
 
 
 # --------------------------------------------------------------------------------
@@ -97,6 +98,9 @@ class PreparedScene:
     #: see the full gt; only single-view SCORING drops underside toes (invisible from
     #: any above-table viewpoint - charging a method for missing them measures nothing).
     gt_underside: list = field(default_factory=list)
+    #: per-gt `{id, closed, underside, seam_class}`, parallel to `gt` — Task 2 maps the
+    #: MPS rule's seam id back to a curve through this, and D39 consults `closed`.
+    gt_meta: list = field(default_factory=list)
     _cache: dict = field(default_factory=dict)
 
     def gt_for_scoring(self, view: str) -> list:
@@ -156,12 +160,13 @@ def prepare(scene_dirs, primary_only: bool = True) -> list[PreparedScene]:
     out = []
     for d in scene_dirs:
         scene, arrays = load_scene(d)
-        gt, undersides = ground_truth(scene, arrays, primary_only=primary_only,
-                                      with_underside=True)
+        gt, meta = ground_truth(scene, arrays, primary_only=primary_only,
+                                with_meta=True)
         if not gt:
             continue
         out.append(PreparedScene(Path(d), scene, arrays, scene_facts(scene), gt,
-                                 gt_underside=undersides))
+                                 gt_underside=[m["underside"] for m in meta],
+                                 gt_meta=meta))
     return out
 
 
@@ -400,6 +405,84 @@ def run_matrix(prepared: list[PreparedScene], methods=None, seeds=range(30),
                        "sec": time.time() - t0, **aux}
                 row.update(_score(spec, pred, gt=prep.gt_for_scoring(view),
                                   tol_mm=tol_mm))
+                rows.append(row)
+        if progress and (si + 1) % 10 == 0:
+            print(f"  {si + 1}/{len(prepared)} scenes", flush=True)
+    return pd.DataFrame(rows)
+
+
+def run_task2(prepared: list[PreparedScene], methods=None, seeds=range(30),
+              verify_seeds: int = 2, noise_scale: float = 0.0, tol_mm: float = 3.0,
+              method_kw=None, progress: bool = False):
+    """The Task-2 chunk (6c(c)): MPS selection + localization, single view, per method.
+
+    The plan's spec verbatim: *"selection is a comparison of matched seam ids,
+    localization is the existing matched-path machinery"* — nothing here computes a new
+    metric. Per scene: `mps_rule-0.1` names the truth seam (over WELDABLE seams, so
+    `prepared` must come from `prepare(..., primary_only=False)` — asserted); the
+    method's single-view polylines are matched one-to-one against that same weldable
+    truth; `mps_matched` says whether the MPS seam received a prediction at all, and the
+    matched pair's `path_error_mm` is the localization row.
+
+    D39 discipline: every reported error is distance-based and therefore
+    rotation-invariant on closed rings; `end_error_mm` — the one parametrization-bound
+    quantity — is NaN whenever the MPS seam is closed, because a ring has no endpoints
+    and any number there would score the method's arbitrary starting point.
+
+    A null MPS (no weldable seam clears `min_len_mm` visible) is a legitimate scene
+    property, not a method failure: the row carries `mps_null=True` and NaN metrics for
+    every method identically.
+    """
+    import pandas as pd
+
+    from weldgen.mps import mps_margin, mps_rule
+
+    methods = [REGISTRY[m] if isinstance(m, str) else m for m in (methods or [])]
+    if any(m.output == "band" for m in methods):
+        raise ValueError("Task 2 scores polyline output; a band method cannot select "
+                         "a seam - exclude it from the task2 chunk")
+    method_kw = method_kw or {}
+    seeds = list(seeds)
+    rows = []
+    for si, prep in enumerate(prepared):
+        mps = mps_rule(prep.scene)
+        margin = mps_margin(prep.scene)
+        gi = next((i for i, m in enumerate(prep.gt_meta)
+                   if mps["seam_id"] is not None and m["id"] == mps["seam_id"]), None)
+        assert mps["seam_id"] is None or gi is not None, \
+            "MPS seam missing from gt - prepare() must use primary_only=False"
+        base = {"scene_id": prep.facts["scene_id"],
+                "joint_type": prep.facts["joint_type"],
+                "seam_family": prep.facts["seam_family"], "view": "single",
+                "noise_scale": float(noise_scale),
+                "mps_null": mps["seam_id"] is None,
+                "mps_seam_id": mps["seam_id"], "mps_class": mps["class"],
+                "mps_margin": margin,
+                "mps_closed": bool(prep.gt_meta[gi]["closed"]) if gi is not None
+                else None}
+        nan_pe = {k: float("nan") for k in
+                  ("rmse", "me", "mean", "lateral_rmse", "lateral_me",
+                   "length_error_mm", "end_error_mm")}
+        for spec in methods:
+            use = seeds if spec.randomised else seeds[:max(1, verify_seeds)]
+            for seed in use:
+                t0 = time.time()
+                pred, aux = spec.run(prep, seed, True, "single", noise_scale,
+                                     **method_kw.get(spec.name, {}))
+                row = {**base, "method": spec.name, "seed": seed,
+                       "n_pred_seams": len(pred), "sec": time.time() - t0}
+                pi = None
+                if gi is not None:
+                    pi = dict(match_seams(pred, prep.gt)).get(gi)
+                row["mps_matched"] = pi is not None
+                if pi is None:
+                    row.update(nan_pe)
+                else:
+                    pe = path_error_mm(pred[pi], prep.gt[gi])
+                    pe.pop("n_samples", None)
+                    if prep.gt_meta[gi]["closed"]:
+                        pe["end_error_mm"] = float("nan")      # D39: rings have no ends
+                    row.update(pe)
                 rows.append(row)
         if progress and (si + 1) % 10 == 0:
             print(f"  {si + 1}/{len(prepared)} scenes", flush=True)

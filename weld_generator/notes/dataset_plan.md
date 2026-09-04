@@ -2007,16 +2007,47 @@ only one of them is generator work:
       once the bore is confined). The Task-2 short section should report the margin
       distribution PER CLASS — the class-dependence of single-view ambiguity is
       itself a result the generator can state exactly
-- [ ] **(c) the Task-2 batch chunk** — each method's single-view output scored on
-      whether it returned the MPS seam (selection) plus localization on that seam;
-      lands in `run_phase4_batch.py` as its own chunk and in the paper as the decided
-      short section. No new metric code: selection is a comparison of matched seam ids,
-      localization is the existing matched-path machinery.
-      *Ruled 2026-09-01: this WAITS with the batch — the user runs Phase 4 once, after
-      enlarging the corpus; the chunk definition is written together with that run's
-      preparation, so the batch script changes land in one pass*
+- [x] **(c) the Task-2 batch chunk** — DONE 2026-09-03, exactly as specced:
+      `harness.run_task2` (per method × scene, single view, L0) matches the method's
+      polylines one-to-one against the WELDABLE truth set (`prepare(primary_only=False)`
+      — `mps_rule-0.1` argmaxes over weldable, not primary), reports `mps_matched`
+      (selection) and the matched pair's `path_error_mm` (localization), with
+      `end_error_mm = NaN` on closed rings — the D39 rule: every other reported metric
+      is distance-based and rotation-invariant by construction, pinned by test
+      (`tests/test_task2.py`, fake-oracle validated like the harness itself). Lands as
+      the `task2` chunk group in `run_phase4_batch.py`, one resumable chunk per method
 
 **Effort:** (a) 0,5 day; (b) 1–2 days; (c) rides the batch.
+
+**Phase 4 run preparation (2026-09-03, user rulings):** the run corpus is
+`out/bench_phase4` — **homogeneous per FAMILY at 60** (`make_bench6b.py
+--per-family 60`), so T = 360 (six families), butt = 180 (square / grooved / arc),
+corner / lap / edge = 60 each, ~720 scenes; classes are unequal by design and every
+number is reported per family/class, never pooled. Same BASE_SEED and residues as
+bench6b, so bench6b is a strict per-stratum subset and seed-sorted prefixes stay
+balanced. Methods: the six literature implementations — `ours`/radius-PCA excluded by
+ruling (see §10), `lit-nurbs` not yet ruled in. `lit-modelreg` runs on the
+slab/prism-primitive subset only (its samplers cover the plate assemblies its papers
+register — printed in the log, never silent). The fixture chunks skip cleanly on a
+corpus without `_fx` twins; the fixture table stays sourced from `out/bench`. Strategy
+recorded: the winner of this comparison becomes the base for the project's own
+improvement work — a single modification that beats it on this corpus is the novel
+contribution, measured on the same rig that found it.
+
+**Gate result on `bench_phase4` (2026-09-03): D34 PASS (worst chord 0,0500 mm);
+D28 plate gate FAIL — terminal-bin mass 0,45 vs 0,44 allowed — and the cause is one
+stratum**: `butt / mech none` = the 60 grooved-butt scenes, whose `PreparedSlab` is
+rectangular by construction and takes no polygon outline (verified: the flags only
+reach square-prep draws, which the builder filters; a grooved-only probe gates at
+1,00 terminal mass). Known finding at bench6b weight (15 scenes diluted to 0,38
+PASS); the ×4 stratum tips it. **The batch runs on the full 720 regardless** — the
+D28 gate protects the *learned-model/release* claim, not the geometric baselines
+(none consults edge orientation), and every batch row carries `scene_id`, so any
+composition ruling is an analysis filter, not a recompute. OPEN DECISION for the
+release corpus (user's): (a) build the prepared-slab-with-outline constructor
+(~1 day, the real fix), (b) hold grooved at ≤30 scenes (pooled ≈0,40, dilution
+recorded), or (c) exclude the stratum from the release/training split and say why.
+Recommendation: (c) now, (a) before the release freeze.
 
 ### Phase 7 — Tack layer
 
@@ -2207,9 +2238,11 @@ Opened by the 2026-08-20 advisor meeting:
 - [ ] Decide whether **Task 2 ships in paper 1 or is deferred**. Recommendation: generate the
       data and release the rule; scope paper 1 to Task 1 plus the seven-method comparison, and
       keep MPS as a short section if Phase 4 runs ahead
-- [ ] **Grade the occlusion distribution before MPS is evaluated** (D26 sampler work, plus the
-      framing-fraction change already landed) — MPS is a weak task while visibility is
-      near-binary
+- [x] ~~Grade the occlusion distribution before MPS is evaluated~~ → **DONE by 6c(b)
+      (2026-09-01)**: the `approach_cone` regime is the D26 sampler work, and the measured
+      per-class MPS-margin structure (Phase 6c section) is the grading — margins rise where
+      geometry permits (edge, lap, tilted pipe) and three classes are structurally pinned
+      (T, corner, saddle), which the Task-2 section reports per class rather than pooled
 - [x] **RESOLVED 2026-08-21** — `lit-modelreg` is implementable without the original CAD
       assets (`scene.json` is a sufficient CAD source, verified in code), *and* it remains
       constitutively L0-with-CAD because the model's seam is the stored truth. Both halves
@@ -2232,10 +2265,14 @@ Opened by the 2026-08-20 advisor meeting:
       **lap 2,6**, with almost every loss to `NoVisibleSeams` — the omission policy (D-tier-1)
       conditions the dataset unevenly across joint types. That is a property of the joint, not
       a sampling defect, and correcting for it silently would hide it
-- [ ] Decide whether radius-PCA's inability to express a coplanar seam is worth one more
-      attempt or should be **reported as a mechanism limit**. The measurement says the band
-      covers the whole area between two parallel plates; nothing in a variance ratio responds
-      to a 180° dihedral
+- [x] ~~Decide whether radius-PCA's inability to express a coplanar seam is worth one more
+      attempt~~ → **RULED 2026-09-03: reported as a mechanism limit, and `ours` (radius-PCA)
+      is EXCLUDED from the Phase 4 batch entirely.** The user's framing: it brings no
+      mechanism the literature methods lack, and the project's own contribution is the
+      improvement built on whichever published method wins the comparison — so the batch is
+      a pure six-method literature run (`run_phase4_batch.py` METHODS_ALL; `--include-ours`
+      documented there if a floor-anchor appendix figure is ever wanted). The coplanar
+      measurement stands in the paper as the mechanism-limit note
 
 - [ ] Lap overlap length has no ISO citation and stays **[ours]**. AWS D1.1 or a fabrication text
       may give a minimum (commonly quoted as some multiple of `t`) — worth one lookup before
