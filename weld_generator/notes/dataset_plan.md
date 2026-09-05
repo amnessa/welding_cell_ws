@@ -1895,7 +1895,19 @@ Full text in `notes/patch_class_disjointness.md`; summary of what landed:
       without incident (2026-08-28): ring-strip topologies for the tube's cut modes and
       the prepared slab's fan caps are watertight by construction; pinned per primitive
       by test
-- [ ] Re-run Phase 4 → **report where the plane-intersection baseline stops working**
+- [x] Re-run Phase 4 → **report where the plane-intersection baseline stops working** —
+      DONE 2026-09-05: full batch over `out/bench_phase4` (169 800 rows, 720 scenes,
+      38 chunks, ~64 h wall with three parallel runners; `out/phase4_batch/`). The
+      answer, measured: `lit-ransac` holds 0,97 median F1 on straight T seams and
+      **0,00 on every curved family and both curved-butt strata** (full view);
+      `lit-ppf` degrades to 0,25–0,36 on curved fillets and dies on butts. Headlines:
+      **lit-lobb is the overall winner** (only method nonzero on every stratum except
+      grooved; best Task-2 profile 0,79 match / 0,7–1,6 mm; most noise-robust
+      0,44→0,31) with two measured weaknesses as improvement targets — closed-ring
+      full-view precision (far-side/bore creases) and corner-class selection;
+      **grooved butts defeat five of six methods** (~0,00); lobb's L0→L1 drop is the
+      largest (0,43→0,03 — its published masks carry it); scene→family joins via
+      `out/bench_phase4/facts.csv`
 
 ## Schema changes curved seams force
 
