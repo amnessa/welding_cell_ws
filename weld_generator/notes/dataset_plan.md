@@ -2047,19 +2047,32 @@ improvement work — a single modification that beats it on this corpus is the n
 contribution, measured on the same rig that found it.
 
 **Gate result on `bench_phase4` (2026-09-03): D34 PASS (worst chord 0,0500 mm);
-D28 plate gate FAIL — terminal-bin mass 0,45 vs 0,44 allowed — and the cause is one
-stratum**: `butt / mech none` = the 60 grooved-butt scenes, whose `PreparedSlab` is
-rectangular by construction and takes no polygon outline (verified: the flags only
-reach square-prep draws, which the builder filters; a grooved-only probe gates at
-1,00 terminal mass). Known finding at bench6b weight (15 scenes diluted to 0,38
-PASS); the ×4 stratum tips it. **The batch runs on the full 720 regardless** — the
-D28 gate protects the *learned-model/release* claim, not the geometric baselines
-(none consults edge orientation), and every batch row carries `scene_id`, so any
-composition ruling is an analysis filter, not a recompute. OPEN DECISION for the
-release corpus (user's): (a) build the prepared-slab-with-outline constructor
-(~1 day, the real fix), (b) hold grooved at ≤30 scenes (pooled ≈0,40, dilution
-recorded), or (c) exclude the stratum from the release/training split and say why.
-Recommendation: (c) now, (a) before the release freeze.
+D28 plate gate FAIL — terminal-bin mass 0,45 vs 0,44 allowed — and the cause was one
+stratum**: `butt / mech none` = the 60 grooved-butt scenes. Root cause, found by
+reading the code rather than the histogram: `sample_joint` already DREW a D28 outline
+for every grooved plate, and `_grooved_butt` discarded it, building rectangular
+`PreparedSlab`s — the one Phase 6 plate the anti-shortcut mechanisms never reached.
+(Grooves themselves are ISO 9692-1, verified; the omission was the constructor's.)
+
+**FIXED 2026-09-07 — `PreparedPrism`** (`weldgen/geom.py`): the Prism outline with
+the PreparedSlab profile on its seam edge, the rectangular primitive kept as the
+edge ORACLE so the cross-section is identical by construction. Every slice is the
+outline clipped by `v <= v_edge(w)`, and that clip only crosses the two edges
+adjacent to the seam edge (guarded), so slices share a vertex count and loft into
+quads: watertight by construction, exact volume (1e-9; the U's arc at its 0,05 mm
+chord budget), planar root/fusion trapezoids, notched planar end faces, analytic
+per-face sampling, closed-form `contains`. `tests/test_prepared_prism.py` (32),
+full suite 460 passed. Schema enum `prepared_prism` (+ `outline_uv`/`outline_shape`);
+`grooved_butt.yaml` gained the D28 keys (geometry keys → new ids). The
+`butt/line_grooved` stratum was regenerated IN PLACE (`scripts/rebuild_stratum.py`;
+retired ids in `out/bench_phase4/retired_butt_line_grooved_scene_ids.json`), 60/60
+`prepared_prism`, zero mouth-guard fallbacks. **Corpus-wide gate now: D28 PASS at
+0,34 vs 0,44 (butt reads a single `outline` row), D34 PASS** —
+`out/bench_phase4/gate_report_2026-09-07.txt`. The a/b/c release-split decision is
+MOOT: grooved stays in the corpus, in the batch table and in training, no caveat.
+User ruling: the six methods are NOT re-run on the rebuilt stratum (the groove is
+what defeats them; only the outline changed) — batch rows for the retired ids are
+labelled the pre-fix stratum at analysis time.
 
 ### Phase 7 — Tack layer
 

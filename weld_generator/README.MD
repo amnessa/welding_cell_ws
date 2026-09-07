@@ -117,7 +117,8 @@ docs/            frozen contracts - read these before changing anything
 weldgen/         the generator - trimesh + NumPy only, no simulator import (D9)
   rng.py             8 named SeedSequence substreams
   geom.py            primitives + face registries, exact algebra: Slab, Prism (6a
-                     outlines), Tube, SweptSlab, PreparedSlab (6b)
+                     outlines), Tube, SweptSlab, PreparedSlab (6b), PreparedPrism
+                     (outline + groove, the D28 fix for grooved butts)
   curves.py          exact curve library (ellipse/arc/saddle/bspline/composite/offset):
                      analytic positions AND tangents, arclength sampling exact-on-curve
   d29.py             the seven-family CURVE-FIRST seam sampler (D29 as amended)
@@ -647,6 +648,16 @@ the shortcut bin — a number that means the opposite of what it says. Consequen
 arc-butt family reports nothing (both parts derive from the curve; no sampler-free
 direction exists in the scene), the swept-stiffener family reports its seam tangents
 against the independent plate outline.
+
+**The grooved stratum was the last rectangle, and the gate found it (2026-09-07).** The
+Phase 4 corpus `out/bench_phase4` (60 scenes per family, 720 total) failed the D28
+plate gate by a hair — 0,45 vs 0,44 — and the histogram named one stratum: grooved
+butts, `mech none`. The cause was a constructor omission, not a design one: the sampler
+drew an outline for every grooved plate and the groove layout discarded it. `PreparedPrism`
+composes the outline with the ISO 9692-1 profile (the rectangular primitive kept as the
+edge oracle, so the cross-section is provably the same), the stratum was regenerated in
+place, and the corpus gates at 0,34 — grooved butts stay in the corpus, the table and
+the training split with no caveat.
 
 **`out/bench6b` is balanced within class, and stays balanced under trimming.** 60 scenes
 per class: T = 10 each of the six fillet-bearing families; butt = 15 square + 15 grooved

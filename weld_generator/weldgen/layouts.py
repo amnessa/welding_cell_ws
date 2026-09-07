@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .geom import PreparedSlab, Prism, Slab, rot_x, rot_z, translate
+from .geom import PreparedPrism, PreparedSlab, Prism, Slab, rot_x, rot_z, translate
 from .joints import JointSpec
 
 JOINT_TYPES = ("T", "corner", "butt", "lap", "edge")
@@ -526,33 +526,61 @@ def _layout_corner(spec: JointSpec, T: np.ndarray) -> list[Slab]:
     return [A, B]
 
 
+def _prepared_outline_local(outline) -> np.ndarray:
+    """Canonical D28 outline (seam edge on v = 0, body upward) -> the prepared frame
+    (seam edge on v = 0, MATERIAL at v <= 0): a mirror in v. `PreparedPrism` restores
+    CCW and pins the seam edge as edge 0."""
+    o = np.asarray(outline, dtype=float)
+    return np.column_stack([o[:, 0], -o[:, 1]])
+
+
+def _prepared_plate(pid: str, oid: int, L: float, depth: float, t: float,
+                    prep_dict: dict, T: np.ndarray, outline, shape):
+    """The grooved plate: a `PreparedPrism` when the sampler drew an outline (D28 on
+    grooved butts, 2026-09-07), else the rectangular `PreparedSlab`. The prism's
+    mouth guard (an outline vertex shallower than the groove mouth) falls back to the
+    rectangle - the object then reads `prepared_slab`, so the D28 gate still sees it."""
+    if outline is not None:
+        try:
+            return PreparedPrism(pid, "workpiece", oid, _prepared_outline_local(outline),
+                                 t, prep_dict, T, shape=shape)
+        except ValueError:
+            pass
+    return PreparedSlab(pid, "workpiece", oid, L, depth, t, prep_dict, T)
+
+
 def _grooved_butt(spec: JointSpec, T: np.ndarray) -> list[Slab]:
-    """D35 butt with an edge preparation: PreparedSlab pair (D30: straight only).
+    """D35 butt with an edge preparation: prepared plates (D30: straight only).
 
     A's prepared edge sits at y = 0 with material at y <= 0, exactly the local frame
     the primitive defines; B is the same primitive rotated 180 about z so its
     preparation faces A across the root gap. Equal thickness (forced by the sampler).
     `h` still offsets B vertically (ISO 5817 no. 5071). Single-bevel prepares A only;
-    B stays a square Slab - ref 1.9.1's asymmetric preparation.
+    B stays square - ref 1.9.1's asymmetric preparation - and takes its D28 outline
+    exactly as a square butt's B does (`_part_B`).
+
+    Outlines: `sample_joint` draws them for every grooved butt (same substream, same
+    order as the square case), and since 2026-09-07 they are USED - the rectangular
+    PreparedSlab was the one Phase 6 plate the D28 mechanisms never reached.
     """
     g = dict(spec.groove)
     prep_dict = {"kind": spec.prep, "bevel_deg": g["bevel_deg_per_side"],
                  "root_face_mm": g["root_face_mm"]}
     if spec.prep == "single_U":
         prep_dict["radius_mm"] = g["radius_mm"]
-    A = PreparedSlab("A", "workpiece", 0, spec.L_A, spec.W_A, spec.t_A,
-                     prep_dict, T)
+    A = _prepared_plate("A", 0, spec.L_A, spec.W_A, spec.t_A, prep_dict, T,
+                        spec.outline_A, spec.outline_shape_A)
     if spec.prep == "single_bevel":
-        B = Slab("B", "workpiece", 1, (spec.L_B, spec.H_B, spec.t_B),
-                 T @ translate(spec.length_offset_mm,
-                               spec.root_gap_mm + spec.H_B / 2.0,
-                               spec.linear_misalignment_mm - spec.t_B / 2.0))
+        T_B = T @ translate(spec.length_offset_mm,
+                            spec.root_gap_mm + spec.H_B / 2.0,
+                            spec.linear_misalignment_mm - spec.t_B / 2.0)
+        B = _part_B(spec, T_B, seam_at_plus_v=False)
     else:
-        B = PreparedSlab("B", "workpiece", 1, spec.L_B, spec.H_B, spec.t_B,
-                         dict(prep_dict),
-                         T @ translate(spec.length_offset_mm, spec.root_gap_mm,
-                                       spec.linear_misalignment_mm)
-                         @ rot_z(180.0))
+        B = _prepared_plate("B", 1, spec.L_B, spec.H_B, spec.t_B, dict(prep_dict),
+                            T @ translate(spec.length_offset_mm, spec.root_gap_mm,
+                                          spec.linear_misalignment_mm)
+                            @ rot_z(180.0),
+                            spec.outline_B, spec.outline_shape_B)
     return [A, B]
 
 

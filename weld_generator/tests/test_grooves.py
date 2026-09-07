@@ -153,7 +153,9 @@ def test_groove_root_replaces_the_d19_triple_exactly(tmp_path):
     nom = arrays[f"seams.npz:{key}"]
     gr = arrays[f"seams.npz:{key}_grooveroot"]
     depth = float(np.mean(nom[:, 2] - gr[:, 2]))
-    assert abs(depth - (t - g["root_face_mm"])) < 1e-6
+    # seams.npz is stored float32: at ~10 mm magnitudes its resolution is ~1e-6, so
+    # the exact derivation is checked at 1e-5 (a real error is O(gap) ~ 1 mm)
+    assert abs(depth - (t - g["root_face_mm"])) < 1e-5
     assert scene["joint"]["iso_9692_ref"] == g["iso_ref"]
 
 

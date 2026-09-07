@@ -359,6 +359,7 @@
               "slab",
               "prism",
               "prepared_slab",
+              "prepared_prism",
               "swept_slab",
               "cylinder",
               "tube"

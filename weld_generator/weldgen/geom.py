@@ -1469,6 +1469,517 @@ class PreparedSlab:
         return m
 
 
+@dataclass
+class PreparedPrism:
+    """A `Prism` outline whose seam edge carries a `PreparedSlab` profile.
+
+    The composition Phase 6b step 4 omitted (found 2026-09-07 by the D28 gate on
+    `out/bench_phase4`): `sample_joint` already draws an outline for every grooved
+    butt plate and `_grooved_butt` threw it away, leaving the grooved stratum the one
+    place a rectangle - and with it the 0/90 free-edge prior - survived. This primitive
+    is that outline with the ISO 9692-1 preparation on its seam edge.
+
+    Local frame: IDENTICAL to `PreparedSlab`'s, so the layout transforms are reused
+    unchanged - `u` along the seam edge, `v` with the prepared edge on v = 0 and
+    material at v <= 0, `w` the thickness with the top face at w = 0. The outline is
+    CCW with the seam edge as edge 0 (vertices 0 -> 1, on v = 0).
+
+    The profile is not re-derived: `self._p` is a `PreparedSlab` with the same
+    preparation, used as the edge ORACLE (`v_edge`, mouth, arc discretisation, chord
+    error), so the cross-section of this part is the rectangular part's cross-section
+    by construction, and the D36 `groove_root` derivation reads the same `t_mm`.
+
+    Structure that keeps everything exact: every horizontal slice is the outline
+    clipped by `v <= v_edge(w)`, and because every non-seam vertex lies deeper than
+    the groove mouth (guarded in `__post_init__`), that clip only ever crosses the two
+    edges ADJACENT to the seam edge. So every slice is a convex polygon with the SAME
+    vertex count - `[P_a(w), P_b(w), v2, ..., v_{k-1}]` - and consecutive slices loft
+    into quads: a watertight mesh by construction, planar root/fusion trapezoids, and
+    end faces (`s1`, `s{k-1}`) that are planar polygons with the profile as one edge.
+
+    Face registry: `+w` `-w` (caps, the slab's broad-face names), `root` / `fusion` /
+    `radius` (the prepared edge, ISO 17659 names as on the PreparedSlab), and
+    `s1 .. s{k-1}` (the outline's remaining sides, numbered as on the Prism; `s0` IS
+    the prepared edge and is not a face). `s1` and `s{k-1}` are the notched end faces.
+    """
+
+    id: str
+    role: str
+    object_id: int
+    outline_uv: np.ndarray
+    t_mm: float
+    prep: dict
+    T_world_part: np.ndarray
+    shape: str = "polygon"
+
+    def __post_init__(self):
+        o = np.asarray(self.outline_uv, dtype=float)
+        if len(o) < 3:
+            raise ValueError("a prepared prism outline needs at least 3 vertices")
+        area2 = float(np.sum(o[:, 0] * np.roll(o[:, 1], -1)
+                             - np.roll(o[:, 0], -1) * o[:, 1]))
+        if area2 < 0:
+            o = o[::-1].copy()
+        k = len(o)
+        on0 = np.abs(o[:, 1]) < 1e-9
+        start = next((i for i in range(k) if on0[i] and on0[(i + 1) % k]), None)
+        if start is None:
+            raise ValueError("the outline has no edge on v = 0 (the seam edge)")
+        o = np.roll(o, -start, axis=0)
+        if k > 2 and (o[2:, 1] >= -1e-9).any():
+            raise ValueError("material must lie at v <= 0 (seam edge on v = 0)")
+        self.outline_uv = o
+        # the edge oracle: same preparation, same validation, same profile
+        self._p = PreparedSlab("_profile", "workpiece", 0, 1.0, 1.0, float(self.t_mm),
+                               dict(self.prep), np.eye(4))
+        if float(o[2:, 1].max()) >= self.mouth_v_mm - 1e-6:
+            raise ValueError("an outline vertex lies within the groove mouth depth of "
+                             "the seam edge - the slice structure would change")
+
+    # --- the profile, delegated -------------------------------------------------------
+    def v_edge(self, w) -> np.ndarray:
+        return self._p.v_edge(w)
+
+    @property
+    def mouth_v_mm(self) -> float:
+        return self._p.mouth_v_mm
+
+    @property
+    def max_chord_error_mm(self) -> float:
+        return self._p.max_chord_error_mm
+
+    def _levels(self) -> np.ndarray:
+        """`(v, w)` of the prepared edge from the bottom up: root bottom, root top,
+        [arc points for a U], mouth. The loft levels of the solid."""
+        return self._p._profile()[:-2]
+
+    # --- slices -----------------------------------------------------------------------
+    def _clip_points(self, v: float) -> tuple[np.ndarray, np.ndarray]:
+        """`(P_a, P_b)`: where the line v = const meets the edges adjacent to the seam
+        edge (edge k-1 into vertex 0, edge 1 out of vertex 1). Exact, linear."""
+        o = self.outline_uv
+        k = len(o)
+        v0, v1, v2, vk = o[0], o[1], o[2], o[k - 1]
+        sa = float(np.clip(v / vk[1], 0.0, 1.0)) if vk[1] < 0 else 0.0
+        sb = float(np.clip(v / v2[1], 0.0, 1.0)) if v2[1] < 0 else 0.0
+        return v0 + sa * (vk - v0), v1 + sb * (v2 - v1)
+
+    def _slice(self, v: float) -> np.ndarray:
+        """The convex cross-section polygon (k, 2) at clip depth `v`, CCW."""
+        pa, pb = self._clip_points(v)
+        return np.vstack([pa, pb, self.outline_uv[2:]])
+
+    def _local_levels_3d(self) -> list[np.ndarray]:
+        """Every loft level as (k, 3) local vertices, bottom to top."""
+        return [np.column_stack([self._slice(v), np.full(len(self.outline_uv), w)])
+                for v, w in self._levels()]
+
+    def _strip_names(self) -> list[str]:
+        """The prepared-edge face each loft strip belongs to, bottom to top."""
+        n_strips = len(self._levels()) - 1
+        if self.prep["kind"] == "single_U":
+            return ["root"] + ["radius"] * (n_strips - 2) + ["fusion"]
+        return ["root", "fusion"]
+
+    # --- registry ---------------------------------------------------------------------
+    def face_names(self) -> tuple[str, ...]:
+        base = ("+w", "-w", "root", "fusion")
+        if self.prep["kind"] == "single_U":
+            base = base + ("radius",)
+        return base + tuple(f"s{j}" for j in range(1, len(self.outline_uv)))
+
+    @property
+    def thickness_mm(self) -> float:
+        return float(self.t_mm)
+
+    @property
+    def length_mm(self) -> float:
+        return float(np.ptp(self.outline_uv[:, 0]))
+
+    @property
+    def width_mm(self) -> float:
+        return float(np.ptp(self.outline_uv[:, 1]))
+
+    @property
+    def dims_mm(self) -> tuple[float, float, float]:
+        return (self.length_mm, self.width_mm, float(self.t_mm))
+
+    @property
+    def part_geometry_id(self) -> str:
+        L, W, t = self.dims_mm
+        return (f"prepared_prism_{self.prep['kind'].lower()}_"
+                f"{len(self.outline_uv)}x{L}x{W}x{t}")
+
+    def _is_end_face(self, name: str) -> bool:
+        return name in ("s1", f"s{len(self.outline_uv) - 1}")
+
+    def _to_world(self, local: np.ndarray) -> np.ndarray:
+        T = self.T_world_part
+        return np.atleast_2d(local) @ T[:3, :3].T + T[:3, 3]
+
+    def _local_face(self, name: str) -> np.ndarray:
+        """LOCAL polygon of a planar face, wound so that its Newell normal is outward."""
+        o = self.outline_uv
+        k = len(o)
+        t = float(self.t_mm)
+        lv = self._levels()
+        levels = self._local_levels_3d()
+        if name == "+w":
+            return levels[-1]
+        if name == "-w":
+            return levels[0][::-1]
+        if name == "root":
+            pa, pb = self._clip_points(0.0)
+            zr = float(lv[1, 1])
+            return np.array([[*pa, -t], [*pb, -t], [*pb, zr], [*pa, zr]])
+        if name == "fusion":
+            v_lo, z_lo = (float(lv[-2, 0]), float(lv[-2, 1]))
+            pa0, pb0 = self._clip_points(v_lo)
+            pa1, pb1 = self._clip_points(self.mouth_v_mm)
+            return np.array([[*pa0, z_lo], [*pb0, z_lo], [*pb1, 0.0], [*pa1, 0.0]])
+        if name == "radius":
+            raise ValueError("the radius face is not planar")
+        j = int(name[1:])
+        if j == 1:                                   # P_b -> v2, notched at P_b
+            top_down = [np.array([*L[1]]) for L in levels[::-1]]     # P_b per level
+            return np.vstack([[*o[1], -t], [*o[2], -t], [*o[2], 0.0]] + top_down[:-1])
+        if j == k - 1:                               # v_{k-1} -> P_a, notched at P_a
+            bottom_up = [np.array([*L[0]]) for L in levels]          # P_a per level
+            return np.vstack([[*o[k - 1], -t]] + bottom_up + [[*o[k - 1], 0.0]])
+        return np.array([[*o[j], -t], [*o[j + 1], -t], [*o[j + 1], 0.0], [*o[j], 0.0]])
+
+    def face_vertices(self, name: str) -> np.ndarray:
+        return self._to_world(self._local_face(name))
+
+    def _outward_normal_local(self, name: str, poly: np.ndarray) -> np.ndarray:
+        n = np.zeros(3)                              # Newell
+        for i in range(len(poly)):
+            a, b = poly[i], poly[(i + 1) % len(poly)]
+            n += np.cross(a, b)
+        n /= max(float(np.linalg.norm(n)), 1e-12)
+        cen = np.array([*self.outline_uv.mean(axis=0), -self.t_mm / 2.0])
+        if float((poly[0] - cen) @ n) < 0:
+            n = -n
+        return n
+
+    def face_plane(self, name: str):
+        if name == "radius":
+            return None
+        poly = self._local_face(name)
+        n_loc = self._outward_normal_local(name, poly)
+        R = self.T_world_part[:3, :3]
+        n = R @ n_loc
+        c = self._to_world(poly[0])[0]
+        return Plane(n=n, d=float(-n @ c))
+
+    def face_normal(self, name: str) -> np.ndarray:
+        pl = self.face_plane(name)
+        if pl is None:
+            raise ValueError("the radius face has no single normal")
+        return pl.n
+
+    def face_center(self, name: str) -> np.ndarray:
+        if name == "radius":
+            mid = 0.5 * (np.pi / 2.0 - self._p._beta)
+            v = -self._p._R * np.sin(mid)
+            pa, pb = self._clip_points(v)
+            zc = -(self.t_mm - self._p._c) + self._p._R
+            local = np.array([0.5 * (pa[0] + pb[0]), v, zc - self._p._R * np.cos(mid)])
+            return self._to_world(local)[0]
+        return self.face_vertices(name).mean(axis=0)
+
+    def _edge_len_at(self, v):
+        """Seam-parallel extent of the slice at depth v: |P_a - P_b|."""
+        v = np.atleast_1d(np.asarray(v, dtype=float))
+        return np.array([float(np.linalg.norm(np.subtract(*self._clip_points(x))))
+                         for x in v])
+
+    def _end_face_frame(self, name: str):
+        """`(far vertex, unit edge dir toward the seam vertex, edge length, v_far)` of a
+        notched end face - the profile clips the edge at `s_max(w)` from the far end."""
+        o = self.outline_uv
+        k = len(o)
+        far, near = (o[2], o[1]) if name == "s1" else (o[k - 1], o[0])
+        e = near - far
+        L = float(np.linalg.norm(e))
+        return far, e / max(L, 1e-12), L, float(far[1])
+
+    def _s_max(self, name: str, w):
+        far, e, L, v_far = self._end_face_frame(name)
+        return (self.v_edge(w) - v_far) / (0.0 - v_far) * L
+
+    def face_area(self, name: str) -> float:
+        if name in ("+w", "-w"):
+            poly = self._slice(self.mouth_v_mm if name == "+w" else 0.0)
+            return 0.5 * abs(float(np.sum(poly[:, 0] * np.roll(poly[:, 1], -1)
+                                          - np.roll(poly[:, 0], -1) * poly[:, 1])))
+        if name == "radius":
+            phis = np.linspace(0.0, np.pi / 2.0 - self._p._beta, 513)
+            return float(np.trapezoid(self._edge_len_at(-self._p._R * np.sin(phis)),
+                                      phis) * self._p._R)
+        if self._is_end_face(name):
+            ws = np.linspace(-self.t_mm, 0.0, 1024)
+            return float(np.trapezoid(self._s_max(name, ws), ws))
+        poly = self._local_face(name)
+        n = np.zeros(3)
+        for i in range(len(poly)):
+            n += np.cross(poly[i], poly[(i + 1) % len(poly)])
+        return 0.5 * float(np.linalg.norm(n))
+
+    @property
+    def surface_area_mm2(self) -> float:
+        return sum(self.face_area(n) for n in self.face_names())
+
+    def surface_desc(self, name: str) -> dict | None:
+        if name != "radius":
+            return None
+        T = self.T_world_part
+        zc = -(self.t_mm - self._p._c) + self._p._R
+        axis_pt = T[:3, :3] @ np.array([0.0, 0.0, zc]) + T[:3, 3]
+        return {"kind": "cylinder", "point_mm": [float(v) for v in axis_pt],
+                "axis": [float(v) for v in T[:3, 0]],
+                "radius_mm": float(self._p._R), "outward": False}
+
+    def face_extent_along(self, name: str, direction) -> tuple[float, float]:
+        d = np.asarray(direction, dtype=float)
+        if name == "radius":
+            phis = np.linspace(0.0, np.pi / 2.0 - self._p._beta, 64)
+            zc = -(self.t_mm - self._p._c) + self._p._R
+            pts = []
+            for ph in phis:
+                v = -self._p._R * np.sin(ph)
+                pa, pb = self._clip_points(v)
+                z = zc - self._p._R * np.cos(ph)
+                pts += [[*pa, z], [*pb, z]]
+            world = self._to_world(np.asarray(pts))
+        else:
+            world = self.face_vertices(name)
+        proj = world @ d
+        return float(proj.min()), float(proj.max())
+
+    # --- the 2-D face frame shared by clip / closest (the Prism machinery) -----------
+    def _face_frame(self, name: str):
+        V = self.face_vertices(name)
+        n = self.face_normal(name)
+        e1 = V[1] - V[0]
+        e1 = e1 / max(np.linalg.norm(e1), 1e-12)
+        e2 = np.cross(n, e1)
+        poly = (V - V[0]) @ np.column_stack([e1, e2])
+        return V[0], e1, e2, poly
+
+    def closest_on_face(self, name: str, pts: np.ndarray) -> np.ndarray:
+        if name == "radius":
+            raise ValueError("the radius face is never a seam-bearing patch")
+        T = self.T_world_part
+        if self._is_end_face(name):
+            # edge-frame clamp under the profile, the PreparedSlab end-cap rule
+            far, e, L, v_far = self._end_face_frame(name)
+            q = (np.atleast_2d(np.asarray(pts, dtype=float)) - T[:3, 3]) @ T[:3, :3]
+            w = np.clip(q[:, 2], -self.t_mm, 0.0)
+            s = (q[:, :2] - far) @ e
+            s = np.clip(s, 0.0, self._s_max(name, w))
+            local = np.column_stack([far + s[:, None] * e, w])
+            return self._to_world(local)
+        origin, e1, e2, poly = self._face_frame(name)
+        rel = np.atleast_2d(np.asarray(pts, dtype=float)) - origin
+        q = np.column_stack([rel @ e1, rel @ e2])
+        k = len(poly)
+        cen = poly.mean(axis=0)
+        inside = np.ones(len(q), dtype=bool)
+        for i in range(k):
+            a, b = poly[i], poly[(i + 1) % k]
+            e = b - a
+            n2 = np.array([e[1], -e[0]])
+            n2 = n2 / max(float(np.linalg.norm(n2)), 1e-12)
+            if float((cen - a) @ n2) < 0:
+                n2 = -n2
+            inside &= (q - a) @ n2 >= -1e-9
+        out = q.copy()
+        todo = ~inside
+        if todo.any():
+            best_d = np.full(int(todo.sum()), np.inf)
+            best_p = np.zeros((int(todo.sum()), 2))
+            qq = q[todo]
+            for i in range(k):
+                a, b = poly[i], poly[(i + 1) % k]
+                e = b - a
+                L2 = float(e @ e)
+                tt = np.clip((qq - a) @ e / max(L2, 1e-12), 0.0, 1.0)
+                proj = a + tt[:, None] * e
+                d = np.linalg.norm(qq - proj, axis=1)
+                m = d < best_d
+                best_d[m] = d[m]
+                best_p[m] = proj[m]
+            out[todo] = best_p
+        return origin + out[:, :1] * e1 + out[:, 1:] * e2
+
+    def face_clip_line(self, name: str, point, direction,
+                       slack_mm: float = 0.0) -> tuple[float, float] | None:
+        """The Prism's exact convex clip on every planar seam-capable face; the notched
+        end faces and the radius never carry a seam line (the PreparedSlab rule)."""
+        if name == "radius" or self._is_end_face(name):
+            return None
+        origin, e1, e2, poly = self._face_frame(name)
+        p2 = np.array([float((point - origin) @ e1), float((point - origin) @ e2)])
+        d2 = np.array([float(direction @ e1), float(direction @ e2)])
+        k = len(poly)
+        cons = []
+        for i in range(k):
+            a, b = poly[i], poly[(i + 1) % k]
+            e = b - a
+            n2 = np.array([e[1], -e[0]])
+            n2 = n2 / max(float(np.linalg.norm(n2)), 1e-12)
+            if float((poly.mean(axis=0) - a) @ n2) < 0:
+                n2 = -n2
+            cons.append((float((a - p2) @ n2), float(d2 @ n2)))
+
+        def clip(skip):
+            lo, hi = -np.inf, np.inf
+            for j, (num, den) in enumerate(cons):
+                if j == skip:
+                    continue
+                if abs(den) < 1e-12:
+                    if num > float(slack_mm) + 1e-9:
+                        return None
+                    continue
+                s_ = num / den
+                if den > 0:
+                    lo = max(lo, s_)
+                else:
+                    hi = min(hi, s_)
+            if hi - lo <= 1e-9 or not np.isfinite(lo) or not np.isfinite(hi):
+                return None
+            return lo, hi
+
+        got = clip(None)
+        if got is not None:
+            return float(got[0]), float(got[1])
+        if float(slack_mm) <= 0.0:
+            return None
+        for j, (num, den) in enumerate(cons):
+            got = clip(j)
+            if got is None:
+                continue
+            worst = min(-num + got[0] * den, -num + got[1] * den)
+            if worst >= -(float(slack_mm) + 1e-9):
+                return float(got[0]), float(got[1])
+        return None
+
+    # --- solid queries ----------------------------------------------------------------
+    def local_bounds(self) -> tuple[np.ndarray, np.ndarray]:
+        o = self.outline_uv
+        return (np.array([o[:, 0].min(), o[:, 1].min(), -float(self.t_mm)]),
+                np.array([o[:, 0].max(), 0.0, 0.0]))
+
+    def contains(self, points: np.ndarray, tol: float = 0.0) -> np.ndarray:
+        T = self.T_world_part
+        q = (np.atleast_2d(np.asarray(points, dtype=float)) - T[:3, 3]) @ T[:3, :3]
+        ok = (q[:, 2] >= -self.t_mm - tol) & (q[:, 2] <= tol)
+        o = self.outline_uv
+        k = len(o)
+        for i in range(k):                              # CCW half-planes, inward
+            a, b = o[i], o[(i + 1) % k]
+            e = b - a
+            n2 = np.array([-e[1], e[0]])
+            n2 = n2 / max(float(np.linalg.norm(n2)), 1e-12)
+            ok &= (q[:, :2] - a) @ n2 >= -tol - 1e-9
+        if ok.any():
+            edge = self.v_edge(np.clip(q[ok, 2], -self.t_mm, 0.0))
+            sub = ok[ok].copy()
+            sub &= q[ok, 1] <= edge + tol
+            ok[ok] = sub
+        return ok
+
+    # --- analytic sampling ------------------------------------------------------------
+    @staticmethod
+    def _sample_polygon(poly2d: np.ndarray, n_pts: int, rng) -> np.ndarray:
+        """Area-uniform points in a convex polygon: fan triangles, area-weighted."""
+        tri = [(poly2d[0], poly2d[i], poly2d[i + 1]) for i in range(1, len(poly2d) - 1)]
+        areas = np.array([0.5 * abs(float((b - a)[0] * (c - a)[1]
+                                          - (b - a)[1] * (c - a)[0]))
+                          for a, b, c in tri])
+        pick = rng.choice(len(tri), size=n_pts, p=areas / areas.sum())
+        r1 = np.sqrt(rng.random(n_pts))
+        r2 = rng.random(n_pts)
+        out = np.empty((n_pts, 2))
+        for i, (a, b, c) in enumerate(tri):
+            m = pick == i
+            out[m] = ((1 - r1[m])[:, None] * a + (r1[m] * (1 - r2[m]))[:, None] * b
+                      + (r1[m] * r2[m])[:, None] * c)
+        return out
+
+    def sample_face(self, name: str, n_pts: int, rng) -> tuple[np.ndarray, np.ndarray]:
+        t = float(self.t_mm)
+        if name in ("+w", "-w"):
+            w = 0.0 if name == "+w" else -t
+            uv = self._sample_polygon(self._slice(self.mouth_v_mm if name == "+w"
+                                                  else 0.0), n_pts, rng)
+            local = np.column_stack([uv, np.full(n_pts, w)])
+            n_loc = np.tile([0.0, 0.0, 1.0 if name == "+w" else -1.0], (n_pts, 1))
+        elif name == "radius":
+            phis_g = np.linspace(0.0, np.pi / 2.0 - self._p._beta, 257)
+            wts = self._edge_len_at(-self._p._R * np.sin(phis_g))
+            cdf = np.concatenate([[0.0], np.cumsum(0.5 * (wts[1:] + wts[:-1]))])
+            cdf /= cdf[-1]
+            phis = np.interp(rng.random(n_pts), cdf, phis_g)
+            zc = -(t - self._p._c) + self._p._R
+            v = -self._p._R * np.sin(phis)
+            us = np.empty(n_pts)
+            for i, vv in enumerate(v):
+                pa, pb = self._clip_points(float(vv))
+                us[i] = pb[0] + rng.random() * (pa[0] - pb[0])
+            local = np.column_stack([us, v, zc - self._p._R * np.cos(phis)])
+            n_loc = np.column_stack([np.zeros(n_pts), np.sin(phis), np.cos(phis)])
+        elif self._is_end_face(name):
+            far, e, L, v_far = self._end_face_frame(name)
+            ws_grid = np.linspace(-t, 0.0, 1024)
+            widths = self._s_max(name, ws_grid)
+            cdf = np.concatenate([[0.0], np.cumsum(np.clip(widths, 1e-9, None))])
+            cdf /= cdf[-1]
+            w = np.interp(rng.random(n_pts), cdf, np.linspace(-t, 0.0, 1025))
+            s = rng.random(n_pts) * self._s_max(name, w)
+            local = np.column_stack([far + s[:, None] * e, w])
+            # outward normal from the face polygon (the edge frame runs far -> near,
+            # which is AGAINST the CCW direction on s1 and along it on s{k-1})
+            n_loc = np.tile(self._outward_normal_local(name, self._local_face(name)),
+                            (n_pts, 1))
+        else:
+            poly = self._local_face(name)               # planar quad: root/fusion/s_j
+            origin, n_loc1 = poly[0], self._outward_normal_local(name, poly)
+            e1 = poly[1] - poly[0]
+            e1 = e1 / max(np.linalg.norm(e1), 1e-12)
+            e2 = np.cross(n_loc1, e1)
+            p2 = (poly - origin) @ np.column_stack([e1, e2])
+            uv = self._sample_polygon(p2, n_pts, rng)
+            local = origin + uv[:, :1] * e1 + uv[:, 1:] * e2
+            n_loc = np.tile(n_loc1, (n_pts, 1))
+        T = self.T_world_part
+        return self._to_world(local), n_loc @ T[:3, :3].T
+
+    # --- mesh (D21 / D34) -------------------------------------------------------------
+    def mesh(self) -> trimesh.Trimesh:
+        """Watertight by construction: a loft of same-count convex slices."""
+        levels = self._local_levels_3d()
+        k = len(self.outline_uv)
+        n_lev = len(levels)
+        verts = np.vstack(levels)
+        faces = []
+        for i in range(1, k - 1):                       # -w cap
+            faces.append([0, i + 1, i])
+        base = (n_lev - 1) * k
+        for i in range(1, k - 1):                       # +w cap
+            faces.append([base, base + i, base + i + 1])
+        for li in range(n_lev - 1):                     # side quads, outward for CCW
+            lo, hi = li * k, (li + 1) * k
+            for i in range(k):
+                j = (i + 1) % k
+                faces.append([lo + i, lo + j, hi + j])
+                faces.append([lo + i, hi + j, hi + i])
+        m = trimesh.Trimesh(vertices=verts, faces=np.asarray(faces), process=False)
+        m.apply_transform(self.T_world_part)
+        return m
+
+
 def intersect_planes(pa: Plane, pb: Plane, tol: float = 1e-9):
     """Exact line of intersection of two planes.
 

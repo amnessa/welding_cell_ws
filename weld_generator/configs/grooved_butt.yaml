@@ -11,11 +11,11 @@ sensor_profiles: [d435i, stereo_good, stereo_poor]
 thickness_mm: [3.0, 20.0]
 groove_preps: true
 class_disjoint: true
-# D28 STATUS (measured 2026-09-03): this stratum is mech-NONE and cannot currently be
-# fixed by flags — `polygon_outlines: true` only reaches square-prep draws (which the
-# bench builder filters out); a PreparedSlab is rectangular by construction, so every
-# kept scene has 100% terminal-bin mass (seams axis-aligned to its own free edges).
-# At bench6b weight (15 scenes) the pooled plate gate absorbed it (0.38 < 0.44); at
-# bench_phase4 weight (60) it tips the gate to FAIL (0.45). The real fix is a
-# prepared-slab-with-polygon-outline constructor (open item, dataset_plan Phase 8/9
-# runway); until then the release-corpus weight of this stratum is a recorded decision.
+# D28 anti-shortcut mechanisms ON (2026-09-07). The config predated Phase 6a's keys,
+# AND the groove constructor discarded the outline draws it received - so through
+# out/bench_phase4 the grooved stratum was the one rectangular plate left (mech none,
+# 100% terminal mass; tipped the pooled plate gate to FAIL at 60 scenes). Grooved plates
+# are now `prepared_prism` (outline + ISO 9692-1 profile). Geometry keys: every scene of
+# this config is re-identified.
+in_plane_yaw: true
+polygon_outlines: true

@@ -119,6 +119,23 @@ def _prism_edges(outline_uv, thickness, T):
     return [(p @ T[:3, :3].T + T[:3, 3], q @ T[:3, :3].T + T[:3, 3]) for p, q in out]
 
 
+def _prepared_prism_edges(outline_uv, thickness, T):
+    """Like `_prism_edges`, in the prepared frame (top face at w = 0, material to -t).
+    The seam edge's own cap boundary is included and excluded by nearness like any
+    prism's seam edge; the groove's mouth line is not a free edge and is not listed."""
+    o = np.asarray(outline_uv, dtype=float)
+    t = float(thickness)
+    T = np.asarray(T, dtype=float)
+    k = len(o)
+    out = []
+    for i in range(k):
+        a2, b2 = o[i], o[(i + 1) % k]
+        for w in (-t, 0.0):
+            out.append((np.array([*a2, w]), np.array([*b2, w])))
+        out.append((np.array([*a2, -t]), np.array([*a2, 0.0])))
+    return [(p @ T[:3, :3].T + T[:3, 3], q @ T[:3, :3].T + T[:3, 3]) for p, q in out]
+
+
 def _seg_seg_dist(a, b, p0, p1):
     """Min distance between segment ab and seam segment p0p1 (sampled, 17x exact
     point-to-segment - exact enough for a 12 mm threshold on plate-scale geometry)."""
@@ -280,12 +297,16 @@ def collect(root: Path):
                 continue
             if o.get("primitive", "slab") == "prism":
                 es = _prism_edges(o["outline_uv"], o["thickness_mm"], o["T_world_part"])
+            elif o.get("primitive") == "prepared_prism":
+                es = _prepared_prism_edges(o["outline_uv"], o["thickness_mm"],
+                                           o["T_world_part"])
             else:
                 es = _slab_edges(o["dims_mm"], o["T_world_part"])
             edges += [(o["id"], a, b) for a, b in es]
         jt = scene["joint"]["type"]
         yawed = abs(float(scene["joint"].get("in_plane_yaw_deg", 0.0))) > 1e-9
-        outlined = any(o.get("primitive") == "prism" for o in scene["objects"])
+        outlined = any(o.get("primitive") in ("prism", "prepared_prism")
+                       for o in scene["objects"])
         mech = ("yaw+out" if yawed and outlined else "yaw" if yawed
                 else "outline" if outlined else "none")
         for s in scene["seams"]:

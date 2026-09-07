@@ -20,7 +20,7 @@ from __future__ import annotations
 import numpy as np
 
 from .camera import in_frustum, project
-from .geom import PreparedSlab, Prism, Slab, SweptSlab, Tube
+from .geom import PreparedPrism, PreparedSlab, Prism, Slab, SweptSlab, Tube
 
 #: Ray origins are lifted this far off the surface along the normal before casting, so a
 #: point never occludes itself with its own face. Small next to any plate thickness, large
@@ -223,6 +223,9 @@ def ray_hits_part(origins, directions, t_max, part) -> np.ndarray:
         return ray_hits_tube(origins, directions, t_max, part)
     if isinstance(part, SweptSlab):
         return ray_hits_swept(origins, directions, t_max, part)
+    if isinstance(part, PreparedPrism):
+        lo3, hi3 = part.local_bounds()
+        return _ray_aabb_refine(origins, directions, t_max, part, lo3, hi3)
     if isinstance(part, PreparedSlab):
         lo3 = np.array([-part.length_mm / 2.0, -part.width_mm, -part.t_mm])
         hi3 = np.array([part.length_mm / 2.0, 0.0, 0.0])

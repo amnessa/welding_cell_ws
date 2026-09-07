@@ -13,7 +13,8 @@ from . import GENERATOR_VERSION, SCHEMA_VERSION
 from .accessibility import d19_curves, enumerate_candidates
 from .camera import intrinsics, sample_pose, standoff_for_framing
 from .config import SENSOR_PROFILES, geometry_config, sample_joint
-from .geom import PreparedSlab, Prism, Slab, approach_dir, rot_x, rot_y, rot_z, translate
+from .geom import (PreparedPrism, PreparedSlab, Prism, Slab, approach_dir, rot_x,
+                   rot_y, rot_z, translate)
 from .hashing import config_id, twin_key
 from .layouts import build as build_layout
 from .rng import Streams
@@ -135,6 +136,12 @@ def _object_entry(s) -> dict[str, Any]:
         entry["primitive"] = "prepared_slab"
         entry["params"] = {k: (float(v) if isinstance(v, (int, float)) else v)
                            for k, v in s.prep.items()}
+    elif isinstance(s, PreparedPrism):
+        entry["primitive"] = "prepared_prism"
+        entry["params"] = {k: (float(v) if isinstance(v, (int, float)) else v)
+                           for k, v in s.prep.items()}
+        entry["outline_uv"] = [[float(u), float(v)] for u, v in s.outline_uv]
+        entry["outline_shape"] = s.shape
     else:
         entry["primitive"] = "prism"
         entry["outline_uv"] = [[float(u), float(v)] for u, v in s.outline_uv]
@@ -292,7 +299,7 @@ def generate_scene(cfg: dict[str, Any], seed: int) -> tuple[dict[str, Any], dict
     # WITHOUT touching contact_tol, whose thin-sheet cap closes the wrap-around hole.
     if spec.prep != "square":
         mouth = sum(abs(p.mouth_v_mm) for p in slabs
-                    if isinstance(p, PreparedSlab))
+                    if isinstance(p, (PreparedSlab, PreparedPrism)))
         access["coplanar_gap_tol_mm"] = float(
             1.1 * (spec.root_gap_mm + mouth) + 0.5)
     cands = enumerate_candidates(slabs, access, joint_type=joint_type,
