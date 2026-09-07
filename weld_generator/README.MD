@@ -34,6 +34,9 @@ python -m pytest tests/ -q
 python -m weldgen generate --config configs/curved_smoke.yaml --n 14 --out out/curved_smoke
 python scripts/make_bench6b.py                       # the family-balanced 6b corpus
 python scripts/qa_d28_gate.py out/bench6a out/bench6b   # anti-shortcut + D34 gates
+python scripts/make_bench6b.py --per-family 60 --out out/bench_phase4   # the Phase 4 corpus
+python scripts/make_fixture_twins.py out/bench_phase4   # D12 twins -> out/bench_phase4_fx
+python scripts/apply_rule_blocks.py out/bench_phase4 out/bench_phase4_fx  # mps + tacks, in place
 ```
 
 The D12 fixture ablation is two runs over the **same seed range**, one per arm:

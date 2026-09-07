@@ -2070,6 +2070,41 @@ retired ids in `out/bench_phase4/retired_butt_line_grooved_scene_ids.json`), 60/
 0,34 vs 0,44 (butt reads a single `outline` row), D34 PASS** —
 `out/bench_phase4/gate_report_2026-09-07.txt`. The a/b/c release-split decision is
 MOOT: grooved stays in the corpus, in the batch table and in training, no caveat.
+**Step 2 DONE 2026-09-07 — fixture twins.** `scripts/make_fixture_twins.py` replays
+every plate stratum's emitted seeds under `fixture_present: true` →
+`out/bench_phase4_fx` (274 twins of 360 plate seeds; curved strata keep the fixture
+off by design). The losses are a D12 result: the fixture arm rejects by
+`NoVisibleSeams` (it occludes the last visible seam) — corner 36/60 worst, lap 40/60,
+T 54/60 mildest — and butt loses 13 more to `NoSeamsFound` (a contact under the
+root closes the joint). Grooved prepared prisms twin cleanly (54/60). The six fixture
+chunks ran (40 pairs, 8 per class, both arms; batch now 173 000 rows). **Measured
+fixture price (paired median ΔF1, full exterior):** the plan predicted phantom
+plane-pair candidates from `lit-ransac`/`lit-ppf` along the contacts — that did NOT
+happen (Δ ≈ 0; their L0 band oracle excludes the fixture region). The price lands on
+the crease detector and the slicer instead: `lit-lobb` returns a median **23 extra
+seams** with the fixture on (precision −0,22; ΔF1 −0,30 on T, −0,49 on corner — every
+part-fixture contact line is a crease to it), `lit-pcaslice` ΔF1 −0,24 (−0,36 butt,
+−0,30 edge: fixture points inside its per-instance band shift the slice centres);
+`lit-modelreg` and `lit-regiongrow` are unmoved. So the winner's third improvement
+target is fixture-contact rejection — a physical prior (the seam is between
+workpieces, never against the table) that the crease detector lacks.
+
+**Step 4 DONE 2026-09-07 — the tack-complete corpus IS the same corpus.**
+`scripts/apply_rule_blocks.py` retro-applies `mps_rule-0.1` and `tackrule-0.1` into
+every stored `scene.json` of `bench_phase4` (720) and `bench_phase4_fx` (274) — the
+D8/D25 design cashed in: both blocks are pure functions of the stored files, so no
+regeneration, `scene_id`/`twin_key` unchanged, `scene.sha256` + index `content_hash`
+rewritten (`weldgen verify` green on every class), schema-valid, manifest records the
+application. Measured: 4 258 tacks over the base corpus, 335 closed rings tacked
+(phase recorded per ring, D39), tack length tracks gauge (edge t=1,5 → the 10 mm
+floor; grooved t=11,8 → 40 mm), and the degenerate single-tack collapse is a
+per-class fact worth a sentence — lap 84 seams (short toes under the 2t margin),
+edge 44, grooved 31, curved families 0. The MPS crosstab is the Task-2 table: T is
+always the fillet, butt names the butt centreline in 160/180 scenes and an
+off-class `lap_toe` (the thickness step) in 20 — D25's "weldable, not primary" at
+work — corner splits fillet 39 / edge 21, edge splits edge 33 / lap_toe 27; one
+fixture twin has a null MPS (everything under 10 mm visible), a legitimate answer.
+
 User ruling: the six methods are NOT re-run on the rebuilt stratum (the groove is
 what defeats them; only the outline changed) — batch rows for the retired ids are
 labelled the pre-fix stratum at analysis time.
