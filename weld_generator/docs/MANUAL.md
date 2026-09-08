@@ -203,7 +203,10 @@ D19: with a root gap the faces do not meet, so "the seam" is a choice. The store
 curve is the **nominal** zero-gap intersection of the extended faces; `_root` and
 `_gapmid` are derived and stored alongside. Grooved butts store `_grooveroot` instead
 (D36). The Phase 5 annotators, unprompted, clicked gap-mid on butts and root on Ts —
-the choice is real.
+the choice is real. Measured on the Phase 4 corpus (notebook 14 §3.2): the root
+offset is ≈ one gap (angle-dependent: ×0,96 at acute fillets, ×1,25 at obtuse), gap-mid
+≈ half, and root lands more than 3 mm from nominal on 23% of butt centrelines and 14% of
+fillets — so every table states its curve, and the two alternatives ship as arrays.
 
 ### 3.4 Camera, cloud, visibility (`camera.py`, `sampling.py`, `visibility.py`)
 
