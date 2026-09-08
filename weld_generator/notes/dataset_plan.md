@@ -2105,9 +2105,19 @@ off-class `lap_toe` (the thickness step) in 20 — D25's "weldable, not primary"
 work — corner splits fillet 39 / edge 21, edge splits edge 33 / lap_toe 27; one
 fixture twin has a null MPS (everything under 10 mm visible), a legitimate answer.
 
-User ruling: the six methods are NOT re-run on the rebuilt stratum (the groove is
-what defeats them; only the outline changed) — batch rows for the retired ids are
-labelled the pre-fix stratum at analysis time.
+**Step 3 DONE 2026-09-08 — the methods re-run on the rebuilt stratum** (user reversed
+the earlier no-rerun ruling: a fixed section should carry current numbers).
+`run_phase4_batch.py` gained two modes for exactly this: `--retire IDS.json` drops a
+retired stratum's rows from every chunk file (archived to `retired_rows_*.csv.gz`),
+and `--append-missing` is self-healing — every chunk runs only the corpus scenes it
+has no rows for and appends them, so a stratum rebuild costs one stratum of compute,
+not a batch. Five parallel group runners appended the 60 scenes in ~50 min; the
+dataframe is back at 173 000 rows and matches the corpus on disk exactly. **The
+comparison against the retired rows confirms the original premise**: on grooved
+butts every method's median F1 is unchanged by the outline (all ≈0,00 in both views
+and at L1; pcaslice single-view 0,49 → 0,47; Task-2 match rates within noise) — the
+groove is what defeats them, the rectangle was never the reason. So the "five of six
+fail on grooves" finding now stands on decorrelated geometry.
 
 ### Phase 7 — Tack layer
 

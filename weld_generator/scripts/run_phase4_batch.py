@@ -183,6 +183,15 @@ def main():
     ap.add_argument("--only", default=None,
                     help="run only chunks whose group or name contains this")
     ap.add_argument("--list", action="store_true")
+    ap.add_argument("--append-missing", action="store_true",
+                    help="self-healing mode after a stratum rebuild: for every chunk "
+                         "whose file exists, run ONLY the corpus scenes that have no "
+                         "rows in it and append them (fixture chunks are paired runs "
+                         "and are left alone - delete their files to redo them)")
+    ap.add_argument("--retire", default=None,
+                    help="JSON with `scene_ids` (a rebuild_stratum.py retired-ids file): "
+                         "drop those scenes' rows from every chunk file, archive them to "
+                         "retired_rows_<stem>.csv.gz, rewrite the concat, and exit")
     ap.add_argument("--corpus", default=str(ROOT / "out" / "bench_phase4"),
                     help="benchmark corpus root (per-joint-type subdirs); the fixture "
                          "chunks read its sibling '<corpus>_fx' for the twins")
@@ -226,10 +235,34 @@ def main():
     outdir = Path(args.out)
     outdir.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
+
+    if args.retire:
+        spec = json.loads(Path(args.retire).read_text())
+        ids = set(spec["scene_ids"])
+        stem = Path(args.retire).stem
+        archived = []
+        for f in sorted(outdir.glob("*.csv.gz")):
+            if f.name == "phase4_batch.csv.gz" or f.name.startswith("retired_rows_"):
+                continue
+            df = pd.read_csv(f, low_memory=False)
+            drop = df.scene_id.isin(ids)
+            if drop.any():
+                archived.append(df[drop])
+                df[~drop].to_csv(f, index=False)
+                print(f"[retire] {f.name}: -{int(drop.sum())} rows", flush=True)
+        if archived:
+            pd.concat(archived, ignore_index=True).to_csv(
+                outdir / f"retired_rows_{stem}.csv.gz", index=False)
+        _concat(outdir, t0)
+        return
+
     for c in plan:
         f = outdir / f"{c['name']}.csv.gz"
-        if f.exists():
+        if f.exists() and not args.append_missing:
             print(f"[skip] {c['name']} (exists)", flush=True)
+            continue
+        if f.exists() and c.get("fixture"):
+            print(f"[skip] {c['name']} (paired fixture chunk; delete to redo)", flush=True)
             continue
         print(f"[run ] {c['name']}", flush=True)
         tc = time.time()
@@ -251,16 +284,35 @@ def main():
             if cdirs is plate_dirs:
                 print(f"    lit-modelreg scope: {len(plate_dirs)}/{len(dirs)} scenes "
                       f"(slab/prism primitives only)", flush=True)
+            old_df = None
+            if f.exists():                             # --append-missing
+                old_df = pd.read_csv(f, low_memory=False)
+                have = set(old_df.scene_id)
+                cdirs = [d for d in cdirs if d.name not in have]
+                if not cdirs:
+                    print(f"[ok  ] {c['name']} up to date", flush=True)
+                    continue
+                print(f"    appending {len(cdirs)} missing scenes", flush=True)
             df = stream(cdirs, c)
             df["fixture"] = False
+            if old_df is not None:
+                df["chunk"] = c["name"]
+                df["condition"] = c["view"]
+                df = pd.concat([old_df, df], ignore_index=True)
         df["chunk"] = c["name"]
         df["condition"] = c["view"]
         df.to_csv(f, index=False)
         print(f"[done] {c['name']}  {len(df)} rows  {time.time() - tc:.0f}s", flush=True)
 
+    _concat(outdir, t0)
+
+
+def _concat(outdir: Path, t0: float):
     parts = sorted(outdir.glob("*.csv.gz"))
-    parts = [p for p in parts if p.name != "phase4_batch.csv.gz"]
-    all_df = pd.concat([pd.read_csv(p) for p in parts], ignore_index=True)
+    parts = [p for p in parts
+             if p.name != "phase4_batch.csv.gz" and not p.name.startswith("retired_rows_")]
+    all_df = pd.concat([pd.read_csv(p, low_memory=False) for p in parts],
+                       ignore_index=True)
     all_df.to_csv(outdir / "phase4_batch.csv.gz", index=False)
     print(f"\n{len(all_df)} rows -> {outdir / 'phase4_batch.csv.gz'}  "
           f"({time.time() - t0:.0f}s this run)", flush=True)
