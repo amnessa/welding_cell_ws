@@ -228,6 +228,8 @@ def scene_facts(scene: dict) -> dict[str, Any]:
         "seed": scene["seed"],
         "joint_type": scene["joint"]["type"],
         "seam_family": scene["joint"].get("seam_family"),
+        "iso_17659_term": scene["joint"].get("iso_17659_term"),
+        "contact_mode": scene["joint"].get("contact_mode"),
         "prep": scene["joint"].get("prep"),
         "primitives": ",".join(sorted({o.get("primitive", "slab")
                                        for o in scene["objects"]

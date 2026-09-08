@@ -5,16 +5,20 @@ seam geometry is computed in closed form from the placement transforms, so there
 annotator, no estimator, and no intra-rater-consistency hand-waving anywhere in the label
 path.
 
-Status: **Phases 1–6 complete.** Five plate joint types with the D4 accessibility rule,
-fixture, camera + visibility + analytic sensor noise (Phases 1–3); seven baseline methods
-implemented and harnessed (Phase 4 — the combined batch over the Phase 6 corpora is the
-one run still pending); the annotation study measured — **the label-noise floor of the
-literature's own protocol is 1,4 mm median lateral RMSE, 2,4× the ~0,6 mm accuracy those
-papers report against such labels** (Phase 5);
-and Phase 6 in both halves — 6a broke the axis-alignment shortcut and made the seam
-classes disjoint by construction, 6b added the curved seam families, non-planar
-primitives, and ISO 9692-1 groove preparations, all under the same exactness contract.
-See **Phase 6 findings** below. Plan: [`notes/dataset_plan.md`](notes/dataset_plan.md);
+Status: **Phases 1–7 complete, the Phase 4 batch run (2026-09-05, 173 000 rows).** Five
+plate joint types with the D4 accessibility rule, fixture, camera + visibility + analytic
+sensor noise (Phases 1–3); six literature methods reimplemented, harnessed and **run over
+the 720-scene per-family corpus** — the plane-intersection mechanism scores zero on every
+curved family, the crease detector (`lit-lobb`) wins and fails only by over-reporting
+creases, grooved butts defeat five of six methods (Phase 4, `notebooks/14_phase4_results.ipynb`);
+the annotation study measured — **the label-noise floor of the literature's own protocol
+is 1,4 mm median lateral RMSE, 2,4× the ~0,6 mm accuracy those papers report against such
+labels** (Phase 5); Phase 6 in both halves — 6a broke the axis-alignment shortcut and made
+the seam classes disjoint by construction, 6b added the curved seam families, non-planar
+primitives and ISO 9692-1 groove preparations, 6c the MPS rule and camera regimes — and
+Phase 7 the tack rule, all under the same exactness contract. See **Phase 6 findings** below. **New readers start with [`docs/MANUAL.md`](docs/MANUAL.md)** —
+the teaching document: the point, the pipeline step by step, the vocabulary, the
+baselines, the results, and a five-minute version. Plan: [`notes/dataset_plan.md`](notes/dataset_plan.md);
 Phase 6 patch notes: [`notes/patch_phase6.md`](notes/patch_phase6.md),
 [`notes/patch_class_disjointness.md`](notes/patch_class_disjointness.md),
 [`notes/patch_phase6b.md`](notes/patch_phase6b.md).
@@ -98,13 +102,18 @@ Two notebooks, both of which need a **kernel restart** after you change `weldgen
   transferred, never detected; CAD-by-construction from `scene.json`; registration error
   as the whole of the error; and the symmetric-counterpart failure outside the
   roughly-positioned envelope.
+- `notebooks/14_phase4_results.ipynb` — **the Phase 4 results**, every figure a groupby over
+  the batch csv on `bench_phase4`: corpus composition, the coverage heatmaps (both views),
+  the straight-to-curved dumbbell, localization, repeatability, the oracle ladder, noise ×
+  sensor profile, Task 2 selection/localization and the MPS margin per stratum, the paired
+  fixture price, covariates and the ISO 17659 T/angle split, cost, and the discussion.
 - `notebooks/13_inspect_tacks.ipynb` — `tackrule-0.1` (Phase 7) drawn on all five plate
   joints and all six curved families: tacks at true length with the weld order
   annotated, margins and thickness-scaled spacing checked against the rule's bounds,
   the D39 closed-loop phase and per-ring antipodal pairing, the round-robin stagger,
   and the degenerate one-tack collapse.
 
-All ten are entries in the seven-method Phase 4 comparison; see `notes/dataset_plan.md` §4
+Notebooks 03–10 are the method entries of the Phase 4 comparison; see `notes/dataset_plan.md` §4
 and **Baselines** below.
 
 ---

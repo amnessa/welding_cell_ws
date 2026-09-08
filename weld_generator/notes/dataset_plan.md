@@ -2347,4 +2347,10 @@ Opened by the 2026-08-20 advisor meeting:
 - [ ] Lap overlap length has no ISO citation and stays **[ours]**. AWS D1.1 or a fabrication text
       may give a minimum (commonly quoted as some multiple of `t`) — worth one lookup before
       submission, not before Phase 2
-- [ ] Pin the three D19 seam definitions precisely in `SCHEMA.md` §1 and name the stored one
+- [x] ~~Pin the three D19 seam definitions precisely in `SCHEMA.md` §1 and name the stored
+      one~~ → **pinned in `SCHEMA.md` §1.3** (nominal = `Π_A ∩ Π_B` of the extended
+      planes, STORED and scored everywhere; root = the terminating face's edge; gap_mid =
+      closest-pair midpoints — both derived arrays alongside). 2026-09-08: the visual a
+      disagreeing reader needs is in `notebooks/14_phase4_results.ipynb` §3.2 — real
+      cross-section slices with the three curves marked, and the corpus-wide offset-vs-gap
+      conversion plot per seam class
