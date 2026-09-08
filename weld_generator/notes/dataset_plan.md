@@ -676,7 +676,7 @@ clouds. What remains of the lap failure is the real one, no longer confounded.
 
 #### The nine "first real results" plots — produced
 
-All nine, on the balanced corpus for `ours`, in `notebooks/11_first_results.ipynb`: error
+All nine, on the balanced corpus for `ours`, in `notebooks/12_first_results.ipynb`: error
 vs root gap (1), vs thickness with the window-closing marker (2 — plus the corrected `t/2`
 bound in `nb03`), vs `occluded_fraction` (3 — the plot only constructed truth can draw),
 vs joint type under both conditions (4), vs controlled density (5), vs included angle (6),
@@ -1428,7 +1428,7 @@ splitting is the fix); and `surface_variation` was rebatched to ~100× the origi
 - [x] **CONFIRMED — both conditions evaluated separately and reported.** Now under the
       corrected condition names (see the HPR entry below): `full_exterior` (Task 1) and
       `single_view` (Task 2), side by side per joint type in
-      `notebooks/11_first_results.ipynb`, with `view=` a first-class axis of
+      `notebooks/12_first_results.ipynb`, with `view=` a first-class axis of
       `harness.run_matrix`
 
 ### Protocol additions from the 2026-08-20 meeting
@@ -2105,6 +2105,29 @@ off-class `lap_toe` (the thickness step) in 20 — D25's "weldable, not primary"
 work — corner splits fillet 39 / edge 21, edge splits edge 33 / lap_toe 27; one
 fixture twin has a null MPS (everything under 10 mm visible), a legitimate answer.
 
+**Step 6 — the seventh method, `lit-quadric` (2026-09-08).** `lit-nurbs` was dropped
+by ruling (RANSAC first, planar butt only — nothing the comparison lacks). Implemented
+instead: Li, Wang & Wang, *Automatic recognition on impeller shape and weld seam based
+on normal of point clouds and PCA*, JMST 40(3) 2026 — the one method whose welding
+surface model is a QUADRIC (normal statistics decide flat vs curved; TLS plane or
+homogeneous-LS quadric; seam = points near both fits projected onto the intersection;
+graph-walk initial point + distance sort). Circle, ellipse and saddle are inside its
+mechanism (plane∩cylinder, plane∩elliptic cylinder, cylinder∩cylinder); rounded
+rectangle, swept B-spline and the coplanar butt are outside it by construction.
+`scripts/baselines/lit_quadric.py` records SEVEN readings the paper leaves open (the
+literal σ statistic would call a plane curved — §4.2's 10° rule is implemented; the
+printed plane normal equations have the trivial minimiser — TLS; homogeneous quadric on
+centred/scaled coords; a finite-patch band; the published DISTANCE ordering folds
+closed rings — chain arm reported as a rung; seeded walk; face-level surfaces with
+part membership at L0). Verified on exact geometry: all three intersections to 0,0 mm;
+`tests/test_lit_quadric.py` 13 tests. Measured on `bench_phase4` samples: pipe-on-plate
+ring recovered at 0,01 mm RMSE, F1 0,86 full view with the chain ordering vs 0,38 as
+published; the full view pays a FAR-SIDE MIRROR (a side plane meets the base plate's
+bottom face) that single view does not; L1 region growing on thin plates merges faces
+through the thickness. Registered in the batch (all groups + `quadric_chain_*` ladder
+arms); notebook `11_lit_quadric.ipynb`; author email drafted at
+`notes/correspondence/lit-quadric_authors_email.md`.
+
 **Step 3 DONE 2026-09-08 — the methods re-run on the rebuilt stratum** (user reversed
 the earlier no-rerun ruling: a fixed section should carry current numbers).
 `run_phase4_batch.py` gained two modes for exactly this: `--retire IDS.json` drops a
@@ -2351,6 +2374,6 @@ Opened by the 2026-08-20 advisor meeting:
       one~~ → **pinned in `SCHEMA.md` §1.3** (nominal = `Π_A ∩ Π_B` of the extended
       planes, STORED and scored everywhere; root = the terminating face's edge; gap_mid =
       closest-pair midpoints — both derived arrays alongside). 2026-09-08: the visual a
-      disagreeing reader needs is in `notebooks/14_phase4_results.ipynb` §3.2 — real
+      disagreeing reader needs is in `notebooks/15_phase4_results.ipynb` §3.2 — real
       cross-section slices with the three curves marked, and the corpus-wide offset-vs-gap
       conversion plot per seam class

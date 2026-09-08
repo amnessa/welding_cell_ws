@@ -203,7 +203,7 @@ D19: with a root gap the faces do not meet, so "the seam" is a choice. The store
 curve is the **nominal** zero-gap intersection of the extended faces; `_root` and
 `_gapmid` are derived and stored alongside. Grooved butts store `_grooveroot` instead
 (D36). The Phase 5 annotators, unprompted, clicked gap-mid on butts and root on Ts —
-the choice is real. Measured on the Phase 4 corpus (notebook 14 §3.2): the root
+the choice is real. Measured on the Phase 4 corpus (notebook 15 §3.2): the root
 offset is ≈ one gap (angle-dependent: ×0,96 at acute fillets, ×1,25 at obtuse), gap-mid
 ≈ half, and root lands more than 3 mm from nominal on 23% of butt centrelines and 14% of
 fillets — so every table states its curve, and the two alternatives ship as arrays.
@@ -328,6 +328,7 @@ reproduction of the paper's own number where one exists.
 | `lit-ppf` | Wang et al. 2024 | point-pair-feature voting for plane pairs | no | a seam box crop (their Faster R-CNN) |
 | `lit-pcaslice` | Wang et al. 2026 | slice along the PCA axis, centre per slice | no | one mask per seam instance (their YOLO + DeepLab) |
 | `lit-modelreg` | Fang & Tian 2024 | non-rigid registration of the CAD model; seam *transferred* | no | the model itself — constitutively L0-with-CAD |
+| `lit-quadric` | Li, Wang & Wang 2026 | normal statistics → plane or **quadric** fit per surface → seam = intersection | no (seeded walk) | per-surface labels + part membership (their two-part region growing); added 2026-09-08, the only non-planar surface model |
 | `ours` | the lab's admittance repo | radius-PCA band | no | object ids — **excluded from the Phase 4 run by ruling** |
 
 **The oracle ladder** is the fairness device: at L0 each method gets *its own paper's*
@@ -364,7 +365,7 @@ band is 20× its oracle-assisted cost).
 
 ## 9. What we found (as of 2026-09-08)
 
-Full detail with figures: `notebooks/14_phase4_results.ipynb`. The headlines:
+Full detail with figures: `notebooks/15_phase4_results.ipynb`. The headlines:
 
 1. **The plane-intersection collapse.** `lit-ransac` 0,97 median F1 on straight T seams,
    **0,00 on every curved family**; `lit-ppf` degrades to 0,25–0,36 on curved fillets
@@ -462,7 +463,7 @@ python scripts/run_phase4_batch.py --append-missing          # after a stratum r
 
 Notebooks (restart the kernel after editing `weldgen/`): 01 the constructed truth of
 one scene, 02 what a single view returns, 03–10 one per method, 07 the repeat harness,
-11/12 the older results notebooks, **13 tacks**, **14 the Phase 4 results**.
+12/13 the older results notebooks, **14 tacks**, **15 the Phase 4 results**.
 `configs/playground.yaml` drives 01/02 — flip its keys to see any configuration.
 
 ---
@@ -484,7 +485,7 @@ one scene, 02 what a single view returns, 03–10 one per method, 07 the repeat 
    1,4 mm. *The contribution to come:* a single modification to the winner that adds
    the two-body prior, measured on the same rig that found the weakness.
 
-Show: the coverage heatmap (§2 of notebook 14), the straight-to-curved dumbbell, the
+Show: the coverage heatmap (§2 of notebook 15), the straight-to-curved dumbbell, the
 noise small multiples, the Task-2 selection heatmap, and the tack notebook's grid.
 
 ---

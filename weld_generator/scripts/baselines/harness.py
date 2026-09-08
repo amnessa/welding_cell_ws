@@ -287,6 +287,27 @@ def _run_lit_modelreg(prep: PreparedScene, seed: int, oracle: bool, view: str, n
     return r.polylines, {"reg_scale": r.s, "mode": mode, "target_features": target_features}
 
 
+def _run_lit_quadric(prep: PreparedScene, seed: int, oracle: bool, view: str, ns: float,
+                     ordering: str = "distance"):
+    # L0 = their two-part split made explicit: per-face SURFACE labels (what the fit
+    # needs) plus part membership (what restricts the pairs). L1 grows the surfaces
+    # itself and has no part membership - every adjacent pair is a candidate.
+    from .lit_quadric import detect
+    c = prep.cloud(view, ns)
+    if oracle:
+        _, lab = prep.oracle("surfaces", view, ns)
+        r = detect(c["xyz"], region_labels=lab, part_labels=c["object_id"],
+                   ordering=ordering, seed=seed)
+    else:
+        r = detect(c["xyz"], ordering=ordering, seed=seed)
+    census = {}
+    for pr in r.pairs:
+        census[pr["status"]] = census.get(pr["status"], 0) + 1
+    return r.polylines, {"n_surfaces": len(r.surfaces), "ordering": ordering,
+                         "n_curved": sum(1 for s in r.surfaces if s["kind"] == "curved"),
+                         "pairs_seam": census.get("seam", 0)}
+
+
 def fake_oracle(prep: PreparedScene, seed: int, oracle: bool, view: str, ns: float,
                 sigma_mm: float = 0.3, p_phantom: float = 0.0, p_miss: float = 0.0):
     """Ground truth plus known noise — the predictor the harness is validated against.
@@ -341,6 +362,10 @@ REGISTRY: dict[str, MethodSpec] = {
     # the method is constitutively L0-with-CAD and has no L1 arm.
     "lit-modelreg": MethodSpec("lit-modelreg", _run_lit_modelreg, randomised=False,
                                oracle_name="model"),
+    # Deterministic per seed (the graph walk's random start is seeded); the seed only
+    # moves the initial point, which on an open seam is one of its two ends either way.
+    "lit-quadric": MethodSpec("lit-quadric", _run_lit_quadric, randomised=False,
+                              oracle_name="surfaces"),
     "fake-oracle": MethodSpec("fake-oracle", fake_oracle, randomised=True,
                               oracle_name=None),
 }

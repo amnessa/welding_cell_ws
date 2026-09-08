@@ -6,7 +6,7 @@ every one of the nine first-results plots, the method coverage table, the repeat
 plots, the noise table, the fixture ablation AND the Task-2 short section (MPS selection
 + localization, the `task2` group) are `groupby`s over its output. Nothing in here
 computes a new quantity — it is `harness.run_matrix` / `harness.run_task2` over an
-explicit chunk list. Six literature methods; `ours` (radius-PCA) is excluded by the
+explicit chunk list. Seven literature methods (lit-quadric added 2026-09-08); `ours` (radius-PCA) is excluded by the
 2026-09-03 ruling (see METHODS_ALL), and the default corpus is the per-family
 `out/bench_phase4` (60 scenes per family, classes unequal by design — report per
 family/class, never pooled).
@@ -73,7 +73,7 @@ from baselines.harness import run_task2  # noqa: E402
 # own contribution is the improvement built on whichever method wins it. Re-add with
 # --include-ours if the floor-anchor appendix figure is wanted.
 METHODS_ALL = ["lit-ransac", "lit-regiongrow", "lit-lobb", "lit-ppf",
-               "lit-pcaslice", "lit-modelreg"]
+               "lit-pcaslice", "lit-modelreg", "lit-quadric"]   # 7th added 2026-09-08
 
 # `lit-modelreg` rebuilds its CAD model from scene.json, and its samplers cover slab
 # and prism primitives only (its papers register plate assemblies) - so its chunks run
@@ -82,7 +82,7 @@ PLATE_PRIMS = {"slab", "prism"}
 
 # measured seconds per scene per run (L0, clean, bench hardware) - for --list only
 EST_SEC = {"ours": 1.5, "lit-ransac": 0.3, "lit-regiongrow": 1.0, "lit-lobb": 2.5,
-           "lit-ppf": 0.6, "lit-pcaslice": 0.5, "lit-modelreg": 2.5}
+           "lit-ppf": 0.6, "lit-pcaslice": 0.5, "lit-modelreg": 2.5, "lit-quadric": 1.0}
 
 
 def chunks(seeds_ransac: int):
@@ -112,6 +112,12 @@ def chunks(seeds_ransac: int):
                     methods=["lit-modelreg"], view="full_exterior", oracle=True,
                     noise=0.0, seeds=2,
                     method_kw={"lit-modelreg": {"target_features": "dense"}}))
+    # lit-quadric's corrected-ordering arm: the published distance sort folds closed
+    # rings (reading 5); the nearest-neighbour chain is the fix, reported as a rung
+    for cond in ("full_exterior", "single"):
+        out.append(dict(group="ladder", name=f"quadric_chain_{cond}",
+                        methods=["lit-quadric"], view=cond, oracle=True, noise=0.0,
+                        seeds=2, method_kw={"lit-quadric": {"ordering": "chain"}}))
     out.append(dict(group="ladder", name="modelreg_global_init",
                     methods=["lit-modelreg"], view="full_exterior", oracle=True,
                     noise=0.0, seeds=2, method_kw={"lit-modelreg": {"init": "global"}}))

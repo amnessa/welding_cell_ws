@@ -7,10 +7,10 @@ path.
 
 Status: **Phases 1–7 complete, the Phase 4 batch run (2026-09-05, 173 000 rows).** Five
 plate joint types with the D4 accessibility rule, fixture, camera + visibility + analytic
-sensor noise (Phases 1–3); six literature methods reimplemented, harnessed and **run over
+sensor noise (Phases 1–3); seven literature methods reimplemented (the seventh, `lit-quadric`, after the run), harnessed and **run over
 the 720-scene per-family corpus** — the plane-intersection mechanism scores zero on every
 curved family, the crease detector (`lit-lobb`) wins and fails only by over-reporting
-creases, grooved butts defeat five of six methods (Phase 4, `notebooks/14_phase4_results.ipynb`);
+creases, grooved butts defeat five of six methods (Phase 4, `notebooks/15_phase4_results.ipynb`);
 the annotation study measured — **the label-noise floor of the literature's own protocol
 is 1,4 mm median lateral RMSE, 2,4× the ~0,6 mm accuracy those papers report against such
 labels** (Phase 5); Phase 6 in both halves — 6a broke the axis-alignment shortcut and made
@@ -90,11 +90,17 @@ Two notebooks, both of which need a **kernel restart** after you change `weldgen
 - `notebooks/09_lit_pcaslice.ipynb` — `lit-pcaslice` (Wang et al. 2026): the slicing
   direction from the data, the two-seams-one-mask failure pinned, and the per-instance
   oracle named for what it is — instance segmentation of the seam-separation problem.
-- `notebooks/12_seven_methods.ipynb` — the seven-method comparison, every figure a
+- `notebooks/13_seven_methods.ipynb` — the seven-method comparison, every figure a
   groupby over the batch job's csv: the coverage table, both tasks side by side, the seed
   box plots with the measured-zero-spread column, the L0→L1 price of each paper's
   unpublished stage, the noise table, the fixture ablation, and the ladder extras.
-- `notebooks/11_first_results.ipynb` — the plan's nine "first real results" plots on the
+- `notebooks/11_lit_quadric.ipynb` — `lit-quadric` (Li, Wang & Wang 2026): the seventh
+  method and the only quadric surface model — the flat/curved verdict in the paper's two
+  readings, the TLS plane and homogeneous quadric fits, the three intersection types exact
+  on exact geometry, the published distance ordering folding a ring against the chain arm,
+  the finite patch and the far-side mirror, the families through the harness, and the
+  seven questions for the authors.
+- `notebooks/12_first_results.ipynb` — the plan's nine "first real results" plots on the
   balanced corpus: gap, thickness, occlusion, joint type (both conditions), density,
   dihedral, fixture on/off on the paired twin corpus, sensor profile, and the D19
   conversion table as a function of g.
@@ -102,12 +108,12 @@ Two notebooks, both of which need a **kernel restart** after you change `weldgen
   transferred, never detected; CAD-by-construction from `scene.json`; registration error
   as the whole of the error; and the symmetric-counterpart failure outside the
   roughly-positioned envelope.
-- `notebooks/14_phase4_results.ipynb` — **the Phase 4 results**, every figure a groupby over
+- `notebooks/15_phase4_results.ipynb` — **the Phase 4 results**, every figure a groupby over
   the batch csv on `bench_phase4`: corpus composition, the coverage heatmaps (both views),
   the straight-to-curved dumbbell, localization, repeatability, the oracle ladder, noise ×
   sensor profile, Task 2 selection/localization and the MPS margin per stratum, the paired
   fixture price, covariates and the ISO 17659 T/angle split, cost, and the discussion.
-- `notebooks/13_inspect_tacks.ipynb` — `tackrule-0.1` (Phase 7) drawn on all five plate
+- `notebooks/14_inspect_tacks.ipynb` — `tackrule-0.1` (Phase 7) drawn on all five plate
   joints and all six curved families: tacks at true length with the weld order
   annotated, margins and thickness-scaled spacing checked against the rule's bounds,
   the D39 closed-loop phase and per-ring antipodal pairing, the round-robin stagger,

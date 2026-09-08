@@ -66,6 +66,8 @@ from .lit_ransac import (LitRansacResult, LitRansacSeam, Plane,
                          detect as lit_ransac_detect, multi_plane_fit,
                          seam_region_oracle, surface_intersection_crop,
                          surface_labels_oracle)
+from .lit_quadric import (QuadricResult, detect as lit_quadric_detect, fit_plane,
+                          fit_quadric, order_points, seam_points, surface_kind)
 from .lit_regiongrow import (RegionGrowResult, detect as lit_regiongrow_detect,
                              local_pca, region_grow, two_surface_edges)
 from .radius_pca import (RadiusPCAResult, detect, directional_components, local_tangent,
@@ -86,6 +88,8 @@ __all__ = [
     "lit_ppf_detect", "PPFResult", "PPFPlane", "ppf", "ppf_planes", "opp_vote",
     "lit_pcaslice_detect", "PCASliceResult", "pca_centerline", "bspline_path",
     "lit_modelreg_detect", "ModelRegResult", "build_model", "cpd_similarity",
+    "lit_quadric_detect", "QuadricResult", "fit_plane", "fit_quadric", "order_points",
+    "seam_points", "surface_kind",
     "lit_lobb_detect", "LobbResult", "lobb_features", "activate", "kmeans_1d_binary",
     "part_labels_oracle",
     "run_matrix", "prepare", "spread", "REGISTRY", "MethodSpec", "PreparedScene",
