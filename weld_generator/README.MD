@@ -17,7 +17,7 @@ is 1,4 mm median lateral RMSE, 2,4× the ~0,6 mm accuracy those papers report ag
 labels** (Phase 5); Phase 6 in both halves — 6a broke the axis-alignment shortcut and made
 the seam classes disjoint by construction, 6b added the curved seam families, non-planar
 primitives and ISO 9692-1 groove preparations, 6c the MPS rule and camera regimes — and
-Phase 7 the tack rule, all under the same exactness contract. See **Phase 6 findings** below. **New readers start with [`docs/MANUAL.md`](docs/MANUAL.md)** —
+Phase 7 the tack rule, all under the same exactness contract. See **Phase 6 findings** below. **Continuing on another machine? Read [`notes/handoff_phase8.md`](notes/handoff_phase8.md) first** (what `git pull` does not carry, the rulings, the Phase 8 plan). **New readers start with [`docs/MANUAL.md`](docs/MANUAL.md)** —
 the teaching document: the point, the pipeline step by step, the vocabulary, the
 baselines, the results, and a five-minute version. Plan: [`notes/dataset_plan.md`](notes/dataset_plan.md);
 Phase 6 patch notes: [`notes/patch_phase6.md`](notes/patch_phase6.md),
