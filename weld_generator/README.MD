@@ -10,7 +10,8 @@ plate joint types with the D4 accessibility rule, fixture, camera + visibility +
 sensor noise (Phases 1–3); seven literature methods reimplemented (the seventh, `lit-quadric`, after the run), harnessed and **run over
 the 720-scene per-family corpus** — the plane-intersection mechanism scores zero on every
 curved family, the crease detector (`lit-lobb`) wins and fails only by over-reporting
-creases, grooved butts defeat five of six methods (Phase 4, `notebooks/15_phase4_results.ipynb`);
+creases, grooved butts defeat every method; the seventh, `lit-quadric`, is exact given its
+welding surfaces and nothing without them (Phase 4, `notebooks/15_phase4_results.ipynb`);
 the annotation study measured — **the label-noise floor of the literature's own protocol
 is 1,4 mm median lateral RMSE, 2,4× the ~0,6 mm accuracy those papers report against such
 labels** (Phase 5); Phase 6 in both halves — 6a broke the axis-alignment shortcut and made

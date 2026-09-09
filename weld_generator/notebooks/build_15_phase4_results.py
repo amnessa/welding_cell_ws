@@ -5,7 +5,7 @@ def md(s): C.append(nbf.v4.new_markdown_cell(s.strip("\n")))
 def code(s): C.append(nbf.v4.new_code_cell(s.strip("\n")))
 
 md(r"""
-# Phase 4 results — the six-method comparison on `bench_phase4`
+# Phase 4 results — the seven-method comparison on `bench_phase4`
 
 Every figure in this notebook is a `groupby` over **one file**,
 `out/phase4_batch/phase4_batch.csv.gz` (173 000 rows), produced by
@@ -41,6 +41,11 @@ buried interior faces is truth only, never a method input.
   with that label.
 * **`ours` (radius-PCA) is excluded by ruling** (2026-09-03): the project's own
   contribution is the improvement built on whichever published method wins here.
+* **`lit-quadric` was added after the first run** (2026-09-08, notebook 11) and runs with
+  its corrected chain ordering in every standard chunk; the as-published distance
+  ordering — which folds closed rings — is the `quadric_distance_*` ladder rung. Its L0
+  stage (per-face surfaces + part membership) is the richest oracle in the ladder; read
+  its L1 row before its L0 row.
 * F1 is at a 3 mm lateral tolerance over densified polylines; `rmse_med` is the
   literature's own metric (RMSE of a matched predicted path against its truth seam).
 """)
@@ -70,9 +75,9 @@ JOIN = ["scene_id", "family", "stratum", "sensor_profile", "density_per_mm2",
 DF = DF.drop(columns=[c for c in JOIN[1:] if c in DF.columns], errors="ignore")
 DF = DF.merge(FACTS[JOIN], on="scene_id", how="left")
 
-METHODS = ["lit-ransac", "lit-regiongrow", "lit-lobb", "lit-ppf", "lit-pcaslice", "lit-modelreg"]
+METHODS = ["lit-ransac", "lit-regiongrow", "lit-lobb", "lit-ppf", "lit-pcaslice", "lit-modelreg", "lit-quadric"]
 SHORT = {"lit-ransac": "ransac", "lit-regiongrow": "regiongrow", "lit-lobb": "lobb",
-         "lit-ppf": "ppf", "lit-pcaslice": "pcaslice", "lit-modelreg": "modelreg"}
+         "lit-ppf": "ppf", "lit-pcaslice": "pcaslice", "lit-modelreg": "modelreg", "lit-quadric": "quadric"}
 ORDER_JT = ["T", "corner", "butt", "lap", "edge"]
 ORDER_STRATA = ["T/line", "T/circle", "T/ellipse", "T/saddle", "T/rounded_rect", "T/swept_path",
                 "corner/line", "butt/line", "butt/line_grooved", "butt/arc_butt",
@@ -80,7 +85,7 @@ ORDER_STRATA = ["T/line", "T/circle", "T/ellipse", "T/saddle", "T/rounded_rect",
 STRAIGHT = {"T/line", "corner/line", "butt/line", "butt/line_grooved", "lap/line", "edge/line"}
 
 # --- palette: the validated categorical order, one slot per method, never cycled ------
-COLOR = dict(zip(METHODS, ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300"]))
+COLOR = dict(zip(METHODS, ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7"]))
 GRAY = "#b8b7b2"; INK = "#0b0b0b"; INK2 = "#52514e"
 SEQ = LinearSegmentedColormap.from_list("seq", ["#f4f8fd", "#cde2fb", "#86b6ef", "#3987e5", "#1c5cab", "#0d366b"])
 DIV = LinearSegmentedColormap.from_list("div", ["#d03b3b", "#f0efec", "#2a78d6"])
@@ -205,8 +210,14 @@ md(r"""
 * **`lit-modelreg` posts 0,95–0,99 wherever it runs**, which is what a CAD-registration
   method should do when the CAD is the truth. It is the ceiling of the L0-with-CAD rung
   and a warning about how that rung is reported in the literature.
-* **Straight plate seams are not solved either.** Edge joints (0,29–0,37 for everyone)
-  and lap joints (crease at a thickness step, 0,37–0,84) remain hard on plain rectangles.
+* **Straight plate seams are not solved either** — by the first six. Edge joints
+  (0,29–0,37) and lap joints (crease at a thickness step, 0,37–0,84) remain hard for them
+  on plain rectangles.
+* **`lit-quadric` leads or ties every stratum but grooved** (notebook 11; added after the
+  first run): 1,00 circle, 0,96 ellipse, 0,85 saddle at 0,01 mm RMSE — the quadric families
+  are inside its surface model where they are outside everyone else's — and 0,99 butt,
+  0,90 edge, 0,88 lap on the plates. Read its L1 row (§5) before crowning it: its L0
+  stage, per-face surfaces with part membership, is the richest oracle in the ladder.
 """)
 
 md(r"""
@@ -451,13 +462,23 @@ ppf_l0 = l0[l0.method == "lit-ppf"].groupby("joint_type").L0.median()
 print("\nlit-ppf exact-normals rung (ΔF1 vs estimated normals):", (ppf_ex - ppf_l0).reindex(ORDER_JT).round(2).to_dict())
 mr = {c: scene_level(DF[DF.chunk == c], "f1").groupby("joint_type").f1.median().reindex(ORDER_JT).round(2).to_dict()
       for c in ("modelreg_dense_features", "modelreg_global_init")}
+for c in ("quadric_distance_full_exterior", "quadric_distance_single"):
+    if (DF.chunk == c).any():
+        q = scene_level(DF[DF.chunk == c], "f1").groupby("stratum").f1.median().reindex(ORDER_STRATA)
+        q0 = scene_level(cov[(cov.method == "lit-quadric") & (cov.condition == c.split("_", 2)[2])], "f1").groupby("stratum").f1.median().reindex(ORDER_STRATA)
+        print(f"\nlit-quadric AS PUBLISHED ({c}) vs chain, median F1 per stratum:"); print(pd.DataFrame({"distance": q, "chain": q0}).round(2).to_string())
 print("lit-modelreg L0 (oracle features, near init):", l0[l0.method == "lit-modelreg"].groupby("joint_type").L0.median().reindex(ORDER_JT).round(2).to_dict())
 for k, v in mr.items(): print(f"lit-modelreg {k}:", v)
 """)
 
 md(r"""
-**Reading it.** The steepest drop belongs to the winner: **`lit-lobb` goes from 0,43 to
-0,03 without its masks** — the K-Net segmentation in the original paper is what confines
+**Reading it.** The steepest drop belongs to the new leader: **`lit-quadric` goes from a
+pooled 0,93 to 0,00 without its surfaces** — only the thick curved members survive
+(rounded_rect 0,53, swept_path 0,72), where region growing on a tube wall is easy; on thin
+plates the grown regions merge through the thickness, and a wrong surface partition yields
+wrong pairs and no seams. The mechanism is exact given the welding surfaces, and finding the
+welding surfaces is the entire problem. The same story holds, at lower altitude, for the
+crease detector: **`lit-lobb` goes from 0,43 to 0,03 without its masks** — the K-Net segmentation in the original paper is what confines
 the crease detector to the parts, and without it every crease in the scene (plate edges,
 the bore, the outline corners) is a seam. That matters for how the paper frames any
 improvement: a modification that helps lobb at L0 must be checked at L1, or it may be
@@ -507,8 +528,10 @@ print(g.round(2).to_string())
 """)
 
 md(r"""
-**Reading it.** `lit-lobb` is the most noise-robust (0,44 → 0,34 → 0,31 pooled over
-profiles; gentlest on `stereo_good` — 0,49 → 0,40 → 0,40 — and steepest on `stereo_poor`,
+**Reading it.** `lit-quadric` is essentially noise-immune (0,56 → 0,49 → 0,57): a
+least-squares surface fit over thousands of points averages the sensor noise out, and the
+intersection inherits the averaged surfaces. Among the point-local methods `lit-lobb` is
+the most robust (0,44 → 0,34 → 0,31 pooled over profiles; gentlest on `stereo_good` — 0,49 → 0,40 → 0,40 — and steepest on `stereo_poor`,
 0,33 → 0,24 → 0,14, where the derived σ_z at these standoffs is millimetres). The plane
 methods go to zero at the stored profile: RANSAC's inlier threshold and PPF's normal estimation are both tuned for
 CAD-clean clouds, and the derived σ_z of a real stereo sensor at these standoffs is
@@ -589,8 +612,11 @@ print(pd.crosstab(mm.joint_type, mm.mps_class).reindex(ORDER_JT).to_string())
 """)
 
 md(r"""
-**Reading it.** `lit-lobb` leads selection among the methods that actually search
-(0,79 overall, 0,94 on T) with the best localization (0,7–1,6 mm on every class);
+**Reading it.** `lit-quadric` localizes the MPS seam at 0,0–0,7 mm on every class — an
+order of magnitude under everyone else — while its selection is mid-pack (0,49 butt to
+0,91 T): it finds the seam it finds exactly, and misses the rest outright. `lit-lobb`
+leads selection among the methods that actually search (0,79 overall, 0,94 on T) with the
+best localization after the quadric (0,7–1,6 mm on every class);
 `lit-ransac` is the precision specialist — exact where its planes exist, matched barely
 half the time; `lit-regiongrow`'s high match rate dissolves into 5–20 mm localization
 (it finds *something* near the MPS, not the seam). **Corner is the selection trap**
@@ -649,7 +675,12 @@ plane methods' L0 band oracle excludes the fixture region, so they never see the
 seams with the fixture on** (precision −0,22; ΔF1 −0,30 on T and −0,49 on corner, the
 classes where the plate rests on the table) — and on the slicer (`lit-pcaslice` −0,24:
 fixture points inside its per-instance band drag the slice centres). `lit-modelreg` and
-`lit-regiongrow` are unmoved. The 274-of-360 twin yield is itself a D12 result: the
+`lit-regiongrow` are unmoved. And the **largest price of all seven is `lit-quadric`'s, ΔF1
+−0,39**: its L0 part membership counts the fixture as a part, so every plate-face ×
+fixture-face pair with a contact band becomes a "seam" along the table — the paper's
+two-part world has no fixture, and the mechanism has no notion that a seam lies between
+*workpieces* (D13, the rule the generator applies to its own candidates). The 274-of-360
+twin yield is itself a D12 result: the
 fixture arm loses seeds by occluding the last visible seam (corner worst at 36/60) and
 butt loses 13 to a contact under the root closing the joint.
 """)
@@ -743,7 +774,18 @@ curved family, and the one mechanism that survives curvature — the crease dete
 pays for it with precision, on closed rings, near fixtures, and above all without the
 segmentation masks its paper did not release.
 
-**The winner and its three measured weaknesses.** `lit-lobb` is the method to improve:
+**Two winners, and the question between them.** With the seventh method the table has
+two leaders that fail in opposite ways. `lit-quadric` is exact wherever its welding
+surfaces are given — 0,93 pooled F1, 0,01 mm on rings and saddles, immune to sensor noise —
+and collapses to 0,00 the moment they are not; its failures are all *segmentation*
+failures (thin plates merging through the thickness, the fixture read as a part). `lit-lobb`
+never needs to know what a surface is and survives every condition at half the accuracy;
+its failures are all *precision* failures. So the improvement with the highest ceiling is
+no longer a two-body prior for the crease detector: it is **a welding-surface segmentation
+good enough to feed the quadric intersection** — everything downstream of it is already
+exact — evaluated at L1, on the fixture twins, and on thin plates, which is where every
+unsupervised partition measured here breaks. The crease detector's route remains the
+fallback that needs no segmentation at all. Before the seventh method, `lit-lobb` was the method to improve:
 the only nonzero profile across strata, the best Task-2 selection and localization, the
 most noise-robust. Its failures are all *precision* failures of the same kind — real
 creases that are not seams: (1) the far side and bore creases of closed rings in full
@@ -774,7 +816,7 @@ beyond the analytic stereo model; Phase 8 renders and the Phase 9 real subset ar
 next two rungs of that ladder. (e) The MPS label is a geometric proxy by decision, and
 this notebook never claims otherwise.
 
-**The paper's tables, in order.** §2 (coverage, both views) · §2.1 (the gap) · §3
+**The paper's tables, in order.** §2 (coverage, both views, seven methods) · §2.1 (the gap) · §3
 (localization) · §4 (repeatability) · §5 (the ladder) · §6 (noise × profile) · §7 (Task 2,
 plus the margin distribution per class) · §8 (fixture) · §9 (covariates and the
 ISO 17659 split) · §10 (cost). The batch csv is the single source for all of them.

@@ -80,6 +80,16 @@ METHODS_ALL = ["lit-ransac", "lit-regiongrow", "lit-lobb", "lit-ppf",
 # on the plate-primitive subset and the coverage restriction is printed, not hidden.
 PLATE_PRIMS = {"slab", "prism"}
 
+# lit-quadric runs with the CORRECTED chain ordering in every standard chunk and the
+# as-published distance ordering as a ladder rung (2026-09-09 swap). Reason: the
+# published sort folds closed rings into paths 40x their length, and SCORING those
+# folded polylines - not the method - made one chunk take 8,9 h on this corpus. The
+# fold is a documented reading (lit_quadric.py, reading 5) and its price is measured
+# on the rung; the standard chunks measure the mechanism.
+def _kw(m):
+    return {"lit-quadric": {"ordering": "chain"}} if m == "lit-quadric" else {}
+
+
 # measured seconds per scene per run (L0, clean, bench hardware) - for --list only
 EST_SEC = {"ours": 1.5, "lit-ransac": 0.3, "lit-regiongrow": 1.0, "lit-lobb": 2.5,
            "lit-ppf": 0.6, "lit-pcaslice": 0.5, "lit-modelreg": 2.5, "lit-quadric": 1.0}
@@ -92,18 +102,20 @@ def chunks(seeds_ransac: int):
         for m in METHODS_ALL:
             out.append(dict(group="coverage", name=f"coverage_{m}_{cond}",
                             methods=[m], view=cond, oracle=True, noise=0.0,
-                            seeds=seeds_ransac if m == "lit-ransac" else 2))
+                            seeds=seeds_ransac if m == "lit-ransac" else 2,
+                            method_kw=_kw(m)))
     # the L1 arms (modelreg has none - the model IS its oracle)
     for m in [m for m in METHODS_ALL if m != "lit-modelreg"]:
         out.append(dict(group="l1", name=f"l1_{m}_full_exterior",
                         methods=[m], view="full_exterior", oracle=False, noise=0.0,
-                        seeds=seeds_ransac if m == "lit-ransac" else 2))
+                        seeds=seeds_ransac if m == "lit-ransac" else 2, method_kw=_kw(m)))
     # the noise table: single view, sigma x {1, 2} (0 is the coverage chunk above)
     for ns in (1.0, 2.0):
         for m in METHODS_ALL:
             out.append(dict(group="noise", name=f"noise{ns:g}_{m}_single",
                             methods=[m], view="single", oracle=True, noise=ns,
-                            seeds=seeds_ransac if m == "lit-ransac" else 2))
+                            seeds=seeds_ransac if m == "lit-ransac" else 2,
+                            method_kw=_kw(m)))
     # ladder extras: lit-ppf exact normals; lit-modelreg dense features + global init
     out.append(dict(group="ladder", name="ppf_exact_normals_full_exterior",
                     methods=["lit-ppf"], view="full_exterior", oracle=True, noise=0.0,
@@ -112,12 +124,12 @@ def chunks(seeds_ransac: int):
                     methods=["lit-modelreg"], view="full_exterior", oracle=True,
                     noise=0.0, seeds=2,
                     method_kw={"lit-modelreg": {"target_features": "dense"}}))
-    # lit-quadric's corrected-ordering arm: the published distance sort folds closed
-    # rings (reading 5); the nearest-neighbour chain is the fix, reported as a rung
+    # lit-quadric AS PUBLISHED: the distance sort that folds closed rings (reading 5),
+    # as a rung - the standard chunks run the corrected chain ordering (see _kw)
     for cond in ("full_exterior", "single"):
-        out.append(dict(group="ladder", name=f"quadric_chain_{cond}",
+        out.append(dict(group="ladder", name=f"quadric_distance_{cond}",
                         methods=["lit-quadric"], view=cond, oracle=True, noise=0.0,
-                        seeds=2, method_kw={"lit-quadric": {"ordering": "chain"}}))
+                        seeds=2, method_kw={"lit-quadric": {"ordering": "distance"}}))
     out.append(dict(group="ladder", name="modelreg_global_init",
                     methods=["lit-modelreg"], view="full_exterior", oracle=True,
                     noise=0.0, seeds=2, method_kw={"lit-modelreg": {"init": "global"}}))
@@ -127,12 +139,14 @@ def chunks(seeds_ransac: int):
     for m in METHODS_ALL:
         out.append(dict(group="task2", name=f"task2_{m}_single",
                         methods=[m], view="single", oracle=True, noise=0.0,
-                        seeds=seeds_ransac if m == "lit-ransac" else 2, task2=True))
+                        seeds=seeds_ransac if m == "lit-ransac" else 2, task2=True,
+                        method_kw=_kw(m)))
     # fixture twins: every method, both arms, paired seeds
     for m in METHODS_ALL:
         out.append(dict(group="fixture", name=f"fixture_{m}",
                         methods=[m], view="full_exterior", oracle=True, noise=0.0,
-                        seeds=seeds_ransac if m == "lit-ransac" else 2, fixture=True))
+                        seeds=seeds_ransac if m == "lit-ransac" else 2, fixture=True,
+                        method_kw=_kw(m)))
     return out
 
 

@@ -370,7 +370,13 @@ Full detail with figures: `notebooks/15_phase4_results.ipynb`. The headlines:
 1. **The plane-intersection collapse.** `lit-ransac` 0,97 median F1 on straight T seams,
    **0,00 on every curved family**; `lit-ppf` degrades to 0,25–0,36 on curved fillets
    and dies on butts.
-2. **`lit-lobb` wins**, being the only method nonzero on every stratum but grooved, the
+2. **Two leaders (after the seventh method, 2026-09-09).** `lit-quadric` — the only quadric
+   surface model — is exact wherever its welding surfaces are given (pooled F1 0,93, rings
+   and saddles at 0,01 mm, immune to sensor noise) and collapses to 0,00 without them (L1),
+   and pays the largest fixture price (it reads the fixture as a part). `lit-lobb` needs no
+   segmentation and survives every condition at half the accuracy. The improvement with the
+   highest ceiling is a welding-surface segmentation that feeds the quadric intersection.
+   Before the seventh method, **`lit-lobb` won**, being the only method nonzero on every stratum but grooved, the
    best on Task 2 (0,79 selection, 0,7–1,6 mm localization), and the most noise-robust
    (0,44 → 0,31 at 2×σ while the plane methods go to zero). Its three measured
    weaknesses are all *precision* failures of one kind — real creases that are not

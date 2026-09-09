@@ -2128,6 +2128,20 @@ through the thickness. Registered in the batch (all groups + `quadric_chain_*` l
 arms); notebook `11_lit_quadric.ipynb`; author email drafted at
 `notes/correspondence/lit-quadric_authors_email.md`.
 
+**Step 6 batch DONE 2026-09-09 — seven methods, 184 680 rows.** `lit-quadric` ran in
+every group with the corrected chain ordering; the as-published distance ordering is the
+`quadric_distance_*` rung (scoring its folded rings cost 8,9 h for one chunk — the fold
+is a documented reading, its price is on the rung: 0,41 vs 1,00 on circles). Measured:
+**L0 pooled median F1 0,93, leading every stratum but grooved** (circle 1,00, ellipse
+0,96, saddle 0,85 at 0,01 mm; butt 0,99 via the gap walls, edge 0,90, lap 0,88);
+**L1 0,00** (only rounded_rect 0,53 / swept_path 0,72 survive) — exact given the welding
+surfaces, nothing without them; **noise-immune** (0,56 → 0,49 → 0,57); Task-2
+localization 0,0–0,7 mm with mid-pack selection; and **the largest fixture price of all
+seven, ΔF1 −0,39** (its part membership counts the fixture as a part — D13 as a method
+failure). The results discussion (notebook 15 §11) now frames TWO leaders failing in
+opposite ways, and the highest-ceiling improvement as a welding-surface segmentation
+that feeds the quadric intersection, evaluated at L1 / on thin plates / on the twins.
+
 **Step 3 DONE 2026-09-08 — the methods re-run on the rebuilt stratum** (user reversed
 the earlier no-rerun ruling: a fixed section should carry current numbers).
 `run_phase4_batch.py` gained two modes for exactly this: `--retire IDS.json` drops a
