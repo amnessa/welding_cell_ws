@@ -303,6 +303,68 @@ plt.tight_layout(); plt.show()
 """)
 
 md(r"""
+## A straight T joint in 3D — full view against single view
+
+The same plate T joint under the two input conditions. In the full-exterior cloud the
+standing plate's side planes intersect the base plate's **bottom** face as well as its top:
+two true fillets (green truth, violet seam) and their two far-side mirrors below the plate —
+the precision cost the mechanism pays whenever both faces of a plate are in the cloud. In
+the single view (the paper's own condition) the same scene yields the one visible fillet,
+cleanly. Orange points are each pair's band before projection.
+""")
+
+code(r"""
+prep = prepare(SCENES["line"][:1])[0]
+fig = plt.figure(figsize=(14, 6.5))
+for k, view in enumerate(("full_exterior", "single")):
+    c = prep.cloud(view, 0.0); _, lab = prep.oracle("surfaces", view, 0.0)
+    r = detect(c["xyz"], region_labels=lab, part_labels=c["object_id"], ordering="chain")
+    ax = fig.add_subplot(1, 2, k + 1, projection="3d")
+    step = max(1, len(c["xyz"]) // 20000)
+    ax.scatter(*c["xyz"][::step].T, s=1, color="#d5d4cf", alpha=0.5)
+    for gpoly in prep.gt: ax.plot(*np.asarray(gpoly).T, color="#008300", linewidth=3)
+    for cl in r.clusters: ax.scatter(*cl.T, s=5, color="#eb6834", alpha=0.7)
+    for sm in r.seams: ax.plot(*sm.T, color=COLOR["lit-quadric"], linewidth=2)
+    # look ACROSS the joint from low elevation, zoomed to the seam: the base plate's top
+    # and bottom faces then separate vertically and the mirrors sit visibly under the plate
+    ctr = np.vstack(prep.gt).mean(axis=0); span = 45.0
+    ax.set_xlim(ctr[0] - span, ctr[0] + span); ax.set_ylim(ctr[1] - span, ctr[1] + span); ax.set_zlim(ctr[2] - span, ctr[2] + span)
+    ax.view_init(14, -12); ax.set_box_aspect((1, 1, 1))
+    census = {}
+    for p_ in r.pairs: census[p_["status"]] = census.get(p_["status"], 0) + 1
+    ax.set_title(f"T joint · {view} · {r.n_seams} seam(s) for {len(prep.gt)} truth fillet(s)", loc="left")
+plt.tight_layout(); plt.show()
+
+# the cross-section: a 2 mm slice across the seam at mid-length, both plates in section,
+# the four seam positions marked - the mirror sits one plate thickness under the fillet
+faces = {f["face_id"]: f["ref"] for f in prep.scene["faces"]}
+c = prep.cloud("full_exterior", 0.0); _, lab = prep.oracle("surfaces", "full_exterior", 0.0)
+r = detect(c["xyz"], region_labels=lab, part_labels=c["object_id"], ordering="chain")
+g0 = np.asarray(prep.gt[0]); m = g0[len(g0) // 2]; t = g0[-1] - g0[0]; t /= np.linalg.norm(t)
+e1 = np.cross([0, 0, 1.0], t); e1 /= np.linalg.norm(e1); e2 = np.cross(t, e1)
+xyz, oid = c["xyz"], c["object_id"]; sel = np.abs((xyz - m) @ t) < 1.0
+fig, ax = plt.subplots(figsize=(7.5, 5.2)); win = 6.0
+for k2, ob in enumerate(np.unique(oid[sel])):
+    q = xyz[sel][oid[sel] == ob]; ax.scatter((q - m) @ e1, (q - m) @ e2, s=5, color=["#86b6ef", "#f0a58a"][k2 % 2], alpha=0.8, label=f"part {ob}")
+for gpoly in prep.gt:
+    gp = np.asarray(gpoly); i = np.argmin(np.abs((gp - m) @ t)); ax.scatter([(gp[i] - m) @ e1], [(gp[i] - m) @ e2], s=140, facecolor="none", edgecolor="#008300", linewidth=2, zorder=6)
+for p_, sm in zip([p_ for p_ in r.pairs if p_["status"] == "seam"], r.seams):
+    i = np.argmin(np.abs((sm - m) @ t)); q = sm[i]; kind = "fillet" if faces[p_["i"]] == "A:+w" else "mirror"
+    ax.scatter([(q - m) @ e1], [(q - m) @ e2], s=60, color=COLOR["lit-quadric"], marker="D", zorder=7, edgecolor="white")
+    side = 1 if faces[p_["j"]] == "B:-w" else -1        # one label per side of the standing plate
+    ax.annotate(f"{kind}\n{faces[p_['i']]}×{faces[p_['j']]}", ((q - m) @ e1, (q - m) @ e2), textcoords="offset points",
+                xytext=(side * 34, 16 if kind == "fillet" else -26), ha="left" if side > 0 else "right", fontsize=8, color=INK2,
+                arrowprops=dict(arrowstyle="-", color="#c9c8c3", linewidth=0.8))
+ax.set_aspect("equal"); ax.set_xlim(-win, win); ax.set_ylim(-win, win); ax.grid(False)
+ax.set_xlabel("across the seam (mm)"); ax.set_ylabel("up (mm)")
+ax.set_title("the same T joint in cross-section: truth (green rings), lit-quadric seams (violet)", loc="left"); ax.legend(fontsize=8, loc="lower left")
+plt.tight_layout(); plt.show()
+for p_, sm in zip([p_ for p_ in r.pairs if p_["status"] == "seam"], r.seams):
+    print(f"  full view seam {faces[p_['i']]} × {faces[p_['j']]}: {len(sm)} points, extent {np.ptp(sm, axis=0).max():.0f} mm  "
+          f"({'true fillet' if faces[p_['i']] == 'A:+w' else 'far-side mirror'})")
+""")
+
+md(r"""
 ## Against the paper's own metric
 
 Their Fig. 6 reports < 1 mm position error per axis against a taught path (whose own error

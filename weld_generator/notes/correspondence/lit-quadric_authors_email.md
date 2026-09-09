@@ -76,11 +76,18 @@ choice to the implementer. I would be grateful if you could confirm or correct m
    the path? This determines how your number should be compared with an error measured
    against exact geometry.
 
-For what it is worth, on synthetic exact geometry my implementation recovers the
-plane ∩ plane, plane ∩ cylinder and cylinder ∩ cylinder intersections to numerical
-precision, and on the benchmark's pipe-on-plate scenes it recovers the complete circular
-seam at ~0.01 mm RMSE with the chain ordering — so the mechanism as I read it works as your
-paper says it should; my questions are only about whether it is the mechanism you ran.
+For what it is worth, my reading of the method performs remarkably well. On synthetic
+exact geometry it recovers the plane ∩ plane, plane ∩ cylinder and cylinder ∩ cylinder
+intersections to numerical precision. On the benchmark (720 scenes: T, butt, corner, lap
+and edge joints; straight seams and six curved seam families; three stereo-sensor noise
+profiles), given the welding-surface segmentation as an oracle, it recovers pipe-on-plate
+and pipe-on-pipe seams at ~0.01 mm RMSE, leads every other reimplemented method on nearly
+every joint family, and is essentially unaffected by sensor noise — the least-squares fits
+average it out. Its weaknesses in my evaluation are all upstream of the fitting: it depends
+entirely on the surface segmentation (without it, region growing on thin plates merges the
+two faces of a plate and the method finds nothing), and it treats a fixture plate under the
+workpieces as a welding surface. So the mechanism as I read it works as your paper says it
+should; my questions are only about whether it is the mechanism you ran.
 
 I will of course share the reimplementation and the evaluation with you before anything is
 published, and I would be glad to cite any clarification as personal communication.
