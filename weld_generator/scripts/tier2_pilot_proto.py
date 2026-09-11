@@ -11,8 +11,13 @@ from PIL import Image
 from scipy import ndimage
 from weldgen.geom import from_object
 from weldgen.camera import project, sample_pose
+from weldgen.visibility import visible_mask
 
 SCENE = pathlib.Path(sys.argv[1]); OUT = pathlib.Path(sys.argv[2]); ALLOY = sys.argv[3] if len(sys.argv) > 3 else "mild_steel"
+SUBSTRATE = sys.argv[4] if len(sys.argv) > 4 else "mdf"          # mdf | steel | none
+HDR = sys.argv[5] if len(sys.argv) > 5 else ""                     # dome HDRI path or ""
+TEX = pathlib.Path("/workspaces/welding_cell_ws/weld_generator/out/pilot_2026-09-11/textures")
+ENV_LABEL = 254
 OUT.mkdir(parents=True, exist_ok=True)
 scene = json.load(open(SCENE / "scene.json")); seams_npz = np.load(SCENE / "seams.npz"); cloud = np.load(SCENE / "cloud.npz")
 parts = [from_object(o) for o in scene["objects"]]; meshes = [p.mesh() for p in parts]
@@ -31,8 +36,9 @@ import omni.replicator.core as rep, omni.usd
 from pxr import UsdGeom, Gf, UsdLux, UsdShade, Sdf
 stage = omni.usd.get_context().get_stage()
 UsdGeom.Xform.Define(stage, "/World")
-dome = UsdLux.DomeLight.Define(stage, "/World/dome"); dome.GetIntensityAttr().Set(800)
-key = UsdLux.DistantLight.Define(stage, "/World/key"); key.GetIntensityAttr().Set(2500); key.GetAngleAttr().Set(2.0)
+dome = UsdLux.DomeLight.Define(stage, "/World/dome"); dome.GetIntensityAttr().Set(1.0 if HDR else 350)
+if HDR: dome.GetTextureFileAttr().Set(HDR)
+key = UsdLux.DistantLight.Define(stage, "/World/key"); key.GetIntensityAttr().Set(1200); key.GetAngleAttr().Set(2.0)
 UsdGeom.Xformable(key).AddRotateXYZOp().Set(Gf.Vec3f(-40, 25, 0))
 mat = UsdShade.Material.Define(stage, "/World/mat"); sh = UsdShade.Shader.Define(stage, "/World/mat/pbr")
 sh.CreateIdAttr("UsdPreviewSurface"); sh.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(Gf.Vec3f(*base))
@@ -43,6 +49,30 @@ for p, m in zip(parts, meshes):
     um.GetPointsAttr().Set([Gf.Vec3f(*(v * MM)) for v in m.vertices]); um.GetFaceVertexCountsAttr().Set([3] * len(m.faces))
     um.GetFaceVertexIndicesAttr().Set(m.faces.ravel().tolist()); um.GetSubdivisionSchemeAttr().Set("none")
     UsdShade.MaterialBindingAPI.Apply(um.GetPrim()).Bind(mat)
+# --- environment layer: substrate plane at the lowest point of the assembly (tier 1 rests
+# every assembly flat on the working surface, so the plane never occludes a joint) ---------
+z_table = float(min(m.vertices[:, 2].min() for m in meshes))
+cxy = np.mean([m.vertices[:, :2].mean(0) for m in meshes], 0)
+if SUBSTRATE != "none":
+    half = 1.0  # metres: 2 m x 2 m board
+    plane = UsdGeom.Mesh.Define(stage, "/World/substrate")
+    c = cxy * MM; zt = z_table * MM
+    plane.GetPointsAttr().Set([Gf.Vec3f(c[0] - half, c[1] - half, zt), Gf.Vec3f(c[0] + half, c[1] - half, zt),
+                               Gf.Vec3f(c[0] + half, c[1] + half, zt), Gf.Vec3f(c[0] - half, c[1] + half, zt)])
+    plane.GetFaceVertexCountsAttr().Set([4]); plane.GetFaceVertexIndicesAttr().Set([0, 1, 2, 3]); plane.GetSubdivisionSchemeAttr().Set("none")
+    tile = 4.0  # texture tile = 0.5 m
+    st = UsdGeom.PrimvarsAPI(plane.GetPrim()).CreatePrimvar("st", Sdf.ValueTypeNames.TexCoord2fArray, UsdGeom.Tokens.vertex)
+    st.Set([Gf.Vec2f(0, 0), Gf.Vec2f(tile, 0), Gf.Vec2f(tile, tile), Gf.Vec2f(0, tile)])
+    pm = UsdShade.Material.Define(stage, "/World/mat_substrate"); ps = UsdShade.Shader.Define(stage, "/World/mat_substrate/pbr"); ps.CreateIdAttr("UsdPreviewSurface")
+    rd = UsdShade.Shader.Define(stage, "/World/mat_substrate/st"); rd.CreateIdAttr("UsdPrimvarReader_float2"); rd.CreateInput("varname", Sdf.ValueTypeNames.Token).Set("st")
+    tx = UsdShade.Shader.Define(stage, "/World/mat_substrate/tex"); tx.CreateIdAttr("UsdUVTexture")
+    tx.CreateInput("file", Sdf.ValueTypeNames.Asset).Set(str(TEX / ("mdf_albedo.png" if SUBSTRATE == "mdf" else "steel_table_albedo.png")))
+    tx.CreateInput("wrapS", Sdf.ValueTypeNames.Token).Set("repeat"); tx.CreateInput("wrapT", Sdf.ValueTypeNames.Token).Set("repeat")
+    tx.CreateInput("st", Sdf.ValueTypeNames.Float2).ConnectToSource(rd.ConnectableAPI(), "result"); tx.CreateOutput("rgb", Sdf.ValueTypeNames.Float3)
+    ps.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).ConnectToSource(tx.ConnectableAPI(), "rgb")
+    ps.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.75 if SUBSTRATE == "mdf" else 0.5)
+    ps.CreateInput("metallic", Sdf.ValueTypeNames.Float).Set(0.0 if SUBSTRATE == "mdf" else 0.8)
+    pm.CreateSurfaceOutput().ConnectToSource(ps.ConnectableAPI(), "surface"); UsdShade.MaterialBindingAPI.Apply(plane.GetPrim()).Bind(pm)
 ucam = UsdGeom.Camera.Define(stage, "/World/cam"); ha = 20.955
 ucam.GetFocalLengthAttr().Set(K[0, 0] * ha / W); ucam.GetHorizontalApertureAttr().Set(ha); ucam.GetVerticalApertureAttr().Set(ha * H / W)
 ucam.GetClippingRangeAttr().Set(Gf.Vec2f(0.01, 50.0)); xf = UsdGeom.Xformable(ucam); xf.ClearXformOpOrder(); op = xf.AddTransformOp()
@@ -76,28 +106,41 @@ def render_view(T, name):
         P = seams_npz[f"seam_{s['id']}"].astype(np.float64); uv, z = project(P, T, K)
         j = np.clip(np.round(uv[:, 0] - 0.5).astype(int), 0, W - 1); i = np.clip(np.round(uv[:, 1] - 0.5).astype(int), 0, H - 1)
         inimg = (uv[:, 0] >= 0) & (uv[:, 0] < W) & (uv[:, 1] >= 0) & (uv[:, 1] < H) & (z > 0)
-        vis = inimg & valid[i, j] & (np.abs(d[i, j] - z) < 1.5)
+        # ONE-SIDED occlusion: hidden only if something renders in FRONT of the seam point.
+        # With a root gap the D19 seam floats between the parts and the depth behind it is
+        # the far plate (or nothing at a silhouette) - neither is an occluder.
+        d_here = np.where(valid[i, j], d[i, j], np.inf)
+        vis_depth = inimg & (d_here >= z - 1.5)
+        # The mask's visibility is the ANALYTIC ray cast tier 1 uses for seams (exact; no
+        # silhouette flicker), with no sensor blind zone. Depth agreement is a cross-check only.
+        appr = seams_npz[f"seam_{s['id']}_approach"].astype(np.float64)
+        vis = visible_mask(P, appr, parts, T, K, W, H, 0.0, face_test=False)
+        print(f"  seam {s['id']}: analytic_vis={vis.mean():.3f} depth_vis={vis_depth.mean():.3f} agree={(vis == vis_depth).mean():.3f}", flush=True)
         stamp(uv[vis], z[vis], f, 2.0, s["id"] + 1, mseam)
         sarr = seams_npz[f"seam_{s['id']}_s"].astype(np.float64); L = float(s["length_mm"])
         for ti, (sid, s0, tl) in enumerate(zip(scene["tacks"]["seam_id"], scene["tacks"]["arclength_mm"], scene["tacks"]["tack_length_mm"])):
             if sid != s["id"]: continue
             ds = np.abs(sarr - s0)
-            if s["closed"]: ds = np.minimum(ds, L - ds)
+            if s.get("closed", False): ds = np.minimum(ds, L - ds)
             sel = vis & (ds <= tl / 2)
             stamp(uv[sel], z[sel], f, 3.0, ti + 1, mtack)
     # object mask by nearest primitive of back-projected pixel
     mobj = np.zeros((H, W), np.uint8); vv, uu = np.nonzero(valid); zc = d[vv, uu]
     pw = np.stack([(uu + 0.5 - K[0, 2]) / f * zc, (vv + 0.5 - K[1, 2]) / K[1, 1] * zc, zc], 1) @ R.T + t
     import trimesh
-    best = np.full(len(pw), np.inf); lab = np.zeros(len(pw), np.uint8)
+    lab = np.zeros(len(pw), np.uint8); on_plane = np.abs(pw[:, 2] - z_table) < 0.3
+    lab[on_plane] = ENV_LABEL; rest = np.flatnonzero(~on_plane)
+    best = np.full(len(rest), np.inf)
     for p, m in zip(parts, meshes):
-        _, dist, _ = trimesh.proximity.closest_point(m, pw); better = dist < best; best[better] = dist[better]; lab[better] = p.object_id + 1
+        _, dist, _ = trimesh.proximity.closest_point(m, pw[rest]); better = dist < best; best[better] = dist[better]; lab[rest[better]] = p.object_id + 1
     mobj[vv, uu] = lab
+    wp = (lab > 0) & (lab != ENV_LABEL)
+    print(f"  twin gate (workpiece px={wp.sum()}, env px={on_plane.sum()}): residual p99={np.percentile(best[wp[rest]], 99):.4f} max={best[wp[rest]].max():.4f} mm", flush=True)
     # write
     v = OUT / name; v.mkdir(exist_ok=True)
     Image.fromarray(rgb.astype(np.uint8)).save(v / "rgb.png")
     Image.fromarray(np.where(valid, np.round(d / 0.05), 0).astype(np.uint16)).save(v / "depth.png")
-    Image.fromarray(mseam * 60).save(v / "mask_seam.png"); Image.fromarray(mtack * 25).save(v / "mask_tack.png"); Image.fromarray(mobj * 80).save(v / "mask_object.png")
+    Image.fromarray(mseam * 60).save(v / "mask_seam.png"); Image.fromarray(mtack * 25).save(v / "mask_tack.png"); Image.fromarray(np.where(mobj == ENV_LABEL, 40, mobj * 80).astype(np.uint8)).save(v / "mask_object.png")
     # review composite: rgb | depth (grey) | rgb with seam (green) + tacks (red) overlay
     dn = np.zeros((H, W), np.uint8)
     if valid.any(): lo, hi = d[valid].min(), d[valid].max(); dn[valid] = (255 - 200 * (d[valid] - lo) / max(hi - lo, 1e-6)).astype(np.uint8)

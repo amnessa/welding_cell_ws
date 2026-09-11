@@ -2235,7 +2235,8 @@ benchmark numbers computed from them are exactly the tier-1 twin.
   scene.json, cloud.npz, seams.npz, scene.sha256     # tier 1, untouched
   mesh_A.ply, mesh_B.ply                             # convenience (M1), unhashed
   render.json                                        # render_id, backend + version,
-                                                     #   material/lighting draw, view list
+                                                     #   material/lighting draw, environment
+                                                     #   (plane, texture, HDRI), view list
   render.sha256                                      # hash of every view's depth array
   views/
     0/                    # THE TWIN VIEW: tier-1 camera pose, K and resolution verbatim
@@ -2244,19 +2245,25 @@ benchmark numbers computed from them are exactly the tier-1 twin.
       depth_valid.png     # uint8 {0,255}: sensor-model validity (D16 on the render)
       mask_seam.png       # uint8: 0 background, k+1 = weldable seam k, from seams.npz
       mask_tack.png       # uint8: 0 background, i+1 = tack i of the `tacks` block
-      mask_object.png     # uint8: 0 background, object_id+1 (255 -> fixture = 255)
+      mask_object.png     # uint8: object_id+1 workpieces, 255 fixture, 254 environment
       view.json           # K, T_world_cam, width, height, view_kind
     1/ .. 9/              # DRAWN VIEWS: same files, cameras from the render substream
 ```
 
 Every mask is **constructed, never detected** — the one rule. `mask_seam` rasterises the
 D19 nominal seam curve stored in `seams.npz`, projected through that view's camera, kept
-only where its depth agrees with the rendered depth (the render *is* the occlusion test),
+only where the **analytic ray cast** tier 1 already uses for seam visibility
+(`visibility.visible_mask`, no blind zone, no face test) says the point is unoccluded,
 and drawn at a **physical** width (a versioned `maskrule-0.1`: 2 mm, projected at the
 pixel's own depth, so a seam is the same number of millimetres wide at 300 mm and at
 1200 mm). `mask_tack` takes the `tacks` block — `seam_id`, `arclength_mm`,
 `tack_length_mm` per tack — and rasterises the arclength interval `[s − L/2, s + L/2]`
 of that seam's polyline the same way. `mask_object` is the renderer's own id buffer.
+Why not "visible where the rendered depth agrees": the pilot showed that test flickers
+wherever the seam passes a silhouette (one pixel spans many millimetres of depth at
+grazing angles) and wherever a root gap puts the D19 midline in free air. The ray cast
+is exact and is the same visibility the tier-1 twin reports; depth agreement is kept as
+a *cross-check* printed per scene, not as the label.
 Depth is stored at 0,05 mm because SCHEMA.md's original "uint16, mm" quantises at 4×
 the D34 budget and would fail the gate by construction.
 
@@ -2337,11 +2344,48 @@ Tier 2 applies each scene's *stored* noise model as is; those items matter for t
 claim that `d435i` matches the hardware. If measured constants differ, add a new profile
 name rather than editing `d435i`, because profile constants sit in the hashed config.
 
-**Open here, decide before the batch:** whether a table/background plane is rendered
-behind the workpieces. Tier 1 has no table, so a plane would appear in depth and break
-the twin gate; but a black void behind every part is not what a camera sees. Likely
-answer: a background plane in views 1–9 only, never in view 0 — to be looked at in the
-pilot.
+#### The environment layer — no void, ever (decided 2026-09-11)
+
+The first pilot rendered workpieces floating in a uniform void. That is the worst
+possible training background: a detector learns the silhouette against a constant field
+(shortcut learning) and fails on a real bench; a void in depth is either a "touching the
+lens" zero, a NaN, or a razor-sharp cliff at the part boundary, all of which are
+artefacts to overfit. So every view, **view 0 included**, renders an **environment layer**:
+
+* **A substrate plane** under the assembly at the lowest workpiece point — tier 1 already
+  rests every assembly flat on the working surface (`scene.py` placement: "A rests flat
+  on the working surface"; the fixture, when present, is dropped to the lowest point and
+  tilts with the assembly), so the plane never comes between the camera and a joint. It
+  gets real depth: continuous gradients up to the contact line, real shadows, and the
+  part boundary is where the geometry changes, not where the data stops.
+* **Its surface is domain-randomised** from a texture set drawn out of the render
+  substream: the lab's **MDF substrate board** (albedo/roughness from photographs of the
+  real setup — the Phase 9 twin), a slotted steel welding table, scratched steel plate,
+  concrete, matte rubber mat. Distractor objects (clamps, magnets, spatter) are a later
+  opt-in arm, labelled environment like the plane.
+* **A workshop HDRI dome** lights the scene and is what a camera sees beyond the plane's
+  edge; HDRIs are drawn from a small CC0 set recorded by name in `render.json`.
+
+**Labels.** The plane and everything beyond it is `mask_object = 254` ("environment");
+workpieces keep `object_id + 1`, the fixture 255. The **twin gate is stated on workpiece
+pixels**: where `mask_object` is a workpiece, view 0's clean depth back-projects onto the
+exact tier-1 primitives within budget. Environment pixels are declared in `render.json`
+(plane pose, extent, texture id, HDRI id) and are not part of the tier-1 twin by
+definition — they are the *sensor's* world, which is exactly what tier 2 adds.
+
+**Depth stays depth.** `depth.png` holds metric depth with `depth_valid.png` alongside;
+beyond the plane's edge (rare at these standoffs with a 2 m plane) depth is 0 and invalid,
+exactly as a real sensor reports out-of-range. Inverse depth, surface normals and
+"fill the background with the foreground median" are *training-time* transforms a loader
+derives from these two files; the dataset does not pre-commit to one. Likewise, because
+`mask_object` isolates the workpieces, a loader can alpha-composite them onto real
+workshop photographs as augmentation without any change to the release.
+
+**Open here, decide before the batch:** the framing range for views 1–9 — the tier-1
+sampler deliberately puts assemblies partly out of frame (`framing_frac` up to 1,45,
+elevations down to 20°) as the benchmark's difficulty axis; training views should draw
+from a tighter range (proposal 0,5–1,0 and 25–70°), recorded per view in `view.json`,
+with view 0 untouched.
 
 **Effort:** 1–2 weeks remains the estimate; the variance is materials (M5), not the
 renderer.

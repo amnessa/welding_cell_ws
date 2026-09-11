@@ -142,6 +142,78 @@ Conventions the prototype pinned down (record in SCHEMA.md when M3 lands):
 
 ---
 
+## 1.1 Look-before-render pilot (2026-09-11)
+
+`scripts/tier2_pilot_proto.py <scene_dir> <out_dir> [alloy]` renders view 0 (the tier-1
+camera) plus two drawn views with RGB, `depth.png` (uint16, 0,05 mm), `mask_seam`,
+`mask_tack`, `mask_object`, `view.json` and a `review.png` composite (RGB | depth | overlay,
+seam green, tacks red). Outputs under `out/pilot_2026-09-11/<stratum>_<alloy>/<view>/`
+(render disk, git-ignored) — open the `review.png` and `review_crop3x.png` files in VS Code.
+
+Findings, in the order they were hit:
+
+1. **Renders are right.** Geometry, pinned camera and depth match tier 1 (§1 gate); the
+   seam mask sits on the joint in every view; tacks appear as short segments of the
+   right length on the seam; the T/tube scene shows 2 of 8 tacks in view 0, correctly
+   (seam 1 is the inner ring inside the bore, the far half of seam 0 is behind the tube).
+2. **Seam visibility must be the analytic ray cast, not depth agreement.** The first
+   pilot drew the seam dashed near the tube's silhouette: at grazing angles one pixel
+   spans ~10 mm of depth, and with a 1,2 mm root gap the D19 midline floats in free air,
+   so "rendered depth agrees with the seam point" flickers. `visibility.visible_mask`
+   (no blind zone, `face_test=False`) is exact and is what tier 1 reports anyway; the
+   depth test is now a printed cross-check. Recorded in `dataset_plan.md` Phase 8.
+   After the switch the T/tube seam is continuous along the visible arc; analytic and
+   depth visibility agree on 92–97 % of seam points on T and stiffener scenes, and the
+   disagreements are all silhouette pixels (lap seams that run along a plate edge: the
+   depth test calls half of them "visible" because the pixel falls just outside the
+   rendered silhouette).
+3. **Plate-pipeline seams carry no `closed` key**; the curved pipeline adds it. Consumers
+   use `s.get("closed", False)`. (Schema: worth making `closed` mandatory in 2.4.)
+4. **Materials look like matte plastic** under `UsdPreviewSurface` + dome light — expected;
+   this is what M5 exists for (OmniPBR/MDL with roughness maps, mill scale, HDRI). The
+   six-alloy palette in the pilot is a placeholder for telling scenes apart.
+5. **Background is a void** — no table, plate floating on grey. **Rejected by the user the
+   same day, rightly**: shortcut learning on the silhouette, depth cliffs at the part
+   boundary. Decision (`dataset_plan.md` Phase 8, "The environment layer"): a substrate
+   plane in *every* view at the lowest workpiece point, domain-randomised texture (the
+   lab's MDF board from photographs, slotted steel table, scratched steel, concrete,
+   rubber), workshop HDRI dome; labelled `mask_object = 254`; twin gate on workpiece
+   pixels. Second pilot (`*_on_mdf`, `*_on_steel`, `*_hdr` dirs) renders it: depth
+   valid fraction goes from 1–14 % to 61–100 % of the frame, the twin gate on workpiece
+   pixels is unchanged (p99 ≤ 0,0008 mm, max ≤ 0,0012 mm over nine views), seam and tack
+   pixel counts are identical to the void renders. The plane is 2 m square at the lowest
+   workpiece vertex; at low elevations (the lap scene's 20° tier-1 camera) its far edge
+   is in frame, beyond which RGB shows the dome and depth is 0/invalid — physically
+   right for a sensor out of range, but the production plane should be 4 m or the HDRI
+   should be a real workshop so the RGB beyond the edge is not a flat grey.
+
+   **Photos needed from the lab (the MDF substrate and the bench) — for M5:**
+   * the bare MDF board, top-down, filling the frame, diffuse even light (overcast window
+     or bounced), no parts, 4–6 shots at different spots and after use (scratches, marks);
+     one with a ruler or a known-size object in frame for scale; highest resolution the
+     phone/camera gives, no HDR/beauty processing;
+   * 2–3 shots of the board at a grazing angle with a single lamp, to read its roughness;
+   * the bench context as the camera sees it: 6–8 shots from the eye-in-hand camera's
+     typical poses (300–1200 mm standoff, 20–70° elevation) with and without parts — these
+     become the reference for the HDRI / backdrop choice and for the Phase 9 twin;
+   * if available, a 360° panorama of the cell from bench height (any phone panorama app)
+     — the cheapest source of a lab-specific HDRI.
+6. **Framing for training views.** The lap scene's tier-1 camera frames the assembly at
+   0,7 % of the image, edge-on — `framing_frac` up to 1,45 and low elevation are the
+   benchmark's difficulty axis by design. View 0 keeps that (it is the twin), but views
+   1–9 exist to train on, so their sampler should use a tighter framing range (proposal:
+   `framing_frac` 0,5–1,0, elevation 25–70°) — a render-config parameter, recorded per
+   view, never touching the tier-1 draw. Open item added to `dataset_plan.md`.
+7. **Drawn views must reuse the tier-1 camera sampler**, aim point included. The pilot's
+   ad-hoc `sample_pose` calls (fixed elevation over world XY, cloud-centroid aim) looked
+   at the lap assembly from below in both extra views, with every seam hidden.
+8. **Exposure.** Stainless and aluminium render nearly white under dome 800 + key 2500 —
+   set explicit exposure/tonemapping in M5 and draw light intensity in a range that keeps
+   the brightest alloy unclipped.
+9. **Speed**: ~35 s for three views when the object mask comes cheap, ~120–140 s when
+   `trimesh.proximity.closest_point` labels ~70 k pixels against the meshes without
+   embree. M3 takes `mask_object` from the semantic annotator instead (free).
+
 ## 2. Decisions Phase 8 forces (record in `dataset_plan.md` §10 as they close)
 
 - [ ] **Depth encoding.** SCHEMA.md §3.1 says `depth.png (uint16, mm)`. A 1 mm quantum is
