@@ -2267,11 +2267,15 @@ a *cross-check* printed per scene, not as the label.
 Depth is stored at 0,05 mm because SCHEMA.md's original "uint16, mm" quantises at 4×
 the D34 budget and would fail the gate by construction.
 
-**Tacks are a plan, not geometry.** Nothing is visible at a tack in RGB or depth; the
-tack mask labels *where the rule puts tacks* on a bare joint, so a model trained on it
-learns tack placement from seam geometry (the MPS task), not tack detection. Visible tack
-beads would be tier-2-only geometry, would break the twin gate below, and are **out of
-scope** for this phase. If wanted later they are a separate opt-in arm, never the twin.
+**What the two masks label (settled with the user, 2026-09-11).** This project does not
+detect welds or tacks that have already been made; it *proposes* them. `mask_seam` marks
+the weldable seam region on a bare joint, and `mask_tack` marks the tackable spots on
+that seam, both constructed from the stored truth — the same seam truth the seven
+literature methods were scored against on the tier-1 corpus, and the same tacking rule
+(D38) behind the MPS task. A model trained on them learns to look at an unwelded joint and
+answer "weld here, tack here", which is the deliverable. The parts in every image are
+therefore bare by design: the label is the plan, and that is exactly what a robot
+welding cell needs before the first arc.
 
 #### The corpus: `train_v1`, 3600 scenes × 10 views
 
@@ -2302,8 +2306,8 @@ reverse.
 Substream 7 (`_reserved7`) becomes `render` (index unchanged, so no existing draw moves;
 SCHEMA.md §6.1). Its draws, in this order, appended only:
 
-1. **Alloy**, one per scene, uniform over six classes: carbon/mild steel, stainless
-   steel, aluminium, cast iron, brass, bronze — the six most-welded material families.
+1. **Alloy**, one per scene, uniform over **seven** classes (user, 2026-09-11): mild steel,
+   stainless steel, aluminium, cast iron, bronze, brass, titanium.
    Both workpieces share the alloy; a dissimilar-metal joint is a small opt-in
    probability, off in `train_v1`.
 2. **Surface condition**, one per part: mill scale, ground, rusted, primed/painted,
@@ -2313,8 +2317,10 @@ SCHEMA.md §6.1). Its draws, in this order, appended only:
    azimuth, an area-light on/off.
 4. **Cameras** for views 1–9 (pose only; intrinsics stay the tier-1 profile's).
 
-A seventh material, **painted MDF**, exists only for the twin of the Phase 9 real subset
-(the real parts are MDF); it is never drawn in `train_v1`. Materials are parametric
+There is **no MDF workpiece material** (user, 2026-09-11): the MDF board is the *substrate*
+photo under the parts, never a part. The Phase 9 real-subset twin therefore renders the
+real MDF parts with the closest alloy look and relies on depth, not RGB, for the
+tier-2 → real comparison — which is what D10 says anyway. Materials are parametric
 OmniPBR checked into `configs/render/`, so the release carries them; NVIDIA vMaterials
 are an optional RGB-fidelity upgrade recorded by name and version in `render.json`.
 Materials must not move the ray cast: the clean-depth gate is re-run under every one.
@@ -2367,7 +2373,11 @@ artefacts to overfit. So every view, **view 0 included**, renders an **environme
   that is domain randomisation (the model must find the joint on *any* bench), while
   **depth stays the flat plane** — photographed clutter has no relief. Real distractor
   geometry (clamps, magnets, spatter) is a later opt-in arm, labelled environment. The
-  photo id is recorded per view in `view.json`; the set is versioned by a manifest hash.
+  photo id is recorded per view in `view.json`. `out/backgrounds/manifest.json` tags each
+  photo with the bench span it covers (user, 2026-09-11: photos 1–16 shot from 0,5 m, 17–25
+  from 1 m, 26–41 counted as 1,5 m; 31–41 are generated images), jittered ±30 % at draw
+  time, and versions the set by hash. Two **lab panoramas** (`out/background_panorama/`)
+  are the dome by default — what a camera sees beyond the plane is the actual cell.
 * **A workshop HDRI dome** lights the scene and is what a camera sees beyond the plane's
   edge; HDRIs are drawn from a small CC0 set recorded by name in `render.json`.
 
@@ -2462,6 +2472,19 @@ small, defensible contribution on its own.
 
 - [ ] Second annotator for Phase 5 — who?
 - [x] ~~BlenderProc vs Isaac Sim for Phase 8~~ → **resolved 2026-09-11**: Isaac Sim + Replicator (installed, gate holds); BlenderProc optional second backend
+
+Phase 8 decisions, all **resolved 2026-09-11** with the user (detail in `phase8_plan.md` §2):
+
+- [x] Depth encoding → `depth.png` uint16 at 0,05 mm/unit + `depth_valid.png`
+- [x] Hashed or unhashed → `scene.sha256` untouched by rendering; `render.sha256` over depth + masks + render config makes renders comparable; RGB compared by tolerance
+- [x] Where the render block lives → `render.json` beside `scene.json`, so tier-1 files and hashes are identical rendered or not
+- [x] Render config and substream → `configs/render/*.yaml` with `render_id`; substream 7 renamed `render`
+- [x] Training masks → seam, tack (placement labels), object/environment
+- [x] Corpus and views → `train_v1`, 12 × 300 scenes, 10 views
+- [x] Materials → seven alloys, no MDF workpiece; surface-condition axis
+- [x] Background → environment layer: substrate plane + user's photos (tagged spans) + lab panoramas as dome
+- [x] Drawn-view rules → elevation 25–70°, framing 0,5–1,0, aim jitter 0,35, standoff 300–1200, redraw unless a primary seam is ≥ 10 % visible and ≥ 100 px
+- [x] The two D16 items below do not gate Phase 8 (they stay open for Phase 9)
 - [ ] Whether tacks ship in paper 1 or are held for paper 2 (depends on whether Phase 6 lands)
 - [x] ~~Point-cloud file format for the release~~ → **resolved Phase 0**: `cloud.npz` per scene
       (one file, numpy-native, no dependency), plus a `--emit-meshes` PLY exporter that Phase 5

@@ -3,7 +3,9 @@
 One seed per scene, spawned into eight **named** substreams in a fixed order.
 
 The split is not arbitrary: substreams 0-2 determine workpiece geometry and seam truth,
-substreams 3-6 determine everything that is an ablation axis. That is what makes
+substreams 3-6 determine everything that is an ablation axis, and substream 7 (`render`,
+Phase 8) everything that only exists in a rendered view - materials, lighting, substrate,
+drawn cameras - so tier-2 realism never touches a tier-1 draw. That is what makes
 `twin_key` (SCHEMA.md §6.4) well-defined, and it is why fixture presence lives in
 `placement` (3) rather than in `joint_config` (0).
 
@@ -26,7 +28,7 @@ SUBSTREAMS = (
     "surface_sample",  # 4 - point sampling, density
     "camera",          # 5 - sensor profile, camera pose, intrinsics jitter
     "noise",           # 6 - depth-noise realization
-    "_reserved7",      # 7
+    "render",          # 7 - Phase 8: alloy, surface condition, lighting, substrate photo, drawn cameras
 )
 
 #: Substreams that determine geometry + seam truth (SCHEMA.md §6.4).

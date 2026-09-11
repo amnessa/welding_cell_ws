@@ -839,7 +839,10 @@ order:
 | 4 | `surface_sample` | point sampling, density |
 | 5 | `camera` | sensor profile, camera pose, intrinsics jitter |
 | 6 | `noise` | depth-noise realization |
-| 7 | *reserved* | |
+| 7 | `render` | **Phase 8, tier 2 only**: alloy, surface condition, lighting, substrate photo, drawn cameras for views 1–9. Never consumed by tier 1, so a rendered scene's tier-1 files are byte-identical to an unrendered one |
+
+Substream 7 is seeded like the others but Phase 8 mixes `sha256(scene_id, render_id)` into its
+draws (the D39 pattern), so two strata that share a seed index do not share a photo or a camera.
 
 The split between 0–2 and 3–6 is not arbitrary: **substreams 0–2 determine the workpiece
 geometry and the seam truth, 3–6 determine everything that is an ablation axis.** That is

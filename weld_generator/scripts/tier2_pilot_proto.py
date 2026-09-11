@@ -17,7 +17,6 @@ SCENE = pathlib.Path(sys.argv[1]); OUT = pathlib.Path(sys.argv[2]); ALLOY = sys.
 SUBSTRATE = sys.argv[4] if len(sys.argv) > 4 else "random"       # photo path | random | none
 HDR = sys.argv[5] if len(sys.argv) > 5 else ""                     # dome HDRI path or ""
 BG_DIR = pathlib.Path("/workspaces/welding_cell_ws/weld_generator/out/backgrounds")
-BG_WIDTH_M = 1.5                                                    # the photo covers this much bench
 ENV_LABEL = 254
 OUT.mkdir(parents=True, exist_ok=True)
 scene = json.load(open(SCENE / "scene.json")); seams_npz = np.load(SCENE / "seams.npz"); cloud = np.load(SCENE / "cloud.npz")
@@ -29,8 +28,8 @@ rng = np.random.default_rng(int.from_bytes(hashlib.sha256((scene["scene_id"] + "
 cam = scene["camera"]; K = np.array(cam["K"]); W, H = cam["width"], cam["height"]
 T0 = np.array(cam["T_world_cam"]); MM = 0.001
 
-# six-alloy pilot palette: (base colour, metallic, roughness) — placeholder values for the look, not final
-ALLOYS = {"mild_steel": ((0.42, 0.42, 0.44), 1.0, 0.45), "stainless": ((0.75, 0.76, 0.78), 1.0, 0.25),
+# seven-alloy pilot palette (user, 2026-09-11): (base colour, metallic, roughness) — placeholder values for the look, not final
+ALLOYS = {"mild_steel": ((0.42, 0.42, 0.44), 1.0, 0.45), "stainless": ((0.75, 0.76, 0.78), 1.0, 0.25), "titanium": ((0.55, 0.53, 0.50), 1.0, 0.4),
           "aluminium": ((0.85, 0.86, 0.88), 1.0, 0.35), "cast_iron": ((0.28, 0.28, 0.29), 0.9, 0.7),
           "brass": ((0.85, 0.65, 0.25), 1.0, 0.3), "bronze": ((0.60, 0.40, 0.22), 1.0, 0.4)}
 base, metallic, rough = ALLOYS[ALLOY]
@@ -41,8 +40,10 @@ import omni.replicator.core as rep, omni.usd
 from pxr import UsdGeom, Gf, UsdLux, UsdShade, Sdf
 stage = omni.usd.get_context().get_stage()
 UsdGeom.Xform.Define(stage, "/World")
-dome = UsdLux.DomeLight.Define(stage, "/World/dome"); dome.GetIntensityAttr().Set(1.0 if HDR else 350)
-if HDR: dome.GetTextureFileAttr().Set(HDR)
+PANOS = sorted((BG_DIR.parent / "background_panorama").glob("*.jpeg"))
+if not HDR and PANOS: HDR = str(PANOS[int(rng.integers(len(PANOS)))])      # lab panorama as the dome (LDR)
+dome = UsdLux.DomeLight.Define(stage, "/World/dome"); dome.GetIntensityAttr().Set(1.0 if HDR.endswith((".hdr", ".exr")) else 900)
+if HDR: dome.GetTextureFileAttr().Set(HDR); print(f"  dome: {pathlib.Path(HDR).name}", flush=True)
 key = UsdLux.DistantLight.Define(stage, "/World/key"); key.GetIntensityAttr().Set(1200); key.GetAngleAttr().Set(2.0)
 UsdGeom.Xformable(key).AddRotateXYZOp().Set(Gf.Vec3f(-40, 25, 0))
 mat = UsdShade.Material.Define(stage, "/World/mat"); sh = UsdShade.Shader.Define(stage, "/World/mat/pbr")
@@ -65,10 +66,11 @@ if SUBSTRATE != "none":
     plane.GetPointsAttr().Set([Gf.Vec3f(c[0] - half, c[1] - half, zt), Gf.Vec3f(c[0] + half, c[1] - half, zt),
                                Gf.Vec3f(c[0] + half, c[1] + half, zt), Gf.Vec3f(c[0] - half, c[1] + half, zt)])
     plane.GetFaceVertexCountsAttr().Set([4]); plane.GetFaceVertexIndicesAttr().Set([0, 1, 2, 3]); plane.GetSubdivisionSchemeAttr().Set("none")
-    photos = sorted(BG_DIR.glob("*.jpeg")) + sorted(BG_DIR.glob("*.jpg")) + sorted(BG_DIR.glob("*.png"))
-    photo = pathlib.Path(SUBSTRATE) if SUBSTRATE != "random" else photos[int(rng.integers(len(photos)))]
-    from PIL import Image as _I; pw_, ph_ = _I.open(photo).size
-    Lx, Ly = BG_WIDTH_M, BG_WIDTH_M * ph_ / pw_                       # metres of bench the photo spans
+    manifest = json.load(open(BG_DIR / "manifest.json"))                # span_m per photo (user tags, 2026-09-11)
+    entry = (manifest["photos"][int(rng.integers(len(manifest["photos"])))] if SUBSTRATE == "random"
+             else next(e for e in manifest["photos"] if e["file"] == pathlib.Path(SUBSTRATE).name))
+    photo = BG_DIR / entry["file"]; pw_, ph_ = entry["width_px"], entry["height_px"]
+    Lx = entry["span_m"] * float(rng.uniform(0.7, 1.3)); Ly = Lx * ph_ / pw_   # tagged span, +-30 % jitter
     ang = float(rng.uniform(0, 2 * np.pi)); ca, sa = np.cos(ang), np.sin(ang)
     def st_of(x, y):                                                  # plane-local metres -> photo uv, rotated
         u, v = ca * x - sa * y, sa * x + ca * y

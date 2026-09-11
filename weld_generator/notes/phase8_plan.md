@@ -232,8 +232,10 @@ Findings, in the order they were hit:
     `sheet_view0_a.png`, `sheet_view0_b.png`, `sheet_drawn.png`). Ten of twelve rendered
     first time; T/circle and T/rounded_rect were **SIGKILLed** (no traceback) in a drawn
     view that fills the frame with a large curved mesh — the pilot's object-mask step ran a
-    nearest-triangle query on ~400 k pixels at once. Chunked (40 k) for the pilot; M3 uses
-    the renderer's id buffer. Findings from the sheets:
+    nearest-triangle query on ~400 k pixels at once. Chunked (40 k) for the pilot — both
+    scenes then rendered all three views; M3 uses the renderer's id buffer. The new
+    ≥ 100 px seam rule fired once on the re-run (edge/line, redrawn from 29 px to 874 px
+    of seam on attempt 3). Findings from the sheets:
     * **Beyond the plane is a flat grey dome** in every low-elevation view 0 (T/line,
       grooved butt, corner, edge, lap at 20–30°). Depth there is correctly invalid, but
       the RGB needs a world: a workshop HDRI dome (the user's panorama, or CC0 sets) and
@@ -249,13 +251,20 @@ Findings, in the order they were hit:
     * Masks are right on all ten strata, including the two parallel seams of the
       rounded-rect stiffener with tacks on both; drawn views are off-centre; all first- or
       second-attempt accepts.
-14. **Speed**: ~35 s for three views when the object mask comes cheap, ~120–140 s when
+14. **Round 3 — user decisions applied** (`round3/`): backgrounds carry the user's span tags
+    (`out/backgrounds/manifest.json`: 1–16 → 0,5 m, 17–25 → 1 m, 26–41 → 1,5 m, ±30 % jitter,
+    31–41 flagged generated); the two lab panoramas in `out/background_panorama/` are the
+    dome by default (LDR JPEG works as a `DomeLight` texture) — at the T/line tier-1 camera
+    (20° elevation) the region beyond the plane is now the lab; titanium added as the seventh
+    alloy. Exposure: an LDR dome at intensity 900 over-brightens bare steel — M5 sets exposure
+    per dome and draws intensity in a range that keeps the brightest alloy unclipped.
+15. **Speed**: ~35 s for three views when the object mask comes cheap, ~120–140 s when
    `trimesh.proximity.closest_point` labels ~70 k pixels against the meshes without
    embree. M3 takes `mask_object` from the semantic annotator instead (free).
 
 ## 2. Decisions Phase 8 forces (record in `dataset_plan.md` §10 as they close)
 
-- [ ] **Depth encoding.** SCHEMA.md §3.1 says `depth.png (uint16, mm)`. A 1 mm quantum is
+- [x] **Depth encoding.** SCHEMA.md §3.1 says `depth.png (uint16, mm)`. A 1 mm quantum is
       4× the D34 budget and would fail the gate by construction. Standoff in the corpus is
       300–1200 mm, so far corners reach ~1,5 m. **Proposal:** `depth.png` uint16 at
       **0,05 mm per unit** (range 3,28 m, quantisation ±0,025 mm), with `depth.scale_mm:
@@ -263,12 +272,14 @@ Findings, in the order they were hit:
       hashes *every* `*.npz` in the scene directory, so a `depth.npz` would break every
       stored hash. Float32 EXR is the alternative if sub-0,025 mm ever matters (it does not
       for a stereo noise model whose σ at 400 mm is ~1 mm).
-- [ ] **Hashed or unhashed.** Rendered files are **unhashed** in `scene.sha256` (like
+      **→ DECIDED 2026-09-11 (user): as proposed — `depth.png` uint16 at 0,05 mm/unit, 0 = no return, `depth_valid.png` alongside.**
+- [x] **Hashed or unhashed.** Rendered files are **unhashed** in `scene.sha256` (like
       meshes: convenience artefacts derived from hashed geometry) but the render pass writes
       its own `render.sha256` (sha256 of the depth array + the resolved render config) so a
       re-render can be *compared*, not gated: RTX path-traced RGB is not bit-deterministic
       across drivers; clean depth from the ray cast is, and that is what the gate measures.
-- [ ] **Where the render block lives.** `scene.json` already reserves `rgb` and `depth`
+      **→ DECIDED 2026-09-11: `scene.sha256` stays tier-1 only (unchanged by rendering). Comparability comes from `render.sha256` = sha256 over every view's depth array + every mask + the resolved render config (`render_id`, background set hash, alloy/light/camera draws). Depth is a ray cast and masks are constructed, so two machines with the same render_id must agree bit-for-bit there; RGB is path-traced and NOT bit-stable across GPUs/drivers, so its hash is recorded per view as informational and compared by tolerance (PSNR), never gated.**
+- [x] **Where the render block lives.** `scene.json` already reserves `rgb` and `depth`
       (`null` in tier 1). Filling them changes the content hash (only `provenance` is
       excluded). Precedent: `apply_rule_blocks.py` fills `mps`/`tacks` in place and rewrites
       `scene.sha256` — identity preserved, same corpus. **Do the same**: the render pass
@@ -276,13 +287,15 @@ Findings, in the order they were hit:
       `render_id`, material/light draw summary) and rewrites `scene.sha256`; `verify` stays
       green; `scene_id`/`twin_key` untouched. `tier` stays `1` for the cloud; the render
       block carries `"tier": 2`. The tier-1 twin *is* the same directory before the pass.
-- [ ] **Render config and substream.** Materials/lighting parameters come from a separate
+      **→ DECIDED 2026-09-11 — proposal AMENDED after the user's question "does this break tier-1-only use?": filling `rgb`/`depth` inside `scene.json` would not break tier-1 consumers (extra keys are ignored) but would give a rendered scene a different `scene.sha256` than a freshly generated one, so `generate(config, seed)` on a clean machine would no longer reproduce the released hash — the D9 release-as-a-program argument. Therefore the render block lives in its own **`render.json`** next to `scene.json`; `scene.json` and `scene.sha256` are byte-identical whether or not a scene was rendered, `verify` never sees the renders, and the tier-1 twin is literally the same files. `scene.json`'s reserved `rgb`/`depth` keys stay `null` and SCHEMA 2.4 points them at `render.json`; `index.jsonl` gains a `render_id` column.**
+- [x] **Render config and substream.** Materials/lighting parameters come from a separate
       YAML (`configs/render/*.yaml`) with its own `render_id` (first 8 hex of the canonical
       sha256), never from `DEFAULT_CONFIG` — no scene re-ids. Draws come from the reserved
       substream index 7: rename `_reserved7` → `render` in `rng.SUBSTREAMS` (index
       unchanged, `SeedSequence.spawn` children are index-keyed, so no existing draw moves).
       A scene's material/lighting realisation is then a pure function of `(seed, render_id)`.
-- [ ] **Training masks (user, 2026-09-10).** Yes — and they are *constructed*, never detected
+      **→ DECIDED 2026-09-11 (user): as proposed. `rng.SUBSTREAMS[7]` renamed `_reserved7` → `render` (index unchanged; SeedSequence children are index-keyed, so no existing draw moves — checked by the determinism tests). Render draws are seeded per scene from `sha256(scene_id, render_id)` on top of it, D39-style, so strata sharing a seed index do not share a photo or a camera.**
+- [x] **Training masks (user, 2026-09-10).** Yes — and they are *constructed*, never detected
       (the one rule). Per rendered view the writer rasterises, from the truth already on
       disk: `mask_seam.png` (uint8, value = seam id + 1 for weldable seams; the D19 nominal
       curve from `seams.npz`, projected through `K`/`T`, kept only where its `z` agrees with
@@ -293,13 +306,18 @@ Findings, in the order they were hit:
       optionally `seam_dist.png` (distance transform of the seam mask, a friendlier training
       target than a 1-px line). Line width is a versioned rule (`mask_rule-0.1`: N px, or a
       physical width in mm projected at the pixel's depth — prefer physical, it is
-      scale-consistent across standoffs). **Caveat to decide:** tacks in the corpus are a
+      scale-consistent across standoffs). (Superseded, see the verdict below:) tacks in the corpus are a
       *plan* (where tacks go), not geometry — nothing is visible at a tack in RGB or depth.
       A `mask_tack` therefore trains tack *placement* from seam geometry, which is the MPS
       task, not tack *detection*. Visible tack beads would be tier-2-only geometry and
       would break the "differs only in sensor realism" gate; if wanted, it is a separate
       arm (`render.tack_beads: true`) rendered *in addition*, never in the twin.
-- [ ] **Corpus size and views (user, 2026-09-10).** `bench_phase4` is 720 scenes, not 360
+      **→ DECIDED 2026-09-11 (user): yes, all three masks, exactly as proposed. The "caveat" above was my
+      misreading of the task: this project proposes weldable seam areas and tackable spots on bare
+      joints — the same task the seven literature methods were scored on in tier 1 — and never
+      detects welds already made. Both masks are proposal labels; nothing is drawn on the parts by
+      design. Plain-language statement in `dataset_plan.md` Phase 8.**
+- [x] **Corpus size and views (user, 2026-09-10).** `bench_phase4` is 720 scenes, not 360
       (T = 360). It is the *benchmark* corpus: 60 per family was chosen for per-stratum
       reporting and the 70 h seven-method batch, and it stays held-out. Training needs its
       own corpus: `out/train_v1` from the same generator with `--per-family 300` (3600
@@ -320,7 +338,8 @@ Findings, in the order they were hit:
       never by view, or ten near-duplicates leak across train/val. Honest note: views of
       one geometry are correlated; if the budget is ever tight, more geometries × fewer
       views generalises better than the reverse.
-- [ ] **Materials (user, 2026-09-10).** Six-way alloy split as proposed: carbon/mild steel,
+      **→ DECIDED 2026-09-11 (user): 3600 scenes = 12 strata × 300 (1800 T + 1800 non-T), 10 views each, 36 000 frames.**
+- [x] **Materials (user, 2026-09-10).** Six-way alloy split as proposed: carbon/mild steel,
       stainless steel, aluminium, cast iron, brass, bronze — drawn per scene from the
       `render` substream (both parts the same alloy; dissimilar-metal joints at a small
       opt-in probability). Two additions argued for: (1) a **surface-condition axis** drawn
@@ -335,21 +354,23 @@ Findings, in the order they were hit:
       roughness, procedural normal/roughness maps) checked into `configs/render/` — fully
       versioned, no external dependency — and treat vMaterials as an optional RGB-fidelity
       upgrade recorded by name + version in the render block.
-- [ ] **The two D16 open items** (`d435i` constants vs the real camera; the 10× sim-noise
+      **→ DECIDED 2026-09-11 (user): **seven** alloys, uniform — mild steel, stainless steel, aluminium, cast iron, bronze, brass, titanium. **No painted MDF** material (the MDF board is the *substrate* photo, never a workpiece). Surface-condition axis kept.**
+- [x] **The two D16 open items** (`d435i` constants vs the real camera; the 10× sim-noise
       discrepancy in the ROS twin) do **not** gate Phase 8. M1–M3 are on clean depth; M4
       applies each scene's stored `noise_model` as is; the discrepancy lives in
       `realsense_sim_camera_node.py`, not here. They matter for Phase 9's claim that
       `d435i` matches the hardware. If measured constants differ, add a **new profile
       name** (`d435i_measured`) — profile constants sit in the resolved config, so editing
       `d435i` re-ids every corpus. The flat-target afternoon can run in parallel with M5.
-- [ ] **Two interpreters.** Tier-1 (`python3`, 3.12, pytest) and tier-2 (`/isaac-sim/python.sh`,
+      **→ DECIDED 2026-09-11 (user): not gating Phase 8; stay in `dataset_plan.md` §10 for Phase 9.**
+- [x] **Two interpreters.** Tier-1 (`python3`, 3.12, pytest) and tier-2 (`/isaac-sim/python.sh`,
       3.11) stay separate. New pure code (`geom.from_object`, the gate maths, the depth
       codec, D16-on-depth) lives in `weldgen/` and is tested under plain pytest with small
       synthetic depth arrays; anything importing `isaacsim`/`omni`/`pxr` lives in
       `weldgen/render/` behind lazy imports and is exercised by an `@pytest.mark.isaac`
       test that skips unless run under `python.sh`. D9 is preserved: `pip install` of the
       core never pulls Isaac.
-
+      **→ DECIDED 2026-09-11: as proposed; in force since M1.**
 ---
 
 ## 3. Milestones, in order
