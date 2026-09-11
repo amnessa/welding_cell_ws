@@ -262,6 +262,62 @@ Findings, in the order they were hit:
    `trimesh.proximity.closest_point` labels ~70 k pixels against the meshes without
    embree. M3 takes `mask_object` from the semantic annotator instead (free).
 
+## 1.2 The gate found a tier-1 bug (2026-09-11) — thin walls are invisible to the analytic ray test
+
+M2's twelve-stratum run passed 11/12. T/rounded_rect failed on **coverage recall 0,29**: tier 1
+marks 64 935 cloud points visible, the render agrees with 19 600; residual (0,03 mm p99) and
+object ids (1,0) are perfect, so the geometry is right and the disagreement is occlusion.
+Locating the disputed points: 72 % of tier-1-visible points sit on the stiffener's far wall
+and on the plate inside its footprint, with the stiffener's near wall 70–105 mm in front of
+them in the render.
+
+**Cause, in tier 1.** `visibility.ray_hits_swept` / `_ray_aabb_refine` (and `ray_hits_tube`'s
+refinement) decide a ray hit by sampling **K = 9 points** of the ray's bounding-box interval
+against `contains`. A closed rounded-rect stiffener is a 6 mm wall in a >100 mm interval:
+samples 12 mm apart step straight through it. Confirmed **without the renderer** by an exact
+Möller–Trumbore cast against the D34 mesh (`scratchpad/vis_audit.py`, pure numpy, no rtree)
+on tier-1-visible points:
+
+| stratum | wrongly "visible" |
+|---|---|
+| T/rounded_rect (closed swept slab) | **72 %** |
+| T/circle (tube) | 16 % |
+| T/ellipse (tube, cut) | 6 % |
+| T/swept_path (open stiffener) | 0,7 % |
+
+Corpus-wide audit, 5 scenes per stratum, 1500 tier-1-visible points each, exact mesh cast
+(`scratchpad/vis_audit.py`; to be kept as `scripts/audit_visibility.py` if the fix goes ahead):
+
+| stratum | wrongly "visible", mean | worst scene |
+|---|---|---|
+| T/line, butt/line_square, butt/line_grooved, corner, edge, lap (plates: closed-form clips) | **0,0 %** | 0,0 % |
+| butt/arc (open curved band) | 0,1 % | 0,1 % |
+| T/swept_path (open stiffener) | 0,8 % | 1,6 % |
+| T/ellipse (cut tube on plate) | 4,2 % | 9,5 % |
+| T/circle (tube on plate) | 6,3 % | 15,3 % |
+| T/saddle (tube on tube) | 17,5 % | 35,1 % |
+| T/rounded_rect (closed stiffener) | 35,0 % | 71,8 % |
+
+So the bug is confined to the revolved and closed-swept primitives — exactly where a ray
+crosses a thin wall — and its size varies with the camera (a view through the tube's bore
+or across the stiffener is the bad case). 360 T scenes carry a tube or a closed stiffener
+(circle, ellipse, saddle, rounded_rect = 240 in `bench_phase4`, plus their `_fx` twins).
+
+**What it touches in tier 1:** `cloud.npz: visible_from_cam` (hashed), `seams.npz: seam_*_visible`,
+`seams[].visible_fraction / occluded_fraction`, the `NoVisibleSeams` omission, and every
+Phase 4 number that conditions on visibility for the tube and closed-stiffener strata. Plates
+(slab/prism/prepared) use exact closed-form clips and are unaffected.
+
+**Fix (recommended, user's call — it re-hashes those strata):** replace the sampled
+containment in `ray_hits_tube` / `ray_hits_swept` with the exact ray–triangle cast against
+the part's own D34 mesh (chord error ≤ 0,05 mm, so the answer is exact to the tolerance the
+schema already promises), AABB-clipped, chunked numpy, no new dependency — the same test
+the renderer performs, which is why the gate caught it. Then regenerate the four T strata
+(circle, ellipse, saddle, rounded_rect) and butt/arc in `bench_phase4` (+ `_fx`), re-run
+`qa_d28_gate`, and re-run the Phase 4 batch for those strata. The determinism gate still
+holds (the fix is deterministic); the content hashes of the affected scenes change, as
+they must.
+
 ## 2. Decisions Phase 8 forces (record in `dataset_plan.md` §10 as they close)
 
 - [x] **Depth encoding.** SCHEMA.md §3.1 says `depth.png (uint16, mm)`. A 1 mm quantum is
@@ -391,7 +447,22 @@ the variance is all in M5.
 - `scripts/emit_meshes.py <corpus>` → `mesh_<id>.ply` next to existing files (handoff §4
   item 10; unhashed, ids untouched). Run it over `bench_phase4` and `_fx`.
 
-**M2 — USD stage + pinned camera + clean depth + the gate** (1 day; prototype exists)
+**M2 — USD stage + pinned camera + clean depth + the gate** (1 day; prototype exists) — **landed 2026-09-11**:
+`weldgen/render/` with `conventions.py` (pure numpy: USD camera/intrinsics, pixel-centre
+back-projection, uint16 depth codec at 0,05 mm, mask labels), `gate.py` (pure numpy/scipy:
+residual, coverage, object agreement, thresholds), `usd_stage.py` (pxr inside functions:
+exact meshes, substrate plane, dome + key light, material hook, camera op) and
+`replicator.py` (render product + `rgb`, `distance_to_image_plane`,
+`instance_id_segmentation_fast`, `normals`; the id buffer maps prim paths → labels, so the
+object mask is free). `scripts/tier2_gate.py` runs N scenes in one app; `tests/test_tier2_gate.py`
+(8 pure tests on an analytic slab view; the Isaac test skips without `isaacsim`).
+Two things learned building it: (1) `trimesh.proximity` needs `rtree`, which D9 rules out, so
+the residual is a KD-tree-over-centroids prefilter plus an exact brute-force recheck of any
+point above 0,05 mm — the prefilter alone over-estimated the tube's long lateral triangles
+by 4 mm; (2) at grazing incidence a pixel spans many millimetres of depth, so coverage
+accepts a point whose depth lies within the depth *range* of the 2×2 pixels around it —
+without that the edge-on lap view scored 0,70 agreement; with it 0,91, and its precision of
+0,82 is the honest cost (hidden underside points near the edge fall inside that range).
 - `weldgen/render/usd_stage.py` (pure pxr: meshes with `object_id`/`face_id` primvars,
   camera from `K`/`T_world_cam`, one distant light), `weldgen/render/replicator.py`
   (render product, `rgb` + `distance_to_image_plane` + `normals` annotators, step, fetch),
