@@ -2213,37 +2213,138 @@ arclength, the emission/hash discipline — was already built by Phases 6b/6c.)*
 
 ### Phase 8 — Tier 2 rendering
 
-Pluggable backend behind the **same schema**. This is the estimate that will slip — keep tier 1
-self-sufficient so a tier-2 delay never blocks a submission.
+*Rewritten 2026-09-11 on the RTX 5070 Ti machine. Execution detail, machine facts and the
+measured feasibility numbers live in `notes/phase8_plan.md`; this section is the
+**what**, so a reader of the plan knows what a tier-2 dataset is before any of it exists.*
 
-- [ ] Pick backend. **BlenderProc is the recommended default** — less painful than Isaac Sim and no
-      proprietary dependency, which matters for the release (D9). Isaac Sim as a second backend only
-      if the lab's existing expertise (Umut, Ege) makes it cheap.
+**Backend: Isaac Sim 5.1 + Replicator, decided.** It is installed on the render machine,
+the headless pipeline runs, and the feasibility gate holds: a clean depth render of a real
+corpus scene back-projects onto the exact primitive surfaces with a max residual of
+0,001 mm against the D34 budget of 0,25 mm. BlenderProc stays a *possible* second backend
+behind the same schema; nothing in the release depends on it. D9 is untouched: tier 1
+still installs with `pip` alone, and every tier-2 file is derived from tier-1 truth.
 
-      **Isaac Sim route confirmed available on this machine (2026-08-18):** Isaac Sim
-      `5.1.0-rc.19` at `/isaac-sim`, with `omni.replicator.core` **1.12.27** in `extscache/`
-      and an RTX 4060 Laptop GPU or RTX 5070 Ti Desktop GPU present; `/isaac-sim/python.sh` resolves both `isaacsim`
-      and `omni.kit.app`. Replicator ships *with* Isaac Sim rather than being a separate
-      install, so the second backend costs no new procurement — it needs a headless Kit app
-      (`SimulationApp` before any `omni.replicator.core` import), which is why the module
-      does not import from a plain interpreter.
+#### What a tier-2 scene looks like
 
-      This does **not** overturn the default. D9 is about what the *release* requires, and a
-      Replicator backend is RTX-only and proprietary, so it stays the second backend behind
-      BlenderProc. What it changes is the risk: the fallback is known-present rather than
-      hypothetical, and the "1–2 weeks, high variance" estimate can be read as variance in
-      materials and failure-mode fidelity rather than in whether a renderer exists at all.
-- [ ] Materials: painted MDF, stainless, mill scale / rust
-- [ ] Lighting variation
-- [ ] Structured-light failure modes: specular dropout, shadow-induced depth holes, realistic
-      invalid-pixel patterns
-- [ ] RGB output (stored, not benchmarked — D10)
+A tier-2 scene is a tier-1 scene directory **plus** rendered views. Nothing in the
+tier-1 files changes, so `scene_id`, `twin_key`, `cloud.npz`, `seams.npz` and the
+benchmark numbers computed from them are exactly the tier-1 twin.
 
-**Gate:** a tier-2 scene and its tier-1 twin (same seed, same geometry) differ **only** in sensor
-realism. That pairing is what makes the tier-1 → tier-2 → real ablation clean, and it is the reason
-the schema is shared.
+```
+<scene_id>/
+  scene.json, cloud.npz, seams.npz, scene.sha256     # tier 1, untouched
+  mesh_A.ply, mesh_B.ply                             # convenience (M1), unhashed
+  render.json                                        # render_id, backend + version,
+                                                     #   material/lighting draw, view list
+  render.sha256                                      # hash of every view's depth array
+  views/
+    0/                    # THE TWIN VIEW: tier-1 camera pose, K and resolution verbatim
+      rgb.png             # 8-bit RGB (D10: stored, never benchmarked on)
+      depth.png           # uint16, 0,05 mm per unit (range 3,28 m), 0 = no return
+      depth_valid.png     # uint8 {0,255}: sensor-model validity (D16 on the render)
+      mask_seam.png       # uint8: 0 background, k+1 = weldable seam k, from seams.npz
+      mask_tack.png       # uint8: 0 background, i+1 = tack i of the `tacks` block
+      mask_object.png     # uint8: 0 background, object_id+1 (255 -> fixture = 255)
+      view.json           # K, T_world_cam, width, height, view_kind
+    1/ .. 9/              # DRAWN VIEWS: same files, cameras from the render substream
+```
 
-**Effort:** 1–2 weeks, high variance.
+Every mask is **constructed, never detected** — the one rule. `mask_seam` rasterises the
+D19 nominal seam curve stored in `seams.npz`, projected through that view's camera, kept
+only where its depth agrees with the rendered depth (the render *is* the occlusion test),
+and drawn at a **physical** width (a versioned `maskrule-0.1`: 2 mm, projected at the
+pixel's own depth, so a seam is the same number of millimetres wide at 300 mm and at
+1200 mm). `mask_tack` takes the `tacks` block — `seam_id`, `arclength_mm`,
+`tack_length_mm` per tack — and rasterises the arclength interval `[s − L/2, s + L/2]`
+of that seam's polyline the same way. `mask_object` is the renderer's own id buffer.
+Depth is stored at 0,05 mm because SCHEMA.md's original "uint16, mm" quantises at 4×
+the D34 budget and would fail the gate by construction.
+
+**Tacks are a plan, not geometry.** Nothing is visible at a tack in RGB or depth; the
+tack mask labels *where the rule puts tacks* on a bare joint, so a model trained on it
+learns tack placement from seam geometry (the MPS task), not tack detection. Visible tack
+beads would be tier-2-only geometry, would break the twin gate below, and are **out of
+scope** for this phase. If wanted later they are a separate opt-in arm, never the twin.
+
+#### The corpus: `train_v1`, 3600 scenes × 10 views
+
+`bench_phase4` (720 scenes, 60 per stratum) is the **benchmark** and stays held out.
+Training gets its own corpus from the same generator and the same twelve strata,
+homogeneously: **300 scenes per stratum = 1800 T** (line, circle, ellipse, saddle,
+rounded_rect, swept_path) **+ 1800 non-T** (butt line_square, butt line_grooved, butt
+arc, corner, lap, edge), under a **new base seed** so no scene overlaps the benchmark.
+Each scene gets **10 views**: view 0 is the tier-1 camera (the twin), views 1–9 are drawn
+from the existing camera sampler (same standoff / elevation / framing ranges as tier 1,
+PARAMETERS.md §4.1) out of the render substream. That is **36 000 frames**, each with
+RGB, depth, validity and the three masks.
+
+| cost | estimate (measured basis in `phase8_plan.md`) |
+|---|---|
+| generate 3600 tier-1 scenes | 13,7 s/scene average, one process per class → ~8 h wall |
+| tier-1 files on disk | ~15 GB (+ ~19 GB if fixture twins are wanted) |
+| render 36 000 frames | 0,1–1 s per frame → 1–10 h GPU, overnight |
+| tier-2 files on disk | ~3 MB per view → ~110 GB; the render disk has 870 GB |
+
+Splits (D11) are by `twin_key`, never by view — ten views of one geometry are one
+example for leakage purposes. Honest note for the training paper: views of one geometry
+are correlated, so if the budget ever tightens, more geometries × fewer views beats the
+reverse.
+
+#### Materials and lighting — the render substream
+
+Substream 7 (`_reserved7`) becomes `render` (index unchanged, so no existing draw moves;
+SCHEMA.md §6.1). Its draws, in this order, appended only:
+
+1. **Alloy**, one per scene, uniform over six classes: carbon/mild steel, stainless
+   steel, aluminium, cast iron, brass, bronze — the six most-welded material families.
+   Both workpieces share the alloy; a dissimilar-metal joint is a small opt-in
+   probability, off in `train_v1`.
+2. **Surface condition**, one per part: mill scale, ground, rusted, primed/painted,
+   oily. For a depth sensor this axis matters more than the alloy — roughness and
+   specularity decide dropout — so it is drawn independently of it.
+3. **Lighting**: dome intensity and colour temperature, one key light's elevation and
+   azimuth, an area-light on/off.
+4. **Cameras** for views 1–9 (pose only; intrinsics stay the tier-1 profile's).
+
+A seventh material, **painted MDF**, exists only for the twin of the Phase 9 real subset
+(the real parts are MDF); it is never drawn in `train_v1`. Materials are parametric
+OmniPBR checked into `configs/render/`, so the release carries them; NVIDIA vMaterials
+are an optional RGB-fidelity upgrade recorded by name and version in `render.json`.
+Materials must not move the ray cast: the clean-depth gate is re-run under every one.
+
+#### Gates, in order
+
+1. **Twin gate** (built first, holds): view 0's clean depth back-projects onto the exact
+   primitives with p99 residual < 0,25 mm, and its coverage agrees with tier-1
+   `visible_from_cam` after applying the profile's `min_z_mm` and frustum.
+2. **Mask gate**: every non-zero `mask_seam` pixel back-projects within 2 mm of the
+   stored seam polyline; every `mask_tack` pixel lies on its seam within the tack's
+   interval; `mask_object` agrees with the nearest tier-1 point's `object_id`.
+3. **Look-before-render**: a pilot of a handful of scenes, all six alloys, rendered and
+   **inspected by eye** — RGB plausibility, mask alignment, depth holes where a stereo
+   camera would have them — signed off before any batch runs. A 36 000-frame batch with
+   a wrong convention is a wasted night and a wasted disk.
+4. **Batch gate**: the render script prints the twin-gate residual per scene and aborts
+   on the first violation; `weldgen verify` stays green over the rendered corpus.
+
+**Twin gate statement (unchanged):** a tier-2 scene and its tier-1 twin (same seed, same
+geometry) differ **only** in sensor realism. That pairing is what makes the tier-1 →
+tier-2 → real ablation clean, and it is why the schema is shared.
+
+**Not gating this phase:** the two D16 open items in §10 (measuring the `d435i` constants
+against the real camera; the 10× sim-noise discrepancy in the ROS twin's camera node).
+Tier 2 applies each scene's *stored* noise model as is; those items matter for the Phase 9
+claim that `d435i` matches the hardware. If measured constants differ, add a new profile
+name rather than editing `d435i`, because profile constants sit in the hashed config.
+
+**Open here, decide before the batch:** whether a table/background plane is rendered
+behind the workpieces. Tier 1 has no table, so a plane would appear in depth and break
+the twin gate; but a black void behind every part is not what a camera sees. Likely
+answer: a background plane in views 1–9 only, never in view 0 — to be looked at in the
+pilot.
+
+**Effort:** 1–2 weeks remains the estimate; the variance is materials (M5), not the
+renderer.
 
 ---
 
@@ -2297,7 +2398,7 @@ small, defensible contribution on its own.
 ## 10. Open decisions
 
 - [ ] Second annotator for Phase 5 — who?
-- [ ] BlenderProc vs Isaac Sim for Phase 8 — decide before Phase 8, not during
+- [x] ~~BlenderProc vs Isaac Sim for Phase 8~~ → **resolved 2026-09-11**: Isaac Sim + Replicator (installed, gate holds); BlenderProc optional second backend
 - [ ] Whether tacks ship in paper 1 or are held for paper 2 (depends on whether Phase 6 lands)
 - [x] ~~Point-cloud file format for the release~~ → **resolved Phase 0**: `cloud.npz` per scene
       (one file, numpy-native, no dependency), plus a `--emit-meshes` PLY exporter that Phase 5

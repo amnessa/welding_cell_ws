@@ -14,6 +14,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+
+#: `np.trapezoid` is numpy >= 2 only; `np.trapz` is the same integral under numpy 1.x.
+#: Isaac Sim's bundled Python is pinned to numpy 1.26 (Phase 8), so the tier-2 renderer
+#: can only mesh a prepared plate through this alias.
+_trapezoid = getattr(np, "trapezoid", None) or getattr(np, "trapz")
 import trimesh
 
 #: Slab face names, in registry order. Index is the local face id.
@@ -1242,7 +1247,7 @@ class PreparedSlab:
         if name in ("+u", "-u"):
             # end cap: width*t minus the groove's profile cut - numeric strip integral
             ws = np.linspace(-self.t_mm, 0.0, 512)
-            return float(np.trapezoid(self.width_mm + self.v_edge(ws), ws))
+            return float(_trapezoid(self.width_mm + self.v_edge(ws), ws))
         if name == "radius":
             ang = np.pi / 2.0 - self._beta
             return float(self._R * ang * self.length_mm)
@@ -1715,11 +1720,11 @@ class PreparedPrism:
                                           - np.roll(poly[:, 0], -1) * poly[:, 1])))
         if name == "radius":
             phis = np.linspace(0.0, np.pi / 2.0 - self._p._beta, 513)
-            return float(np.trapezoid(self._edge_len_at(-self._p._R * np.sin(phis)),
+            return float(_trapezoid(self._edge_len_at(-self._p._R * np.sin(phis)),
                                       phis) * self._p._R)
         if self._is_end_face(name):
             ws = np.linspace(-self.t_mm, 0.0, 1024)
-            return float(np.trapezoid(self._s_max(name, ws), ws))
+            return float(_trapezoid(self._s_max(name, ws), ws))
         poly = self._local_face(name)
         n = np.zeros(3)
         for i in range(len(poly)):
@@ -2016,3 +2021,58 @@ def approach_dir(na: np.ndarray, nb: np.ndarray) -> np.ndarray:
     if n < 1e-12:
         raise ValueError("degenerate face pair: normals are antiparallel")
     return v / n
+
+
+# ---------------------------------------------------------------------------------------
+# scene.json -> primitive (the consumer-side inverse of `scene._object_entry` and
+# `scene_curved._objects_block`)
+# ---------------------------------------------------------------------------------------
+
+#: `objects[].primitive` vocabulary, SCHEMA.md §2.1.
+PRIMITIVES = ("slab", "prism", "prepared_slab", "prepared_prism", "tube", "swept_slab")
+
+
+def from_object(entry: dict):
+    """Rebuild the exact primitive an `objects[]` entry of `scene.json` describes.
+
+    Meshes are not written per scene (SCHEMA.md §3.1): the entry carries the primitive
+    and its parameters, and this is the one place that turns them back into geometry.
+    Every consumer that needs a surface - the Phase 8 renderer, `--emit-meshes`, a
+    CloudCompare export - goes through here, so a scene on disk has exactly one meaning.
+
+    The mapping is field-for-field against the two serialisers and is checked by
+    `tests/test_from_object.py`: serialise -> rebuild -> serialise is the identity.
+    Curved spines come back through `curves.from_parametric`, which already exists
+    for the seam block. `T_world_part` is always a fresh float64 array.
+    """
+    from .curves import from_parametric   # local: curves must stay importable alone
+
+    kind = entry["primitive"]
+    common = dict(id=entry["id"], role=entry["role"], object_id=int(entry["object_id"]),
+                  T_world_part=np.asarray(entry["T_world_part"], dtype=float))
+    params = entry.get("params") or {}
+
+    if kind == "slab":
+        return Slab(dims_mm=tuple(float(v) for v in entry["dims_mm"]), **common)
+    if kind == "prism":
+        return Prism(outline_uv=np.asarray(entry["outline_uv"], dtype=float),
+                     thickness=float(entry["thickness_mm"]),
+                     shape=entry.get("outline_shape", "polygon"), **common)
+    if kind == "prepared_slab":
+        L, W, t = (float(v) for v in entry["dims_mm"])
+        return PreparedSlab(length_mm=L, width_mm=W, t_mm=t, prep=dict(params), **common)
+    if kind == "prepared_prism":
+        return PreparedPrism(outline_uv=np.asarray(entry["outline_uv"], dtype=float),
+                             t_mm=float(entry["thickness_mm"]), prep=dict(params),
+                             shape=entry.get("outline_shape", "polygon"), **common)
+    if kind == "tube":
+        return Tube(r_outer_mm=float(params["r_outer_mm"]), wall_mm=float(params["wall_mm"]),
+                    length_mm=float(params["length_mm"]), base_cut=params.get("base_cut"),
+                    gap_mm=float(params.get("gap_mm", 0.0)), **common)
+    if kind == "swept_slab":
+        return SweptSlab(spine=from_parametric(params["spine"]),
+                         offset_lo_mm=float(params["offset_lo_mm"]),
+                         offset_hi_mm=float(params["offset_hi_mm"]),
+                         z0_mm=float(params["z0_mm"]), z1_mm=float(params["z1_mm"]), **common)
+    raise ValueError(f"unknown primitive {kind!r}; expected one of {PRIMITIVES}")
+

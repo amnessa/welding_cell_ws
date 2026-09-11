@@ -33,14 +33,19 @@ older corpora (`out/bench_fx` 7,6 GB, `out/bench` 1,4 GB) — never the four syn
 ext4 (label `renders`) and mounts it on the host at `/mnt/renders`. It reaches the
 container through one added line in `.devcontainer/devcontainer.json` `runArgs`:
 `"--volume=/mnt/renders:/mnt/renders:rw"` — takes effect after *Dev Containers: Rebuild
-Container*. Then, inside the container:
+Container* — done 2026-09-10 evening; `/mnt/renders` shows 916 GB ext4. Then, inside the container:
 
 ```bash
 mkdir -p /mnt/renders/weld_generator
-rsync -a --info=progress2 out/ /mnt/renders/weld_generator/out/     # ~25 GB, verify after
+cp -a out /mnt/renders/weld_generator/out        # 19 GB; no rsync in this image. Verify after:
 .venv/bin/python -m weldgen verify --out /mnt/renders/weld_generator/out/bench_phase4/T
 mv out out_nvme_old && ln -s /mnt/renders/weld_generator/out out    # then delete out_nvme_old
 ```
+
+**Done 2026-09-11:** copied (19 GB, file lists identical), all 994 scenes of `bench_phase4` and
+`bench_phase4_fx` verify on the render disk, `out` is now the symlink, `.gitignore` gained a bare
+`out` entry (the `out/` pattern matches directories only, not symlinks). `out_nvme_old/` on the
+NVMe is the redundant copy, left for the user to delete.
 
 Everything under `out/` (corpora, renders, the 3600-scene training corpus) then lives on
 the render disk; the repo and `.venv` stay on the NVMe. The other partitions (`sda1`,
@@ -51,7 +56,9 @@ the render disk; the repo and `.venv` stay on the NVMe. The other partitions (`s
 `git rm -r --cached .venv` once to stop git reporting them). Created with
 `uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python "numpy>=2"
 "scipy>=1.13" trimesh pyyaml jsonschema pytest matplotlib pandas scikit-learn jupyter
-nbconvert ipykernel` (`python3 -m venv` lacks ensurepip in this image). A full `pytest`
+nbconvert ipykernel` (`python3 -m venv` lacks ensurepip in this image; `uv` lives in
+`/root/.local/bin` and **does not survive a container rebuild** — nothing under `/root` does,
+including the Claude memory dir, while the workspace and its `.venv` are bind-mounted and do). A full `pytest`
 run once froze VS Code on this box — run it niced with capped BLAS threads:
 `OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 nice -n 19 .venv/bin/python -m pytest tests/ -q`.
 
@@ -72,8 +79,8 @@ how it is created), `.venv/bin/python -m pytest tests/ -q` from `weld_generator/
 scikit-learn as harness extras.
 
 **Consequence for tier 2:** Isaac Python is pinned to numpy 1.26.0, so
-`weldgen/geom.py` needs `_trapezoid = getattr(np, "trapezoid", np.trapz)` (one line, both
-call sites) before `PreparedPrism.mesh()` can run inside the renderer — M1 does this.
+`weldgen/geom.py` has `_trapezoid = getattr(np, "trapezoid", None) or np.trapz` at all three
+call sites (M1, 2026-09-11) so `PreparedPrism.mesh()` runs inside the renderer.
 
 ---
 
@@ -239,7 +246,11 @@ Conventions the prototype pinned down (record in SCHEMA.md when M3 lands):
 Each milestone ends with a check that can be run cold. Estimated total ≈ 8–10 working days;
 the variance is all in M5.
 
-**M1 — `weldgen.geom.from_object` + mesh emission** (½ day, tier-1 only)
+**M1 — `weldgen.geom.from_object` + mesh emission** (½ day, tier-1 only) — **landed 2026-09-11**:
+`geom.from_object` (all six primitives, `PRIMITIVES` vocabulary), the `_trapezoid` shim
+(numpy 1.26 in Isaac Python meshes prepared prisms and swept slabs from real corpus scenes),
+`scripts/emit_meshes.py` with a `--check` round-trip gate, `tests/test_from_object.py`
+(11 tests: hand-built parts for all six, plus generated plate / grooved / curved scenes).
 - Inverse of `scene._object_entry` / `scene_curved._objects_block` for all six primitives
   (slab, prism, prepared_slab, prepared_prism, tube, swept_slab; `spine` via
   `curves.from_parametric`).
