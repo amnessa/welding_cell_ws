@@ -523,3 +523,60 @@ def test_the_flag_is_stored_and_the_camera_never_sees_an_interior_point():
     full = cloud_for(scene, arrays, view="full")["xyz"]
     fx = cloud_for(scene, arrays, view="full_exterior")["xyz"]
     assert len(fx) < len(full)                          # the buried interface left the input
+
+
+# ---------------------------------------------------------------- 2026-09-11: thin walls
+# The Phase 8 twin gate found that K = 9 interval sampling steps through thin walls. Ground
+# truth here is fine containment MARCHING (0.25 mm steps) - slow, exact to the step, and
+# independent of both the old and the new code path.
+
+
+def _march_hits(o, d, tm, part, step=0.25):
+    out = np.zeros(len(o), bool)
+    for i in range(len(o)):
+        ts = np.arange(step, tm[i] - step, step)
+        if len(ts):
+            out[i] = part.contains(o[i] + ts[:, None] * d[i]).any()
+    return out
+
+
+def _rays_through(part, n, seed):
+    from weldgen.geom import SweptSlab  # noqa: F401
+    m = part.mesh(); lo, hi = m.bounds
+    g = np.random.default_rng(seed)
+    o = g.uniform(lo - 40, hi + 40, (n, 3)); tgt = g.uniform(lo, hi, (n, 3))
+    d = tgt - o; tm = np.linalg.norm(d, axis=1) * 1.6; d /= np.linalg.norm(d, axis=1, keepdims=True)
+    return o, d, tm
+
+
+def test_thin_walled_tube_rays_agree_with_fine_marching():
+    from weldgen.geom import Tube
+    from weldgen.visibility import ray_hits_tube
+    t = Tube("B", "workpiece", 1, 50.0, 4.0, 120.0, np.eye(4))
+    o, d, tm = _rays_through(t, 300, 3)
+    got, want = ray_hits_tube(o, d, tm, t), _march_hits(o, d, tm, t)
+    assert (got == want).mean() > 0.99 and want.sum() > 50
+
+
+def test_closed_thin_stiffener_rays_agree_with_fine_marching():
+    from weldgen.curves import Ellipse3D
+    from weldgen.geom import SweptSlab
+    from weldgen.visibility import ray_hits_swept
+    ring = Ellipse3D(np.zeros(3), np.array([1.0, 0, 0]), np.array([0, 1.0, 0]), 60.0, 45.0)
+    part = SweptSlab("B", "workpiece", 1, ring, -5.0, 0.0, 0.0, 90.0, np.eye(4))
+    o, d, tm = _rays_through(part, 200, 5)
+    got, want = ray_hits_swept(o, d, tm, part), _march_hits(o, d, tm, part)
+    assert (got == want).mean() > 0.98 and want.sum() > 40
+
+
+def test_ray_cache_follows_a_pose_change():
+    """The pipelines pose parts after construction; the cached mesh must follow."""
+    from weldgen.geom import Tube
+    from weldgen.visibility import ray_hits_tube
+    t = Tube("B", "workpiece", 1, 30.0, 4.0, 100.0, np.eye(4))
+    o = np.array([[0.0, -200.0, 50.0]]); d = np.array([[0.0, 1.0, 0.0]]); tm = np.array([400.0])
+    assert ray_hits_tube(o, d, tm, t)[0]                     # through the tube at the origin
+    t.T_world_part = np.eye(4); t.T_world_part[:3, 3] = [500.0, 0.0, 0.0]   # moved away
+    assert not ray_hits_tube(o, d, tm, t)[0]
+    t.T_world_part[:3, 3] = [0.0, 0.0, 0.0]                 # in-place edit of the same array
+    assert ray_hits_tube(o, d, tm, t)[0]

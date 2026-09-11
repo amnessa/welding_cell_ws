@@ -1,0 +1,40 @@
+# Tier-2 render configuration - Phase 8 (dataset_plan.md Phase 8, phase8_plan.md §2).
+# `render_id` = first 8 hex of sha256(canonical_json(resolved config without paths) + background set hash).
+# Draws come from sha256(scene_id, render_id) - never from the tier-1 substreams - so a
+# rendered scene's tier-1 files are byte-identical to an unrendered one.
+render_config_version: "1.0"
+backend: isaac_replicator
+views: 10                      # view 0 = the tier-1 camera (the twin); 1..views-1 drawn
+rt_subframes: 16
+depth:
+  scale_mm: 0.05               # uint16 quantum; 0 = no return
+masks:
+  rule: maskrule-0.1
+  seam_width_mm: 2.0           # physical width, projected at the pixel's own depth
+  tack_width_mm: 3.0
+  occlusion: analytic_ray_cast # weldgen.visibility.visible_mask, no blind zone, no face test
+materials:
+  rule: materials-0.1-placeholder   # M5 replaces with OmniPBR/MDL + surface maps
+  alloys: [mild_steel, stainless_steel, aluminium, cast_iron, bronze, brass, titanium]
+  surface_conditions: [mill_scale, ground, rusted, primed, oily]
+  dissimilar_probability: 0.0
+environment:
+  backgrounds_manifest: out/backgrounds/manifest.json   # path: excluded from render_id; its set_hash is included
+  panoramas_dir: out/background_panorama                # path: excluded from render_id
+  plane_half_m: 3.0
+  span_jitter: 0.3
+  roughness: [0.45, 0.85]
+lighting:
+  dome_intensity: [600.0, 1200.0]        # LDR panorama dome
+  key_intensity: [600.0, 1800.0]
+  key_elevation_deg: [30.0, 70.0]
+  key_azimuth_deg: [0.0, 360.0]
+drawn_views:
+  elevation_deg: [25.0, 70.0]
+  framing_frac: [0.5, 1.0]
+  aim_jitter_frac: 0.35
+  roll_deg: [-10.0, 10.0]
+  standoff_mm: [300.0, 1200.0]
+  min_visible_fraction: 0.1
+  min_seam_px: 100
+  max_attempts: 40

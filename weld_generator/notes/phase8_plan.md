@@ -318,6 +318,44 @@ the renderer performs, which is why the gate caught it. Then regenerate the four
 holds (the fix is deterministic); the content hashes of the affected scenes change, as
 they must.
 
+**Fix applied 2026-09-11 (user: "go with your recommendation").** `visibility.ray_hits_mesh`
+(Möller–Trumbore, AABB-clipped, chunked numpy, no rtree) replaces the K = 9 sampling in
+`ray_hits_tube` (the analytic cylinder clip stays as the candidate filter) and
+`ray_hits_swept`; the mesh is built once per part (`_part_mesh`). Plates are untouched.
+Tests: `test_visibility.py` gains two thin-wall tests against 0,25 mm containment
+*marching* (independent of both code paths); 78 tests in the four affected suites pass.
+
+Cost, measured on `curved_smoke` seeds (the user's question — "does it increase overhead?"):
+
+| family | before | after |
+|---|---|---|
+| 5 rounded_rect (closed stiffener) | 65,4 s (all of it in the sampled `contains`) | **41,5 s** |
+| 2 circle (tube on plate) | ~0,7 s | 1,7 s |
+| 4 saddle (tube on tube) | ~1,0 s | 15,3 s (two tube meshes in the 30-direction exterior scan) |
+
+**A second bug, mine, caught by the same gate an hour later.** The first version cached the
+part's mesh on the object; `scene_curved.py:212` re-poses parts *after* construction and
+the pipeline had already cast rays before that, so the cache served a stale pose and the
+first rebuild was producing wrong masks (stored 0,121 visible vs 0,053 recomputed on the
+same scene). The cache is now keyed on `T_world_part` (`test_ray_cache_follows_a_pose_change`),
+stored and recomputed masks are bit-identical, and the rebuild was restarted from scratch.
+On the rounded-rect scene that started all this: tier-1 visibility 0,187 → 0,053, the two
+seams' visible fractions 0,525 / 0,383 → 0,201 / 0,000, and the twin gate now reads
+coverage agreement 0,997 with recall 1,000 (was 0,865 / 0,288).
+
+**A third lesson, from the full suite.** `test_bore_verdict_is_the_cavity_gate_not_the_cone`
+failed at 0,47 instead of > 0,9: bore seam points sit on the TRUE surface in a concave
+corner, the tessellated inner wall intrudes up to the 0,05 mm chord error, and a torch-cone
+ray lifted 0,1 mm off the point met that chord at 0,12 mm. Rule added to `ray_hits_mesh`:
+a hit closer than **0,25 mm** (the D34 chord budget) is not an occluder — nothing physical
+is thinner than 2 mm. The rebuild was restarted a third time; 95 tests in the five affected
+suites pass, and on the reference scene the seam verdicts are unchanged (seam 0 weldable,
+clear 1,0; seam 1 `confined_bore`) while the visible fractions drop to their true values.
+
+So: the worst stratum got faster, tubes cost a second, the saddle costs ~14 s more per scene
+— ≤ 75 min per 300-scene stratum, in exchange for a correct answer. If the saddle ever
+matters, a per-face bounding-box prefilter in `ray_hits_mesh` would cut it further.
+
 ## 2. Decisions Phase 8 forces (record in `dataset_plan.md` §10 as they close)
 
 - [x] **Depth encoding.** SCHEMA.md §3.1 says `depth.png (uint16, mm)`. A 1 mm quantum is
@@ -474,7 +512,19 @@ without that the edge-on lap view scored 0,70 agreement; with it 0,91, and its p
 - Check: residual p99 < 0,25 mm and coverage agreement > 0,9 on one scene per stratum
   (12 scenes; the semantic annotator's `object_id` must agree with the nearest tier-1 point).
 
-**M3 — writer, schema fields, `verify` green** (1 day)
+**M3 — writer, schema fields, `verify` green** (1 day) — **landed 2026-09-11** (while the
+visfix rebuild ran): `configs/render/lab_v1.yaml` + `render/config.py` (`render_id` over the
+resolved config minus paths plus the background set hash), `render/draws.py` (one generator
+from sha256(scene_id, render_id); alloy, surface condition per part, substrate photo with
+tagged span ± 30 %, panorama dome, key light, drawn views under the `dataset_plan.md` rules
+with attempts recorded), `render/masks.py` (`maskrule-0.1`, analytic visibility, physical
+width, D38 tack intervals), `render/materials.py` (`materials-0.1-placeholder`, seven alloys),
+`render/writer.py` (view folders, `render.json`, `render.sha256`, `verify_render`),
+`docs/render.schema.json`, `scripts/render_tier2.py` (one app, N scenes, view-0 gate, abort on
+fail), `python -m weldgen verify-render`, SCHEMA.md §3.1/§6.2. Tests:
+`tests/test_tier2_writer.py` (6, pure). Checks on the reference scene: 3 views in 30 s, gate
+PASS, `render.sha256` reproduces from disk, the four tier-1 files byte-identical after the
+render, `render.json` validates against the schema.
 - Custom writer emits `rgb.png`, `depth.png` (0,05 mm/unit uint16), `depth_valid.png`,
   fills the `rgb`/`depth` blocks, rewrites `scene.sha256`, writes `render.sha256`.
 - SCHEMA.md §3.1 / §4.1 / §6.2 amended; `docs/scene.schema.json` gets the two blocks;

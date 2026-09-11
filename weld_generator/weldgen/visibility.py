@@ -82,16 +82,90 @@ def ray_hits_convex(origins: np.ndarray, directions: np.ndarray, t_max: np.ndarr
         & ~outside.any(axis=1)
 
 
-def ray_hits_tube(origins, directions, t_max, tube: Tube) -> np.ndarray:
-    """Ray-vs-tube: analytic outer-cylinder interval, refined by exact containment.
+def _part_mesh(part):
+    """The part's own D34 mesh at its CURRENT pose, rebuilt whenever the pose changes.
 
-    The candidate interval (inside the outer cylinder, within the axial slab) is a
-    closed-form quadratic. A tube is not convex - the bore and a cut base carve it -
-    so hits inside the candidate interval are confirmed by sampling K points of the
-    interval against the EXACT `contains` (bore and cut evaluated analytically). The
-    only approximation is interval sub-sampling: a solid sliver narrower than 1/K of
-    the candidate interval can be missed, which perturbs occlusion booleans only -
-    never a label.
+    Keyed on `T_world_part` because the pipelines pose parts after construction and cast
+    rays both before and after: a cache keyed on the object alone served a stale pose and
+    silently marked points visible through a wall that had since moved (found 2026-09-11,
+    the first rebuild with the exact cast).
+    """
+    key = np.asarray(part.T_world_part, dtype=float).tobytes()
+    cached = getattr(part, "_ray_mesh", None)
+    if cached is None or cached[0] != key:
+        cached = (key, part.mesh())
+        try:
+            object.__setattr__(part, "_ray_mesh", cached)
+        except Exception:                                   # frozen dataclass: no cache
+            pass
+    return cached[1]
+
+
+def ray_hits_mesh(origins, directions, t_max, mesh, max_pairs: int = 3_000_000,
+                  t_min_mm: float = 0.25) -> np.ndarray:
+    """Exact ray-vs-triangle-mesh test (Moller-Trumbore), pure numpy, no rtree (D9).
+
+    True where the ray meets any triangle strictly inside (0, t_max). Rays are first clipped
+    against the mesh's bounding box so only candidates pay for the triangle loop, and the
+    loop is chunked so `rays x faces` never exceeds `max_pairs` at once.
+
+    This replaced the K = 9 "sample the interval against `contains`" refinement on
+    2026-09-11: nine samples across a >100 mm interval step straight through a 6 mm tube
+    wall, and the Phase 8 twin gate caught it (up to 72 % of a closed stiffener's "visible"
+    points were behind its own near wall). Against the D34 mesh the answer is exact to the
+    chord tolerance the schema already promises - and it is the test a renderer performs.
+
+    `t_min_mm` (default 0.25 mm, the D34 chord budget): a hit closer to the origin than the
+    mesh's own tolerance is not an occluder. Seam points sit on the TRUE surface in concave
+    corners where the tessellated wall intrudes by up to 0.05 mm; a torch-cone ray lifted
+    0.1 mm off such a point met the chord at 0.12 mm and the bore verdicts flipped
+    (`test_bore_verdict_is_the_cavity_gate_not_the_cone`, 2026-09-11). No real wall is
+    thinner than 2 mm, so nothing physical hides below a quarter millimetre.
+    """
+    o = np.asarray(origins, dtype=float); d = np.asarray(directions, dtype=float)
+    t_max = np.asarray(t_max, dtype=float)
+    out = np.zeros(len(o), dtype=bool)
+    if len(o) == 0:
+        return out
+    lo3, hi3 = np.asarray(mesh.bounds[0], float) - 1e-6, np.asarray(mesh.bounds[1], float) + 1e-6
+    lo = np.full(len(o), float(t_min_mm)); hi = t_max - 1e-9
+    for k in range(3):
+        with np.errstate(divide="ignore", invalid="ignore"):
+            t1 = (lo3[k] - o[:, k]) / d[:, k]; t2 = (hi3[k] - o[:, k]) / d[:, k]
+        par = np.abs(d[:, k]) < 1e-12
+        inside = (o[:, k] >= lo3[k]) & (o[:, k] <= hi3[k])
+        lo = np.maximum(lo, np.where(par, np.where(inside, -np.inf, np.inf), np.minimum(t1, t2)))
+        hi = np.minimum(hi, np.where(par, np.where(inside, np.inf, -np.inf), np.maximum(t1, t2)))
+    cand = np.flatnonzero(hi > lo)
+    if len(cand) == 0:
+        return out
+    tri = np.asarray(mesh.triangles, dtype=float)
+    v0, e1, e2 = tri[:, 0], tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]
+    F = len(tri); chunk = max(1, max_pairs // F)
+    for c0 in range(0, len(cand), chunk):
+        idx = cand[c0:c0 + chunk]
+        oo, dd, tt = o[idx], d[idx], t_max[idx]
+        pv = np.cross(dd[:, None, :], e2[None, :, :])                 # (n, F, 3)
+        det = np.einsum("nfk,fk->nf", pv, e1)
+        ok = np.abs(det) > 1e-12
+        inv = np.where(ok, 1.0 / np.where(ok, det, 1.0), 0.0)
+        sv = oo[:, None, :] - v0[None, :, :]
+        u = np.einsum("nfk,nfk->nf", sv, pv) * inv
+        qv = np.cross(sv, e1[None, :, :])
+        v = np.einsum("nfk,nk->nf", qv, dd) * inv
+        t = np.einsum("nfk,fk->nf", qv, e2) * inv
+        hit = ok & (u >= 0.0) & (v >= 0.0) & (u + v <= 1.0) & (t > float(t_min_mm)) & (t < tt[:, None] - 1e-9)
+        out[idx] = hit.any(axis=1)
+    return out
+
+
+def ray_hits_tube(origins, directions, t_max, tube: Tube) -> np.ndarray:
+    """Ray-vs-tube: analytic outer-cylinder interval as a candidate filter, then the exact
+    ray-triangle cast against the tube's D34 mesh (`ray_hits_mesh`).
+
+    Until 2026-09-11 the candidate interval was refined by sampling K = 9 points against
+    `contains`; that misses a wall thinner than 1/9 of the interval, which for a ray
+    through the bore is every wall. The Phase 8 twin gate found it.
     """
     T = tube.T_world_part
     o = (np.asarray(origins, dtype=float) - T[:3, 3]) @ T[:3, :3]
@@ -125,62 +199,26 @@ def ray_hits_tube(origins, directions, t_max, tube: Tube) -> np.ndarray:
                                   np.inf, -np.inf), np.maximum(t1, t2))
     lo = np.maximum(np.maximum(lo, zlo), 1e-9)
     hi = np.minimum(np.minimum(hi, zhi), t_max - 1e-9)
-    cand = hi > lo
+    cand = np.flatnonzero(hi > lo)
     out = np.zeros(len(o), dtype=bool)
-    if not cand.any():
+    if len(cand) == 0:
         return out
-    K = 9
-    fr = (np.arange(K) + 0.5) / K
-    ts = lo[cand, None] + fr[None, :] * (hi[cand] - lo[cand])[:, None]
-    pts = (np.asarray(origins, dtype=float)[cand, None, :]
-           + ts[:, :, None] * np.asarray(directions, dtype=float)[cand, None, :])
-    hit = tube.contains(pts.reshape(-1, 3)).reshape(-1, K).any(axis=1)
-    out[cand] = hit
+    # exact against the tube's own D34 mesh (2026-09-11; see `ray_hits_mesh`)
+    out[cand] = ray_hits_mesh(np.asarray(origins, dtype=float)[cand],
+                              np.asarray(directions, dtype=float)[cand], t_max[cand], _part_mesh(tube))
     return out
 
 
 def ray_hits_swept(origins, directions, t_max, part: SweptSlab) -> np.ndarray:
-    """Ray-vs-SweptSlab: axis-aligned bounding-box interval, refined by containment.
+    """Ray-vs-SweptSlab: exact ray-triangle cast against the band's D34 mesh.
 
-    A swept band has no closed-form ray intersection for spline spines, so the
-    candidate interval is the part's local AABB clip and the verdict comes from
-    sampling K points of it against `contains` (fine-spine-polyline resolution).
-    Boolean-only approximation, same caveat as the tube's interval refinement.
+    A swept band has no closed-form ray intersection for spline spines. Until 2026-09-11
+    the AABB interval was sampled at K = 9 points against `contains`; a closed 6 mm
+    stiffener wall in a >100 mm interval fell between samples, and up to 72 % of a
+    rounded-rect scene's "visible" points were behind its own near wall. `ray_hits_mesh`
+    is exact to the mesh's chord tolerance and, on the profile that motivated it, faster.
     """
-    T = part.T_world_part
-    o = (np.asarray(origins, dtype=float) - T[:3, 3]) @ T[:3, :3]
-    d = np.asarray(directions, dtype=float) @ T[:3, :3]
-    t_max = np.asarray(t_max, dtype=float)
-
-    ts_g = part._grid()
-    sp = part.spine.point(ts_g)[:, :2]
-    pad = max(abs(part.offset_lo_mm), abs(part.offset_hi_mm)) + 1e-6
-    lo3 = np.array([sp[:, 0].min() - pad, sp[:, 1].min() - pad, part.z0_mm])
-    hi3 = np.array([sp[:, 0].max() + pad, sp[:, 1].max() + pad, part.z1_mm])
-
-    lo = np.full(len(o), 1e-9)
-    hi = t_max - 1e-9
-    for k in range(3):
-        with np.errstate(divide="ignore", invalid="ignore"):
-            t1 = (lo3[k] - o[:, k]) / d[:, k]
-            t2 = (hi3[k] - o[:, k]) / d[:, k]
-        par = np.abs(d[:, k]) < 1e-12
-        inside = (o[:, k] >= lo3[k]) & (o[:, k] <= hi3[k])
-        a = np.where(par, np.where(inside, -np.inf, np.inf), np.minimum(t1, t2))
-        b = np.where(par, np.where(inside, np.inf, -np.inf), np.maximum(t1, t2))
-        lo = np.maximum(lo, a)
-        hi = np.minimum(hi, b)
-    cand = hi > lo
-    out = np.zeros(len(o), dtype=bool)
-    if not cand.any():
-        return out
-    K = 9
-    fr = (np.arange(K) + 0.5) / K
-    ts = lo[cand, None] + fr[None, :] * (hi[cand] - lo[cand])[:, None]
-    pts = (np.asarray(origins, dtype=float)[cand, None, :]
-           + ts[:, :, None] * np.asarray(directions, dtype=float)[cand, None, :])
-    out[cand] = part.contains(pts.reshape(-1, 3)).reshape(-1, K).any(axis=1)
-    return out
+    return ray_hits_mesh(origins, directions, t_max, _part_mesh(part))
 
 
 def _ray_aabb_refine(origins, directions, t_max, part, lo3, hi3,

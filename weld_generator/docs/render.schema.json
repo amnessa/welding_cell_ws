@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "weldgen render.json - the tier-2 layer of a scene (Phase 8)",
+  "type": "object",
+  "required": ["render_schema_version", "render_id", "scene_id", "backend", "draws", "config", "views", "twin_gate"],
+  "properties": {
+    "render_schema_version": {"const": "1.0.0"},
+    "render_id": {"type": "string", "pattern": "^[0-9a-f]{8}$"},
+    "scene_id": {"type": "string"},
+    "backend": {"type": "object", "required": ["name", "version"]},
+    "draws": {"type": "object", "required": ["alloy", "surface_condition", "substrate", "dome", "key_light"]},
+    "config": {"type": "object"},
+    "twin_gate": {"type": "object", "required": ["pass", "residual_p99_mm", "coverage", "objects"]},
+    "provenance": {"type": "object"},
+    "views": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["view", "view_kind"],
+        "properties": {
+          "view": {"type": "integer", "minimum": 0},
+          "view_kind": {"enum": ["tier1", "drawn", "undrawable"]},
+          "K": {"type": "array"}, "T_world_cam": {"type": "array"},
+          "width": {"type": "integer"}, "height": {"type": "integer"},
+          "files": {"type": "array"}, "hashed": {"type": "object"}, "rgb_sha256": {"type": "string"},
+          "depth": {"type": "object", "required": ["scale_mm", "invalid_value"]},
+          "masks": {"type": "object"}
+        }
+      }
+    }
+  }
+}

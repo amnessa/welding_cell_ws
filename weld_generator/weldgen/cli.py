@@ -101,6 +101,22 @@ def cmd_verify(args: argparse.Namespace) -> int:
     return 1 if bad else 0
 
 
+def cmd_verify_render(args: argparse.Namespace) -> int:
+    """Re-hash every rendered scene's views against its stored `render.sha256` (tier 2)."""
+    from .render.writer import verify_render
+
+    root = Path(args.out)
+    dirs = sorted(p.parent for p in root.rglob("render.sha256"))
+    bad = 0
+    for d in dirs:
+        ok, got = verify_render(d)
+        if not ok:
+            bad += 1
+            print(f"MISMATCH {d.name}\n  stored {(d / 'render.sha256').read_text().strip()}\n  recomputed {got}")
+    print(f"{len(dirs) - bad}/{len(dirs)} rendered scenes verify")
+    return 1 if bad else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="weldgen")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -118,6 +134,10 @@ def main(argv: list[str] | None = None) -> int:
     v = sub.add_parser("verify", help="re-hash scenes on disk")
     v.add_argument("--out", default="out/phase1")
     v.set_defaults(func=cmd_verify)
+
+    vr = sub.add_parser("verify-render", help="re-hash rendered views (tier 2) on disk")
+    vr.add_argument("--out", required=True)
+    vr.set_defaults(func=cmd_verify_render)
 
     args = p.parse_args(argv)
     return args.func(args)

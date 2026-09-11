@@ -397,9 +397,26 @@ which is why weldable seams sort first.
   cloud.npz           # §5.1
   seams.npz           # §5.2
   scene.sha256        # §6.2 content hash, one hex line
-  rgb.png             # tier 2 only  (D10: stored, not benchmarked)
-  depth.png           # tier 2 only  (uint16, mm)
+  mesh_<id>.ply       # convenience only (--emit-meshes / scripts/emit_meshes.py), unhashed
+  render.json         # TIER 2 (Phase 8): render_id, draws, twin-gate report, view list
+  render.sha256       # tier 2: sha256 over every view's depth + masks + resolved render config
+  views/<k>/          # tier 2: k = 0 is the tier-1 camera (the twin), 1..N-1 are drawn
+    rgb.png           #   8-bit RGB  (D10: stored, never benchmarked on)
+    depth.png         #   uint16, 0.05 mm per unit, 0 = no return (z along the optical axis)
+    depth_valid.png   #   uint8 {0,255}
+    mask_seam.png     #   uint8: seam id + 1 for weldable seams (maskrule-0.1: 2 mm physical width,
+                      #   analytic ray-cast visibility, no blind zone)
+    mask_tack.png     #   uint8: tack index + 1 (D38 intervals on the seam polyline)
+    mask_object.png   #   uint8: object_id + 1 workpieces, 255 fixture, 254 environment, 0 none
+    view.json         #   K, T_world_cam, width, height, view_kind, draw record, per-file hashes
 ```
+
+**The tier-2 layer never touches tier 1.** `scene.json`, the `.npz` files and `scene.sha256`
+are byte-identical whether or not a scene has been rendered; `scene.json`'s reserved `rgb` and
+`depth` keys stay `null` and the render layer lives entirely in `render.json`
+(`docs/render.schema.json`). That is what keeps `generate(config, seed)` on a clean machine
+reproducing the released hash (§6.2) after rendering, and it is why a tier-1-only user can
+ignore tier 2 completely. The full design is `notes/dataset_plan.md` Phase 8.
 
 Meshes are **not** written per scene. Parts are parametric primitives; `scene.json`
 carries the primitive and its dims, and the generator reconstructs the exact mesh. Only
@@ -882,6 +899,13 @@ otherwise re-running next month would "fail" a gate it actually passes.
 **Phase 1 gate:** `generate(config, seed)` twice, in separate processes, on different
 machines → identical `content_hash`. If this fails, the release-as-a-program argument
 collapses, and nothing downstream is worth measuring.
+
+**`render.sha256` (tier 2).** The same idea for the render layer: sha256 over the canonical
+resolved render config and, per view in order, the sha256 of the `depth.png` array and the
+three mask arrays. Depth is a ray cast and the masks are constructed, so the same
+`render_id` on another machine must reproduce it bit for bit; RGB is path-traced, not
+bit-stable across GPUs, and its per-view hash is recorded in `view.json` as information
+only. `python -m weldgen verify-render --out <dir>` re-hashes a rendered corpus.
 
 ### 6.3 Geometric invariants — asserted, not stored (D21)
 
