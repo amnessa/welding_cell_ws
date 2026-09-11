@@ -2358,11 +2358,16 @@ artefacts to overfit. So every view, **view 0 included**, renders an **environme
   tilts with the assembly), so the plane never comes between the camera and a joint. It
   gets real depth: continuous gradients up to the contact line, real shadows, and the
   part boundary is where the geometry changes, not where the data stops.
-* **Its surface is domain-randomised** from a texture set drawn out of the render
-  substream: the lab's **MDF substrate board** (albedo/roughness from photographs of the
-  real setup — the Phase 9 twin), a slotted steel welding table, scratched steel plate,
-  concrete, matte rubber mat. Distractor objects (clamps, magnets, spatter) are a later
-  opt-in arm, labelled environment like the plane.
+* **Its surface is a photograph**, drawn per view out of the render substream from
+  `out/backgrounds/` — 41 lab and workshop photographs the user supplied on 2026-09-11
+  (the MDF grid board on its profile frame with and without parts, plywood benches with
+  tools, concrete floor, slotted steel, pallets, welding tables). One photo is the plane's
+  albedo covering ~1,5 m of bench, mirrored beyond its edges, at a random rotation and a
+  random roughness. Perspective, shading and clutter are baked into the photo: for RGB
+  that is domain randomisation (the model must find the joint on *any* bench), while
+  **depth stays the flat plane** — photographed clutter has no relief. Real distractor
+  geometry (clamps, magnets, spatter) is a later opt-in arm, labelled environment. The
+  photo id is recorded per view in `view.json`; the set is versioned by a manifest hash.
 * **A workshop HDRI dome** lights the scene and is what a camera sees beyond the plane's
   edge; HDRIs are drawn from a small CC0 set recorded by name in `render.json`.
 
@@ -2381,11 +2386,25 @@ derives from these two files; the dataset does not pre-commit to one. Likewise, 
 `mask_object` isolates the workpieces, a loader can alpha-composite them onto real
 workshop photographs as augmentation without any change to the release.
 
-**Open here, decide before the batch:** the framing range for views 1–9 — the tier-1
-sampler deliberately puts assemblies partly out of frame (`framing_frac` up to 1,45,
-elevations down to 20°) as the benchmark's difficulty axis; training views should draw
-from a tighter range (proposal 0,5–1,0 and 25–70°), recorded per view in `view.json`,
-with view 0 untouched.
+#### Drawn views 1–9 — the training camera (decided 2026-09-11)
+
+The tier-1 camera is the benchmark's difficulty axis (`framing_frac` up to 1,45, elevation
+down to 20°, aim jitter 0,15 × span) and view 0 keeps it. Views 1–9 exist to train on and
+use the same sampler ingredients with training ranges, all recorded per view:
+
+| draw | range | why |
+|---|---|---|
+| elevation | 25–70° | below 25° a standing plate hides its own seam; above 70° fillets flatten |
+| framing fraction | 0,5–1,0 | the assembly fills half to all of the short side; never out of frame on purpose |
+| aim jitter | ±0,35 × longest workpiece edge, all three axes | the user's observation: with 0,15 the joint is always mid-frame, and a model can read "seam = image centre" off the data |
+| roll | ±10° | eye-in-hand cameras are not level |
+| standoff | from the framing fraction, **clamped to 300–1200 mm** (the tier-1 range) | framing a 240 mm assembly at 0,95 otherwise puts the camera 60 mm from a tube — inside every sensor's blind zone |
+| seeding | render draws come from `sha256(scene_id, render_id)`, not the scene seed alone | two strata sharing a seed index would otherwise get the same photo, lights and cameras (D39's tack-phase precedent) |
+| **redraw rule** | a view in which no *primary* seam (weldable **and** matches the joint type) is at least 10 % visible by the analytic ray cast **and at least 100 px long in the image** is redrawn, up to 40 attempts, then the scene is flagged | the user's second observation: the lap scene's first drawn views showed only unreachable seams — a frame with no supervisable seam is not a training example, and tier 1 already omits such scenes (`NoVisibleSeams`, `min_visible_fraction = 0,1`) rather than labelling them "no seam" |
+
+Redraws are recorded (`view.json: attempts`), so the bias they introduce is measurable:
+lap joints will need more redraws than butt joints, and that number is itself a statement
+about the joint type.
 
 **Effort:** 1–2 weeks remains the estimate; the variance is materials (M5), not the
 renderer.

@@ -210,7 +210,46 @@ Findings, in the order they were hit:
 8. **Exposure.** Stainless and aluminium render nearly white under dome 800 + key 2500 —
    set explicit exposure/tonemapping in M5 and draw light intensity in a range that keeps
    the brightest alloy unclipped.
-9. **Speed**: ~35 s for three views when the object mask comes cheap, ~120–140 s when
+9. **Backgrounds are the user's photographs** (`out/backgrounds/`, 41 JPEGs at 1500×2000 /
+   2000×1500 / 2816×1536): the MDF grid board on its frame, benches with tools, concrete,
+   slotted steel, pallets. The pilot maps one photo per view onto the 4 m plane as albedo
+   (1,5 m span, mirror wrap, random rotation); the procedural `textures/` are retired.
+10. **Joint always mid-frame** (user): the pilot's drawn views aimed at the seam centroid
+    exactly. Fixed with the tier-1 aim-jitter idea at 0,35 × span; rule in `dataset_plan.md`.
+11. **Views with no reachable seam** (user, lap scene): fixed with the redraw rule — a drawn
+    view must show ≥ 10 % of a primary seam by the analytic ray cast, else redraw (≤ 40).
+12. **Photo backgrounds rendered** (`*_bg` dirs): welding-table, concrete and bench photos
+    under the four scenes. They read as bench shots; the photo's own perspective and
+    mirrored repeats are visible at the frame edges (a domain-randomisation artefact, not a
+    depth error — depth is the flat plane). Near-top-down photos (the MDF board shots)
+    look most physical; tag the set so the substrate draw prefers them for view 0.
+    Drawn views: joint off-centre, first attempt accepted in all draws, best primary
+    visibility 0,41–1,0. Two fixes from the numbers, both verified on a re-render:
+    standoff clamped to 300–1200 mm (one draw had put the camera 13 mm from the tube;
+    now ≥ 168 mm to the nearest surface), and render draws seeded from `scene_id` (the
+    brass and stainless scenes share seed 2000005 and had drawn the same photo and cameras).
+13. **Round 2 — one scene per stratum, all six alloys** (`out/pilot_2026-09-11/round2/`,
+    `sheet_view0_a.png`, `sheet_view0_b.png`, `sheet_drawn.png`). Ten of twelve rendered
+    first time; T/circle and T/rounded_rect were **SIGKILLed** (no traceback) in a drawn
+    view that fills the frame with a large curved mesh — the pilot's object-mask step ran a
+    nearest-triangle query on ~400 k pixels at once. Chunked (40 k) for the pilot; M3 uses
+    the renderer's id buffer. Findings from the sheets:
+    * **Beyond the plane is a flat grey dome** in every low-elevation view 0 (T/line,
+      grooved butt, corner, edge, lap at 20–30°). Depth there is correctly invalid, but
+      the RGB needs a world: a workshop HDRI dome (the user's panorama, or CC0 sets) and
+      a 6 m plane. M5 item.
+    * **Photo scale is wrong for close-up photos.** All photos are mapped at 1,5 m of
+      bench, so a cutting-mat photo taken from 40 cm shows a water bottle larger than the
+      workpiece. Domain randomisation tolerates it, but a per-photo span tag (the user
+      knows roughly what each photo covers) plus a ±30 % scale jitter is cheap and keeps
+      the world plausible. Ask the user for the tags; store in `backgrounds/manifest.json`.
+    * **A visible seam can be tiny in pixels**: edge/line's second drawn view passed the
+      10 % rule with the seam 29 px long. Added: the best primary seam must also be
+      ≥ 100 px in the image (rule in `dataset_plan.md`).
+    * Masks are right on all ten strata, including the two parallel seams of the
+      rounded-rect stiffener with tacks on both; drawn views are off-centre; all first- or
+      second-attempt accepts.
+14. **Speed**: ~35 s for three views when the object mask comes cheap, ~120–140 s when
    `trimesh.proximity.closest_point` labels ~70 k pixels against the meshes without
    embree. M3 takes `mask_object` from the semantic annotator instead (free).
 

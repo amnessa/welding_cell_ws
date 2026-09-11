@@ -14,13 +14,18 @@ from weldgen.camera import project, sample_pose
 from weldgen.visibility import visible_mask
 
 SCENE = pathlib.Path(sys.argv[1]); OUT = pathlib.Path(sys.argv[2]); ALLOY = sys.argv[3] if len(sys.argv) > 3 else "mild_steel"
-SUBSTRATE = sys.argv[4] if len(sys.argv) > 4 else "mdf"          # mdf | steel | none
+SUBSTRATE = sys.argv[4] if len(sys.argv) > 4 else "random"       # photo path | random | none
 HDR = sys.argv[5] if len(sys.argv) > 5 else ""                     # dome HDRI path or ""
-TEX = pathlib.Path("/workspaces/welding_cell_ws/weld_generator/out/pilot_2026-09-11/textures")
+BG_DIR = pathlib.Path("/workspaces/welding_cell_ws/weld_generator/out/backgrounds")
+BG_WIDTH_M = 1.5                                                    # the photo covers this much bench
 ENV_LABEL = 254
 OUT.mkdir(parents=True, exist_ok=True)
 scene = json.load(open(SCENE / "scene.json")); seams_npz = np.load(SCENE / "seams.npz"); cloud = np.load(SCENE / "cloud.npz")
 parts = [from_object(o) for o in scene["objects"]]; meshes = [p.mesh() for p in parts]
+import hashlib
+# render draws: seeded from (scene_id, render_id) the way D39 seeds the tack phase - NOT from the
+# scene seed alone, or every stratum sharing a seed index gets the same photo and cameras.
+rng = np.random.default_rng(int.from_bytes(hashlib.sha256((scene["scene_id"] + "|pilot").encode()).digest()[:8], "big"))
 cam = scene["camera"]; K = np.array(cam["K"]); W, H = cam["width"], cam["height"]
 T0 = np.array(cam["T_world_cam"]); MM = 0.001
 
@@ -54,24 +59,32 @@ for p, m in zip(parts, meshes):
 z_table = float(min(m.vertices[:, 2].min() for m in meshes))
 cxy = np.mean([m.vertices[:, :2].mean(0) for m in meshes], 0)
 if SUBSTRATE != "none":
-    half = 1.0  # metres: 2 m x 2 m board
+    half = 2.0  # metres: 4 m x 4 m board
     plane = UsdGeom.Mesh.Define(stage, "/World/substrate")
     c = cxy * MM; zt = z_table * MM
     plane.GetPointsAttr().Set([Gf.Vec3f(c[0] - half, c[1] - half, zt), Gf.Vec3f(c[0] + half, c[1] - half, zt),
                                Gf.Vec3f(c[0] + half, c[1] + half, zt), Gf.Vec3f(c[0] - half, c[1] + half, zt)])
     plane.GetFaceVertexCountsAttr().Set([4]); plane.GetFaceVertexIndicesAttr().Set([0, 1, 2, 3]); plane.GetSubdivisionSchemeAttr().Set("none")
-    tile = 4.0  # texture tile = 0.5 m
+    photos = sorted(BG_DIR.glob("*.jpeg")) + sorted(BG_DIR.glob("*.jpg")) + sorted(BG_DIR.glob("*.png"))
+    photo = pathlib.Path(SUBSTRATE) if SUBSTRATE != "random" else photos[int(rng.integers(len(photos)))]
+    from PIL import Image as _I; pw_, ph_ = _I.open(photo).size
+    Lx, Ly = BG_WIDTH_M, BG_WIDTH_M * ph_ / pw_                       # metres of bench the photo spans
+    ang = float(rng.uniform(0, 2 * np.pi)); ca, sa = np.cos(ang), np.sin(ang)
+    def st_of(x, y):                                                  # plane-local metres -> photo uv, rotated
+        u, v = ca * x - sa * y, sa * x + ca * y
+        return Gf.Vec2f(u / Lx + 0.5, v / Ly + 0.5)
     st = UsdGeom.PrimvarsAPI(plane.GetPrim()).CreatePrimvar("st", Sdf.ValueTypeNames.TexCoord2fArray, UsdGeom.Tokens.vertex)
-    st.Set([Gf.Vec2f(0, 0), Gf.Vec2f(tile, 0), Gf.Vec2f(tile, tile), Gf.Vec2f(0, tile)])
+    st.Set([st_of(-half, -half), st_of(half, -half), st_of(half, half), st_of(-half, half)])
+    print(f"  substrate photo {photo.name} ({pw_}x{ph_}) spans {Lx:.2f}x{Ly:.2f} m, rotated {np.degrees(ang):.0f} deg", flush=True)
     pm = UsdShade.Material.Define(stage, "/World/mat_substrate"); ps = UsdShade.Shader.Define(stage, "/World/mat_substrate/pbr"); ps.CreateIdAttr("UsdPreviewSurface")
     rd = UsdShade.Shader.Define(stage, "/World/mat_substrate/st"); rd.CreateIdAttr("UsdPrimvarReader_float2"); rd.CreateInput("varname", Sdf.ValueTypeNames.Token).Set("st")
     tx = UsdShade.Shader.Define(stage, "/World/mat_substrate/tex"); tx.CreateIdAttr("UsdUVTexture")
-    tx.CreateInput("file", Sdf.ValueTypeNames.Asset).Set(str(TEX / ("mdf_albedo.png" if SUBSTRATE == "mdf" else "steel_table_albedo.png")))
-    tx.CreateInput("wrapS", Sdf.ValueTypeNames.Token).Set("repeat"); tx.CreateInput("wrapT", Sdf.ValueTypeNames.Token).Set("repeat")
+    tx.CreateInput("file", Sdf.ValueTypeNames.Asset).Set(str(photo))
+    tx.CreateInput("wrapS", Sdf.ValueTypeNames.Token).Set("mirror"); tx.CreateInput("wrapT", Sdf.ValueTypeNames.Token).Set("mirror")
     tx.CreateInput("st", Sdf.ValueTypeNames.Float2).ConnectToSource(rd.ConnectableAPI(), "result"); tx.CreateOutput("rgb", Sdf.ValueTypeNames.Float3)
     ps.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).ConnectToSource(tx.ConnectableAPI(), "rgb")
-    ps.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.75 if SUBSTRATE == "mdf" else 0.5)
-    ps.CreateInput("metallic", Sdf.ValueTypeNames.Float).Set(0.0 if SUBSTRATE == "mdf" else 0.8)
+    ps.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(float(rng.uniform(0.45, 0.85)))
+    ps.CreateInput("metallic", Sdf.ValueTypeNames.Float).Set(0.0)
     pm.CreateSurfaceOutput().ConnectToSource(ps.ConnectableAPI(), "surface"); UsdShade.MaterialBindingAPI.Apply(plane.GetPrim()).Bind(pm)
 ucam = UsdGeom.Camera.Define(stage, "/World/cam"); ha = 20.955
 ucam.GetFocalLengthAttr().Set(K[0, 0] * ha / W); ucam.GetHorizontalApertureAttr().Set(ha); ucam.GetVerticalApertureAttr().Set(ha * H / W)
@@ -132,7 +145,10 @@ def render_view(T, name):
     lab[on_plane] = ENV_LABEL; rest = np.flatnonzero(~on_plane)
     best = np.full(len(rest), np.inf)
     for p, m in zip(parts, meshes):
-        _, dist, _ = trimesh.proximity.closest_point(m, pw[rest]); better = dist < best; best[better] = dist[better]; lab[rest[better]] = p.object_id + 1
+        for c0 in range(0, len(rest), 40000):                     # chunked: one 400k-pixel query OOM-killed Kit
+            sl = rest[c0:c0 + 40000]
+            _, dist, _ = trimesh.proximity.closest_point(m, pw[sl]); better = dist < best[c0:c0 + 40000]
+            best[c0:c0 + 40000][better] = dist[better]; lab[sl[better]] = p.object_id + 1
     mobj[vv, uu] = lab
     wp = (lab > 0) & (lab != ENV_LABEL)
     print(f"  twin gate (workpiece px={wp.sum()}, env px={on_plane.sum()}): residual p99={np.percentile(best[wp[rest]], 99):.4f} max={best[wp[rest]].max():.4f} mm", flush=True)
@@ -153,9 +169,33 @@ def render_view(T, name):
 
 t0 = time.time()
 render_view(T0, "0")
-# a drawn view: same standoff, elevation 45, azimuth +70 deg from view 0's, aimed at the tier-1 aim point (approx: cloud centroid)
-aim = cloud["xyz"].astype(np.float64).mean(0); az0 = np.degrees(np.arctan2(T0[1, 3] - aim[1], T0[0, 3] - aim[0]))
-render_view(sample_pose(aim, cam["standoff_mm"], 45.0, az0 + 70.0, 0.0), "1")
-render_view(sample_pose(aim, cam["standoff_mm"] * 0.8, 30.0, az0 - 110.0, 5.0), "2")
+# drawn views: the tier-1 sampler's ingredients (aim at the joint, miss it on purpose, frame by
+# extent), with training ranges - elevation 25-70 deg, framing 0.5-1.0, aim jitter 0.35 x span -
+# and a REDRAW rule: a view in which no primary seam is at least 10 % visible is not a training
+# example (tier 1 omits such scenes; a drawn view is redrawn instead).
+from weldgen.camera import standoff_for_framing
+prof_f = float(cam["K"][0][0]); span = max(float(np.max(o["dims_mm"])) for o in scene["objects"] if o["role"] == "workpiece")
+primary = [s_ for s_ in scene["seams"] if s_["weldable"] and s_["matches_joint_type"]]
+seam_pts = {s_["id"]: seams_npz[f"seam_{s_['id']}"].astype(np.float64) for s_ in primary}
+seam_ap = {s_["id"]: seams_npz[f"seam_{s_['id']}_approach"].astype(np.float64) for s_ in primary}
+centre = np.mean([seam_pts[k].mean(0) for k in seam_pts], 0)
+def draw_view():
+    for attempt in range(40):
+        aim = centre + rng.uniform(-1, 1, 3) * 0.35 * span
+        el, az, roll, fr = rng.uniform(25, 70), rng.uniform(0, 360), rng.uniform(-10, 10), rng.uniform(0.5, 1.0)
+        standoff = float(np.clip(standoff_for_framing(span, fr, prof_f, W, H), 300.0, 1200.0))   # tier-1 range
+        T = sample_pose(aim, standoff, el, az, roll)
+        best, best_px = 0.0, 0
+        for k in seam_pts:
+            vis_k = visible_mask(seam_pts[k], seam_ap[k], parts, T, K, W, H, 0.0, face_test=False)
+            uv_k, _ = project(seam_pts[k][vis_k], T, K)
+            n_px = len(np.unique(np.round(uv_k).astype(int), axis=0)) if vis_k.any() else 0
+            best = max(best, vis_k.mean()); best_px = max(best_px, n_px)
+        if best >= 0.10 and best_px >= 100:
+            print(f"  drawn view: attempt {attempt + 1}, el={el:.0f} az={az:.0f} framing={fr:.2f} best_primary_visible={best:.2f} seam_px={best_px}", flush=True)
+            return T
+    raise RuntimeError("no drawable view with a visible primary seam in 40 attempts")
+for k in (1, 2):
+    render_view(draw_view(), str(k))
 print("TOTAL", round(time.time() - t0, 1), "s", flush=True)
 app.close()
