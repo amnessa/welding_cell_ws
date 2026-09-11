@@ -6,8 +6,10 @@ goes at the end; earlier draws must not move.
 
     1. alloy (one per scene)         2. surface condition (one per workpiece, in object order)
     3. substrate photo + span jitter + rotation + roughness
-    4. dome panorama + intensity     5. key light intensity, elevation, azimuth
-    6. drawn views 1..N-1, each: aim jitter (3), elevation, azimuth, roll, framing
+    4. dome (CC0 HDRI or lab panorama) + exposure     5. key light intensity, elevation, azimuth
+    6. per workpiece: surface set, uv rotation, uv offset (2), roughness jitter   [M5]
+    7. dome rotation                                                             [M5]
+    8. drawn views 1..N-1, each: aim jitter (3), elevation, azimuth, roll, framing
        - redrawn until a primary seam is >= min_visible_fraction visible AND >= min_seam_px
 """
 
@@ -31,8 +33,14 @@ def _u(rng, lo_hi):
     return float(rng.uniform(float(lo_hi[0]), float(lo_hi[1])))
 
 
-def draw_appearance(rng: np.random.Generator, cfg: dict, scene: dict, backgrounds: dict) -> dict:
-    """Draws 1-5. Pure; returns a JSON-able dict that goes into render.json verbatim."""
+def draw_appearance(rng: np.random.Generator, cfg: dict, scene: dict, backgrounds: dict,
+                    assets: dict | None = None) -> dict:
+    """Draws 1-7. Pure; returns a JSON-able dict that goes into render.json verbatim.
+
+    With `assets` (the CC0 manifest) the dome is drawn over HDRIs + lab panoramas and each
+    workpiece gets a surface set of its condition (draw 6) - M5. Without it (tests, or no
+    download) the dome is a lab panorama and no textures are drawn; the placeholder look.
+    """
     mats = cfg["materials"]; env = cfg["environment"]; lit = cfg["lighting"]
     alloy = str(rng.choice(mats["alloys"]))
     workpieces = [o["id"] for o in scene["objects"] if o["role"] == "workpiece"]
@@ -44,12 +52,28 @@ def draw_appearance(rng: np.random.Generator, cfg: dict, scene: dict, background
                  "span_m_y": span * ph["height_px"] / ph["width_px"],
                  "rotation_deg": _u(rng, (0.0, 360.0)), "roughness": _u(rng, env["roughness"]),
                  "plane_half_m": float(env["plane_half_m"])}
-    panos = backgrounds["_panoramas"]
-    dome = {"panorama": Path(panos[int(rng.integers(len(panos)))]).name if panos else None,
-            "intensity": _u(rng, lit["dome_intensity"])}
+    # 4. dome: one draw over the CC0 HDRIs and (optionally) the lab panoramas, plus an exposure
+    choices = [("hdri", h["name"], h["file"]) for h in (assets or {}).get("hdris", [])]
+    if env.get("use_lab_panoramas", True) or not choices:
+        choices += [("panorama", Path(pp).name, pp) for pp in backgrounds["_panoramas"]]
+    kind, name, file = choices[int(rng.integers(len(choices)))] if choices else ("none", None, None)
+    dome = {"kind": kind, "name": name, "file": file, "exposure": _u(rng, lit.get("dome_exposure", (1.0, 1.0)))}
     key = {"intensity": _u(rng, lit["key_intensity"]), "elevation_deg": _u(rng, lit["key_elevation_deg"]),
            "azimuth_deg": _u(rng, lit["key_azimuth_deg"])}
-    return {"alloy": alloy, "surface_condition": surface, "substrate": substrate, "dome": dome, "key_light": key}
+    # 6. per workpiece (object order): surface set of its condition, uv rotation, uv offset, roughness jitter
+    textures = {}
+    if assets is not None:
+        by_cond = {c: [t for t in assets["textures"] if t["asset_id"] in ids] for c, ids in assets["conditions"].items()}
+        for oid in workpieces:
+            pool = by_cond.get(surface[oid]) or assets["textures"]
+            t = pool[int(rng.integers(len(pool)))]
+            textures[oid] = {"asset_id": t["asset_id"], "uv_rotation_deg": _u(rng, mats.get("uv_rotation_deg", (0.0, 0.0))),
+                             "uv_offset": [float(rng.uniform()), float(rng.uniform())],
+                             "roughness_jitter": _u(rng, mats.get("roughness_jitter", (1.0, 1.0)))}
+    # 7. dome rotation
+    dome["rotation_deg"] = _u(rng, lit.get("dome_rotation_deg", (0.0, 0.0)))
+    return {"alloy": alloy, "surface_condition": surface, "substrate": substrate, "dome": dome, "key_light": key,
+            "textures": textures}
 
 
 def primary_seams(scene: dict, seams_npz) -> dict[int, tuple[np.ndarray, np.ndarray]]:

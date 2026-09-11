@@ -532,7 +532,38 @@ render, `render.json` validates against the schema.
 - Twin identity test: rendered scene's geometry keys (`objects`, `seams`, `twin_key`) are
   byte-identical to the pre-render `scene.json`.
 
-**M4 — D16 noise on rendered depth** (½ day)
+**M4 — D16 noise on rendered depth** (½ day) — **landed 2026-09-11**: `render/sensor.py`
+(`sensor_validity`: the deterministic D16 part — grazing dropout on the rendered normals +
+blind zone — via the same `noise.apply`; `realise`: a noisy depth image from the stored
+model, seed = scene seed + view index; `tier_comparison`: the M4 check). The writer stores
+the validity as `depth_valid.png` (hashed in `render.sha256`); the realisation is derived
+on demand, exactly tier 1's rule. Tests: `tests/test_tier2_sensor.py` (3, pure: the rule
+pixel by pixel, seeded realisation with axial scatter ≈ σ_z, writer round trip).
+
+The check had to be restated: validity *fractions* are not comparable across tiers (tier 1
+samples surfaces by area and its visibility already excludes the blind zone; a render
+weights by projected area and sees everything from 200 mm). The honest statement is
+**point-wise**: for each tier-1 visible point that lands on a rendered workpiece pixel of the
+same depth, the point's D16 validity must equal the pixel's. One scene per stratum, view 0:
+
+| stratum | profile | agreement | valid t1 / t2 at those points | points |
+|---|---|---|---|---|
+| T/line | stereo_poor | 0,997 | 0,913 / 0,912 | 41 629 |
+| T/circle | d435i | 0,993 | 0,953 / 0,953 | 70 262 |
+| T/ellipse | stereo_poor | 0,997 | 1,000 / 0,997 | 9 491 |
+| T/saddle | d435i | 0,979 | 0,781 / 0,783 | 13 948 |
+| T/rounded_rect (old, stale corpus) | d435i | 0,991 | 0,966 / 0,969 | 17 828 |
+| T/swept_path | stereo_good | 1,000 | 1,000 / 1,000 | 59 037 |
+| butt/line_square | stereo_poor | 0,996 | 0,987 / 0,990 | 248 327 |
+| butt/arc | d435i | 0,998 | 0,998 / 0,996 | 15 953 |
+| butt/line_grooved | d435i | 1,000 | 1,000 / 1,000 | 40 023 |
+| corner | d435i | 0,998 | 0,995 / 0,997 | 59 343 |
+| edge | d435i | 1,000 | 1,000 / 1,000 | 43 070 |
+| lap | stereo_poor | 0,989 | 0,057 / 0,061 | 27 918 |
+
+Disagreements are points within a degree or two of the 75° dropout limit, where the
+rendered normal and the analytic normal round differently. The lap scene's 6 % is real:
+its tier-1 camera skims the plates at grazing incidence, and both tiers say so.
 - Back-project `depth.png` → xyz (+ normals from the `normals` annotator), run
   `noise.apply` with the scene's stored `noise_model` → the tier-2 noisy cloud. Same seed ⇒
   same realisation class as tier 1; report σ_z vs range on both tiers in one cell.

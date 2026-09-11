@@ -2242,7 +2242,8 @@ benchmark numbers computed from them are exactly the tier-1 twin.
     0/                    # THE TWIN VIEW: tier-1 camera pose, K and resolution verbatim
       rgb.png             # 8-bit RGB (D10: stored, never benchmarked on)
       depth.png           # uint16, 0,05 mm per unit (range 3,28 m), 0 = no return
-      depth_valid.png     # uint8 {0,255}: sensor-model validity (D16 on the render)
+      depth_valid.png     # uint8 {0,255}: the DETERMINISTIC D16 validity (grazing dropout on the
+                          #   rendered normals + blind zone); the noisy realisation is NOT stored
       mask_seam.png       # uint8: 0 background, k+1 = weldable seam k, from seams.npz
       mask_tack.png       # uint8: 0 background, i+1 = tack i of the `tacks` block
       mask_object.png     # uint8: object_id+1 workpieces, 255 fixture, 254 environment
@@ -2320,9 +2321,29 @@ SCHEMA.md §6.1). Its draws, in this order, appended only:
 There is **no MDF workpiece material** (user, 2026-09-11): the MDF board is the *substrate*
 photo under the parts, never a part. The Phase 9 real-subset twin therefore renders the
 real MDF parts with the closest alloy look and relies on depth, not RGB, for the
-tier-2 → real comparison — which is what D10 says anyway. Materials are parametric
-OmniPBR checked into `configs/render/`, so the release carries them; NVIDIA vMaterials
-are an optional RGB-fidelity upgrade recorded by name and version in `render.json`.
+tier-2 → real comparison — which is what D10 says anyway.
+
+**Materials are `materials-1.0`, from two published sources, so nothing is tuned by eye
+(user, 2026-09-11: "I could defend why we chose something published or structured").**
+
+* *Alloy base reflectance* F0 (linear RGB) from Real-Time Rendering, 4th ed., Table 9.2:
+  iron (mild steel, cast iron), chromium (stainless — its passive layer), aluminium,
+  titanium, brass C260; bronze is not tabulated and is recorded as an interpolation of
+  copper. With `metallic = 1` a PBR surface uses this colour as its specular colour.
+* *Surface condition* from CC0 ambientCG surface sets fetched by name through the site's
+  API (`scripts/fetch_render_assets.py`, `out/render_assets/manifest.json`: 29 sets —
+  brushed and scratched steel for `ground`/`oily`, dark oxide for `mill_scale`, rust sets,
+  powder-coat and painted sets for `primed`), each with colour, roughness and normal maps.
+  The colour map is blended with the alloy's F0 (bare conditions keep the alloy, coatings
+  hide it), roughness is scaled per condition (+ a per-part jitter) and cast iron adds 0,15.
+* *Lighting* from CC0 Poly Haven HDRIs fetched the same way (24 indoor machine shops,
+  workshops, garages, hangars) plus the two lab panoramas, drawn per scene with an
+  exposure and a rotation; one key light on top.
+* Every asset's URL, licence (CC0 1.0), checksum and size is in the manifest, and the
+  manifest's `set_hash` is part of `render_id`, so a render is reproducible down to the
+  texture files. Texture coordinates are a planar projection per triangle in the part's
+  local frame at the set's physical tile size, with a per-part rotation and offset draw.
+
 Materials must not move the ray cast: the clean-depth gate is re-run under every one.
 
 #### Gates, in order
@@ -2387,6 +2408,18 @@ pixels**: where `mask_object` is a workpiece, view 0's clean depth back-projects
 exact tier-1 primitives within budget. Environment pixels are declared in `render.json`
 (plane pose, extent, texture id, HDRI id) and are not part of the tier-1 twin by
 definition — they are the *sensor's* world, which is exactly what tier 2 adds.
+
+**The sensor model on the render follows tier 1's rule (M4).** Tier 1 stores a clean cloud
+and the noise-model parameters; the realisation is whatever `noise.apply` returns for the
+stored seed (SCHEMA.md §5.1). Tier 2 does the same on the rendered depth: `depth.png` is
+the clean ray cast (the twin), `depth_valid.png` is the *deterministic* part of D16
+(grazing-incidence dropout on the rendered normals and the profile's blind zone), and a
+noisy depth image is derived on demand by `weldgen.render.sensor.realise` — the same
+`noise.apply`, seed = the scene's stored seed + view index — so both tiers share one
+convention and the release does not double in size. Per scene, `render.json` records the
+sensor validity fraction on tier-1 visible points and on the rendered workpiece pixels of
+view 0, compared **point-wise** (a tier-1 visible point vs the rendered pixel it lands on):
+agreement ≥ 0,98 (M4 check, 2026-09-11: 0,979–1,000 across the twelve strata).
 
 **Depth stays depth.** `depth.png` holds metric depth with `depth_valid.png` alongside;
 beyond the plane's edge (rare at these standoffs with a 2 m plane) depth is 0 and invalid,

@@ -18,7 +18,7 @@ import yaml
 
 from ..hashing import canonical_json
 
-PATH_KEYS = ("backgrounds_manifest", "panoramas_dir")
+PATH_KEYS = ("backgrounds_manifest", "panoramas_dir", "render_assets_manifest")
 
 
 def load_render_config(path: str | Path) -> dict[str, Any]:
@@ -38,7 +38,19 @@ def load_backgrounds(cfg: dict[str, Any], root: str | Path) -> dict[str, Any]:
     return m
 
 
-def hashable_config(cfg: dict[str, Any], backgrounds: dict[str, Any] | None) -> dict[str, Any]:
+def load_render_assets(cfg: dict[str, Any], root: str | Path) -> dict[str, Any] | None:
+    """The CC0 asset manifest (scripts/fetch_render_assets.py) with absolute paths, or None."""
+    rel = cfg["environment"].get("render_assets_manifest")
+    if not rel:
+        return None
+    mpath = Path(root) / rel
+    if not mpath.exists():
+        return None
+    m = json.loads(mpath.read_text()); m["_dir"] = str(mpath.parent)
+    return m
+
+
+def hashable_config(cfg: dict[str, Any], backgrounds: dict[str, Any] | None, assets: dict[str, Any] | None = None) -> dict[str, Any]:
     out = json.loads(json.dumps({k: v for k, v in cfg.items() if not k.startswith("_")}))
     env = dict(out.get("environment", {}))
     for k in PATH_KEYS:
@@ -47,8 +59,11 @@ def hashable_config(cfg: dict[str, Any], backgrounds: dict[str, Any] | None) -> 
     if backgrounds is not None:
         out["backgrounds_set_hash"] = backgrounds["set_hash"]
         out["panoramas"] = [Path(p).name for p in backgrounds["_panoramas"]]
+    if assets is not None:
+        out["render_assets_set_hash"] = assets["set_hash"]
+        out["render_assets_version"] = assets.get("version")
     return out
 
 
-def render_id(cfg: dict[str, Any], backgrounds: dict[str, Any] | None) -> str:
-    return hashlib.sha256(canonical_json(hashable_config(cfg, backgrounds)).encode()).hexdigest()[:8]
+def render_id(cfg: dict[str, Any], backgrounds: dict[str, Any] | None, assets: dict[str, Any] | None = None) -> str:
+    return hashlib.sha256(canonical_json(hashable_config(cfg, backgrounds, assets)).encode()).hexdigest()[:8]

@@ -41,21 +41,25 @@ def _sha(arr: np.ndarray) -> str:
 
 def write_view(view_dir: Path, rgb: np.ndarray, depth_mm: np.ndarray, valid: np.ndarray,
                mask_seam: np.ndarray, mask_tack: np.ndarray, mask_object: np.ndarray,
-               meta: dict) -> dict:
+               meta: dict, sensor_valid: np.ndarray | None = None) -> dict:
     """Write one view folder; return the entry that goes into render.json."""
     view_dir = Path(view_dir); view_dir.mkdir(parents=True, exist_ok=True)
     png16 = encode_depth(depth_mm, valid)
     _png(view_dir / "rgb.png", np.asarray(rgb, np.uint8))
     _png(view_dir / "depth.png", png16)
-    _png(view_dir / "depth_valid.png", (png16 > 0).astype(np.uint8) * 255)
+    # depth_valid = the DETERMINISTIC sensor validity (D16 grazing dropout + blind zone) on the
+    # rendered pixels - see render/sensor.py. Without a sensor model it is the render validity.
+    dv = (png16 > 0) if sensor_valid is None else ((png16 > 0) & np.asarray(sensor_valid, bool))
+    dv8 = dv.astype(np.uint8) * 255
+    _png(view_dir / "depth_valid.png", dv8)
     _png(view_dir / "mask_seam.png", np.asarray(mask_seam, np.uint8))
     _png(view_dir / "mask_tack.png", np.asarray(mask_tack, np.uint8))
     _png(view_dir / "mask_object.png", np.asarray(mask_object, np.uint8))
     entry = {**meta, "files": list(VIEW_FILES),
              "depth": {"file": "depth.png", "encoding": "uint16", "scale_mm": DEPTH_SCALE_MM, "invalid_value": 0,
-                       "valid_fraction": float((png16 > 0).mean())},
+                       "valid_fraction": float((png16 > 0).mean()), "sensor_valid_fraction": float(dv.mean())},
              "rgb_sha256": _sha(np.asarray(rgb, np.uint8)),
-             "hashed": {"depth": _sha(png16), "mask_seam": _sha(np.asarray(mask_seam, np.uint8)),
+             "hashed": {"depth": _sha(png16), "depth_valid": _sha(dv8), "mask_seam": _sha(np.asarray(mask_seam, np.uint8)),
                         "mask_tack": _sha(np.asarray(mask_tack, np.uint8)),
                         "mask_object": _sha(np.asarray(mask_object, np.uint8))}}
     (view_dir / "view.json").write_text(json.dumps(entry, indent=1, sort_keys=True))
@@ -66,7 +70,7 @@ def render_hash(view_entries: list[dict], hashable_config: dict) -> str:
     """sha256 over the resolved config and, per view in order, the hashed arrays' digests."""
     h = hashlib.sha256(canonical_json(hashable_config).encode())
     for e in view_entries:
-        for name in ("depth", "mask_seam", "mask_tack", "mask_object"):
+        for name in ("depth", "depth_valid", "mask_seam", "mask_tack", "mask_object"):
             h.update(f"{e['view']}:{name}:".encode()); h.update(e["hashed"][name].encode())
     return h.hexdigest()
 
@@ -86,6 +90,7 @@ def read_view(view_dir: Path) -> dict:
     view_dir = Path(view_dir)
     depth_mm, valid = decode_depth(np.array(Image.open(view_dir / "depth.png")))
     return {"rgb": np.array(Image.open(view_dir / "rgb.png")), "depth_mm": depth_mm, "valid": valid,
+            "sensor_valid": np.array(Image.open(view_dir / "depth_valid.png")) > 0,
             "mask_seam": np.array(Image.open(view_dir / "mask_seam.png")),
             "mask_tack": np.array(Image.open(view_dir / "mask_tack.png")),
             "mask_object": np.array(Image.open(view_dir / "mask_object.png")),
@@ -102,7 +107,8 @@ def verify_render(scene_dir: Path) -> tuple[bool, str]:
             continue
         v = read_view(scene_dir / "views" / str(e["view"]))
         png16 = np.array(Image.open(scene_dir / "views" / str(e["view"]) / "depth.png"))
-        entries.append({"view": e["view"], "hashed": {"depth": _sha(png16), "mask_seam": _sha(v["mask_seam"]),
+        dv8 = np.array(Image.open(scene_dir / "views" / str(e["view"]) / "depth_valid.png"))
+        entries.append({"view": e["view"], "hashed": {"depth": _sha(png16), "depth_valid": _sha(dv8), "mask_seam": _sha(v["mask_seam"]),
                                                      "mask_tack": _sha(v["mask_tack"]), "mask_object": _sha(v["mask_object"])}})
     want = (scene_dir / "render.sha256").read_text().strip()
     got = render_hash(entries, doc["config"])

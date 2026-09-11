@@ -24,12 +24,25 @@ sys.path.insert(0, str(ROOT))
 import numpy as np  # noqa: E402
 
 from weldgen.geom import from_object  # noqa: E402
-from weldgen.render.config import hashable_config, load_backgrounds, load_render_config, render_id  # noqa: E402
+from weldgen.render.config import hashable_config, load_backgrounds, load_render_assets, load_render_config, render_id  # noqa: E402
 from weldgen.render.draws import draw_appearance, draw_views, primary_seams, render_rng  # noqa: E402
 from weldgen.render.gate import format_report, twin_gate  # noqa: E402
 from weldgen.render.masks import seam_and_tack_masks  # noqa: E402
-from weldgen.render.materials import pbr_spec  # noqa: E402
+from weldgen.render.hdr import dome_intensity_for  # noqa: E402
+from weldgen.render.materials import recipe  # noqa: E402
+from weldgen.render.sensor import sensor_validity, tier_comparison  # noqa: E402
 from weldgen.render.writer import write_render, write_view  # noqa: E402
+
+
+def material_spec(part, draws: dict, tex_by_id: dict, assets: dict | None):
+    """materials-1.0 recipe for a workpiece when the surface set is available; None -> default."""
+    if part.role != "workpiece":
+        return None
+    td = draws.get("textures", {}).get(part.id)
+    if not td or assets is None or td["asset_id"] not in tex_by_id:
+        return None
+    rec = recipe(draws["alloy"], draws["surface_condition"].get(part.id, "ground"), tex_by_id[td["asset_id"]], td["roughness_jitter"])
+    return {**rec, "assets_dir": assets["_dir"], "uv_rotation_deg": td["uv_rotation_deg"], "uv_offset": tuple(td["uv_offset"])}
 
 
 def main() -> int:
@@ -42,9 +55,13 @@ def main() -> int:
     args = ap.parse_args()
 
     cfg = load_render_config(args.config)
-    bgs = load_backgrounds(cfg, ROOT)
-    rid = render_id(cfg, bgs); hcfg = hashable_config(cfg, bgs)
-    print(f"render_id {rid} ({cfg['_source']}), backgrounds {len(bgs['photos'])} photos / {len(bgs['_panoramas'])} panoramas", flush=True)
+    bgs = load_backgrounds(cfg, ROOT); assets = load_render_assets(cfg, ROOT)
+    rid = render_id(cfg, bgs, assets); hcfg = hashable_config(cfg, bgs, assets)
+    asset_note = "none" if assets is None else f"{len(assets['hdris'])} HDRIs / {len(assets['textures'])} surface sets ({assets['set_hash']})"
+    print(f"render_id {rid} ({cfg['_source']}), backgrounds {len(bgs['photos'])} photos / {len(bgs['_panoramas'])} panoramas, "
+          f"assets: {asset_note}", flush=True)
+    tex_by_id = {t["asset_id"]: t for t in (assets or {}).get("textures", [])}
+    hdri_by_name = {h["name"]: h for h in (assets or {}).get("hdris", [])}
 
     from isaacsim import SimulationApp
     app = SimulationApp({"headless": True})
@@ -62,7 +79,7 @@ def main() -> int:
         cloud = dict(np.load(sd / "cloud.npz")); seams_npz = dict(np.load(sd / "seams.npz"))
         parts = [from_object(o) for o in scene["objects"]]; meshes = [p.mesh() for p in parts]
         rng = render_rng(scene["scene_id"], rid)
-        draws = draw_appearance(rng, cfg, scene, bgs)
+        draws = draw_appearance(rng, cfg, scene, bgs, assets)
         views = draw_views(rng, cfg, scene, primary_seams(scene, seams_npz), parts, args.views)
         sub = draws["substrate"]; dome = draws["dome"]; key = draws["key_light"]
         clear_stage()
@@ -70,11 +87,12 @@ def main() -> int:
                         substrate={"photo": str(pathlib.Path(bgs["_dir"]) / sub["photo"]),
                                    "span_m": (sub["span_m"], sub["span_m_y"]), "rotation_rad": np.radians(sub["rotation_deg"]),
                                    "roughness": sub["roughness"], "half_m": sub["plane_half_m"]},
-                        dome={"texture": next((p for p in bgs["_panoramas"] if pathlib.Path(p).name == dome["panorama"]), None),
-                              "intensity": dome["intensity"]},
+                        dome={"texture": (str(pathlib.Path(assets["_dir"]) / dome["file"]) if dome["kind"] == "hdri" else dome["file"]),
+                              "intensity": dome_intensity_for(dome, cfg["lighting"], hdri_by_name),
+                              "rotation_deg": dome.get("rotation_deg", 0.0)},
                         key_light={"intensity": key["intensity"],
                                    "rotation_xyz_deg": (-key["elevation_deg"], key["azimuth_deg"], 0.0)},
-                        material_for=lambda p: pbr_spec(draws["alloy"], draws["surface_condition"].get(p.id, "ground")) if p.role == "workpiece" else None)
+                        material_for=lambda p: material_spec(p, draws, tex_by_id, assets))
         cam = scene["camera"]; W, H = cam["width"], cam["height"]
         if renderer is None or (renderer.width, renderer.height) != (W, H):
             renderer = Renderer(CAMERA_PATH, W, H, int(cfg["rt_subframes"]))
@@ -86,17 +104,23 @@ def main() -> int:
             out = renderer.render(h.label_by_path)
             ms, mt, mstats = seam_and_tack_masks(scene, seams_npz, parts, v["K"], v["T_world_cam"], W, H,
                                                  cfg["masks"]["seam_width_mm"], cfg["masks"]["tack_width_mm"])
+            sv = sensor_validity(out["depth_mm"], out["valid"], out["normals"], v["K"], v["T_world_cam"], scene["noise_model"])
             if v["view"] == 0:
                 gate = twin_gate(scene, cloud, meshes, out["depth_mm"], out["valid"], out["mask_object"])
+                gate["sensor"] = tier_comparison(scene, cloud, out["depth_mm"], out["valid"], out["normals"], out["mask_object"])
             entries.append(write_view(sd / "views" / str(v["view"]), out["rgb"], out["depth_mm"], out["valid"], ms, mt,
-                                      out["mask_object"], {**v, "masks": {"rule": cfg["masks"]["rule"], **mstats}}))
+                                      out["mask_object"], {**v, "masks": {"rule": cfg["masks"]["rule"], **mstats},
+                                                            "sensor": {"profile": scene["noise_model"].get("profile"), "rule": "D16 deterministic validity; realisation via render.sensor.realise",
+                                                                       "realisation_seed": int(scene["noise_model"]["seed"]) + int(v["view"])}},
+                                      sensor_valid=sv))
         meta = {"render_id": rid, "scene_id": scene["scene_id"], "backend": {"name": "isaac_replicator", "kit": kit_ver},
                 "draws": draws, "twin_gate": gate,
                 "provenance": {"created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "config_source": cfg["_source"]}}
         digest = write_render(sd, meta, entries, hcfg)
         n_ok = sum(e.get("view_kind") != "undrawable" for e in entries)
         print(f"{sd.parent.name}/{sd.name}: {n_ok}/{len(views)} views, alloy {draws['alloy']}, {sub['photo']}, "
-              f"{format_report(gate)}  render.sha256 {digest[:12]}  [{time.time() - t0:.1f}s]", flush=True)
+              f"{format_report(gate)}  sensor agree={gate['sensor']['agreement']:.3f} (t1 {gate['sensor']['tier1_valid_fraction']:.3f} vs t2 {gate['sensor']['tier2_valid_fraction_at_those_pixels']:.3f} on {gate['sensor']['compared_points']} pts)  "
+              f"render.sha256 {digest[:12]}  [{time.time() - t0:.1f}s]", flush=True)
         if not gate["pass"]:
             n_fail += 1
             if not args.no_gate_abort:

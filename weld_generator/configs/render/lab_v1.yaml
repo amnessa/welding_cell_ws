@@ -14,19 +14,30 @@ masks:
   tack_width_mm: 3.0
   occlusion: analytic_ray_cast # weldgen.visibility.visible_mask, no blind zone, no face test
 materials:
-  rule: materials-0.1-placeholder   # M5 replaces with OmniPBR/MDL + surface maps
+  rule: materials-1.0               # F0 from RTR4 Table 9.2 + CC0 ambientCG surface sets (render/materials.py)
+  roughness_jitter: [0.85, 1.15]
+  uv_rotation_deg: [0.0, 360.0]
   alloys: [mild_steel, stainless_steel, aluminium, cast_iron, bronze, brass, titanium]
   surface_conditions: [mill_scale, ground, rusted, primed, oily]
   dissimilar_probability: 0.0
 environment:
   backgrounds_manifest: out/backgrounds/manifest.json   # path: excluded from render_id; its set_hash is included
   panoramas_dir: out/background_panorama                # path: excluded from render_id
+  render_assets_manifest: out/render_assets/manifest.json   # path: excluded; its set_hash is included
+  use_lab_panoramas: true                               # lab panoramas join the CC0 HDRIs in the dome draw
   plane_half_m: 3.0
   span_jitter: 0.3
   roughness: [0.45, 0.85]
 lighting:
-  dome_intensity: [600.0, 1200.0]        # LDR panorama dome
-  key_intensity: [600.0, 1800.0]
+  # Dome intensity rule (measured 2026-09-11 in this renderer: the tonemapper maps dome 300 -> frame
+  # mean ~115/255, 1000 -> ~190, 3000 -> ~234): intensity = dome_base * (dome_target_mean_luminance /
+  # the HDRI's measured mean luminance) * exposure. LDR lab panoramas use dome_base_ldr * exposure.
+  dome_base: 300.0
+  dome_target_mean_luminance: 0.75
+  dome_base_ldr: 900.0
+  dome_exposure: [0.6, 1.5]
+  dome_rotation_deg: [0.0, 360.0]
+  key_intensity: [100.0, 600.0]           # below the dome; a fill, not the light
   key_elevation_deg: [30.0, 70.0]
   key_azimuth_deg: [0.0, 360.0]
 drawn_views:

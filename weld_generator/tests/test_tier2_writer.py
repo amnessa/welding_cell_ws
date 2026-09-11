@@ -151,3 +151,78 @@ def test_writer_round_trip_and_render_hash(tmp_path):
     # RGB is informational: changing it must not change render.sha256
     entries[0]["rgb_sha256"] = "x"
     assert render_hash(entries, hcfg) == digest
+
+
+# ------------------------------------------------------------------ M5: materials + assets
+
+
+def _fake_assets():
+    tex = []
+    for cond, ids in {"ground": ["Metal009", "Metal011"], "mill_scale": ["Metal046A"], "rusted": ["Rust007"],
+                      "primed": ["Metal027"]}.items():
+        for a in ids:
+            tex.append({"asset_id": a, "condition": cond, "dir": f"textures/{a}", "tile_mm": 1000.0,
+                        "files": {"color": f"textures/{a}/{a}_1K-JPG_Color.jpg", "roughness": f"textures/{a}/{a}_1K-JPG_Roughness.jpg",
+                                  "normalgl": f"textures/{a}/{a}_1K-JPG_NormalGL.jpg"}})
+    conds = {c: [t["asset_id"] for t in tex if t["condition"] == c] for c in ("ground", "mill_scale", "rusted", "primed")}
+    conds["oily"] = conds["ground"]
+    return {"version": "test", "set_hash": "feedface", "_dir": "/nowhere/assets", "textures": tex, "conditions": conds,
+            "hdris": [{"name": "machine_shop_01", "file": "hdris/machine_shop_01_2k.hdr"}]}
+
+
+def test_render_id_includes_the_asset_set_hash():
+    cfg = _cfg(); bg = _fake_backgrounds(); a = _fake_assets()
+    assert render_id(cfg, bg, a) != render_id(cfg, bg, None)
+    assert render_id(cfg, bg, {**a, "set_hash": "other"}) != render_id(cfg, bg, a)
+    assert "render_assets_manifest" not in hashable_config(cfg, bg, a)["environment"]
+
+
+def test_f0_table_is_the_published_one_and_covers_every_alloy():
+    from weldgen.render.materials import ALLOYS, F0_TABLE, SURFACE, recipe
+    assert set(ALLOYS) == set(_cfg()["materials"]["alloys"])
+    assert set(SURFACE) == set(_cfg()["materials"]["surface_conditions"])
+    assert F0_TABLE["iron"] == (0.562, 0.565, 0.578) and F0_TABLE["aluminium"] == (0.913, 0.922, 0.924)
+    assert ALLOYS["stainless_steel"][0] == "chromium" and "INTERPOLATED" in ALLOYS["bronze"][2]
+    r = recipe("brass", "rusted", _fake_assets()["textures"][3], 1.1)
+    assert r["rule"] == "materials-1.0" and r["f0"] == list(F0_TABLE["brass"]) and r["metallic"] == 0.2
+    assert r["texture"] == "Rust007" and "normalgl" in r["files"]
+
+
+def test_appearance_draws_pick_surface_sets_of_the_drawn_condition():
+    cfg = _cfg(); bg = _fake_backgrounds(); a = _fake_assets(); scene, _, _, _ = _scene_with_seam()
+    d = draw_appearance(render_rng("s", "r"), cfg, scene, bg, a)
+    cond = d["surface_condition"]["A"]; t = d["textures"]["A"]
+    assert t["asset_id"] in a["conditions"][cond]
+    assert 0.85 <= t["roughness_jitter"] <= 1.15 and 0 <= t["uv_rotation_deg"] <= 360
+    assert d["dome"]["kind"] in ("hdri", "panorama") and 0.6 <= d["dome"]["exposure"] <= 1.5 and "rotation_deg" in d["dome"]
+    # the first five draws do not move when assets are added (append-only): alloy/surface/substrate agree
+    d0 = draw_appearance(render_rng("s", "r"), cfg, scene, bg, None)
+    assert d0["alloy"] == d["alloy"] and d0["surface_condition"] == d["surface_condition"] and d0["substrate"] == d["substrate"]
+
+
+def test_planar_st_projects_by_dominant_axis_in_the_part_frame():
+    from weldgen.render.usd_stage import planar_st
+    from weldgen.geom import Slab
+    T = np.eye(4); T[:3, 3] = [500.0, 0.0, 0.0]
+    m = Slab("A", "workpiece", 0, (200.0, 100.0, 10.0), T).mesh()
+    st = planar_st(m, T, 1000.0)
+    assert st.shape == (len(m.faces) * 3, 2)
+    assert np.abs(st).max() <= 0.1 + 1e-9, "local frame: the 500 mm world offset must not appear"
+    # the two big faces (normal +-w) project u,v -> ranges 0.2 x 0.1 tiles
+    span = np.ptp(st.reshape(-1, 3, 2), axis=(0, 1))
+    assert np.allclose(sorted(span), [0.1, 0.2], atol=1e-9)
+
+
+def test_hdr_reader_round_trips_and_the_dome_rule_normalises_mean_luminance(tmp_path):
+    from weldgen.render.hdr import dome_intensity_for, hdr_stats, read_hdr, write_hdr_flat
+    g = np.random.default_rng(3); img = (g.random((64, 128, 3)) ** 3 * 50).astype(np.float32)
+    write_hdr_flat(tmp_path / "t.hdr", img); back = read_hdr(tmp_path / "t.hdr")
+    assert back.shape == img.shape and np.abs(back - img).max() / img.max() < 0.01
+    st = hdr_stats(tmp_path / "t.hdr")
+    assert 0 < st["log_mean_luminance"] < st["mean_luminance"] < st["p999_luminance"]
+    lit = {"dome_base": 300.0, "dome_target_mean_luminance": 0.75, "dome_base_ldr": 900.0}
+    by = {"a": {"mean_luminance": 0.5}, "b": {"mean_luminance": 1.0}}
+    ia = dome_intensity_for({"kind": "hdri", "name": "a", "exposure": 1.0}, lit, by)
+    ib = dome_intensity_for({"kind": "hdri", "name": "b", "exposure": 1.0}, lit, by)
+    assert np.isclose(ia, 450.0) and np.isclose(ib, 225.0) and np.isclose(ia * 0.5, ib)
+    assert dome_intensity_for({"kind": "panorama", "exposure": 1.2}, lit, by) == 1080.0
