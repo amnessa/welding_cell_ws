@@ -15,6 +15,17 @@ from .conventions import LABEL_NONE, MM_PER_M
 ANNOTATORS = ("rgb", "distance_to_image_plane", "instance_id_segmentation_fast", "normals")
 
 
+def labels_from_ids(ids: np.ndarray, id_to_label: dict, label_by_path: dict) -> np.ndarray:
+    """Map the id buffer to `mask_object` labels. The lookup table spans every id the
+    renderer declares, not only those present in this frame - a prim that is fully hidden
+    in a view still has an id (an edge scene crashed on that, 2026-09-12)."""
+    n = max([int(ids.max()) if ids.size else 0] + [int(k) for k in id_to_label]) + 1
+    lut = np.full(n, LABEL_NONE, dtype=np.uint8)
+    for k, path in id_to_label.items():
+        lut[int(k)] = label_by_path.get(path, LABEL_NONE)
+    return lut[ids]
+
+
 class Renderer:
     def __init__(self, camera_path: str, width: int, height: int, rt_subframes: int = 16):
         import omni.replicator.core as rep
@@ -35,11 +46,7 @@ class Renderer:
         valid = np.isfinite(d) & (d > 0)
         d = np.where(valid, d, 0.0)
         seg = self.ann["instance_id_segmentation_fast"].get_data()
-        ids = np.asarray(seg["data"]); id_to_label = seg["info"]["idToLabels"]
-        lut = np.full(int(ids.max()) + 1, LABEL_NONE, dtype=np.uint8)
-        for k, path in id_to_label.items():
-            lut[int(k)] = label_by_path.get(path, LABEL_NONE)
-        mask_object = lut[ids]
+        mask_object = labels_from_ids(np.asarray(seg["data"]), seg["info"]["idToLabels"], label_by_path)
         normals = np.asarray(self.ann["normals"].get_data(), dtype=np.float32)[..., :3]
         return {"rgb": rgb, "depth_mm": d, "valid": valid, "mask_object": mask_object, "normals": normals}
 

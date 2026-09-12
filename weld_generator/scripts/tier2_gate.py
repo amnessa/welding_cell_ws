@@ -54,7 +54,7 @@ def main() -> int:
             pathlib.Path(args.dump).mkdir(parents=True, exist_ok=True)
             np.savez_compressed(pathlib.Path(args.dump) / f"{sd.name}.npz", depth_mm=out["depth_mm"].astype(np.float32),
                                 valid=out["valid"], mask_object=out["mask_object"], normals=out["normals"], rgb=out["rgb"])
-        rep = twin_gate(scene, cloud, meshes, out["depth_mm"], out["valid"], out["mask_object"])
+        rep = twin_gate(scene, cloud, meshes, out["depth_mm"], out["valid"], out["mask_object"], dict(np.load(sd / "seams.npz")))
         rep["seconds"] = round(time.time() - t0, 1); reports[sd.name] = rep
         bad += not rep["pass"]
         print(f"{sd.parent.name}/{sd.name}: {format_report(rep)}  [{rep['seconds']}s]", flush=True)

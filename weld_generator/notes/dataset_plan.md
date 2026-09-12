@@ -2331,14 +2331,21 @@ tier-2 → real comparison — which is what D10 says anyway.
   titanium, brass C260; bronze is not tabulated and is recorded as an interpolation of
   copper. With `metallic = 1` a PBR surface uses this colour as its specular colour.
 * *Surface condition* from CC0 ambientCG surface sets fetched by name through the site's
-  API (`scripts/fetch_render_assets.py`, `out/render_assets/manifest.json`: 29 sets —
-  brushed and scratched steel for `ground`/`oily`, dark oxide for `mill_scale`, rust sets,
-  powder-coat and painted sets for `primed`), each with colour, roughness and normal maps.
+  API (`scripts/fetch_render_assets.py`, `out/render_assets/manifest.json`: 19 sets —
+  brushed and scratched steel for `ground`/`oily`, dark oxide for `mill_scale`, light
+  surface rust on iron for `rusted`, powder-coated steel for `primed`), each with colour,
+  roughness and normal maps. The heavy-corrosion (`Rust###`) and peeling-paint
+  (`PaintedMetal###`) sets, and two of the heavier iron-rust sets, were dropped by the user
+  on 2026-09-11: parts handed to a welding cell never look like that, and a dataset should
+  not teach it.
   The colour map is blended with the alloy's F0 (bare conditions keep the alloy, coatings
   hide it), roughness is scaled per condition (+ a per-part jitter) and cast iron adds 0,15.
 * *Lighting* from CC0 Poly Haven HDRIs fetched the same way (24 indoor machine shops,
   workshops, garages, hangars) plus the two lab panoramas, drawn per scene with an
-  exposure and a rotation; one key light on top.
+  exposure and a rotation; one weak key light as fill. HDRIs are absolute radiance at
+  very different levels, so each is normalised by its measured mean luminance to a
+  common target before the exposure draw (the rule and the renderer's measured
+  tonemapper response are in `configs/render/lab_v1.yaml`).
 * Every asset's URL, licence (CC0 1.0), checksum and size is in the manifest, and the
   manifest's `set_hash` is part of `render_id`, so a render is reproducible down to the
   texture files. Texture coordinates are a planar projection per triangle in the part's
@@ -2518,6 +2525,7 @@ Phase 8 decisions, all **resolved 2026-09-11** with the user (detail in `phase8_
 - [x] Background → environment layer: substrate plane + user's photos (tagged spans) + lab panoramas as dome
 - [x] Drawn-view rules → elevation 25–70°, framing 0,5–1,0, aim jitter 0,35, standoff 300–1200, redraw unless a primary seam is ≥ 10 % visible and ≥ 100 px
 - [x] The two D16 items below do not gate Phase 8 (they stay open for Phase 9)
+- [ ] **Determinism across numpy versions** (found 2026-09-11 rebuilding `bench_phase4` under numpy 2.5.3 vs the 2.3.5 original): every scene's content hash changed with no array or label change, from last-digit float noise. Either pin numpy + trimesh for the release (and say so in §6.2) or define the hash with a float tolerance. Recommendation: pin — a tolerance hash weakens the gate's meaning for a few digits nobody needs.
 - [ ] Whether tacks ship in paper 1 or are held for paper 2 (depends on whether Phase 6 lands)
 - [x] ~~Point-cloud file format for the release~~ → **resolved Phase 0**: `cloud.npz` per scene
       (one file, numpy-native, no dependency), plus a `--emit-meshes` PLY exporter that Phase 5

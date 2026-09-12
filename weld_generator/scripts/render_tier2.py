@@ -106,7 +106,7 @@ def main() -> int:
                                                  cfg["masks"]["seam_width_mm"], cfg["masks"]["tack_width_mm"])
             sv = sensor_validity(out["depth_mm"], out["valid"], out["normals"], v["K"], v["T_world_cam"], scene["noise_model"])
             if v["view"] == 0:
-                gate = twin_gate(scene, cloud, meshes, out["depth_mm"], out["valid"], out["mask_object"])
+                gate = twin_gate(scene, cloud, meshes, out["depth_mm"], out["valid"], out["mask_object"], seams_npz)
                 gate["sensor"] = tier_comparison(scene, cloud, out["depth_mm"], out["valid"], out["normals"], out["mask_object"])
             entries.append(write_view(sd / "views" / str(v["view"]), out["rgb"], out["depth_mm"], out["valid"], ms, mt,
                                       out["mask_object"], {**v, "masks": {"rule": cfg["masks"]["rule"], **mstats},

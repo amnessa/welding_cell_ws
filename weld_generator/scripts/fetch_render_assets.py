@@ -36,9 +36,11 @@ HDRIS = ["machine_shop_01", "machine_shop_02", "machine_shop_03", "industrial_wo
 TEXTURES = {
     "ground":     ["Metal009", "Metal011", "Metal012", "Metal038", "Metal003", "Metal050C", "Metal049A"],
     "mill_scale": ["Metal046A", "Metal046B", "Metal063", "Metal055A", "Metal052C", "Metal041A"],
-    "rusted":     ["Rust006", "Rust007", "Rust008", "Rust009", "Rust010", "Metal041B", "Metal041C",
-                   "Metal053B", "Metal053C", "Metal056C"],
-    "primed":     ["Metal027", "Metal028", "Metal029", "PaintedMetal010", "PaintedMetal012", "PaintedMetal014"],
+    # user, 2026-09-11: the `Rust###` and `PaintedMetal###` sets are heavy corrosion and peeling
+    # paint - never seen on parts handed to a welding cell - and were dropped. What stays is
+    # light surface rust on iron and powder-coated steel.
+    "rusted":     ["Metal041B", "Metal053B", "Metal053C"],      # 041C, 056C also dropped by the user
+    "primed":     ["Metal027", "Metal028", "Metal029"],
     # `oily` reuses the ground sets with a roughness scale < 1 (a film, not a different surface)
 }
 

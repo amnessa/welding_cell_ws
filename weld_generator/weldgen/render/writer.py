@@ -70,6 +70,8 @@ def render_hash(view_entries: list[dict], hashable_config: dict) -> str:
     """sha256 over the resolved config and, per view in order, the hashed arrays' digests."""
     h = hashlib.sha256(canonical_json(hashable_config).encode())
     for e in view_entries:
+        if "hashed" not in e:                      # an undrawable view has no files (recorded, not hashed)
+            h.update(f"{e['view']}:undrawable:".encode()); continue
         for name in ("depth", "depth_valid", "mask_seam", "mask_tack", "mask_object"):
             h.update(f"{e['view']}:{name}:".encode()); h.update(e["hashed"][name].encode())
     return h.hexdigest()

@@ -92,29 +92,39 @@ STRATA: dict[str, list] = {
 }
 
 
-def _seeds(residues, stride):
+def _seeds(residues, stride, base_seed: int = BASE_SEED):
     i = 0
     while True:
         for r in residues:
-            yield BASE_SEED + r + stride * i
+            yield base_seed + r + stride * i
         i += 1
 
 
-def build(out_root: Path, quiet: bool, per_family: int | None = None) -> dict:
-    manifest = {"base_seed": BASE_SEED, "per_family": per_family, "classes": {}}
-    for jt, sources in STRATA.items():
-        stride = sum(len(res) for _, _, res, _, _ in sources)
+def build(out_root: Path, quiet: bool, per_family: int | None = None, base_seed: int = BASE_SEED,
+          classes: list[str] | None = None, sources: list[str] | None = None,
+          index_name: str = "index.jsonl") -> dict:
+    """`classes` / `sources` restrict the run (Phase 8 M6: the 3600-scene `train_v1` corpus is
+    built as one process per T source, each writing its own `index_<source>.jsonl`, merged by
+    `merge_indexes` afterwards). The stride and residues are those of the FULL class, so a
+    filtered run walks exactly the seeds the unfiltered run would."""
+    manifest = {"base_seed": base_seed, "per_family": per_family, "classes": {}}
+    for jt, all_sources in STRATA.items():
+        if classes and jt not in classes:
+            continue
+        stride = sum(len(res) for _, _, res, _, _ in all_sources)
         class_dir = out_root / jt
         class_dir.mkdir(parents=True, exist_ok=True)
-        index = open(class_dir / "index.jsonl", "w")
+        index = open(class_dir / index_name, "w")
         cls_manifest = {"stride": stride, "sources": {}}
-        for name, loader, residues, target, keep in sources:
+        for name, loader, residues, target, keep in all_sources:
+            if sources and name not in sources:
+                continue
             if per_family is not None:
                 target = per_family
             cfg, gen = (_plate(loader[1]) if loader[0] == "plate"
                         else _curved(loader[1]))
             emitted, attempts, t0 = 0, 0, time.time()
-            for seed in _seeds(residues, stride):
+            for seed in _seeds(residues, stride, base_seed):
                 if emitted >= target or attempts >= ATTEMPT_CAP * target:
                     break
                 attempts += 1
@@ -144,8 +154,43 @@ def build(out_root: Path, quiet: bool, per_family: int | None = None) -> dict:
                 print(f"WARNING: {jt}/{name} short: {emitted}/{target}", flush=True)
         index.close()
         manifest["classes"][jt] = cls_manifest
-    (out_root / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    if index_name == "index.jsonl":
+        (out_root / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    else:   # one part per (class, source) - three plate classes all have a source called "line"
+        tag = "_".join(list(manifest["classes"]) + [index_name[len("index_"):-len(".jsonl")]])
+        (out_root / f"manifest_{tag}.json").write_text(json.dumps(manifest, indent=2))
     return manifest
+
+
+def merge_indexes(out_root: Path) -> None:
+    """Merge per-source `index_<source>.jsonl` / `manifest_<source>.json` parts into the
+    standard `index.jsonl` (seed-sorted) and `manifest.json`."""
+    manifest = {"base_seed": None, "per_family": None, "classes": {}}
+    for mpart in sorted(out_root.glob("manifest_*.json")):
+        m = json.loads(mpart.read_text())
+        manifest["base_seed"], manifest["per_family"] = m["base_seed"], m["per_family"]
+        for jt, cm in m["classes"].items():
+            manifest["classes"].setdefault(jt, {"stride": cm["stride"], "sources": {}})["sources"].update(cm["sources"])
+    for class_dir in sorted(p for p in out_root.iterdir() if p.is_dir()):
+        parts = sorted(class_dir.glob("index_*.jsonl"))
+        if not parts:
+            continue
+        rows = [json.loads(l) for f in parts for l in open(f) if l.strip()]
+        # a class whose manifest part was lost (pre-fix naming clash) is reconstructed from its index
+        jt = class_dir.name
+        cm = manifest["classes"].setdefault(jt, {"stride": sum(len(r) for _, _, r, _, _ in STRATA[jt]), "sources": {}})
+        for name, loader, residues, target, _ in STRATA[jt]:
+            srows = [r for r in rows if r["source"] == name]
+            if srows and name not in cm["sources"]:
+                cm["sources"][name] = {"config": list(loader), "residues": residues,
+                                       "target": manifest["per_family"] or target,
+                                       "emitted": sum(1 for r in srows if r.get("emitted")), "attempts": len(srows),
+                                       "seconds": None, "reconstructed_from_index": True}
+        rows.sort(key=lambda r: r["seed"])
+        with open(class_dir / "index.jsonl", "w") as fh:
+            for r in rows:
+                fh.write(json.dumps(r) + "\n")
+    (out_root / "manifest.json").write_text(json.dumps(manifest, indent=2))
 
 
 def main():
@@ -154,12 +199,23 @@ def main():
     ap.add_argument("--per-family", type=int, default=None,
                     help="override every source's target to N (Phase 4 run corpus)")
     ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--base-seed", type=int, default=BASE_SEED,
+                    help="a DIFFERENT base seed keeps a training corpus disjoint from the benchmark (M6: 3000000)")
+    ap.add_argument("--classes", default=None, help="comma list of joint types to build (default all)")
+    ap.add_argument("--sources", default=None, help="comma list of source names to build (default all); writes index_<name>.jsonl")
+    ap.add_argument("--merge", action="store_true", help="merge per-source index/manifest parts in --out and exit")
     args = ap.parse_args()
     out_root = Path(args.out)
-    if out_root.exists() and any(out_root.iterdir()):
+    if args.merge:
+        merge_indexes(out_root); print("merged:", out_root); return 0
+    classes = args.classes.split(",") if args.classes else None
+    sources = args.sources.split(",") if args.sources else None
+    index_name = "index.jsonl" if not sources else f"index_{'_'.join(sources)}.jsonl"
+    if out_root.exists() and any(out_root.iterdir()) and not (classes or sources):
         print(f"{out_root} exists and is not empty - refusing to mix corpora")
         return 1
-    build(out_root, args.quiet, per_family=args.per_family)
+    build(out_root, args.quiet, per_family=args.per_family, base_seed=args.base_seed,
+          classes=classes, sources=sources, index_name=index_name)
     print("done:", out_root)
     return 0
 

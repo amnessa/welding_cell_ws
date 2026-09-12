@@ -226,3 +226,17 @@ def test_hdr_reader_round_trips_and_the_dome_rule_normalises_mean_luminance(tmp_
     ib = dome_intensity_for({"kind": "hdri", "name": "b", "exposure": 1.0}, lit, by)
     assert np.isclose(ia, 450.0) and np.isclose(ib, 225.0) and np.isclose(ia * 0.5, ib)
     assert dome_intensity_for({"kind": "panorama", "exposure": 1.2}, lit, by) == 1080.0
+
+
+def test_render_hash_tolerates_an_undrawable_view():
+    e = {"view": 0, "hashed": {"depth": "a", "depth_valid": "b", "mask_seam": "c", "mask_tack": "d", "mask_object": "e"}}
+    u = {"view": 3, "view_kind": "undrawable", "attempts": 40}
+    assert render_hash([e, u], {}) != render_hash([e], {}) and render_hash([e, u], {}) == render_hash([e, u], {})
+
+
+def test_id_buffer_lookup_spans_declared_ids_not_only_visible_ones():
+    from weldgen.render.replicator import labels_from_ids
+    ids = np.array([[0, 1, 1], [3, 3, 0]], dtype=np.uint32)          # id 6 declared but absent from the frame
+    out = labels_from_ids(ids, {"1": "/World/part_A", "3": "/World/substrate", "6": "/World/part_B"},
+                          {"/World/part_A": 1, "/World/part_B": 2, "/World/substrate": LABEL_ENV})
+    assert out.tolist() == [[0, 1, 1], [LABEL_ENV, LABEL_ENV, 0]]
