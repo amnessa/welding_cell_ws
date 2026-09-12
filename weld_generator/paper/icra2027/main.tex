@@ -1,0 +1,199 @@
+\documentclass[letterpaper, 10 pt, conference]{ieeeconf}
+\IEEEoverridecommandlockouts
+\overrideIEEEmargins
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath,amssymb}
+\usepackage{url}
+\usepackage{xcolor}
+\usepackage[hidelinks]{hyperref}
+\usepackage{cite}
+\usepackage{placeins}
+\graphicspath{{figures/}}
+\input{tables/numbers.tex}
+\newcommand{\M}[1]{M#1}
+\newcommand{\mm}{\,mm}
+
+\title{\LARGE \bf
+Exact Ground Truth for Weld-Seam Extraction:\\ A Constructed Benchmark and a Controlled Comparison of Seven Published Methods}
+
+\author{Anonymous Authors\thanks{Submitted to ICRA 2027. Author details are withheld for double-anonymous review.}}
+
+\begin{document}
+\maketitle
+\thispagestyle{empty}
+\pagestyle{empty}
+
+\begin{abstract}
+Vision systems for robotic welding report sub-millimetre seam-extraction accuracy, but that accuracy is measured against hand-taught paths or hand-clicked points in scans, on a handful of workpieces, with datasets that are rarely released. We present a benchmark in which the ground truth is \emph{constructed, never detected}: scenes of parts waiting to be welded are generated from the seam outward, so every seam is known analytically, every condition (joint type, curvature, groove, thickness, fixture, viewpoint, sensor noise) is a controlled dial, and one seed with one dial changed gives a bit-identical twin. On \nScenes{} scenes in \nStrata{} strata we reimplement seven published seam-extraction methods from their papers and measure, under equal conditions, which geometric mechanisms can express which joints. Three findings follow. The plane-intersection mechanism that dominates the literature scores zero on every curved family. The unpublished segmentation stage each paper depends on accounts for most of every method's score; the quadric-intersection method falls from \quadricLzero{} to \quadricLone{} median F1 when it is withheld. And the hand-annotation protocol the field scores against has a floor of \annMedian{}\mm{} median lateral error on our scenes, \annRatio$\times$ the accuracy those papers report against such labels. The generator, the corpus, the reimplementations and the evaluation harness are released.
+\end{abstract}
+
+\section{Introduction}
+
+A welding robot needs the three-dimensional curve along which two parts meet, the \emph{seam}, to plan its torch path. Vision systems recover it from a point cloud captured by a wrist camera, a laser line scanner or a multi-view scan, and a growing literature reports sub-millimetre accuracy for this task~\cite{yi2026seam,wang2024ppf,zhang2025lobb,fang2024model}. Three things are wrong with how that accuracy is measured, and this paper addresses each.
+
+\textbf{The ground truth is not exact.} Published methods are scored against a hand-taught path or hand-clicked points in a scan. One recent method~\cite{yi2026seam} states its own truth's error budget at about $0.5\mm$ and then reports $0.64\mm$ RMSE against it. We measured the same annotation protocol with an independent, briefed annotator on scenes whose seams are known exactly and found a median lateral error of \annMedian\mm{} (Sec.~\ref{sec:annotation}). A reported $0.6\mm$ against such labels is a statement about the labels.
+
+\textbf{The conditions are not varied.} Each paper evaluates on its own workpieces, one sensor, one fixture, and almost always straight seams. Nobody reports what happens on a curved seam, with the fixture in view, at twice the sensor noise, or under a different random seed, because their truth is fixed to their scans.
+
+\textbf{The data are not available.} ``Available on reasonable request'' is the norm. A benchmark that others cannot download is not a benchmark.
+
+Our answer is one rule: \emph{ground truth is constructed, never detected}. The generator samples a joint (type, thicknesses, root gap, misalignment, included angle, preparation), places the parts by closed-form transforms, and the seam is the intersection of the parts' surfaces computed algebraically from the same transforms. There is no annotator, no estimator and no ``consistency'' anywhere in the label path. Everything else follows from the rule: what is stored, what is a versioned convention, and what is a gate.
+
+The contributions are (i) the benchmark: \nScenes{} scenes in \nStrata{} strata spanning five joint types and six curved seam families, with per-point visibility and reachability flags, a derived stereo sensor model, fixture twins and anti-shortcut gates (Sec.~\ref{sec:benchmark}); (ii) faithful reimplementations of seven published seam-extraction methods, each with its unpublished coarse stage replaced by an oracle from truth so that its geometric mechanism can be measured alone (Sec.~\ref{sec:methods}); (iii) the comparison itself (Sec.~\ref{sec:results}), whose headline is that the dominant mechanism cannot express curvature and that the segmentation stage papers do not release is most of what they report; and (iv) a measurement of the hand-annotation floor of the field's evaluation protocol (Sec.~\ref{sec:annotation}).
+
+\section{Related work}\label{sec:related}
+
+\textbf{Seam extraction from point clouds.} We group published methods by the geometric mechanism that produces the seam, because that is what the benchmark measures. \emph{Plane intersection}: fit planes to the workpiece faces (RANSAC~\cite{fischler1981ransac} in~\cite{yi2026seam}, point-pair-feature voting~\cite{drost2010ppf} in~\cite{wang2024ppf}) and intersect them pairwise. \emph{Crease detection}: find points where a local descriptor changes, then chain them; the local bounding-box flatness of~\cite{zhang2025lobb,zhang2025lobbtase} and the curvature-seeded region growing of~\cite{wei2024coarse}. \emph{Slicing}: cut the cloud into slices, take a geometric centre per slice, fit a spline~\cite{wang2026pipe}. \emph{Model registration}: register a CAD-like model to the scan and transfer the seam from the model~\cite{fang2024model}. \emph{Quadric intersection}: fit quadric surfaces to segmented faces and intersect them~\cite{li2026impeller}. Every one of these papers relies on a learned segmentation or detection stage in front of the geometry (a PointNet++, FastSAM, K-Net, Faster R-CNN, YOLO or DeepLab), trained on data that is not released.
+
+\textbf{Learned seam detectors and datasets.} Voxel and point networks detect seams directly~\cite{wang2024weldnet,song2025lwsnet,zhu2025sanet}, and active-perception work chooses where to look~\cite{tao2026paear}; all are trained and evaluated on scans with hand-made labels, and report label \emph{consistency} rather than accuracy. Synthetic data with exact labels is the standard remedy in other perception domains~\cite{tobin2017domain}, and the value of a shared benchmark with fixed metrics is established~\cite{geiger2012kitti}; to our knowledge no such benchmark exists for weld seams.
+
+\section{The benchmark}\label{sec:benchmark}
+
+\subsection{Constructed truth}
+A scene is a set of parametric parts (plates, prisms, prepared plates with ISO~9692-1 grooves~\cite{iso9692}, tubes with planar or saddle cuts, and swept bands along curves) placed by rigid transforms, and its seams are the analytic intersection curves of their surfaces. For plates the seam is the intersection line of two face planes; for a tube on a plate it is an ellipse from the plane--cylinder intersection; for a tube on a tube a saddle curve; for a swept band an offset of its spine. All are evaluated in closed form and stored as dense polylines ($0.1\mm$ spacing) together with the seam tangent, the two face normals, the local dihedral angle and the torch approach direction. Joint parameters follow the standards: thickness and misalignment ranges from ISO~5817 quality levels~\cite{iso5817}, root gaps scaling with thickness per ISO~9692-1, and the joint taxonomy of ISO~17659~\cite{iso17659}, including the distinction between a T~joint and an angle joint that most of the literature elides.
+
+A root gap makes ``the seam'' ambiguous: the face-plane intersection, the root line and the gap midline are three different curves. We store all three and score against the nominal one, and Sec.~\ref{sec:annotation} shows that human annotators click a different one depending on the joint type.
+
+\subsection{What a camera returns}
+A cloud is sampled uniformly by area on every surface, then flagged twice. \texttt{visible\_from\_cam} is geometric visibility from the stored camera: in the frustum, beyond the sensor's blind zone, facing the camera and unoccluded by an exact ray cast against the parts. \texttt{exterior} is reachability by a perfect multi-view scan, from a 30-direction ray scan. Sensor dropout is deliberately not in either flag: a derived stereo noise model~\cite{katz2007hpr} (axial $\sigma_z = s\,z^2/(f\,b)$ from a profile's baseline $b$, focal length $f$ and subpixel precision $s$, plus lateral blur and grazing-incidence dropout) is applied at evaluation time from stored parameters, so that noise is a citable convention rather than a baked artefact and can be scaled as an experimental axis. Three sensor profiles ship; the camera is sampled on a spherical shell whose elevation range deliberately includes views in which a standing plate occludes its own seam.
+
+\subsection{Rules, gates and twins}
+Two more labels are \emph{rules} rather than truth, versioned and re-runnable: the \emph{most probable seam} a coarse-positioned torch is at (argmax of visible arclength over weldable seams) and a tack-placement schedule (spacing and length as functions of the thinner plate, from shop practice). Two corpus-level gates guard against shortcuts: no seam may run parallel to a free plate edge more often than a stated prior allows (outlines are drawn so that the seam-bearing edge is the only axis-aligned one), and the tessellated render meshes must stay within $0.25\mm$ chord error of the analytic surfaces. Every scene has a \emph{twin key}: the hash of the geometry-determining part of its random state, so that a fixture-present twin, a different sensor profile, or a rendered version of the same scene shares bit-identical workpiece geometry and seam truth. The corpus is a pure function of its configuration and seeds; regenerating it reproduces every content hash.
+
+\subsection{Strata, tasks and metrics}
+The benchmark corpus has \nScenes{} scenes, 60 per stratum, in \nStrata{} strata: T~joints with a line, a pipe (circle), an obliquely cut pipe (ellipse), a pipe on a pipe (saddle), a rectangular tube (rounded rectangle) and a swept stiffener; corner, lap and edge joints; and square, grooved and arc-shaped butt joints (Fig.~\ref{fig:gallery}). \emph{Task~1} recovers every weldable seam from a perfect multi-view exterior scan; \emph{Task~2} names the most probable seam from a single view. Predicted and true polylines are densified and matched at a $3\mm$ tolerance, giving precision, recall and F1; we also report the literature's own matched-path RMSE. Every method with a random component is run over \nRansacSeeds{} seeds per scene and reported as the per-scene median; the deterministic methods show exactly zero spread.
+
+\begin{figure}[t]
+\centering\includegraphics[width=\columnwidth]{fig_gallery.pdf}
+\caption{The twelve strata, one scene each: tier-1 clouds (grey and tan: the two parts) with the constructed seams (red: seams of the joint's own class; orange: other weldable seams).}
+\label{fig:gallery}
+\end{figure}
+
+\subsection{Tiers}
+Tier~1, used for every result in this paper, is analytic: geometry, ray-cast visibility and the noise model, with no renderer, no simulator and no GPU, because a generator that needs a specific simulator is as inaccessible as the data it criticises. Tier~2 renders the same scenes (RGB, depth, validity, seam, tack and object masks) with published material reflectances, CC0 surface sets and workshop HDRIs, paired to tier~1 by seed and gated so that the rendered clean depth back-projects onto the exact surfaces within $0.25\mm$; a 3600-scene training corpus with ten views per scene is being rendered as this paper is written (Fig.~\ref{fig:renders}) and is not evaluated here. The twin gate is worth stating because of what it found: comparing the renderer's exact depth with tier~1's visibility flags exposed a sampling shortcut in our own analytic ray test that had marked up to a third of the points behind a thin tube wall as visible, and then an exit-crossing error in its replacement. Both were corrected and the corpus regenerated before any number in this paper was computed; an exact renderer is a second, independent implementation of the same truth, and disagreement between two exact implementations is how such errors surface.
+
+\begin{figure*}[!t]
+\centering\includegraphics[width=\textwidth]{fig_renders.pdf}
+\caption{Tier 2, in progress: rendered views of the same benchmark, with the constructed seam (green) and tack (red) masks. Not used in the results below.}
+\label{fig:renders}
+\end{figure*}
+
+\section{Seven methods, reimplemented}\label{sec:methods}
+
+Each method was reimplemented from its paper, tested against known geometry, and run through the same harness. Table~\ref{tab:methods} lists them with the mechanism and the unpublished coarse stage each depends on. That stage is replaced by an \emph{oracle} from truth of exactly the kind the paper's network would produce: a weld-region band for \M1, per-surface masks for \M2, per-component masks for \M3, a weld-box crop for \M4, per-instance masks for \M5, and the welding-surface labels for \M7; \M6 receives the model itself and is constitutively at the top of the ladder. The oracles are not interchangeable, and supplying the same one to every method would flatter some and starve others; we measured that a seam band has all of its points within $20\mm$ of a seam while a surface-derived crop of the same scene has $31\%$, since a plate has six faces and every rim is a surface junction.
+
+Where a paper reports its own numbers, the reimplementation reproduces them: \M1 gives $0.60\mm$ RMSE and $0.81\mm$ mean error on a T joint at the paper's point spacing with its weld region supplied, against reported maxima of $0.64$ and $1.16\mm$, and exactly zero error without noise and with its refit disabled, which is the real check (three exact points give an exact plane, two exact planes an exact line); \M3 gives a median $0.51\mm$ RMSE on corner joints against a reported $<0.7\mm$. Two of \M1's equations are unusable as printed (an iteration budget that reads as $10^{10}$ samples, a plane refit from two points), and were implemented as the text intends. The first author of \M3 confirmed the implementation choices in writing; correspondence with the authors of \M7 is pending.
+
+\begin{table*}[t]
+\caption{The seven methods, their mechanism, and the unpublished stage each depends on.}
+\label{tab:methods}
+\centering\footnotesize
+\begin{tabular}{@{}llll@{}}
+\toprule
+ & method & mechanism & coarse stage (oracle) \\
+\midrule
+\M1 & \cite{yi2026seam} & multi-plane RANSAC, pairwise intersection & weld-region segmentation \\
+\M2 & \cite{wei2024coarse} & curvature-seeded region growing, edge points & per-surface masks \\
+\M3 & \cite{zhang2025lobb} & bounding-box flatness, K-means, polynomial fit & per-component masks \\
+\M4 & \cite{wang2024ppf} & PPF coplanarity, orthogonal-pair voting & weld-box crop \\
+\M5 & \cite{wang2026pipe} & PCA-adaptive slicing, per-slice centres, B-spline & per-instance masks \\
+\M6 & \cite{fang2024model} & CPD registration~\cite{myronenko2010cpd} of a model; seam transferred & the model \\
+\M7 & \cite{li2026impeller} & quadric fits, surface intersection & welding-surface labels \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\section{Results}\label{sec:results}
+
+\subsection{Which mechanisms express which joints}
+Fig.~\ref{fig:coverage}(a) is the benchmark's headline: median F1 per stratum and method under the perfect multi-view scan. Read the rows: a method's profile across families is its mechanism's signature.
+
+\emph{The plane-intersection collapse is total.} \M1 holds \ransacTline{} on straight T seams and zero on every curved family and both curved butt strata; \M4 degrades more gracefully on curved fillets, since a ring or a saddle is locally a plane pair for short runs, and dies on butts. There is no partial credit at the first non-planar member.
+
+\emph{One mechanism survives curvature and one is exact under it.} \M3's crease detector is the only method with a non-zero median on every stratum except the grooved butt, at roughly half the accuracy of the leader; \M7, the only quadric surface model, is exact wherever its welding surfaces are given (rings and saddles at $0.01\mm$) and is the best method on nine of twelve strata.
+
+\emph{Grooved butts defeat six of seven methods} (median F1 $\leq$ \groovedMax); the finding survived rebuilding that stratum with decorrelated outlines, so it is the groove, not the rectangle. Table~\ref{tab:sc} gives the straight-to-curved gap per method.
+
+\begin{figure*}[t]
+\centering\includegraphics[width=\textwidth]{fig_coverage.pdf}
+\caption{Median F1 at $3\mm$ per stratum and method: (a) Task 1, every weldable seam from a perfect exterior scan; (b) the same methods on what one camera returns. \M6 registers plate assemblies only.}
+\label{fig:coverage}
+\end{figure*}
+
+\begin{table}[t]
+\caption{Straight-to-curved gap: median F1 on the straight T seam vs.\ the mean over the five curved T families (Task 1).}
+\label{tab:sc}
+\centering\footnotesize\setlength{\tabcolsep}{4pt}
+\input{tables/straight_curved.tex}
+\end{table}
+
+\subsection{The oracle ladder}
+Fig.~\ref{fig:ladder} withholds each paper's coarse stage and changes nothing else. The pooled median F1 of \M7 falls from \quadricLzero{} to \quadricLone{}, of \M3 from \lobbLzero{} to \lobbLone{}. Two methods that share nothing but that one input fail by the same factor without it, which makes the honest framing a \emph{ladder every method sits on} rather than a weakness of one. \M4 has one more rung: with the generator's exact normals in place of estimated ones its butt and edge scores rise by about $0.5$, so its mechanism is sound and the normal estimate on a thin coplanar pair is what fails.
+
+\begin{figure*}[t]
+\centering\includegraphics[width=\textwidth]{fig_ladder.pdf}
+\caption{The oracle ladder: median F1 per joint type (a) with each paper's own coarse stage supplied as an oracle and (b) with it withheld. \M6 is constitutively at the top of the ladder and is omitted.}
+\label{fig:ladder}
+\end{figure*}
+
+\subsection{Sensor noise}
+Fig.~\ref{fig:noise} scales the derived stereo noise on the single view: clean, the profile's own $\sigma$, and twice it. \M7 is essentially noise-immune (\noiseQuadricClean{} $\to$ \noiseQuadricTwo{} pooled), \M3 degrades, and the plane-intersection methods go to zero at the first noise step.
+
+\begin{figure*}[t]
+\centering\includegraphics[width=\textwidth]{fig_noise.pdf}
+\caption{Median F1 on the single view against the derived stereo noise, per sensor profile. The two leaders are drawn in colour.}
+\label{fig:noise}
+\end{figure*}
+
+\subsection{Task 2, the fixture, repeatability and cost}
+Table~\ref{tab:task2} scores the most-probable-seam task: whether the named seam received a prediction, and the matched path error. Two methods sit at $100\%$ selection for a reason that is not skill (\M5 receives one mask per seam instance, \M6 transfers every seam from the model); their localisation is the number to read. \M7 localises the named seam within $\taskTwoQuadricRmseMax\mm$ on every class.
+
+The fixture twins (Table~\ref{tab:fixture}) show where a clamping plate in view lands: not on the plane methods, whose band oracle shields them, but on the crease detector and the slicer, which read the fixture-contact lines as seams (\M3 adds a median of \fixtureLobbExtra{} phantom seams), and on \M7, which reads the fixture as a part. Repeatability is measurable here and not reported in the field: a single-draw \M1 number is not a measurement, since on a sizeable share of scenes the same cloud gives F1 anywhere from failure to success depending on the RANSAC seed alone. Per-scene median runtimes (Table~\ref{tab:cost}) show every method well under $4$\,s.
+
+\begin{table*}[t]
+\caption{Task 2: selection rate of the most probable seam and median RMSE (mm) on the matched seam, per joint type.}
+\label{tab:task2}
+\centering\scriptsize
+\input{tables/task2.tex}
+\end{table*}
+
+\begin{table}[t]
+\caption{The fixture price: paired twins with and without the clamping plate in view (medians over pairs).}
+\label{tab:fixture}
+\centering\footnotesize
+\input{tables/fixture.tex}
+\end{table}
+
+\begin{table}[t]
+\caption{Median seconds per scene, with (L0) and without (L1) the oracle.}
+\label{tab:cost}
+\centering\footnotesize
+\input{tables/cost.tex}
+\end{table}
+
+\section{The annotation floor}\label{sec:annotation}
+
+Twenty scenes, four per joint type, were exported as clouds and hand-labelled in CloudCompare by an independent annotator who was briefed with the protocol of the annotation-based literature and did not know the truth. Scored against the exact seams (Fig.~\ref{fig:annotation}): the median lateral RMSE is \annMedian\mm{} with a 95th percentile of \annPninetyfive\mm; endpoint error is worse still (\annEnd\mm{} median); \annMiss{} of the seams were missed and the flush stack of an edge joint invited marking every visible edge. The lap joint is catastrophic for a human as well (\annLap\mm{} median): the plate edge is picked instead of the toe, the same class that every method above struggles with. Which of the three candidate curves the annotator clicked depends on the joint type exactly as the physical crease predicts: the gap midline on a butt, the root on a fillet. The author's own pass, excluded from the measurement, was worse (\annOwner\mm), which supports the exclusion rule rather than undermining it. A sub-millimetre accuracy measured against labels with \annMedian\mm{} of noise is below its own label noise.
+
+\begin{figure}[t]
+\centering\includegraphics[width=\columnwidth]{fig_annotation.pdf}
+\caption{Lateral RMSE of hand labels against exact seams, per joint type (briefed annotator, 20 scenes), against the accuracy the annotation-based literature reports.}
+\label{fig:annotation}
+\end{figure}
+
+\section{Discussion and limitations}
+
+\textbf{What the comparison says.} Two findings are structural. The plane-intersection mechanism cannot express curvature, and most of the field's reported accuracy is the accuracy of a segmentation stage that is not released. The improvement with the highest ceiling is therefore not a new geometric primitive but a welding-surface segmentation that feeds a quadric intersection, and the benchmark makes that claim testable rather than rhetorical. The second structural finding is about evaluation: the protocol the field scores against has a $1.4\mm$ floor, and our exact truth is what makes the floor measurable at all.
+
+\textbf{Limitations.} The benchmark is synthetic, and the numbers above are tier-1 numbers. Three answers, stated before a reviewer states them: the tiered design exists precisely because a physical dataset cannot vary these conditions, and the rendered tier and a scanned real subset with known part poses are the next two steps of the same schema; the reimplementations are documented readings with tests and, for one method, the first author's written endorsement, but they are reimplementations; and the most-probable-seam label is a geometric proxy, a stated convention, not a statement about the load-bearing seam. Our own seam extractor is deliberately not among the seven; the contribution is the dataset and the comparison.
+
+\section{Conclusion}
+A benchmark whose truth is constructed rather than detected turns three questions the field could not ask into measurements: which mechanisms express which joints, what the unpublished segmentation stage is worth, and how accurate the labels are that published accuracies are measured against. The generator, corpus, reimplementations, harness and results notebook are released with this paper.
+
+\section*{Acknowledgment}
+Generative AI (Anthropic Claude, via Claude Code) was used to draft the text of every section from the project's own documentation and results, to write the figure-generation and evaluation code, and to edit the manuscript; every number, figure and claim was produced by the released code from the released data and checked by the authors.
+
+\bibliographystyle{ieeetr}
+\bibliography{refs}
+\end{document}

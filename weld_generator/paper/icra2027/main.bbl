@@ -1,0 +1,112 @@
+\begin{thebibliography}{10}
+
+\bibitem{yi2026seam}
+J.~Yi, X.~Kong, H.~Tang, J.~Zhang, Z.~Chen, and L.~Deng, ``Weld seam extraction
+  and path generation for robotic welding of steel structures based on {3D}
+  vision,'' {\em Automation in Construction}, vol.~183, p.~106792, 2026.
+
+\bibitem{wang2024ppf}
+S.~Wang, Z.~Li, G.~Chen, and Y.~Yue, ``Weld seam object detection system based
+  on the fusion of {2D} images and {3D} point clouds using interpretable neural
+  networks,'' {\em Scientific Reports}, vol.~14, p.~21137, 2024.
+
+\bibitem{zhang2025lobb}
+Y.~Zhang, Y.~Geng, X.~Tian, Y.~Sun, and X.~Xu, ``A novel weld seam extraction
+  method with semantic segmentation and point cloud feature for irregular
+  structure workpieces,'' {\em Robotics and Computer-Integrated Manufacturing},
+  vol.~95, p.~102987, 2025.
+
+\bibitem{fang2024model}
+W.~Fang and X.~Tian, ``A novel model-based welding trajectory planning method
+  for identical structural workpieces,'' {\em Robotics and Computer-Integrated
+  Manufacturing}, vol.~89, p.~102772, 2024.
+
+\bibitem{fischler1981ransac}
+M.~A. Fischler and R.~C. Bolles, ``Random sample consensus: a paradigm for
+  model fitting with applications to image analysis and automated
+  cartography,'' {\em Communications of the ACM}, vol.~24, no.~6, pp.~381--395,
+  1981.
+
+\bibitem{drost2010ppf}
+B.~Drost, M.~Ulrich, N.~Navab, and S.~Ilic, ``Model globally, match locally:
+  efficient and robust {3D} object recognition,'' in {\em IEEE Conf. Computer
+  Vision and Pattern Recognition (CVPR)}, pp.~998--1005, 2010.
+
+\bibitem{zhang2025lobbtase}
+Y.~Zhang, Y.~Geng, X.~Tian, F.~Zheng, Y.~Jiang, and M.~Lai, ``A feature
+  extraction approach over workpiece point clouds for robotic welding,'' {\em
+  IEEE Transactions on Automation Science and Engineering}, vol.~22,
+  pp.~75--84, 2025.
+
+\bibitem{wei2024coarse}
+P.~Wei, S.~Cheng, D.~Li, R.~Song, Y.~Zhang, and W.~Zhang, ``Coarse-to-fine
+  detection of multiple seams for robotic welding,'' {\em arXiv preprint
+  arXiv:2408.10710}, 2024.
+
+\bibitem{wang2026pipe}
+T.~Wang, Y.~Liang, X.~Liu, and Z.~Wang, ``{3D} vision-based intersecting pipe
+  welding path planning,'' {\em Welding in the World}, 2026.
+\newblock doi:10.1007/s40194-026-02509-9.
+
+\bibitem{li2026impeller}
+D.~Li, Y.~Wang, and Z.~Wang, ``Automatic recognition on impeller shape and weld
+  seam based on normal of point clouds and {PCA},'' {\em Journal of Mechanical
+  Science and Technology}, vol.~40, no.~3, pp.~2039--2046, 2026.
+
+\bibitem{wang2024weldnet}
+H.~Wang, Y.~Rong, J.~Xu, S.~Xiang, and Y.~Peng, ``{WeldNet}: a voxel-based deep
+  learning network for point cloud annular weld seam detection,'' {\em Science
+  China Technological Sciences}, 2024.
+
+\bibitem{song2025lwsnet}
+L.~Song, H.~Wang, Y.~Zhang, Z.~Qiao, and F.~Han, ``{LWSNet}: a lightweight
+  network for automated welding point cloud segmentation,'' {\em Measurement},
+  vol.~243, p.~116290, 2025.
+
+\bibitem{zhu2025sanet}
+Z.~Zhu, H.~Gu, Z.~Yang, L.~Zhao, G.~Song, and Q.~Wang, ``{SANet}: a pure vision
+  strip-aware network with {PSSCA} and multistage fusion for weld seam
+  detection,'' {\em Applied Sciences}, vol.~15, p.~11296, 2025.
+
+\bibitem{tao2026paear}
+Y.~Tao, D.~Tan, F.~Ren, P.~Zheng, J.~Leng, Y.~Liu, W.~Wang, H.~Wei, and
+  L.~Wang, ``{PAEAR}: point clouds area exploration and active recognition
+  method driven by reinforcement learning for robotic welding,'' {\em Robotics
+  and Computer-Integrated Manufacturing}, vol.~102, p.~103340, 2026.
+
+\bibitem{tobin2017domain}
+J.~Tobin, R.~Fong, A.~Ray, J.~Schneider, W.~Zaremba, and P.~Abbeel, ``Domain
+  randomization for transferring deep neural networks from simulation to the
+  real world,'' in {\em IEEE/RSJ Int. Conf. Intelligent Robots and Systems
+  (IROS)}, pp.~23--30, 2017.
+
+\bibitem{geiger2012kitti}
+A.~Geiger, P.~Lenz, and R.~Urtasun, ``Are we ready for autonomous driving? {The
+  KITTI} vision benchmark suite,'' in {\em IEEE Conf. Computer Vision and
+  Pattern Recognition (CVPR)}, pp.~3354--3361, 2012.
+
+\bibitem{iso9692}
+{ISO}, ``{ISO 9692-1:2013} welding and allied processes -- types of joint
+  preparation -- part 1: Manual metal arc welding, gas-shielded metal arc
+  welding, gas welding, {TIG} welding and beam welding of steels.''
+  International Organization for Standardization, 2013.
+
+\bibitem{iso5817}
+{ISO}, ``{ISO 5817:2023} welding -- fusion-welded joints in steel, nickel,
+  titanium and their alloys (beam welding excluded) -- quality levels for
+  imperfections.'' International Organization for Standardization, 2023.
+
+\bibitem{iso17659}
+{ISO}, ``{ISO 17659:2004} welding -- multilingual terms for welded joints with
+  illustrations.'' International Organization for Standardization, 2004.
+
+\bibitem{katz2007hpr}
+S.~Katz, A.~Tal, and R.~Basri, ``Direct visibility of point sets,'' {\em ACM
+  Transactions on Graphics}, vol.~26, no.~3, p.~24, 2007.
+
+\bibitem{myronenko2010cpd}
+A.~Myronenko and X.~Song, ``Point set registration: coherent point drift,''
+  {\em IEEE Transactions on Pattern Analysis and Machine Intelligence},
+  vol.~32, no.~12, pp.~2262--2275, 2010.
+
+\end{thebibliography}

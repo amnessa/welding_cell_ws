@@ -446,6 +446,34 @@ rgb / depth / id buffers do not depend on visibility; masks are rebuilt by
 `scripts/tier2_remask.py` and gates by `scripts/tier2_regate.py`; replaced scene ids are
 re-rendered with `--resume`.
 
+**Second rebuild landed and swapped (2026-09-12 15:30):** `bench_phase4` is now the entry-only
+corpus; the intermediate one is `bench_phase4_visfix1`, the laptop-era one `bench_phase4_pre_visfix`.
+Against visfix1: every plate stratum **byte-identical** (60/60 hashes — the earlier plate re-hash
+was indeed only the numpy version); tube strata changed `visible_from_cam` by 0,03–0,7 % on
+average (max 8,3 % on a circle scene), `exterior` by ≤ 0,34 %; three ids replaced (one each
+in ellipse, saddle, rounded_rect). `facts.csv` regenerated; gate report
+`gate_report_2026-09-12.txt`. Phase 4 chain restarted at priority: 379 ids of the six strata
+from both earlier corpora retired → `--append-missing` → fixture chunks.
+**Twin gate on the final benchmark, one scene per stratum: 12/12 PASS** with coverage
+agreement ≥ 0,995, recall ≥ 0,986, precision ≥ 0,987, object ids 1,000 on every stratum
+(`out/pilot_2026-09-11/gate_final_12strata.json`) — tier 1 and the renderer now agree on
+visibility to within a percent everywhere, including the tube bores.
+
+### 1.3 ICRA 2027 paper (started 2026-09-12; deadline 15 Sep 23:59 PST)
+
+`paper/icra2027/`: `main.tex` (ieeeconf, double-anonymous), `refs.bib`, `make_figures.py`
+(every figure, table and headline macro from `phase4_batch.csv.gz` + `facts.csv` +
+`annotation_scores.csv` → `figures/*.pdf`, `tables/*.tex`, `tables/numbers.tex`),
+`make_gallery.py` (Fig. 1 tier-1 gallery, Fig. 2 tier-2 render strip). Build:
+`.venv/bin/python paper/icra2027/make_figures.py && python make_gallery.py && cd paper/icra2027 &&
+pdflatex main && bibtex main && pdflatex main && pdflatex main`. Rules from the CFP: 8 pages
+*including* references; PDF, ICRA two-column; ≥ 3 keywords (Computer Vision for
+Manufacturing, Industrial Robots, Range Sensing, Object detection/segmentation); AI-generated
+content must be disclosed in the acknowledgment naming the system and the sections (done);
+PaperPlaza. Framing: benchmark + findings (constructed truth; seven reimplemented methods;
+the plane-intersection collapse, the oracle ladder, the 1,4 mm annotation floor). The curved
+strata's macros are NaN until the Phase 4 re-run lands — re-run `make_figures.py` then.
+
 ## 2. Decisions Phase 8 forces (record in `dataset_plan.md` §10 as they close)
 
 - [x] **Depth encoding.** SCHEMA.md §3.1 says `depth.png (uint16, mm)`. A 1 mm quantum is
