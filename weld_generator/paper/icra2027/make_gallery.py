@@ -19,18 +19,18 @@ def first_scene(corpus, cls, src, k=0):
     ids = [json.loads(l)["scene_id"] for l in open(ROOT / f"out/{corpus}/{cls}/index.jsonl") if json.loads(l).get("emitted") and json.loads(l)["source"] == src]
     return ROOT / f"out/{corpus}/{cls}/{ids[k]}"
 plt.rcParams.update({"font.size": 7, "pdf.fonttype": 42})
-fig, axes = plt.subplots(2, 6, figsize=(7.1, 2.75), subplot_kw={"projection": "3d"}, gridspec_kw={"wspace": 0.02, "hspace": 0.02})
+fig, axes = plt.subplots(4, 3, figsize=(3.45, 4.15), subplot_kw={"projection": "3d"}, gridspec_kw={"wspace": 0.0, "hspace": 0.0})
 for ax, (cls, src) in zip(axes.ravel(), ORDER):
     sd = first_scene("bench_phase4", cls, src, 1 if src == "line" else 0)
     scene = json.loads((sd / "scene.json").read_text()); c = np.load(sd / "cloud.npz"); s = np.load(sd / "seams.npz")
-    xyz = c["xyz"]; sub = np.random.default_rng(0).choice(len(xyz), min(4000, len(xyz)), replace=False)
-    ax.scatter(xyz[sub, 0], xyz[sub, 1], xyz[sub, 2], s=0.18, c=np.where(c["object_id"][sub] == 0, "#aeb6c0", "#d6c7a6"), depthshade=False, linewidths=0, zorder=1)
+    xyz = c["xyz"]; sub = np.random.default_rng(0).choice(len(xyz), min(5000, len(xyz)), replace=False)
+    ax.scatter(xyz[sub, 0], xyz[sub, 1], xyz[sub, 2], s=0.3, c=np.where(c["object_id"][sub] == 0, "#aeb6c0", "#d6c7a6"), depthshade=False, linewidths=0, zorder=1)
     for sm in scene["seams"]:
         if sm["weldable"]:
             p = s[f"seam_{sm['id']}"]; ax.plot(p[:, 0], p[:, 1], p[:, 2], color="#d03b3b" if sm["matches_joint_type"] else "#eda100", linewidth=1.6, zorder=10)
     lo, hi = xyz.min(0), xyz.max(0); ctr, span = (lo + hi) / 2, (hi - lo).max() / 2
     ax.set_xlim(ctr[0] - span, ctr[0] + span); ax.set_ylim(ctr[1] - span, ctr[1] + span); ax.set_zlim(ctr[2] - span, ctr[2] + span)
-    ax.view_init(elev=32, azim=-55); ax.set_axis_off(); ax.set_title(LABEL[(cls, src)], fontsize=7, pad=-2)
+    ax.view_init(elev=32, azim=-55); ax.set_axis_off(); ax.set_title(LABEL[(cls, src)], fontsize=7, pad=-4)
 plt.savefig(FIG / "fig_gallery.pdf", bbox_inches="tight", pad_inches=0.02); plt.close()
 # tier-2 strip: view 0 rgb with the seam mask, for strata that have renders in train_v1
 tiles = []
@@ -52,8 +52,10 @@ for cls, src in ORDER:
     y0, y1 = max(cy - side // 2, 0), min(cy + side // 2, rgb.shape[0]); x0, x1 = max(cx - side // 2, 0), min(cx + side // 2, rgb.shape[1])
     tiles.append((LABEL[(cls, src)], np.array(Image.fromarray(ov[y0:y1, x0:x1].astype(np.uint8)).resize((220, 220)))))
 if tiles:
-    fig, axes = plt.subplots(1, len(tiles), figsize=(7.1, 7.1 / len(tiles) + 0.25), gridspec_kw={"wspace": 0.03})
-    for ax, (lab, im) in zip(np.atleast_1d(axes), tiles):
-        ax.imshow(im); ax.set_axis_off(); ax.set_title(lab, fontsize=6.5, pad=2)
+    tiles = tiles[:8]; ncol = 4; nrow = int(np.ceil(len(tiles) / ncol))
+    fig, axes = plt.subplots(nrow, ncol, figsize=(7.1, 1.85 * nrow + 0.2), gridspec_kw={"wspace": 0.03, "hspace": 0.18})
+    for ax in np.atleast_1d(axes).ravel(): ax.set_axis_off()
+    for ax, (lab, im) in zip(np.atleast_1d(axes).ravel(), tiles):
+        ax.imshow(im); ax.set_title(lab, fontsize=7, pad=2)
     plt.savefig(FIG / "fig_renders.pdf", bbox_inches="tight", pad_inches=0.02, dpi=200); plt.close()
 print("gallery written;", len(tiles), "render tiles")

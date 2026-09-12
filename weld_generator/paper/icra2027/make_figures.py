@@ -77,7 +77,7 @@ def cov_table(view, col="f1"):
     s = scene_level(cov[cov.condition == view], col)
     return s.pivot_table(index="stratum", columns="method", values=col, aggfunc="median").reindex(ORDER_STRATA)[METHODS]
 T_full, T_single = cov_table("full_exterior"), cov_table("single")
-fig, axes = plt.subplots(1, 2, figsize=(FULLW, 2.9), gridspec_kw={"wspace": 0.55})
+fig, axes = plt.subplots(1, 2, figsize=(FULLW, 2.7), gridspec_kw={"wspace": 0.55})
 heat(T_full, axes[0], cbar=False); axes[0].set_title("(a) Task 1: full exterior scan", loc="left")
 heat(T_single, axes[1], ylabels=[""] * 12, cbar_label="median F1 @ 3 mm"); axes[1].set_title("(b) single view", loc="left")
 plt.savefig(FIG / "fig_coverage.pdf", bbox_inches="tight"); plt.close()
@@ -102,7 +102,7 @@ lad = l0.merge(l1, on=["method", "stratum", "joint_type", "scene_id"])
 tbl = lad.groupby(["method", "joint_type"])[["L0", "L1"]].median().unstack("joint_type")
 LM = [m for m in METHODS if m != "lit-modelreg"]
 L0t, L1t = tbl["L0"][ORDER_JT].reindex(LM), tbl["L1"][ORDER_JT].reindex(LM)
-fig, axes = plt.subplots(1, 2, figsize=(FULLW, 2.2), gridspec_kw={"wspace": 0.35, "width_ratios": [1, 1]})
+fig, axes = plt.subplots(1, 2, figsize=(FULLW, 1.85), gridspec_kw={"wspace": 0.35, "width_ratios": [1, 1]})
 heat(L0t.T, axes[0], xlabels=[PAPERTAG[m] for m in LM], ylabels=ORDER_JT, cbar=False); axes[0].set_title("(a) L0: with the paper's own coarse stage (oracle)", loc="left")
 heat(L1t.T, axes[1], xlabels=[PAPERTAG[m] for m in LM], ylabels=ORDER_JT, cbar_label="median F1"); axes[1].set_title("(b) L1: coarse stage withheld", loc="left")
 plt.savefig(FIG / "fig_ladder.pdf", bbox_inches="tight"); plt.close()
@@ -114,7 +114,7 @@ num("quadricLzero", pooled0["lit-quadric"]); num("quadricLone", pooled1["lit-qua
 n0 = cov[cov.condition == "single"].assign(ns=0.0)
 nn = DF[DF.chunk.str.startswith("noise")].assign(ns=lambda d: d.noise_scale)
 N = pd.concat([n0, nn]); N = N[N.method != "lit-modelreg"]
-fig, axes = plt.subplots(1, 3, figsize=(FULLW, 1.9), sharey=True, gridspec_kw={"wspace": 0.12})
+fig, axes = plt.subplots(1, 3, figsize=(FULLW, 1.6), sharey=True, gridspec_kw={"wspace": 0.12})
 for ax, prof in zip(axes, ["d435i", "stereo_good", "stereo_poor"]):
     sub = N[N.sensor_profile == prof]
     g = sub.groupby(["method", "ns", "scene_id"]).f1.median().groupby(["method", "ns"]).median().unstack("ns")
@@ -166,7 +166,7 @@ ct.columns.names = [None, None]; ct.index.name = None
 
 # ------------------------------------------------------------------ 8. Phase 5 annotation floor
 ann = pd.read_csv(ROOT / "out/annotation/annotation_scores.csv"); br = ann[ann.role == "briefed"]
-fig, ax = plt.subplots(figsize=(COLW, 1.9))
+fig, ax = plt.subplots(figsize=(COLW, 1.65))
 order = ["edge", "corner", "T", "butt", "lap"]
 data = [br[br.joint_type == jt].lat_rmse.dropna().values for jt in order]
 bp = ax.boxplot(data, tick_labels=order, widths=0.5, patch_artist=True, showfliers=True, flierprops=dict(marker="o", markersize=2.5, markerfacecolor=GRAY, markeredgecolor="none"))

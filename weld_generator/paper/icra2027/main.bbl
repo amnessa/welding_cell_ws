@@ -5,11 +5,6 @@ J.~Yi, X.~Kong, H.~Tang, J.~Zhang, Z.~Chen, and L.~Deng, ``Weld seam extraction
   and path generation for robotic welding of steel structures based on {3D}
   vision,'' {\em Automation in Construction}, vol.~183, p.~106792, 2026.
 
-\bibitem{wang2024ppf}
-S.~Wang, Z.~Li, G.~Chen, and Y.~Yue, ``Weld seam object detection system based
-  on the fusion of {2D} images and {3D} point clouds using interpretable neural
-  networks,'' {\em Scientific Reports}, vol.~14, p.~21137, 2024.
-
 \bibitem{zhang2025lobb}
 Y.~Zhang, Y.~Geng, X.~Tian, Y.~Sun, and X.~Xu, ``A novel weld seam extraction
   method with semantic segmentation and point cloud feature for irregular
@@ -21,27 +16,20 @@ W.~Fang and X.~Tian, ``A novel model-based welding trajectory planning method
   for identical structural workpieces,'' {\em Robotics and Computer-Integrated
   Manufacturing}, vol.~89, p.~102772, 2024.
 
-\bibitem{fischler1981ransac}
-M.~A. Fischler and R.~C. Bolles, ``Random sample consensus: a paradigm for
-  model fitting with applications to image analysis and automated
-  cartography,'' {\em Communications of the ACM}, vol.~24, no.~6, pp.~381--395,
-  1981.
+\bibitem{zhou2020pathplanning}
+P.~Zhou, R.~Peng, M.~Xu, V.~Wu, and D.~Navarro-Alarcon, ``Path planning with
+  automatic seam extraction over point cloud models for robotic arc welding,''
+  {\em arXiv preprint arXiv:2011.11951}, 2020.
 
-\bibitem{drost2010ppf}
-B.~Drost, M.~Ulrich, N.~Navab, and S.~Ilic, ``Model globally, match locally:
-  efficient and robust {3D} object recognition,'' in {\em IEEE Conf. Computer
-  Vision and Pattern Recognition (CVPR)}, pp.~998--1005, 2010.
+\bibitem{wang2025laser}
+H.~Wang, Y.~Rong, S.~Xiang, J.~Xu, Y.~Peng, and Y.~Huang, ``{3D} curve weld
+  seam path and posture planning based on line laser sensors,'' {\em Robotics
+  and Computer-Integrated Manufacturing}, vol.~94, p.~102985, 2025.
 
-\bibitem{zhang2025lobbtase}
-Y.~Zhang, Y.~Geng, X.~Tian, F.~Zheng, Y.~Jiang, and M.~Lai, ``A feature
-  extraction approach over workpiece point clouds for robotic welding,'' {\em
-  IEEE Transactions on Automation Science and Engineering}, vol.~22,
-  pp.~75--84, 2025.
-
-\bibitem{wei2024coarse}
-P.~Wei, S.~Cheng, D.~Li, R.~Song, Y.~Zhang, and W.~Zhang, ``Coarse-to-fine
-  detection of multiple seams for robotic welding,'' {\em arXiv preprint
-  arXiv:2408.10710}, 2024.
+\bibitem{wang2024ppf}
+S.~Wang, Z.~Li, G.~Chen, and Y.~Yue, ``Weld seam object detection system based
+  on the fusion of {2D} images and {3D} point clouds using interpretable neural
+  networks,'' {\em Scientific Reports}, vol.~14, p.~21137, 2024.
 
 \bibitem{wang2026pipe}
 T.~Wang, Y.~Liang, X.~Liu, and Z.~Wang, ``{3D} vision-based intersecting pipe
@@ -52,6 +40,11 @@ T.~Wang, Y.~Liang, X.~Liu, and Z.~Wang, ``{3D} vision-based intersecting pipe
 D.~Li, Y.~Wang, and Z.~Wang, ``Automatic recognition on impeller shape and weld
   seam based on normal of point clouds and {PCA},'' {\em Journal of Mechanical
   Science and Technology}, vol.~40, no.~3, pp.~2039--2046, 2026.
+
+\bibitem{wang2023tubesheet}
+H.~Wang, Y.~Huang, G.~Zhang, and Y.~Rong, ``A novel method for dense point
+  cloud reconstruction and weld seam detection for tubesheet welding robot,''
+  {\em Optics \& Laser Technology}, vol.~163, p.~109346, 2023.
 
 \bibitem{wang2024weldnet}
 H.~Wang, Y.~Rong, J.~Xu, S.~Xiang, and Y.~Peng, ``{WeldNet}: a voxel-based deep
@@ -73,6 +66,33 @@ Y.~Tao, D.~Tan, F.~Ren, P.~Zheng, J.~Leng, Y.~Liu, W.~Wang, H.~Wei, and
   L.~Wang, ``{PAEAR}: point clouds area exploration and active recognition
   method driven by reinforcement learning for robotic welding,'' {\em Robotics
   and Computer-Integrated Manufacturing}, vol.~102, p.~103340, 2026.
+
+\bibitem{wei2024coarse}
+P.~Wei, S.~Cheng, D.~Li, R.~Song, Y.~Zhang, and W.~Zhang, ``Coarse-to-fine
+  detection of multiple seams for robotic welding,'' {\em arXiv preprint
+  arXiv:2408.10710}, 2024.
+
+\bibitem{fischler1981ransac}
+M.~A. Fischler and R.~C. Bolles, ``Random sample consensus: a paradigm for
+  model fitting with applications to image analysis and automated
+  cartography,'' {\em Communications of the ACM}, vol.~24, no.~6, pp.~381--395,
+  1981.
+
+\bibitem{drost2010ppf}
+B.~Drost, M.~Ulrich, N.~Navab, and S.~Ilic, ``Model globally, match locally:
+  efficient and robust {3D} object recognition,'' in {\em IEEE Conf. Computer
+  Vision and Pattern Recognition (CVPR)}, pp.~998--1005, 2010.
+
+\bibitem{zhang2025lobbtase}
+Y.~Zhang, Y.~Geng, X.~Tian, F.~Zheng, Y.~Jiang, and M.~Lai, ``A feature
+  extraction approach over workpiece point clouds for robotic welding,'' {\em
+  IEEE Transactions on Automation Science and Engineering}, vol.~22,
+  pp.~75--84, 2025.
+
+\bibitem{lin2026coating}
+Z.~Lin, H.~Dong, W.~Kong, H.~Huang, I.-M. Chen, and H.~Dong, ``A coarse-to-fine
+  multimodal detection framework based on deep learning for robotic coating
+  tasks,'' {\em IEEE/ASME Transactions on Mechatronics}, vol.~31, no.~1, 2026.
 
 \bibitem{tobin2017domain}
 J.~Tobin, R.~Fong, A.~Ray, J.~Schneider, W.~Zaremba, and P.~Abbeel, ``Domain
