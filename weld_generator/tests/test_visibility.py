@@ -544,7 +544,9 @@ def _rays_through(part, n, seed):
     from weldgen.geom import SweptSlab  # noqa: F401
     m = part.mesh(); lo, hi = m.bounds
     g = np.random.default_rng(seed)
-    o = g.uniform(lo - 40, hi + 40, (n, 3)); tgt = g.uniform(lo, hi, (n, 3))
+    o = g.uniform(lo - 40, hi + 40, (n * 2, 3)); tgt = g.uniform(lo, hi, (n * 2, 3))
+    keep = ~part.contains(o)                    # an entry-only cast is about rays that START OUTSIDE the solid
+    o, tgt = o[keep][:n], tgt[keep][:n]
     d = tgt - o; tm = np.linalg.norm(d, axis=1) * 1.6; d /= np.linalg.norm(d, axis=1, keepdims=True)
     return o, d, tm
 

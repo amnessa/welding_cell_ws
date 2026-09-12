@@ -105,7 +105,7 @@ def ray_hits_mesh(origins, directions, t_max, mesh, max_pairs: int = 3_000_000,
                   t_min_mm: float = 0.25) -> np.ndarray:
     """Exact ray-vs-triangle-mesh test (Moller-Trumbore), pure numpy, no rtree (D9).
 
-    True where the ray meets any triangle strictly inside (0, t_max). Rays are first clipped
+    True where the ray ENTERS the solid strictly inside (t_min, t_max). Rays are first clipped
     against the mesh's bounding box so only candidates pay for the triangle loop, and the
     loop is chunked so `rays x faces` never exceeds `max_pairs` at once.
 
@@ -141,6 +141,7 @@ def ray_hits_mesh(origins, directions, t_max, mesh, max_pairs: int = 3_000_000,
         return out
     tri = np.asarray(mesh.triangles, dtype=float)
     v0, e1, e2 = tri[:, 0], tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]
+    outward = float(mesh.volume) > 0.0            # D21 meshes are winding-consistent; sign says which way
     F = len(tri); chunk = max(1, max_pairs // F)
     for c0 in range(0, len(cand), chunk):
         idx = cand[c0:c0 + chunk]
@@ -154,7 +155,17 @@ def ray_hits_mesh(origins, directions, t_max, mesh, max_pairs: int = 3_000_000,
         qv = np.cross(sv, e1[None, :, :])
         v = np.einsum("nfk,nk->nf", qv, dd) * inv
         t = np.einsum("nfk,fk->nf", qv, e2) * inv
-        hit = ok & (u >= 0.0) & (v >= 0.0) & (u + v <= 1.0) & (t > float(t_min_mm)) & (t < tt[:, None] - 1e-9)
+        # ENTRY crossings only: a ray meets a front-facing triangle (ray . outward normal < 0)
+        # when it enters material. A ray that starts on the true surface can sit up to the
+        # chord error INSIDE the tessellated wall and would otherwise 'hit' its own wall on
+        # the way out (found 2026-09-12: inner tube walls seen at grazing angles were marked
+        # hidden by their own exit crossing). Exits are never occluders.
+        # Moller-Trumbore: det = e1 . (d x e2) = -d . (e1 x e2), so det > 0 <=> d . n_face < 0,
+        # the ray runs AGAINST the outward normal, i.e. it is entering (checked against the
+        # containment-marching reference in test_constructors: a ray ending inside the solid
+        # has an entry and no exit, and the inverted sign missed it).
+        entering = det > 0.0 if outward else det < 0.0
+        hit = ok & entering & (u >= 0.0) & (v >= 0.0) & (u + v <= 1.0) & (t > float(t_min_mm)) & (t < tt[:, None] - 1e-9)
         out[idx] = hit.any(axis=1)
     return out
 

@@ -100,7 +100,8 @@ def test_ray_hits_tube_agrees_with_exact_containment_marching():
     t = _tube({"kind": "plane", "n_local": [0.35, 0.0, 0.94], "d": 15.0}, gap=0.5,
               r=35.0, wall=6.0, L=120.0)
     rng = np.random.default_rng(1)
-    o = rng.uniform(-150, 150, (600, 3)) + np.array([0, 0, 40.0])
+    o = rng.uniform(-150, 150, (900, 3)) + np.array([0, 0, 40.0])
+    o = o[~t.contains(o)][:600]              # entry-only cast: rays that START OUTSIDE the solid (2026-09-12)
     d = rng.normal(size=(600, 3))
     d /= np.linalg.norm(d, axis=1, keepdims=True)
     tm = rng.uniform(50, 400, 600)

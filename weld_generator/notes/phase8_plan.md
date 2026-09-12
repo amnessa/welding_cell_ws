@@ -421,6 +421,31 @@ results (their arrays are unchanged, only hashes moved).
   README / handoff / `dataset_plan.md` (row count, dates). **User's priority (2026-09-11):
   this before the 36 000-frame render.**
 
+### 1.2.3 The render found the fix's own error (2026-09-12) — exit crossings are not occluders
+
+The train_v1 render's twin gate failed a cut-tube scene on *precision* (recall 1,0, residual
+0,0004 mm): the render showed 27 k inner-wall points that tier 1 called hidden, and tier 1's
+exact cast said "occluded" for all of them. The independent brute-force cast showed why: the
+nearest "hit" was 0,35 mm from the origin — the ray's own wall. A seam/surface point lies on
+the TRUE surface, up to the 0,05 mm chord error *inside* the tessellated wall, and at a grazing
+angle its ray meets the mesh on the way OUT. An exit crossing is not an occluder.
+`ray_hits_mesh` now counts **entry crossings only** (front-facing triangles, `det > 0` in
+Möller–Trumbore, i.e. ray against the outward normal — the sign was first written backwards
+and `test_ray_hits_tube_agrees_with_exact_containment_marching` caught it: a ray that ends
+inside the solid has an entry and no exit). The marching tests now start their rays outside
+the solid, which is what an entry-only cast is about. 82 tests pass.
+
+Magnitude on the visfix corpus (5 scenes/stratum, tier-1 hidden points that an entry-only
+cast calls visible, as % of the visible set): circle 3,0 % (max 8,6 %), saddle 1,6 %,
+ellipse 1,2 %, rounded_rect 0,4 %, swept_path 0,1 %, arc ≤ 0,2 %, every plate stratum 0.
+Grazing bore views (the scene that exposed it) are far worse, so the corpus carries the fix:
+**both corpora are being rebuilt** in parallel (`bench_phase4_visfix2`, `train_v1_v2`); plates
+reproduce identically. The paused Phase 4 self-healing run was stopped (its tube-strata rows
+would have been stale) and restarts after the swap. Rendered `train_v1` scenes are kept:
+rgb / depth / id buffers do not depend on visibility; masks are rebuilt by
+`scripts/tier2_remask.py` and gates by `scripts/tier2_regate.py`; replaced scene ids are
+re-rendered with `--resume`.
+
 ## 2. Decisions Phase 8 forces (record in `dataset_plan.md` §10 as they close)
 
 - [x] **Depth encoding.** SCHEMA.md §3.1 says `depth.png (uint16, mm)`. A 1 mm quantum is
