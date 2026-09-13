@@ -120,10 +120,6 @@ A.~Geiger, P.~Lenz, and R.~Urtasun, ``Are we ready for autonomous driving? {The
 {ISO}, ``{ISO 17659:2004} welding -- multilingual terms for welded joints with
   illustrations.'' International Organization for Standardization, 2004.
 
-\bibitem{katz2007hpr}
-S.~Katz, A.~Tal, and R.~Basri, ``Direct visibility of point sets,'' {\em ACM
-  Transactions on Graphics}, vol.~26, no.~3, p.~24, 2007.
-
 \bibitem{myronenko2010cpd}
 A.~Myronenko and X.~Song, ``Point set registration: coherent point drift,''
   {\em IEEE Transactions on Pattern Analysis and Machine Intelligence},

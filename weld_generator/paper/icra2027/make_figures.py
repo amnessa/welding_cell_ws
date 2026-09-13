@@ -25,7 +25,7 @@ def _fam(r):
     if isinstance(r.seam_family, str): return r.seam_family
     return "line_grooved" if (isinstance(r.prep, str) and r.prep != "square") else "line"
 FACTS["family"] = FACTS.apply(_fam, axis=1); FACTS["stratum"] = FACTS.joint_type + "/" + FACTS.family
-JOIN = ["scene_id", "family", "stratum", "sensor_profile", "twin_key"]
+JOIN = ["scene_id", "family", "stratum", "sensor_profile", "twin_key", "iso_17659_term"]
 DF = DF.drop(columns=[c for c in JOIN[1:] if c in DF.columns], errors="ignore").merge(FACTS[JOIN], on="scene_id", how="left")
 METHODS = ["lit-ransac", "lit-regiongrow", "lit-lobb", "lit-ppf", "lit-pcaslice", "lit-modelreg", "lit-quadric"]
 SHORT = {"lit-ransac": "ransac", "lit-regiongrow": "regiongrow", "lit-lobb": "lobb", "lit-ppf": "ppf",
@@ -88,6 +88,25 @@ num("quadricCurvedMean", T_full.loc[curved, "lit-quadric"].mean()); num("lobbCur
 num("groovedMax", T_full.loc["butt/line_grooved"].drop("lit-modelreg").max())
 num("nStrataNonzeroLobb", int((T_full["lit-lobb"] > 0.05).sum()), "{:d}")
 (TAB / "coverage_full.tex").write_text(T_full.rename(columns=PAPERTAG).rename(index=STRATA_LABEL).to_latex(float_format="%.2f", na_rep="--"))
+# --- mechanism reading (Sec. V.A): recall/precision splits, closed vs open curves, single-view gains, ISO 17659 split
+R_full, P_full = cov_table("full_exterior", "recall"), cov_table("full_exterior", "precision")
+closed = ["T/circle", "T/ellipse", "T/rounded_rect"]
+num("quadricCurvedRecallMin", R_full.loc[curved + ["butt/arc_butt"], "lit-quadric"].min())
+num("quadricRingFoneMin", T_full.loc[["T/circle", "T/ellipse", "T/saddle"], "lit-quadric"].min())
+num("quadricRectPrec", P_full.loc["T/rounded_rect", "lit-quadric"]); num("quadricArcPrec", P_full.loc["butt/arc_butt", "lit-quadric"])
+num("ppfCurvedRecallMin", R_full.loc[curved, "lit-ppf"].min()); num("ppfCurvedPrecMax", P_full.loc[curved, "lit-ppf"].max())
+num("pcasliceClosedMax", T_full.loc[closed, "lit-pcaslice"].max()); num("pcasliceSwept", T_full.loc["T/swept_path", "lit-pcaslice"])
+num("regiongrowMax", T_full["lit-regiongrow"].max())
+num("ransacCornerFull", T_full.loc["corner/line", "lit-ransac"]); num("ransacCornerSingle", T_single.loc["corner/line", "lit-ransac"])
+num("pcasliceArcFull", T_full.loc["butt/arc_butt", "lit-pcaslice"]); num("pcasliceArcSingle", T_single.loc["butt/arc_butt", "lit-pcaslice"])
+num("pcasliceGroovedSingle", T_single.loc["butt/line_grooved", "lit-pcaslice"])
+tl = cov[(cov.condition == "full_exterior") & (cov.stratum == "T/line")]
+tl = tl.assign(angled=tl.iso_17659_term.astype(str).str.startswith("angle"))
+gA = tl.groupby(["method", "angled", "scene_id"]).f1.median().groupby(["method", "angled"]).median().unstack("angled")
+for m in ("lit-ppf", "lit-lobb", "lit-ransac"):
+    num(f"{SHORT[m]}Tjoint", gA.loc[m, False]); num(f"{SHORT[m]}Angle", gA.loc[m, True])
+rs = cov[(cov.condition == "full_exterior") & (cov.method == "lit-ransac")].groupby("scene_id").f1.agg(["min", "max"])
+num("ransacBimodalShare", 100 * ((rs["min"] <= 0.0) & (rs["max"] >= 0.9)).mean(), "{:.0f}")
 
 # ------------------------------------------------------------------ 2. straight vs curved, per method (table)
 straight = T_full.loc["T/line"]; curv = T_full.loc[curved].mean()
@@ -108,6 +127,8 @@ heat(L1t.T, axes[1], xlabels=[PAPERTAG[m] for m in LM], ylabels=ORDER_JT, cbar_l
 plt.savefig(FIG / "fig_ladder.pdf", bbox_inches="tight"); plt.close()
 pooled0 = lad.groupby("method").L0.median(); pooled1 = lad.groupby("method").L1.median()
 num("quadricLzero", pooled0["lit-quadric"]); num("quadricLone", pooled1["lit-quadric"]); num("lobbLzero", pooled0["lit-lobb"]); num("lobbLone", pooled1["lit-lobb"])
+md = DF[DF.chunk == "modelreg_dense_features"]
+if len(md): num("modelregDenseButt", md[md.joint_type == "butt"].groupby("scene_id").f1.median().median()); num("modelregButt", l0[(l0.method == "lit-modelreg") & (l0.joint_type == "butt")].L0.median())
 (TAB / "ladder.tex").write_text(pd.DataFrame({"L0": pooled0, "L1": pooled1}).reindex(LM).rename(index=PAPERTAG).to_latex(float_format="%.2f"))
 
 # ------------------------------------------------------------------ 4. sensor noise small multiples
@@ -179,6 +200,9 @@ plt.savefig(FIG / "fig_annotation.pdf", bbox_inches="tight"); plt.close()
 num("annMedian", br.lat_rmse.median(), "{:.1f}"); num("annPninetyfive", br.lat_rmse.quantile(0.95), "{:.1f}"); num("annLap", br[br.joint_type == "lap"].lat_rmse.median(), "{:.1f}")
 num("annEnd", br.end_err.median(), "{:.1f}"); num("annMiss", br.missed.sum() / br.n_gt.sum(), "{:.2f}"); num("annRatio", br.lat_rmse.median() / 0.6, "{:.1f}")
 num("annOwner", ann[ann.role != "briefed"].lat_rmse.median(), "{:.1f}")
+num("annExtra", br.extra.sum() / br.n_gt.sum(), "{:.2f}")
+num("annButtNominal", br[br.joint_type == "butt"].rmse_nominal.median(), "{:.1f}"); num("annButtGapmid", br[br.joint_type == "butt"].rmse_gapmid.median(), "{:.1f}")
+num("annTNominal", br[br.joint_type == "T"].rmse_nominal.median(), "{:.1f}"); num("annTRoot", br[br.joint_type == "T"].rmse_root.median(), "{:.1f}")
 
 # ------------------------------------------------------------------ 9. corpus numbers
 num("nScenes", int(FACTS.scene_id.nunique()), "{:d}"); num("nRows", int(len(DF)), "{:,d}"); num("nStrata", len(ORDER_STRATA), "{:d}")
