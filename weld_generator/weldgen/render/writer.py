@@ -105,8 +105,8 @@ def verify_render(scene_dir: Path) -> tuple[bool, str]:
     doc = json.loads((scene_dir / "render.json").read_text())
     entries = []
     for e in doc["views"]:
-        if e.get("view_kind") == "undrawable":
-            continue
+        if e.get("view_kind") == "undrawable":     # no files; render_hash folds it in by name
+            entries.append({"view": e["view"], "view_kind": "undrawable"}); continue
         v = read_view(scene_dir / "views" / str(e["view"]))
         png16 = np.array(Image.open(scene_dir / "views" / str(e["view"]) / "depth.png"))
         dv8 = np.array(Image.open(scene_dir / "views" / str(e["view"]) / "depth_valid.png"))

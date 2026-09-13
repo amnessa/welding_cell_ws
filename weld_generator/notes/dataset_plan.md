@@ -2338,6 +2338,13 @@ tier-2 → real comparison — which is what D10 says anyway.
   (`PaintedMetal###`) sets, and two of the heavier iron-rust sets, were dropped by the user
   on 2026-09-11: parts handed to a welding cell never look like that, and a dataset should
   not teach it.
+* *One stock per scene* — **`materials-1.1`, user 2026-09-13**: the two parts of a scene
+  share the alloy, the surface condition *and* the surface set ("parts should have matching
+  texture"; nobody welds a primed part to a bare one, and dissimilar-metal joints are out of
+  scope). Only the texture placement (uv rotation and offset) is drawn per part. 1.0 drew the
+  condition and the set per part, which put unlike parts together in 2876 of the 3600
+  `train_v1` scenes; the rule string is part of `render_id`, so the corpus is re-rendered
+  under 1.1 (the 1.0 renders are kept aside as `out/train_v1_renders_materials10/`).
   The colour map is blended with the alloy's F0 (bare conditions keep the alloy, coatings
   hide it), roughness is scaled per condition (+ a per-part jitter) and cast iron adds 0,15.
 * *Lighting* from CC0 Poly Haven HDRIs fetched the same way (24 indoor machine shops,
@@ -2521,7 +2528,8 @@ Phase 8 decisions, all **resolved 2026-09-11** with the user (detail in `phase8_
 - [x] Render config and substream → `configs/render/*.yaml` with `render_id`; substream 7 renamed `render`
 - [x] Training masks → seam, tack (placement labels), object/environment
 - [x] Corpus and views → `train_v1`, 12 × 300 scenes, 10 views
-- [x] Materials → seven alloys, no MDF workpiece; surface-condition axis
+- [x] Materials → seven alloys, no MDF workpiece; surface-condition axis; **2026-09-13: one
+      stock per scene** (`materials-1.1` — alloy, condition and surface set shared by both parts)
 - [x] Background → environment layer: substrate plane + user's photos (tagged spans) + lab panoramas as dome
 - [x] Drawn-view rules → elevation 25–70°, framing 0,5–1,0, aim jitter 0,35, standoff 300–1200, redraw unless a primary seam is ≥ 10 % visible and ≥ 100 px
 - [x] The two D16 items below do not gate Phase 8 (they stay open for Phase 9)

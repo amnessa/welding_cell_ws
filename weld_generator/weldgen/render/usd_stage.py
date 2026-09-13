@@ -58,7 +58,7 @@ def planar_st(mesh, T_world_part, tile_mm: float) -> np.ndarray:
 def _textured_pbr(stage, path: str, rec: dict, assets_dir: str, uv_rotation_deg: float = 0.0,
                   uv_offset=(0.0, 0.0)):
     """UsdPreviewSurface driven by a CC0 surface set (colour x F0 blend, roughness x scale + bias,
-    normal map) - `materials-1.0`, see render/materials.py."""
+    normal map) - `materials-1.1`, see render/materials.py."""
     from pxr import Gf, Sdf, UsdShade
     d = Path(assets_dir)
     mat = UsdShade.Material.Define(stage, path)
@@ -171,7 +171,7 @@ def build_stage(parts, meshes, *, substrate: dict | None = None, dome: dict | No
     for p, m in zip(parts, meshes):
         spec = material_for(p) if material_for else None
         st = None
-        if spec and "rule" in spec:                          # materials-1.0 recipe with a surface set
+        if spec and "rule" in spec:                          # materials-1.x recipe with a surface set
             mat = _textured_pbr(stage, f"{WORLD}/mat_{p.id}", spec, spec["assets_dir"],
                                 spec.get("uv_rotation_deg", 0.0), spec.get("uv_offset", (0.0, 0.0)))
             st = planar_st(m, p.T_world_part, spec["tile_mm"])

@@ -1,4 +1,4 @@
-"""Materials - `materials-1.0` (Phase 8 M5).
+"""Materials - `materials-1.1` (Phase 8 M5; 1.1 on 2026-09-13).
 
 Two published sources, so nothing here is tuned by eye:
 
@@ -15,11 +15,15 @@ Two published sources, so nothing here is tuned by eye:
   powder-coat/painted sets for `primed`; `oily` reuses the ground sets with a roughness scale
   below one. The albedo map is multiplied by the alloy's F0 so the same rust set reads
   differently on brass and on steel.
+* **One stock per scene** (1.1): alloy, surface condition and surface set are drawn once per
+  scene and shared by every workpiece (render/draws.py); the recipe below is unchanged from
+  1.0. Parts that are welded together come from the same stock, so a scene never shows a
+  primed part against a bare one.
 """
 
 from __future__ import annotations
 
-RULE = "materials-1.0"
+RULE = "materials-1.1"
 
 #: RTR4 Table 9.2, linear RGB F0.
 F0_TABLE = {

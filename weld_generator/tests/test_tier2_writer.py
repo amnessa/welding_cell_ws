@@ -184,7 +184,7 @@ def test_f0_table_is_the_published_one_and_covers_every_alloy():
     assert F0_TABLE["iron"] == (0.562, 0.565, 0.578) and F0_TABLE["aluminium"] == (0.913, 0.922, 0.924)
     assert ALLOYS["stainless_steel"][0] == "chromium" and "INTERPOLATED" in ALLOYS["bronze"][2]
     r = recipe("brass", "rusted", _fake_assets()["textures"][3], 1.1)
-    assert r["rule"] == "materials-1.0" and r["f0"] == list(F0_TABLE["brass"]) and r["metallic"] == 0.2
+    assert r["rule"] == "materials-1.1" and r["f0"] == list(F0_TABLE["brass"]) and r["metallic"] == 0.2
     assert r["texture"] == "Rust007" and "normalgl" in r["files"]
 
 
@@ -198,6 +198,28 @@ def test_appearance_draws_pick_surface_sets_of_the_drawn_condition():
     # the first five draws do not move when assets are added (append-only): alloy/surface/substrate agree
     d0 = draw_appearance(render_rng("s", "r"), cfg, scene, bg, None)
     assert d0["alloy"] == d["alloy"] and d0["surface_condition"] == d["surface_condition"] and d0["substrate"] == d["substrate"]
+
+
+def test_materials_1_1_both_parts_share_alloy_condition_and_surface_set():
+    """user, 2026-09-13: parts welded together come from the same stock - matching texture,
+    same condition, same alloy; only the texture placement may differ between the parts."""
+    cfg = _cfg(); bg = _fake_backgrounds(); a = _fake_assets(); scene, _, _, _ = _scene_with_seam()
+    scene = json.loads(json.dumps(scene))
+    scene["objects"].append({"id": "B", "role": "workpiece", "object_id": 1, "dims_mm": [200.0, 120.0, 8.0],
+                             "T_world_part": np.eye(4).tolist()})
+    scene["objects"].append({"id": "fixture", "role": "fixture", "object_id": 255, "dims_mm": [50.0, 50.0, 50.0],
+                             "T_world_part": np.eye(4).tolist()})
+    seen_diff_uv = False
+    for k in range(20):
+        d = draw_appearance(render_rng(f"s{k}", "r"), cfg, scene, bg, a)
+        assert set(d["surface_condition"]) == {"A", "B"} and set(d["textures"]) == {"A", "B"}, "workpieces only"
+        assert d["surface_condition"]["A"] == d["surface_condition"]["B"]
+        ta, tb = d["textures"]["A"], d["textures"]["B"]
+        assert ta["asset_id"] == tb["asset_id"] and ta["roughness_jitter"] == tb["roughness_jitter"]
+        assert ta["asset_id"] in a["conditions"][d["surface_condition"]["A"]]
+        seen_diff_uv |= ta["uv_rotation_deg"] != tb["uv_rotation_deg"]
+    assert seen_diff_uv, "texture placement is still per part"
+    assert cfg["materials"]["rule"] == "materials-1.1"
 
 
 def test_planar_st_projects_by_dominant_axis_in_the_part_frame():
@@ -232,6 +254,21 @@ def test_render_hash_tolerates_an_undrawable_view():
     e = {"view": 0, "hashed": {"depth": "a", "depth_valid": "b", "mask_seam": "c", "mask_tack": "d", "mask_object": "e"}}
     u = {"view": 3, "view_kind": "undrawable", "attempts": 40}
     assert render_hash([e, u], {}) != render_hash([e], {}) and render_hash([e, u], {}) == render_hash([e, u], {})
+
+
+def test_verify_render_agrees_with_write_render_when_a_view_is_undrawable(tmp_path):
+    """2026-09-13: 11 of 3600 train_v1 scenes failed verify-render - exactly the 11 with an undrawable
+    view. write_render hashed the undrawable entry by name; verify_render skipped it."""
+    from weldgen.render.writer import verify_render, write_render, write_view
+    H_, W_ = 8, 10
+    depth = np.full((H_, W_), 500.0); valid = np.ones((H_, W_), bool)
+    m = np.zeros((H_, W_), np.uint8)
+    e0 = write_view(tmp_path / "views" / "0", rgb=np.zeros((H_, W_, 3), np.uint8), depth_mm=depth, valid=valid,
+                    mask_seam=m, mask_tack=m, mask_object=m, meta={"view": 0, "view_kind": "tier1"})
+    u = {"view": 1, "view_kind": "undrawable", "attempts": 40}
+    write_render(tmp_path, {"render_id": "r", "scene_id": "s"}, [e0, u], {"k": 1})
+    ok, _ = verify_render(tmp_path)
+    assert ok
 
 
 def test_id_buffer_lookup_spans_declared_ids_not_only_visible_ones():

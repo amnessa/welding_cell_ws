@@ -470,7 +470,10 @@ pdflatex main && bibtex main && pdflatex main && pdflatex main`. Rules from the 
 *including* references; PDF, ICRA two-column; ≥ 3 keywords (Computer Vision for
 Manufacturing, Industrial Robots, Range Sensing, Object detection/segmentation); AI-generated
 content must be disclosed in the acknowledgment naming the system and the sections (done);
-PaperPlaza. Framing: benchmark + findings (constructed truth; seven reimplemented methods;
+PaperPlaza. Anonymity (user, 2026-09-13): *statement only* — the paper says the generator,
+corpus and renders are released upon acceptance; no repository or dataset link, anonymised or
+not, in the submission; real links go into the camera-ready. The optional video attachment
+is skipped (nothing to film: no physical welding in scope). Framing: benchmark + findings (constructed truth; seven reimplemented methods;
 the plane-intersection collapse, the oracle ladder, the 1,4 mm annotation floor). The curved
 strata's macros are NaN until the Phase 4 re-run lands — re-run `make_figures.py` then.
 
@@ -698,7 +701,11 @@ user's rule "published or structured, never tuned by eye":
   and peeling-paint sets, then two more rust sets (Metal041C, Metal056C), as unrealistic
   for parts arriving at a welding cell: **19 sets**, `rusted` = Metal041B / 053B / 053C (set
   hash 3eb8b3a600414f16; `out/render_assets/surface_sets_preview.png` shows the earlier 21).
-* `render/materials.py` = `materials-1.0`: alloy F0 from Real-Time Rendering 4e Table 9.2
+* `render/materials.py` = `materials-1.1` (1.0 until 2026-09-13; 1.1 draws the surface
+  condition and the surface set **once per scene** — the user saw parts of one scene rendered
+  in unlike textures, and parts welded together come from the same stock; only the texture
+  placement is per part; the rule string sits in `render_id`, so 1.1 is a full re-render):
+  alloy F0 from Real-Time Rendering 4e Table 9.2
   (iron → mild steel and cast iron, chromium → stainless, aluminium, titanium, brass C260;
   bronze recorded as an interpolation of copper), surface condition from the CC0 sets
   (colour blended with the F0 by a per-condition weight, roughness scaled per condition +
@@ -756,6 +763,16 @@ scene (`replicator.labels_from_ids`, now sized by the declared ids, with a test)
 launcher now retries each class until its process exits 0. `scripts/tier2_regate.py` recomputes the gate from a scene's
 stored view-0 files; a sweep over the whole corpus with the final definition is queued behind
 the render (`out/train_v1/twin_gate_sweep.json`), so every `render.json` carries the same gate.
+
+**First full render done 2026-09-13 05:07 (materials-1.0):** 3600 scenes / 36 000 frames in
+30 069 s of wall time after the resume (T alone 956 scenes in 7,9 h; the corpus was swapped
+for the entry-only rebuild on 2026-09-12 with 2644 renders carried over); the sweep
+re-masked 769 of 36 000 views and the re-gate passes 3600/3600; `verify-render` reported 3589/3600 — the 11 misses were exactly the 11 scenes with an *undrawable* view: `write_render` folds such a view into `render.sha256` by name, `verify_render` skipped it (fixed 2026-09-13 with a regression test; the renders were sound). **Then re-rendered under
+materials-1.1** (user, 2026-09-13: both parts of a scene must carry matching texture): the
+1.0 renders moved to `out/train_v1_renders_materials10/`, the eight Fig. 2 scenes rendered
+first for the paper, then the whole corpus with `--resume` (the eight are skipped — draws are
+a function of scene id and render id, so a pilot render and a batch render are the same
+bytes).
 - `scripts/render_tier2.py --corpus out/bench_phase4 --render-config configs/render/lab_v1.yaml
   [--only <class>] [--resume]`, run as `nohup /isaac-sim/python.sh … > log 2>&1 &` with a
   watcher (handoff §2 lessons; never `pkill -f` from a shell containing the pattern).

@@ -4,11 +4,18 @@ All draws come from ONE generator seeded by sha256(scene_id, render_id) (the D39
 never from the tier-1 substreams, and are APPENDED in the order below. Adding a draw later
 goes at the end; earlier draws must not move.
 
-    1. alloy (one per scene)         2. surface condition (one per workpiece, in object order)
+    1. alloy (one per scene)         2. surface condition (ONE per scene, recorded per workpiece)
     3. substrate photo + span jitter + rotation + roughness
     4. dome (CC0 HDRI or lab panorama) + exposure     5. key light intensity, elevation, azimuth
-    6. per workpiece: surface set, uv rotation, uv offset (2), roughness jitter   [M5]
-    7. dome rotation                                                             [M5]
+    6. surface set + roughness jitter (ONE per scene), then per workpiece: uv rotation, uv offset (2)
+    7. dome rotation
+
+`materials-1.1` (user, 2026-09-13): the two parts of a scene are cut from the same stock, so
+they share alloy, surface condition AND surface set ("parts should have matching texture");
+only the texture placement (uv rotation / offset) differs per part. materials-1.0 drew the
+condition and the set per workpiece, which put a primed part next to a bare one and read as
+two different metals. A rule change is a new render_id, so draws 2 and 6 could be reshaped;
+within a rule the order above stays append-only.
     8. drawn views 1..N-1, each: aim jitter (3), elevation, azimuth, roll, framing
        - redrawn until a primary seam is >= min_visible_fraction visible AND >= min_seam_px
 """
@@ -44,7 +51,8 @@ def draw_appearance(rng: np.random.Generator, cfg: dict, scene: dict, background
     mats = cfg["materials"]; env = cfg["environment"]; lit = cfg["lighting"]
     alloy = str(rng.choice(mats["alloys"]))
     workpieces = [o["id"] for o in scene["objects"] if o["role"] == "workpiece"]
-    surface = {oid: str(rng.choice(mats["surface_conditions"])) for oid in workpieces}
+    condition = str(rng.choice(mats["surface_conditions"]))          # 2. one per scene (materials-1.1)
+    surface = {oid: condition for oid in workpieces}
     photos = backgrounds["photos"]
     ph = photos[int(rng.integers(len(photos)))]
     span = float(ph["span_m"]) * (1.0 + _u(rng, (-env["span_jitter"], env["span_jitter"])))
@@ -60,16 +68,18 @@ def draw_appearance(rng: np.random.Generator, cfg: dict, scene: dict, background
     dome = {"kind": kind, "name": name, "file": file, "exposure": _u(rng, lit.get("dome_exposure", (1.0, 1.0)))}
     key = {"intensity": _u(rng, lit["key_intensity"]), "elevation_deg": _u(rng, lit["key_elevation_deg"]),
            "azimuth_deg": _u(rng, lit["key_azimuth_deg"])}
-    # 6. per workpiece (object order): surface set of its condition, uv rotation, uv offset, roughness jitter
+    # 6. ONE surface set of the scene's condition + one roughness jitter (materials-1.1), then per
+    #    workpiece (object order) the texture placement: uv rotation, uv offset
     textures = {}
     if assets is not None:
         by_cond = {c: [t for t in assets["textures"] if t["asset_id"] in ids] for c, ids in assets["conditions"].items()}
+        pool = by_cond.get(condition) or assets["textures"]
+        t = pool[int(rng.integers(len(pool)))]
+        jitter = _u(rng, mats.get("roughness_jitter", (1.0, 1.0)))
         for oid in workpieces:
-            pool = by_cond.get(surface[oid]) or assets["textures"]
-            t = pool[int(rng.integers(len(pool)))]
             textures[oid] = {"asset_id": t["asset_id"], "uv_rotation_deg": _u(rng, mats.get("uv_rotation_deg", (0.0, 0.0))),
                              "uv_offset": [float(rng.uniform()), float(rng.uniform())],
-                             "roughness_jitter": _u(rng, mats.get("roughness_jitter", (1.0, 1.0)))}
+                             "roughness_jitter": jitter}
     # 7. dome rotation
     dome["rotation_deg"] = _u(rng, lit.get("dome_rotation_deg", (0.0, 0.0)))
     return {"alloy": alloy, "surface_condition": surface, "substrate": substrate, "dome": dome, "key_light": key,

@@ -14,7 +14,7 @@ masks:
   tack_width_mm: 3.0
   occlusion: analytic_ray_cast # weldgen.visibility.visible_mask, no blind zone, no face test
 materials:
-  rule: materials-1.0               # F0 from RTR4 Table 9.2 + CC0 ambientCG surface sets (render/materials.py)
+  rule: materials-1.1               # F0 from RTR4 Table 9.2 + CC0 ambientCG surface sets; 1.1 = one condition + one set per scene (render/materials.py)
   roughness_jitter: [0.85, 1.15]
   uv_rotation_deg: [0.0, 360.0]
   alloys: [mild_steel, stainless_steel, aluminium, cast_iron, bronze, brass, titanium]

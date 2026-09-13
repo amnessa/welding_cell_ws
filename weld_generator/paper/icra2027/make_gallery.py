@@ -1,7 +1,7 @@
 """Fig. 1: the twelve strata as tier-1 clouds with the constructed seams, plus a strip of
 tier-2 renders (view 0, with the seam mask) where they exist. One scene per stratum."""
 from __future__ import annotations
-import json, pathlib, sys
+import json, os, pathlib, sys
 import numpy as np
 import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -32,11 +32,12 @@ for ax, (cls, src) in zip(axes.ravel(), ORDER):
     ax.set_xlim(ctr[0] - span, ctr[0] + span); ax.set_ylim(ctr[1] - span, ctr[1] + span); ax.set_zlim(ctr[2] - span, ctr[2] + span)
     ax.view_init(elev=32, azim=-55); ax.set_axis_off(); ax.set_title(LABEL[(cls, src)], fontsize=7, pad=-4)
 plt.savefig(FIG / "fig_gallery.pdf", bbox_inches="tight", pad_inches=0.02); plt.close()
-# tier-2 strip: view 0 rgb with the seam mask, for strata that have renders in train_v1
+# tier-2 strip: view 0 rgb with the seam mask, for strata that have renders (WELDGEN_RENDER_CORPUS, default train_v1)
+RCORPUS = os.environ.get("WELDGEN_RENDER_CORPUS", "train_v1")
 tiles = []
 for cls, src in ORDER:
     try:
-        sd = first_scene("train_v1", cls, src)
+        sd = first_scene(RCORPUS, cls, src)
     except Exception:
         continue
     v = sd / "views/0"

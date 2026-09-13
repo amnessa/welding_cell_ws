@@ -35,7 +35,7 @@ from weldgen.render.writer import write_render, write_view  # noqa: E402
 
 
 def material_spec(part, draws: dict, tex_by_id: dict, assets: dict | None):
-    """materials-1.0 recipe for a workpiece when the surface set is available; None -> default."""
+    """materials-1.1 recipe for a workpiece when the surface set is available; None -> default."""
     if part.role != "workpiece":
         return None
     td = draws.get("textures", {}).get(part.id)
