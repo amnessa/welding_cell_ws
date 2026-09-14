@@ -2128,7 +2128,12 @@ through the thickness. Registered in the batch (all groups + `quadric_chain_*` l
 arms); notebook `11_lit_quadric.ipynb`; author email drafted at
 `notes/correspondence/lit-quadric_authors_email.md`.
 
-**Step 6 batch DONE 2026-09-09 — seven methods, 184 680 rows.** `lit-quadric` ran in
+**Step 6 batch DONE 2026-09-09 — seven methods, 184 680 rows; re-run 2026-09-12 → 14 on
+the six curved strata** (379 scene ids retired after the tier-1 visibility fix, rows
+re-appended per chunk, fixture chunks recomputed; the curved-strata numbers below and in
+notebook 15 are the re-run's — the plain circle's far side is now correctly invisible from
+a single view, which moved `lit-lobb`'s T/circle full-view F1 from 0,06 to 0,41 and left
+every headline finding in place). `lit-quadric` ran in
 every group with the corrected chain ordering; the as-published distance ordering is the
 `quadric_distance_*` rung (scoring its folded rings cost 8,9 h for one chunk — the fold
 is a documented reading, its price is on the rung: 0,41 vs 1,00 on circles). Measured:

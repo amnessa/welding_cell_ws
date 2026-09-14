@@ -10,7 +10,9 @@ memory: everything an earlier session knew that is not derivable from the repo i
 
 Phases 0–7 are complete and the Phase 4 batch has been run over the final corpus: seven
 literature methods on 720 scenes (60 per seam family, 12 strata), 184 680 rows in
-`out/phase4_batch/phase4_batch.csv.gz`, fully analysed in
+`out/phase4_batch/phase4_batch.csv.gz` (re-run 2026-09-12 → 14 on the six curved strata
+after the tier-1 visibility fix, `phase8_plan.md` §1.2; every chunk repaired in place with
+`--retire` / `--append-missing`, fixture chunks recomputed), fully analysed in
 `notebooks/15_phase4_results.ipynb`. The corpus `out/bench_phase4` passes its own gates
 (D28 0,34 vs 0,44 allowed; D34 0,05 mm vs 0,25), carries fixture twins (`_fx`, 274 scenes),
 and has the `mps` and `tacks` rule blocks applied in place. The seventh method

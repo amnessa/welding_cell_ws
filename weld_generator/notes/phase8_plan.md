@@ -421,6 +421,20 @@ results (their arrays are unchanged, only hashes moved).
   README / handoff / `dataset_plan.md` (row count, dates). **User's priority (2026-09-11):
   this before the 36 000-frame render.**
 
+### 1.2.2a Phase 4 re-run landed (2026-09-14 04:30)
+
+`run_phase4_batch.py --retire` (379 ids) + `--append-missing` + fixture chunks: 34 h of
+chain wall time, the last third run as up to eight side workers (`--append-missing --only
+<chunk>`; a chunk finished by a worker is `[ok] up to date` when the chain reaches it — the
+only cost of the scheme is an occasional duplicated chunk). 184 680 rows again once the
+`quadric_distance_full_exterior` rung lands (it scores folded rings, ~9 h). Notebook 15
+rebuilt (`build_15_phase4_results.py`, boxplot `labels` → `tick_labels` for this
+matplotlib) and re-executed with the prose revised to the re-run's numbers; notebook 13
+re-executed; `make_figures.py` + the paper recompiled (8 pages). Headline movements from
+the visibility fix: `lit-lobb` T/circle full-view 0,06 → 0,41 (the far side of the tube
+is now correctly invisible), `lit-quadric` pooled L0 0,90 → 0,88, straight-to-curved
+means as in the paper's Table II; every finding stands.
+
 ### 1.2.3 The render found the fix's own error (2026-09-12) — exit crossings are not occluders
 
 The train_v1 render's twin gate failed a cut-tube scene on *precision* (recall 1,0, residual

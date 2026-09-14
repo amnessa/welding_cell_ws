@@ -8,7 +8,7 @@ md(r"""
 # Phase 4 results — the seven-method comparison on `bench_phase4`
 
 Every figure in this notebook is a `groupby` over **one file**,
-`out/phase4_batch/phase4_batch.csv.gz` (173 000 rows), produced by
+`out/phase4_batch/phase4_batch.csv.gz` (184 680 rows after the 2026-09-12/14 re-run of the six curved strata under the corrected visibility test), produced by
 `scripts/run_phase4_batch.py` over the corpus `out/bench_phase4` (720 scenes, 60 per
 family) and its fixture twins `out/bench_phase4_fx`. **No cell here runs a method.** If a
 number needs recomputing, delete the chunk file and re-run the batch script; if a stratum
@@ -188,22 +188,25 @@ md(r"""
 **Reading the table.**
 
 * **The plane-intersection collapse is total and clean.** `lit-ransac` (plane RANSAC +
-  pairwise intersection) holds 0,97 on straight T seams and **0,00 on every curved family
-  and both curved-butt strata**. `lit-ppf` (point-pair features voting for plane pairs)
-  degrades more gracefully on curved fillets (~0,25–0,36: a saddle or ring is locally a
-  plane pair for short runs) and dies on butts. This is the answer to the plan's question
+  pairwise intersection) holds 0,98 on straight T seams and **0,00 on every curved family
+  and both curved-butt strata** — recall zero, i.e. no candidate emitted, not a near miss.
+  `lit-ppf` (point-pair features voting for plane pairs) degrades more gracefully on
+  curved fillets (~0,28–0,45: a saddle or ring is locally a plane pair for short runs,
+  so its recall stays ≥ 0,50 while its precision never exceeds 0,31) and dies on butts. This is the answer to the plan's question
   *"where does the plane-intersection baseline stop working"*: at the first non-planar
   member, and there is no partial credit.
 * **`lit-lobb` is the only method with a nonzero median on every stratum except grooved.**
   Its local-bounding-box flatness feature is a crease detector, which is exactly the
-  invariant that survives curvature. Its full-view scores on closed rings (T/circle 0,06,
-  rounded_rect 0,08) are *worse* than its single-view ones (0,41, 0,38): the full exterior
-  cloud includes the far side of the tube and the bore crease, both real creases it
-  faithfully reports — a precision failure of the mechanism, not a detection failure.
-* **Grooved butts are a wall for five of six methods** (≈0,00 in full view). The groove
+  invariant that survives curvature. Its full-view scores on the cut pipe, the saddle and the
+  rectangular tube (0,12 / 0,13 / 0,10) are *worse* than its single-view ones (0,43 / 0,57 /
+  0,34): the full exterior cloud includes the far side of the tube and the bore crease,
+  both real creases it faithfully reports — a precision failure of the mechanism, not a
+  detection failure. (Before the visibility fix the plain circle showed the same
+  inversion, 0,06 vs 0,41; with the corrected far-side flags it is 0,41 vs 0,38.)
+* **Grooved butts are a wall for all seven methods in full view** (≤ 0,03). The groove
   walls put two long parallel creases either side of the root, and crease detectors
   return the wrong lines; the plane-pair methods find the bevel faces and intersect them
-  above the joint. Only `lit-pcaslice`'s per-instance masks recover it (0,49 single-view).
+  above the joint. Only `lit-pcaslice`'s per-instance masks recover it (0,47 single-view).
   This finding stands on *decorrelated* geometry: the stratum was rebuilt with polygon
   outlines and re-run, and every number is unchanged from the rectangular version
   (`notes/dataset_plan.md`, step 3) — the groove is what defeats them, not the outline.
@@ -214,7 +217,7 @@ md(r"""
   (0,29–0,37) and lap joints (crease at a thickness step, 0,37–0,84) remain hard for them
   on plain rectangles.
 * **`lit-quadric` leads or ties every stratum but grooved** (notebook 11; added after the
-  first run): 1,00 circle, 0,96 ellipse, 0,85 saddle at 0,01 mm RMSE — the quadric families
+  first run): 1,00 circle, 0,87 ellipse, 0,90 saddle at 0,01 mm RMSE — the quadric families
   are inside its surface model where they are outside everyone else's — and 0,99 butt,
   0,90 edge, 0,88 lap on the plates. Read its L1 row (§5) before crowning it: its L0
   stage, per-face surfaces with part membership, is the richest oracle in the ladder.
@@ -230,13 +233,14 @@ the length of the line is the price of the mechanism's planarity assumption and 
 else. (`lit-modelreg` has no curved coverage by scope and is shown with its straight
 point only.)
 
-**Reading it.** Every mechanism loses most of its score to curvature — RANSAC 0,98 → 0,16,
-the slicer 0,96 → 0,23, the crease detector 0,79 → 0,21 — with one exception worth
-naming: `lit-ppf`'s line is the flattest (0,48 → 0,34). The point-pair voter decides
-*locally*, and a ring or a saddle is a plane pair over any short run, so it keeps a third
-of its score where the global plane fit keeps nothing; in full view it beats the crease
-detector on four of the five curved T families (the crease detector is paying its
-far-side-crease price there). In single view the ranking reverses (§2) — which is the
+**Reading it.** Every mechanism but one loses most of its score to curvature — RANSAC
+0,98 → 0,15, the slicer 0,96 → 0,22, the crease detector 0,79 → 0,30 — and the exception
+is the mechanism whose surface model contains the curved primitives: `lit-quadric`
+0,99 → 0,88. Among the rest `lit-ppf`'s line is the flattest (0,48 → 0,35). The point-pair
+voter decides *locally*, and a ring or a saddle is a plane pair over any short run, so it
+keeps most of its score where the global plane fit keeps nothing; in full view it beats
+the crease detector on three of the five curved T families (the crease detector is
+paying its far-side-crease price there). In single view the ranking reverses (§2) — which is the
 view a robot has.
 """)
 
@@ -411,7 +415,7 @@ sp = r.groupby(["joint_type", "scene_id"]).f1.agg(["min", "median", "max"]); sp[
 fig, axes = plt.subplots(1, 2, figsize=(11, 3.2), gridspec_kw={"width_ratios": [1.4, 1]})
 ax = axes[0]
 data = [sp.loc[jt, "spread"].values for jt in ORDER_JT]
-bp = ax.boxplot(data, labels=ORDER_JT, widths=0.5, patch_artist=True, showfliers=True,
+bp = ax.boxplot(data, tick_labels=ORDER_JT, widths=0.5, patch_artist=True, showfliers=True,
                 flierprops=dict(marker="o", markersize=3, markerfacecolor=COLOR["lit-ransac"], markeredgecolor="none", alpha=0.5))
 for b in bp["boxes"]: b.set(facecolor="#cde2fb", edgecolor=COLOR["lit-ransac"], linewidth=1.2)
 for k in ("whiskers", "caps", "medians"):
@@ -473,12 +477,13 @@ for k, v in mr.items(): print(f"lit-modelreg {k}:", v)
 
 md(r"""
 **Reading it.** The steepest drop belongs to the new leader: **`lit-quadric` goes from a
-pooled 0,93 to 0,00 without its surfaces** — only the thick curved members survive
-(rounded_rect 0,53, swept_path 0,72), where region growing on a tube wall is easy; on thin
+pooled 0,88 to 0,00 without its surfaces** — only the swept stiffener survives (0,57),
+with faint remnants on the straight T (0,17) and the corner (0,28), where region growing
+on a thick wall is easy; on thin
 plates the grown regions merge through the thickness, and a wrong surface partition yields
 wrong pairs and no seams. The mechanism is exact given the welding surfaces, and finding the
 welding surfaces is the entire problem. The same story holds, at lower altitude, for the
-crease detector: **`lit-lobb` goes from 0,43 to 0,03 without its masks** — the K-Net segmentation in the original paper is what confines
+crease detector: **`lit-lobb` goes from 0,47 to 0,04 without its masks** — the K-Net segmentation in the original paper is what confines
 the crease detector to the parts, and without it every crease in the scene (plate edges,
 the bore, the outline corners) is a seam. That matters for how the paper frames any
 improvement: a modification that helps lobb at L0 must be checked at L1, or it may be
@@ -528,11 +533,13 @@ print(g.round(2).to_string())
 """)
 
 md(r"""
-**Reading it.** `lit-quadric` is essentially noise-immune (0,56 → 0,49 → 0,57): a
+**Reading it.** `lit-quadric` is essentially noise-immune (0,58 → 0,46 → 0,56 pooled;
+the dip at 1σ is the profile mix, not a trend — `stereo_good` 0,64 → 0,53 → 0,62): a
 least-squares surface fit over thousands of points averages the sensor noise out, and the
 intersection inherits the averaged surfaces. Among the point-local methods `lit-lobb` is
-the most robust (0,44 → 0,34 → 0,31 pooled over profiles; gentlest on `stereo_good` — 0,49 → 0,40 → 0,40 — and steepest on `stereo_poor`,
-0,33 → 0,24 → 0,14, where the derived σ_z at these standoffs is millimetres). The plane
+the most robust (0,45 → 0,32 → 0,29 pooled over profiles; gentlest on `stereo_good` —
+0,49 → 0,37 → 0,39 — and steepest on `stereo_poor`, 0,35 → 0,24 → 0,12, where the derived
+σ_z at these standoffs is millimetres). The plane
 methods go to zero at the stored profile: RANSAC's inlier threshold and PPF's normal estimation are both tuned for
 CAD-clean clouds, and the derived σ_z of a real stereo sensor at these standoffs is
 already outside their operating window. This is a table the literature could not produce
@@ -595,7 +602,7 @@ code(r"""
 mm = t2.drop_duplicates("scene_id")[["scene_id", "stratum", "joint_type", "mps_margin", "mps_class"]]
 fig, ax = plt.subplots(figsize=(9.5, 3.2))
 xs = [mm[mm.stratum == s].mps_margin.dropna().values for s in ORDER_STRATA]
-bp = ax.boxplot(xs, labels=[s.split("/")[1] if s.count("/") else s for s in ORDER_STRATA], widths=0.55, patch_artist=True, showfliers=False)
+bp = ax.boxplot(xs, tick_labels=[s.split("/")[1] if s.count("/") else s for s in ORDER_STRATA], widths=0.55, patch_artist=True, showfliers=False)
 for b, s in zip(bp["boxes"], ORDER_STRATA): b.set(facecolor="#cde2fb", edgecolor="#2a78d6", linewidth=1.1)
 for k in ("whiskers", "caps", "medians"):
     for l in bp[k]: l.set(color="#2a78d6", linewidth=1.1)
@@ -613,10 +620,10 @@ print(pd.crosstab(mm.joint_type, mm.mps_class).reindex(ORDER_JT).to_string())
 
 md(r"""
 **Reading it.** `lit-quadric` localizes the MPS seam at 0,0–0,7 mm on every class — an
-order of magnitude under everyone else — while its selection is mid-pack (0,49 butt to
-0,91 T): it finds the seam it finds exactly, and misses the rest outright. `lit-lobb`
-leads selection among the methods that actually search (0,79 overall, 0,94 on T) with the
-best localization after the quadric (0,7–1,6 mm on every class);
+order of magnitude under everyone else — while its selection is mid-pack (0,50 butt to
+0,93 T): it finds the seam it finds exactly, and misses the rest outright. `lit-lobb`
+leads selection among the methods that actually search (0,80 overall, 0,96 on T) with the
+best localization after the quadric (0,8–1,7 mm on every class);
 `lit-ransac` is the precision specialist — exact where its planes exist, matched barely
 half the time; `lit-regiongrow`'s high match rate dissolves into 5–20 mm localization
 (it finds *something* near the MPS, not the seam). **Corner is the selection trap**
@@ -652,7 +659,7 @@ d["joint_type"] = d.twin_key.map(jt_of)
 fig, axes = plt.subplots(1, 2, figsize=(11.5, 3.3), gridspec_kw={"width_ratios": [1.3, 1]})
 ax = axes[0]
 xs = [d[d.method == m].dF1.values for m in METHODS]
-bp = ax.boxplot(xs, labels=[SHORT[m] for m in METHODS], widths=0.5, patch_artist=True, showfliers=True,
+bp = ax.boxplot(xs, tick_labels=[SHORT[m] for m in METHODS], widths=0.5, patch_artist=True, showfliers=True,
                 flierprops=dict(marker="o", markersize=3, markerfacecolor=GRAY, markeredgecolor="none"))
 for b, m in zip(bp["boxes"], METHODS): b.set(facecolor="white", edgecolor=COLOR[m], linewidth=1.4)
 for k in ("whiskers", "caps"):
@@ -672,11 +679,12 @@ md(r"""
 **Reading it.** The prediction was wrong in direction, and the measurement says why: the
 plane methods' L0 band oracle excludes the fixture region, so they never see the contact
 (Δ ≈ 0). The price lands on the crease detector — **`lit-lobb` returns a median 23 extra
-seams with the fixture on** (precision −0,22; ΔF1 −0,30 on T and −0,49 on corner, the
-classes where the plate rests on the table) — and on the slicer (`lit-pcaslice` −0,24:
-fixture points inside its per-instance band drag the slice centres). `lit-modelreg` and
+seams with the fixture on** (precision −0,27; ΔF1 −0,30 on T, −0,34 on butt and −0,49 on
+corner, the classes where the plate rests on the table) — and on the slicer
+(`lit-pcaslice` −0,20 overall, −0,30 on edge and −0,23 on lap: fixture points inside its
+per-instance band drag the slice centres). `lit-modelreg` and
 `lit-regiongrow` are unmoved. And the **largest price of all seven is `lit-quadric`'s, ΔF1
-−0,39**: its L0 part membership counts the fixture as a part, so every plate-face ×
+−0,37 (−0,58 on butt)**: its L0 part membership counts the fixture as a part, so every plate-face ×
 fixture-face pair with a contact band becomes a "seam" along the table — the paper's
 two-part world has no fixture, and the mechanism has no notion that a seam lies between
 *workpieces* (D13, the rule the generator applies to its own candidates). The 274-of-360
@@ -750,10 +758,10 @@ md(r"""
 
 Median seconds per *run* per method (`sec` measures the method call only — not oracle
 preparation, not scoring). Two readings: single-view clouds are 3–5× cheaper than full
-exterior for every method, and withholding the oracle costs the crease detector 10× (3,5 s
-against 0,35 s: it must examine every point instead of the masked parts). Note what this
+exterior for every method, and withholding the oracle costs the crease detector 10× (4,6 s
+against 0,45 s: it must examine every point instead of the masked parts). Note what this
 column does **not** explain: the L1 `lit-ransac` chunk dominated the batch wall-clock
-(13,7 h against 2,3 h for its oracle sibling) while its method time barely moved — the
+(15,2 h against 1,6 h for its oracle sibling in the 2026-09-12 re-run) while its method time barely moved — the
 cost was in *scoring* the hundreds of phantom polylines an unmasked RANSAC returns
 (one-to-one matching is quadratic in candidates), which is itself a statement about
 what that method emits without its stage.
@@ -776,7 +784,7 @@ segmentation masks its paper did not release.
 
 **Two winners, and the question between them.** With the seventh method the table has
 two leaders that fail in opposite ways. `lit-quadric` is exact wherever its welding
-surfaces are given — 0,93 pooled F1, 0,01 mm on rings and saddles, immune to sensor noise —
+surfaces are given — 0,88 pooled F1, 0,01 mm on rings and saddles, immune to sensor noise —
 and collapses to 0,00 the moment they are not; its failures are all *segmentation*
 failures (thin plates merging through the thickness, the fixture read as a part). `lit-lobb`
 never needs to know what a surface is and survives every condition at half the accuracy;
