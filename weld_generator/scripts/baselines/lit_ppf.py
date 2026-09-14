@@ -47,6 +47,41 @@ Three things about this paper that the reimplementation has to be explicit about
    normal-oracle arm (`normals="exact"` + the `normals_xyz` argument). This is the L2 rung
    the plan said would become meaningful at `lit-ppf`.
 
+Deviations from the printed algorithm, every one reachable as a kwarg
+--------------------------------------------------------------------
+Each of these is a place where the paper is silent, self-contradictory, or describes a
+sensor this dataset does not have; each keeps the literal reading one kwarg away.
+
+* **Duplicate planes are merged** (`ppf_planes`). Two 25 mm samples on one face grow the
+  same plane and the paper never merges, which would run every downstream pair test on a
+  plane against a copy of itself.
+* **Re-seeding after the distance grid** (`ppf_planes`, 8 rounds, lowest unclaimed index
+  so it stays deterministic). Sampling at 25 mm can never seed a surface that lies WITHIN
+  the interval of an already-sampled one - an edge joint's second sheet sits 8 mm above
+  the first - so without re-seeding the coverage result for coplanar joints would be an
+  artifact of the sampling stage instead of a verdict on the orthogonality gate.
+* **One seam per SCENE, not one per pair** (`dedup=True`, the default). Algorithm 1
+  accumulates the feature points of *all* orthogonal plane pairs into a single set `F`
+  and emits ONE corner pair for the scene. Emitting a seam per accepted pair instead
+  turns every duplicate or spurious plane into a false positive - measured at recall
+  >= 0,5 with precision <= 0,31 on curved strata. Seams whose intersection lines are
+  collinear (`dedup_angle_deg`, `dedup_offset_mm`) are therefore merged into one seam
+  over the UNION of their feature points. `dedup=False` restores the per-pair behaviour.
+* **Outlier removal keeps the dominant cluster** (`keep_clusters="largest"`, the default).
+  The paper refines the feature points with "DBSCAN clustering and outlier removal";
+  keeping every non-noise label (`keep_clusters="all"`, the old behaviour) lets a distant
+  blob stretch the farthest-pair corners clean across the band.
+* **The orthogonality gate carries a tolerance** (`ortho_tol_deg=15`, `pair_rule`). The
+  paper's OPP test is categorical - a pair is orthogonal or it is not - yet Table 2 puts
+  V-shaped welds through the same pipeline, which no exact 90 deg test can accept. The
+  15 deg is this module's invention and is named as such; `pair_rule="intersecting"`
+  drops the 90 deg anchor entirely and takes any non-parallel pair (fold angle in
+  `[fold_min_deg, 180 - fold_min_deg]`), so a sweep can price the gate rather than
+  assume it.
+* **theta is folded modulo pi before binning** (`opp_vote`). Estimated normals have
+  arbitrary sign, so an unfolded histogram splits one intersection direction across two
+  antipodal bins and halves the peak it is about to threshold.
+
 The published constants: sampling interval **25 mm**; feature-distance threshold
 **0,1 mm**. The second is stated for a 50 um-accuracy Photoneo scan; on clouds sampled at
 ~1 mm spacing nothing survives a 0,1 mm gate, so the default here scales with spacing and
@@ -276,31 +311,65 @@ def rotation_to_z(n: np.ndarray) -> np.ndarray:
 
 def opp_vote(pts: np.ndarray, normals: np.ndarray, ref: PPFPlane, other: PPFPlane,
              ortho_tol_deg: float = 15.0, n_pairs: int = 400,
-             theta_bins: int = 36, rho_bin_mm: float = 2.0
-             ) -> tuple[int, float, float] | None:
-    """The local Hough vote for one candidate pair. `(votes, theta, rho)` or `None`.
+             theta_bins: int = 36, pair_rule: str = "orthogonal",
+             fold_min_deg: float = 20.0
+             ) -> tuple[int, float, float, int] | None:
+    """The local Hough vote for one candidate pair. `(votes, theta, rho, n_voted)` or `None`.
 
-    Directed point pairs are drawn across the two planes; a pair is OPP when the
-    descriptor's angle component sits within `ortho_tol_deg` of 90 deg. Each OPP pair
-    votes in the space of eqs. 22-23 — `theta`, the partner normal's azimuth once the
-    reference normal is rotated onto z, and `rho = n2 . (x1 - x2)`.
+    Directed point pairs are drawn across the two planes; the pair is admitted when it
+    passes `pair_rule`, and each admitted pair votes in the space of eqs. 22-23 - `theta`,
+    the partner normal's azimuth once the reference normal is rotated onto z, and
+    `rho = n2 . (x1 - x2)`.
+
+    `pair_rule` is the gate the paper leaves categorical:
+
+    * `"orthogonal"` (default, the printed test): the descriptor's angle component must sit
+      within `ortho_tol_deg` of 90 deg. The tolerance is **not published** - the paper's
+      OPP test is a yes/no - but a zero-tolerance test admits nothing on a sampled cloud,
+      and the paper's own Table 2 runs V welds through this pipeline. 15 deg is kept as the
+      default because it is what the rest of Phase 4 was measured with.
+    * `"intersecting"`: any non-parallel pair, fold angle within
+      `[fold_min_deg, 180 - fold_min_deg]`. Normal signs are arbitrary, so only the acute
+      normal angle `ang = arccos|n1.n2|` is observable and a fold of `ang` is
+      indistinguishable from one of `180 - ang`; the interval test reduces to
+      `ang >= fold_min_deg`. This rung prices the orthogonality gate: it is what lets a
+      60 deg V fold through a pipeline built around 90 deg corners.
+
+    `n_voted`, the number of point pairs that voted, is returned so `detect` can read
+    `min_votes` as a fraction of it: the strided pair draw gives ~`n_pairs` pairs, so the
+    historical `min_votes=30` was always ~7,5 % of them, not an absolute quantity of
+    evidence.
 
     **The vote is local, and the first implementation here got that wrong.** For a fixed
     reference point `x1`, `rho = n2 . x1 - n2 . x2` is constant over every partner on a
-    true plane (the second term is the plane's offset) — so per reference point the votes
+    true plane (the second term is the plane's offset) - so per reference point the votes
     land in ONE bin by construction, and *across* reference points `rho` varies with `x1`'s
     distance from the partner plane, also by construction. A global (theta, rho)
     accumulator therefore scatters a perfect fold over dozens of rho bins, which is
     exactly what it did. The statistic that is global for a genuine orthogonal *plane*
-    pair is `theta` — one intersection direction — so the peak is taken over theta, and
+    pair is `theta` - one intersection direction - so the peak is taken over theta, and
     a curved or accidental pairing smears it. `rho`'s per-reference consistency is what
     eq. 23 contributes to *locating* the line; with the planes already parameterised the
     line is recovered in closed form, which coincides with the voted location for true
     planes. Everything here is deterministic: pairs are strided, not drawn.
+
+    theta is folded **modulo pi** before binning. Normal orientation is arbitrary under
+    PCA estimation, so `n2` and `-n2` are both plausible readings of one plane and their
+    azimuths differ by pi; unfolded, one intersection direction lands in two antipodal
+    bins and the peak that `min_votes` thresholds is halved by a sign convention. The
+    `theta_bins` bins now span `[0, pi)`.
     """
     cosd = abs(float(np.clip(ref.normal @ other.normal, -1, 1)))
-    if cosd > np.cos(np.radians(90.0 - ortho_tol_deg)):
-        return None                                    # not orthogonal: no vote at all
+    ang = float(np.degrees(np.arccos(cosd)))         # acute angle between the normals
+    if pair_rule == "orthogonal":
+        if abs(ang - 90.0) > float(ortho_tol_deg):
+            return None                                # not orthogonal: no vote at all
+    elif pair_rule == "intersecting":
+        if ang < float(fold_min_deg):
+            return None                                # parallel (or nearly): no fold
+    else:
+        raise ValueError('pair_rule must be "orthogonal" or "intersecting", '
+                         f'got {pair_rule!r}')
     Rz = rotation_to_z(ref.normal)
 
     a = ref.inliers[:: max(1, len(ref.inliers) // int(np.sqrt(n_pairs)))]
@@ -315,13 +384,14 @@ def opp_vote(pts: np.ndarray, normals: np.ndarray, ref: PPFPlane, other: PPFPlan
     # eq. 23, rho for every (x1, x2) pair
     rho = np.einsum("bj,abj->ab", n2, x1[:, None, :] - x2[None, :, :])
 
-    th = np.broadcast_to(theta[None, :], rho.shape).ravel()
-    ti = ((th + np.pi) / (2 * np.pi) * theta_bins).astype(int) % theta_bins
+    th = np.mod(np.broadcast_to(theta[None, :], rho.shape).ravel(), np.pi)
+    ti = (th / np.pi * theta_bins).astype(int) % theta_bins
     counts = np.bincount(ti, minlength=theta_bins)
     peak = int(counts.argmax())
     votes = int(counts[peak])
     sel = ti == peak
-    return votes, float(np.median(th[sel])), float(np.median(rho.ravel()[sel]))
+    return (votes, float(np.median(th[sel])), float(np.median(rho.ravel()[sel])),
+            int(th.size))
 
 
 # --------------------------------------------------------------------------------
@@ -335,9 +405,12 @@ class PPFResult:
     seams: list[np.ndarray]               #: corner-pair polylines, one per accepted OPP
     clusters: list[np.ndarray]            #: the feature points behind each seam
     planes: list[PPFPlane]
-    #: every plane pair considered: {i, j, angle_deg, votes, status} with status one of
-    #: `seam`, `not_orthogonal`, `low_votes`, `no_features` - the coverage claim as data,
-    #: same discipline as `LitRansacResult.pairs`
+    #: every plane pair considered: {i, j, angle_deg, votes, vote_frac, n_pairs, status}
+    #: with status one of `seam`, `merged_seam` (accepted, then absorbed into a collinear
+    #: seam by `dedup` - carries `merged_into`, the index of the keeper's pair entry),
+    #: `not_orthogonal` (failed `pair_rule`, whichever rule is in force), `low_votes`,
+    #: `no_features` - the coverage claim as data, same discipline as
+    #: `LitRansacResult.pairs`
     pairs: list[dict[str, Any]] = field(default_factory=list)
     points: np.ndarray = field(default_factory=lambda: np.zeros((0, 3)))
     normals: np.ndarray = field(default_factory=lambda: np.zeros((0, 3)))
@@ -355,6 +428,38 @@ class PPFResult:
         return len(self.seams)
 
 
+def merge_collinear(cands: list[dict[str, Any]], angle_deg: float = 5.0,
+                    offset_mm: float = 2.0) -> list[list[dict[str, Any]]]:
+    """Group accepted pairs whose intersection LINES are the same line.
+
+    This is Algorithm 1's accounting restored: the paper pools the feature points of every
+    orthogonal pair into one set `F` and reports one corner pair, so two plane pairs that
+    voted for the same crease are one seam, not two. Two lines are the same when their
+    directions agree within `angle_deg` (sign-free: `d` and `-d` are one direction) and the
+    perpendicular offset of one anchor from the other's line is under `offset_mm`.
+
+    Greedy, highest-vote candidate first, so the keeper of each group is its best-supported
+    pair; ties keep input order, which makes the grouping deterministic. Returns a list of
+    groups, each group's keeper first.
+    """
+    cos_tol = np.cos(np.radians(float(angle_deg)))
+    groups: list[list[dict[str, Any]]] = []
+    order = sorted(range(len(cands)), key=lambda k: (-cands[k]["votes"], k))
+    for k in order:
+        c = cands[k]
+        for g in groups:
+            r = g[0]
+            if abs(float(r["d"] @ c["d"])) < cos_tol:
+                continue
+            if float(np.linalg.norm(np.cross(c["p0"] - r["p0"], r["d"]))) > offset_mm:
+                continue
+            g.append(c)
+            break
+        else:
+            groups.append([c])
+    return groups
+
+
 def detect(pts: np.ndarray,
            normals: str = "estimate",
            normals_xyz: np.ndarray | None = None,
@@ -365,13 +470,20 @@ def detect(pts: np.ndarray,
            angle_tol_deg: float = 15.0,
            assign_order: str = "asc",
            min_plane_pts: int = 30,
+           pair_rule: str = "orthogonal",
            ortho_tol_deg: float = 15.0,
-           min_votes: int = 30,
+           fold_min_deg: float = 20.0,
+           theta_bins: int = 36,
+           min_votes: float = 30.0,
            feature_tol_mm: float | None = None,
            dbscan_eps_mm: float | None = None,
            dbscan_min_samples: int = 6,
+           keep_clusters: str = "largest",
            min_feature_pts: int = 10,
            min_seam_length_mm: float = 5.0,
+           dedup: bool = True,
+           dedup_angle_deg: float = 5.0,
+           dedup_offset_mm: float | None = None,
            segmentation_mask: np.ndarray | None = None) -> PPFResult:
     """Run `lit-ppf` end to end. Lengths in **millimetres**.
 
@@ -381,15 +493,43 @@ def detect(pts: np.ndarray,
             the normal-oracle rung of the ladder). The delta between the two arms is the
             price of normal estimation, a number no paper in the seven reports.
         sample_interval_mm: published, 25 mm.
+        coplanar_tol_mm: plane-growth and point-assignment distance. Unpublished; defaults
+            to 2x the measured point spacing and is logged in `params` as resolved.
+        pair_rule: `"orthogonal"` (the printed OPP test, tolerance `ortho_tol_deg`) or
+            `"intersecting"` (any non-parallel pair, fold angle within
+            `[fold_min_deg, 180 - fold_min_deg]`). See `opp_vote`.
+        ortho_tol_deg: half-width of the orthogonality gate, **unpublished** - the paper's
+            test is categorical. Honoured end to end: it reaches `opp_vote` for every pair
+            and is logged in `params`. Sweeping it (15 / 30 / 45) prices the invention.
+        theta_bins: bins of the Hough peak, spanning `[0, pi)` after the modulo-pi fold.
+        min_votes: acceptance threshold on the Hough peak. Unpublished; this is the knob
+            that separates a real orthogonal pair from an accidental one. Read as an
+            **absolute count** when `>= 1` and as a **fraction of the pairs that voted**
+            when `< 1` - the honest reading of what it always was, since the strided draw
+            gives ~400 pairs and 30 of them is ~7,5 %. `params` logs both.
+        keep_clusters: `"largest"` (the paper's "outlier removal": the dominant DBSCAN
+            cluster is the crease, everything else is an outlier) or `"all"` (every
+            non-noise label, this module's earlier behaviour, which lets a distant blob
+            stretch the farthest-pair corners across the band).
         feature_tol_mm: the experiment section's published 0,1 mm — for a 50 um scanner.
             Default scales as 1,5x the point spacing instead, or nothing survives on a
             ~1 mm-spacing cloud; pass 0.1 to reproduce the paper literally.
-        min_votes: acceptance threshold on the Hough peak. Unpublished; this is the knob
-            that separates a real orthogonal pair from an accidental one.
+        dedup: merge seams that are the same line (Algorithm 1 pools all pairs into one
+            feature set and emits ONE corner pair). `False` emits one seam per accepted
+            pair, which is what this module did before and what makes duplicate planes
+            read as false positives.
+        dedup_angle_deg, dedup_offset_mm: the collinearity tolerances; the offset defaults
+            to 2x `feature_tol_mm`, the width of the feature corridor itself.
         segmentation_mask: the Faster R-CNN weld-box crop, supplied as an **oracle** via
             `seam_region_oracle` (a learned 2D weld-region detector, the same shape of
             stage as Yi et al.'s PointNet++). Withhold for the L1 arm.
     """
+    if keep_clusters not in ("largest", "all"):
+        raise ValueError('keep_clusters must be "largest" or "all", '
+                         f'got {keep_clusters!r}')
+    if pair_rule not in ("orthogonal", "intersecting"):
+        raise ValueError('pair_rule must be "orthogonal" or "intersecting", '
+                         f'got {pair_rule!r}')
     pts = np.asarray(pts, dtype=float)
     used_oracle = segmentation_mask is not None
     if used_oracle:
@@ -403,12 +543,24 @@ def detect(pts: np.ndarray,
     spacing = mean_spacing_mm(P) if len(P) > 1 else 1.0
     feature_tol_mm = float(feature_tol_mm) if feature_tol_mm else max(1.5 * spacing, 1.0)
     dbscan_eps_mm = float(dbscan_eps_mm) if dbscan_eps_mm else 3.0 * feature_tol_mm
+    dedup_offset_mm = float(dedup_offset_mm) if dedup_offset_mm is not None \
+        else 2.0 * feature_tol_mm
+    # resolved here rather than inside `ppf_planes` so the value can be logged
+    if coplanar_tol_mm is None and len(P) > 1:
+        coplanar_tol_mm = max(2.0 * mean_spacing_mm(P), 0.5)
 
     params = dict(normals=normals, voxel_mm=voxel_mm, normal_k=normal_k,
                   sample_interval_mm=sample_interval_mm, angle_tol_deg=angle_tol_deg,
-                  assign_order=assign_order, ortho_tol_deg=ortho_tol_deg,
-                  min_votes=min_votes, feature_tol_mm=feature_tol_mm,
-                  dbscan_eps_mm=dbscan_eps_mm, n_input=len(P))
+                  assign_order=assign_order, coplanar_tol_mm=coplanar_tol_mm,
+                  min_plane_pts=min_plane_pts, pair_rule=pair_rule,
+                  ortho_tol_deg=ortho_tol_deg, fold_min_deg=fold_min_deg,
+                  theta_bins=theta_bins, min_votes=min_votes,
+                  min_votes_is_fraction=bool(min_votes < 1),
+                  feature_tol_mm=feature_tol_mm, dbscan_eps_mm=dbscan_eps_mm,
+                  dbscan_min_samples=dbscan_min_samples, keep_clusters=keep_clusters,
+                  min_feature_pts=min_feature_pts, min_seam_length_mm=min_seam_length_mm,
+                  dedup=dedup, dedup_angle_deg=dedup_angle_deg,
+                  dedup_offset_mm=dedup_offset_mm, n_input=len(P))
     empty = np.zeros((0, 3))
 
     if len(P) < max(min_plane_pts, normal_k):
@@ -433,20 +585,27 @@ def detect(pts: np.ndarray,
         return PPFResult([], [], planes, [], P, N, params, used_oracle, used_exact,
                          f"{len(planes)} plane(s); the OPP stage needs a pair")
 
-    seams, clusters, pair_log = [], [], []
+    cands: list[dict[str, Any]] = []
+    pair_log: list[dict[str, Any]] = []
     for i in range(len(planes)):
         for j in range(i + 1, len(planes)):
             a, b = planes[i], planes[j]
             ang = float(np.degrees(np.arccos(np.clip(abs(a.normal @ b.normal), -1, 1))))
-            vote = opp_vote(P, N, a, b, ortho_tol_deg)
+            vote = opp_vote(P, N, a, b, ortho_tol_deg, theta_bins=theta_bins,
+                            pair_rule=pair_rule, fold_min_deg=fold_min_deg)
             if vote is None:
                 pair_log.append({"i": i, "j": j, "angle_deg": ang, "votes": 0,
+                                 "vote_frac": 0.0, "n_pairs": 0,
                                  "status": "not_orthogonal"})
                 continue
-            votes, _, _ = vote
-            if votes < min_votes:
-                pair_log.append({"i": i, "j": j, "angle_deg": ang, "votes": votes,
-                                 "status": "low_votes"})
+            votes, _, _, n_voted = vote
+            frac = votes / max(n_voted, 1)
+            rec = {"i": i, "j": j, "angle_deg": ang, "votes": votes, "vote_frac": frac,
+                   "n_pairs": n_voted}
+            # `min_votes < 1` is read as the fraction of voting pairs it always was
+            need = float(min_votes) if min_votes >= 1 else float(min_votes) * n_voted
+            if votes < need:
+                pair_log.append({**rec, "status": "low_votes"})
                 continue
 
             # the voted pair's intersection line, then the experiment section's rule:
@@ -468,26 +627,51 @@ def detect(pts: np.ndarray,
             dist = np.linalg.norm(np.cross(P - p0, d), axis=1)
             feats = P[on_a & on_b & (dist <= feature_tol_mm)]
             if len(feats) < min_feature_pts:
-                pair_log.append({"i": i, "j": j, "angle_deg": ang, "votes": votes,
-                                 "status": "no_features"})
+                pair_log.append({**rec, "status": "no_features"})
                 continue
             lab = dbscan_components(feats, dbscan_eps_mm, dbscan_min_samples)
-            keep = lab >= 0
-            feats = feats[keep] if keep.any() else feats
+            if (lab >= 0).any():
+                if keep_clusters == "largest":
+                    # "DBSCAN clustering and outlier removal": the crease is the dominant
+                    # cluster and every other run of points is an outlier. Keeping all of
+                    # them instead lets one distant blob set an endpoint.
+                    vals, cnt = np.unique(lab[lab >= 0], return_counts=True)
+                    feats = feats[lab == vals[int(cnt.argmax())]]
+                else:
+                    feats = feats[lab >= 0]
+            if len(feats) < min_feature_pts:
+                pair_log.append({**rec, "status": "no_features"})
+                continue
 
             # "the two furthest point clouds in the feature point cloud set are selected
             # as a pair of corner points" - the paper's own endpoint rule, verbatim
             t = (feats - p0) @ d
-            c1 = p0 + t.min() * d
-            c2 = p0 + t.max() * d
-            if float(np.linalg.norm(c2 - c1)) < min_seam_length_mm:
-                pair_log.append({"i": i, "j": j, "angle_deg": ang, "votes": votes,
-                                 "status": "no_features"})
+            if float(t.max() - t.min()) < min_seam_length_mm:
+                pair_log.append({**rec, "status": "no_features"})
                 continue
-            seams.append(np.stack([c1, c2]))
-            clusters.append(feats)
-            pair_log.append({"i": i, "j": j, "angle_deg": ang, "votes": votes,
-                             "status": "seam"})
+            pair_log.append({**rec, "status": "seam"})
+            cands.append({"p0": p0, "d": d, "feats": feats, "votes": votes,
+                          "log": len(pair_log) - 1})
+
+    groups = merge_collinear(cands, dedup_angle_deg, dedup_offset_mm) if dedup \
+        else [[c] for c in cands]
+
+    seams, clusters = [], []
+    for g in groups:
+        keep = g[0]
+        # Algorithm 1's single feature set F: the union over the pairs that voted for this
+        # line, corners taken from the union exactly as the paper takes them from F
+        feats = np.unique(np.vstack([c["feats"] for c in g]), axis=0)
+        p0, d = keep["p0"], keep["d"]
+        t = (feats - p0) @ d
+        c1, c2 = p0 + t.min() * d, p0 + t.max() * d
+        if float(np.linalg.norm(c2 - c1)) < min_seam_length_mm:
+            continue
+        for c in g[1:]:
+            pair_log[c["log"]]["status"] = "merged_seam"
+            pair_log[c["log"]]["merged_into"] = keep["log"]
+        seams.append(np.stack([c1, c2]))
+        clusters.append(feats)
 
     note = ""
     if not seams:
@@ -496,5 +680,8 @@ def detect(pts: np.ndarray,
             cen[pr["status"]] = cen.get(pr["status"], 0) + 1
         note = (f"no seam from {len(planes)} planes; {len(pair_log)} pair(s): "
                 + ", ".join(f"{v} {k}" for k, v in sorted(cen.items())))
+    elif dedup and len(cands) > len(seams):
+        note = (f"{len(cands)} accepted pair(s) merged into {len(seams)} seam(s) "
+                "(Algorithm 1 pools the feature points of every pair)")
     return PPFResult(seams, clusters, planes, pair_log, P, N, params, used_oracle,
                      used_exact, note)

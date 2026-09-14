@@ -427,3 +427,201 @@ def test_runs_end_to_end_on_a_generated_scene():
         assert m["recall"] > 0.5, (d.name, m)
         return
     pytest.skip("no T or corner scene with primary seams")
+
+
+# --- the three reading choices, as switches (deviations 7-9) ----------------------------
+
+def vee(included_deg: float, size: float = 100.0, n: int = 60) -> np.ndarray:
+    """Two zero-thickness planes folded about the x axis at `included_deg`.
+
+    At 90 deg this is `fold()`. The generator samples included angles over 60-120 deg, so
+    this is the shape of every groove in the corpus that is not a square fillet.
+    """
+    a = grid(size, n)
+    t = np.radians(included_deg)
+    p1 = np.column_stack([a[:, 0], a[:, 1], np.zeros(len(a))])
+    p2 = np.column_stack([a[:, 0], a[:, 1] * np.cos(t), a[:, 1] * np.sin(t)])
+    return np.vstack([p1, p2])
+
+
+def test_the_thirty_degree_orthogonality_window_is_invented_and_sits_on_the_corpus_edge():
+    """§6 says "each pair of orthogonal steel plates" and no more. 30 deg is ours.
+
+    The tolerance is not a detail on this corpus. Included angles are sampled over
+    60-120 deg, and **both extremes evaluate `|fold - 90| = 30` exactly** — the gate is a
+    knife edge sitting precisely on the sampling range's boundary, so which side of it a
+    60 deg groove falls on is decided by the last bit of an `arccos`, not by geometry.
+    That is what makes `pair_rule` a switch worth pricing rather than a preference: the
+    generous reading accepts the same fold without argument.
+    """
+    pts = vee(60.0)
+
+    rej = detect(pts, seed=0, pair_rule="orthogonal", orthogonal_tol_deg=30.0)
+    assert rej.n_seams == 0
+    assert [p["status"] for p in rej.pairs] == ["not_orthogonal"]
+    # The knife edge itself, stated as a number: the fold is 60 deg to within a ulp, so
+    # the gate quantity is 30 to within a ulp and `> 30.0` decides on rounding alone.
+    assert abs(rej.pairs[0]["fold_deg"] - 60.0) < 1e-6
+    assert abs(abs(rej.pairs[0]["fold_deg"] - 90.0) - 30.0) < 1e-6
+
+    # Same cloud, generous reading: a real fold, so a real seam, along the x axis.
+    acc = detect(pts, seed=0, pair_rule="intersecting")
+    assert acc.n_seams == 1
+    assert [p["status"] for p in acc.pairs] == ["seam"]
+    assert np.allclose(np.abs(acc.seams[0].direction), [1, 0, 0], atol=1e-6)
+
+    # And a hair sharper than the corpus edge rejects without relying on rounding.
+    assert detect(vee(59.0), seed=0, orthogonal_tol_deg=30.0).n_seams == 0
+
+
+def test_the_intersecting_rule_still_refuses_the_near_parallel_pairs():
+    """`"intersecting"` is generous, not indiscriminate — `(20, 160)` deg, not `(0, 180)`.
+
+    Eq. 21 is `n1 x n2`: as the fold goes to zero the direction is noise and the
+    intersection point runs away. The window is what keeps the generous rung a *reading*
+    of §6 rather than the removal of §6's premise, and `not_intersecting` records it.
+    """
+    r = detect(vee(5.0), seed=0, pair_rule="intersecting")
+    assert r.n_seams == 0
+    assert all(p["status"] in ("parallel", "not_intersecting") for p in r.pairs)
+
+    # The window is a kwarg, so the rung's own boundary can be priced too.
+    wide = detect(vee(5.0), seed=0, pair_rule="intersecting",
+                  intersect_range_deg=(1.0, 179.0))
+    assert any(p["status"] not in ("parallel", "not_intersecting") for p in wide.pairs)
+
+    with pytest.raises(ValueError):
+        detect(fold(), seed=0, pair_rule="coplanar")
+
+
+def test_three_times_the_spacing_is_the_papers_rule_and_two_millimetres_is_its_answer():
+    """§5.2: "plane fitting stabilizes when the threshold approximates three times the
+    point cloud resolution", measured at 0,6427 mm by KD-tree search -> 1,93 ~ 2 mm.
+
+    On a 1 mm-spaced cloud the rule says 3 mm and the constant still says 2. The corpus
+    sweeps density over 0,25-4 pts/mm², i.e. 0,5-2 mm spacing, so the two readings are
+    2 mm against 1,5-6 mm — a different experiment, not a rounding difference.
+    """
+    from baselines.lit_ransac import estimate_point_spacing
+
+    pts = fold(size=99.0, n=100)                       # exactly 1 mm grid spacing
+    assert estimate_point_spacing(pts) == pytest.approx(1.0, abs=1e-9)
+
+    r = detect(pts, seed=0, dist_thresh_rule="3x_spacing")
+    assert r.params["point_spacing_mm"] == pytest.approx(1.0, abs=1e-9)
+    assert r.params["dist_thresh_mm"] == pytest.approx(3.0, abs=1e-6)
+    assert r.params["dist_thresh_rule"] == "3x_spacing"
+    # The realised threshold is honoured end to end, not just recorded: the support
+    # radius §6 uses defaults to three times it.
+    assert r.params["support_radius_mm"] == pytest.approx(9.0, abs=1e-6)
+
+    # Default unchanged — the published constant, and the measurement alongside it.
+    f = detect(pts, seed=0)
+    assert f.params["dist_thresh_mm"] == T_D2_MM and f.params["dist_thresh_rule"] == "fixed"
+    assert f.params["point_spacing_mm"] == pytest.approx(1.0, abs=1e-9)
+
+    with pytest.raises(ValueError):
+        detect(pts, seed=0, dist_thresh_rule="half_thickness")
+
+
+def test_the_statistical_filter_of_equation_nine_drops_flyers_and_keeps_the_plate():
+    """Eq. 9 on a plane with planted flyers. The paper prints neither `k` nor `tau`.
+
+    What it costs is as much the point as what it removes: the rule is a global cut on a
+    per-point mean neighbour distance, so a **boundary** point of a finite plate — fewer
+    neighbours on one side — looks like an outlier to it. On a bare grid that is a few
+    percent of the cloud, taken off the rim, which is exactly where §6 reads seam
+    endpoints. Hence `outlier_filter=False` by default and a switch to price it.
+    """
+    from baselines.lit_ransac import statistical_outlier_filter
+
+    a = grid(100.0, 60)
+    plane = np.column_stack([a[:, 0], a[:, 1], np.zeros(len(a))])
+    rng = np.random.default_rng(0)
+    flyers = np.column_stack([rng.uniform(0, 100, 40), rng.uniform(0, 100, 40),
+                              rng.uniform(30, 60, 40)])
+    pts = np.vstack([plane, flyers])
+
+    keep = statistical_outlier_filter(pts, k=20, std_ratio=1.0)
+    assert not keep[len(plane):].any()                 # every flyer gone
+    assert keep[:len(plane)].mean() > 0.9              # and the plate survives
+
+    # End to end through `detect`, where it runs after the §3 mask and the voxel merge.
+    r = detect(pts, seed=0, outlier_filter=True)
+    assert r.params["outlier_filter"] is True
+    assert r.params["outlier_k"] == 20 and r.params["outlier_std_ratio"] == 1.0
+    assert r.params["n_outliers_removed"] >= 40
+    assert len(r.points) == len(pts) - r.params["n_outliers_removed"]
+    assert np.abs(r.points[:, 2]).max() < 30.0         # no flyer reached the fitter
+
+    off = detect(pts, seed=0)
+    assert off.params["outlier_filter"] is False and off.params["n_outliers_removed"] == 0
+    assert len(off.points) == len(pts)
+
+
+def test_every_as_printed_switch_is_reachable_from_detect():
+    """The literal readings are kwargs of `detect`, so a batch can price them.
+
+    A deviation behind a switch nobody can reach from the entry point is a deviation
+    without a control. This is the list in the module docstring, called through the one
+    function the harness uses, with the paper's reading of each.
+    """
+    import inspect
+
+    sig = inspect.signature(detect).parameters
+    assert {"iteration_rule", "plane_refit", "refit_k", "coord_bounds_mm", "right_handed",
+            "pair_rule", "orthogonal_tol_deg", "intersect_range_deg", "dist_thresh_rule",
+            "outlier_filter", "outlier_k", "outlier_std_ratio", "min_seam_length_mm",
+            "min_pair_support", "support_radius_mm", "endpoint_source"} <= set(sig)
+
+    # Defaults are the ones every existing Phase 4 number was produced with.
+    assert sig["iteration_rule"].default == "adaptive"
+    assert sig["plane_refit"].default == "centroid_lstsq"
+    assert sig["coord_bounds_mm"].default is None
+    assert sig["right_handed"].default is True
+    assert sig["pair_rule"].default == "orthogonal"
+    assert sig["orthogonal_tol_deg"].default == 30.0
+    assert sig["dist_thresh_rule"].default == "fixed"
+    assert sig["outlier_filter"].default is False
+
+    pts = fold()
+    literal = detect(pts, seed=0, iteration_rule="literal", plane_refit="centroid_3pt",
+                     coord_bounds_mm=(1e-3, 1e3), right_handed=False, max_iterations=200)
+    assert literal.params["iteration_rule"] == "literal"
+    assert literal.params["plane_refit"] == "centroid_3pt"
+    assert literal.params["coord_bounds_mm"] == (1e-3, 1e3)
+    assert literal.params["right_handed"] is False
+    if literal.seams:
+        assert np.linalg.det(literal.seams[0].R_torch) < 0      # eq. 24 as printed
+
+
+def test_every_gate_this_reimplementation_added_is_in_the_params():
+    """The added gates are recorded, because a number produced under them is conditional.
+
+    `min_seam_length_mm`, `min_pair_support` and `support_radius_mm` are deviation 5 and
+    its slivers guard — nothing in the paper. A result that does not carry them cannot be
+    compared against one produced with different ones.
+    """
+    r = detect(fold(), seed=0)
+    for k in ("min_seam_length_mm", "min_pair_support", "support_radius_mm",
+              "orthogonal_tol_deg", "intersect_range_deg", "max_extrapolation_mm",
+              "dist_thresh_rule", "point_spacing_mm", "outlier_filter",
+              "n_outliers_removed", "max_planes", "max_iterations", "refit_k"):
+        assert k in r.params, k
+    assert r.params["support_radius_mm"] == 3.0 * r.params["dist_thresh_mm"]
+
+
+def test_the_new_switches_leave_the_published_defaults_bit_identical():
+    """Adding a switch must not move the default path. This is that assertion.
+
+    Every Phase 4 row already on disk was produced by `detect(...)` with these defaults;
+    if the refactor moved them, the corpus results would silently become a mixture.
+    """
+    pts, _ = slabs("T")
+    before = detect(pts, seed=3, prefilter_density_per_mm2=1.0)
+    after = detect(pts, seed=3, prefilter_density_per_mm2=1.0, pair_rule="orthogonal",
+                   orthogonal_tol_deg=30.0, dist_thresh_rule="fixed",
+                   dist_thresh_mm=T_D2_MM, outlier_filter=False)
+    assert [s.polyline.tolist() for s in before.seams] == \
+           [s.polyline.tolist() for s in after.seams]
+    assert [p["status"] for p in before.pairs] == [p["status"] for p in after.pairs]

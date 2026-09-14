@@ -2133,7 +2133,9 @@ the six curved strata** (379 scene ids retired after the tier-1 visibility fix, 
 re-appended per chunk, fixture chunks recomputed; the curved-strata numbers below and in
 notebook 15 are the re-run's — the plain circle's far side is now correctly invisible from
 a single view, which moved `lit-lobb`'s T/circle full-view F1 from 0,06 to 0,41 and left
-every headline finding in place). `lit-quadric` ran in
+every headline finding in place). **2026-09-14: `lit-modelreg` extended to every stratum**
+(model from the exact D34 meshes for tubes, swept bands and prepared plates;
+`phase8_plan.md` §1.2.2b), so the seven-method table has no by-scope gaps. `lit-quadric` ran in
 every group with the corrected chain ordering; the as-published distance ordering is the
 `quadric_distance_*` rung (scoring its folded rings cost 8,9 h for one chunk — the fold
 is a documented reading, its price is on the rung: 0,41 vs 1,00 on circles). Measured:

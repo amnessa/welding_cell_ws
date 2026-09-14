@@ -230,8 +230,9 @@ The same numbers as a dumbbell, holding the joint type fixed: each method's medi
 the straight T seam (`T/line`) against the mean of its medians over the five curved T
 families. Same joint, same fillet, same L0 stage — only the seam's curvature changes, so
 the length of the line is the price of the mechanism's planarity assumption and nothing
-else. (`lit-modelreg` has no curved coverage by scope and is shown with its straight
-point only.)
+else. (`lit-modelreg` is given the model on every stratum — analytic plates, and since
+2026-09-14 the exact D34 meshes for tubes, swept bands and prepared plates — so its line
+is the price of *registration* under curvature, not of a planarity assumption.)
 
 **Reading it.** Every mechanism but one loses most of its score to curvature — RANSAC
 0,98 → 0,15, the slicer 0,96 → 0,22, the crease detector 0,79 → 0,30 — and the exception
@@ -818,8 +819,9 @@ was reviewed with its first author (oracle masks, Mean-Shift off, LOBB radius en
 the others are faithful to their papers as read, with the two contradictions found in
 `lit-ransac`'s equations documented. (b) L0 oracles are derived from truth, so L0 is an
 upper bound on what a real coarse stage would give — the ladder is the honest framing.
-(c) `lit-modelreg`'s scope is slab/prism plates; its absence on curved strata is a
-scope limit, not a failure. (d) The corpus is synthetic, tier 1: no sensor artefacts
+(c) `lit-modelreg` is CAD-by-construction on every stratum (its model is the scene's
+own geometry, from the D34 meshes on the curved and prepared strata since 2026-09-14),
+so its row is a registration ceiling, never a detection result. (d) The corpus is synthetic, tier 1: no sensor artefacts
 beyond the analytic stereo model; Phase 8 renders and the Phase 9 real subset are the
 next two rungs of that ladder. (e) The MPS label is a geometric proxy by decision, and
 this notebook never claims otherwise.

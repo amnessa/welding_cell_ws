@@ -23,8 +23,9 @@ Stages, and which of them this dataset supplies:
                the downsampled cloud, dedupe           -> `roi_by_extension`
     TASE §III  LOBB: PCA frame, bounding box (l, w, h), flatness / centre offset / corner
                entropy                                 -> `lobb_features`
-    TASE §III-C nonlinear tanh activation, then binary K-means per feature
-                                                       -> `activate`, `kmeans_1d_binary`
+    TASE §III-C nonlinear tanh activation, then the three-layer hierarchical binary K-means
+               of Fig. 9 (boundary -> crease on the non-boundary subset -> corner on the
+               edge cloud)          -> `activate`, `kmeans_1d_binary`, `corner_points`
     RCIM §3.4.2 Mean-Shift density filtering to fit key points   -> `mean_shift_keypoints`
     RCIM §3.4.3 polynomial fit along the dominant axis           -> `fit_dominant_axis`
 
@@ -58,7 +59,25 @@ Deviations, and why each one exists
    on image pixels and is lifted through the depth map; here it runs directly on the point
    cloud, which is the same test without the projection. The `n x n` pixel neighbourhood
    becomes a metric radius - `edge_radius_mm` - because a pixel window has no fixed size in
-   millimetres and every number in this repo does.
+   millimetres and every number in this repo does. **It is a resolution-relative radius, and
+   that is the whole point**: RCIM eq. 1-2 sets `n = 3` (§4.1) on a 1280 x 1024 sensor whose
+   near field of view is 220 mm, so their window is ~0,5 mm across - three SAMPLES wide, not
+   three millimetres. At this generator's ~1 pt/mm2 the scale-equivalent of a `3 x 3` window
+   is a ball of radius `1,5 x` the point spacing, so `edge_radius_mm=None` (the default) now
+   measures the spacing and uses that; `EDGE_RADIUS_MM_LEGACY = 3,0` mm is the fixed ball
+   this module used before the audit, six times too wide in sample units, and is reachable
+   by passing the number explicitly.
+
+   **What the faithful reading costs, measured:** a ROOT GAP is a distance their window
+   never has to cross. In the image the two masks abut in projection; in 3D they are
+   physically apart, and at 1 pt/mm2 the resolution-relative ball is ~1,1 mm - smaller than
+   a 1,5 mm root gap. On `bench_phase4` `butt/line_square` (gap 1,49 mm) it therefore finds
+   **zero** boundary points and the method returns "ROI too small after the coarse stage",
+   where the 3,0 mm ball returned a seam (a wrong one: F1 0,00 either way). That is a
+   property of the published predicate meeting a gapped joint, not a bug to paper over, and
+   it is why the failure returns a `note` instead of an exception. A joint whose parts are
+   further apart than the sampling window needs `edge_radius_mm` set explicitly, at which
+   point the number is a JOINT parameter and must be reported as one.
 2. **The K-means is 1-D and binary at every level**, which TASE §III-C states outright
    ("all feature clustering problems in this paper are binary classification problems of
    one-dimensional data"). Implemented directly rather than through `sklearn`, seeded at the
@@ -75,6 +94,28 @@ Deviations, and why each one exists
    this in the write-up rather than reporting a number the mechanism could not have produced.
 4. **Multi-seam.** The paper fits one weld. Connected components before fitting, shared with
    `radius_pca.connected_components`, so a T joint's two fillets come back as two curves.
+5. **The hierarchy is a hierarchy** (TASE Fig. 9, p. 79), which it was not until the audit:
+   the boundary split runs on the centre offset over the ROI, and the crease split then runs
+   on the flatness over the **non-boundary subset only**. Computing both splits over the
+   whole ROI and taking `crease & ~boundary` is a different algorithm, because a 1-D K-means
+   threshold is fitted to whatever population it is given - the rim points drag the flatness
+   threshold down, and face points on the far side of it come back as creases. The old path
+   is `kmeans="flat"` and stays runnable so the two can be compared rather than asserted.
+6. **The third layer (corner points) is implemented but OFF by default, and here is the
+   measured reason.** `corner_layer=True` recomputes the corner entropy over
+   `boundary | crease` - it has to be recomputed, because over the edge cloud alone a line
+   point's neighbourhood is a band and a corner's is not, a distinction that does not exist
+   over the full ROI - and cuts the crease components at the corners before the fit. TASE
+   §III-B2 says *"on the extracted edge LINE point cloud"*, and that precondition does not
+   hold here: this crease layer returns a **band several millimetres wide**, not a
+   one-point-wide curve, so at a 2,5 mm LOBB radius nearly every edge neighbourhood is
+   isotropic and the low-entropy ("corner") cluster swallows the seam - on the first bench
+   corner scene, 1228 of 1241 crease points came back as corners and the fit lost the seam
+   entirely. Making it the default would therefore be a reimplementation error, not fidelity.
+   TODO to close it properly: thin the edge cloud to a curve (skeletonise, or take the
+   Mean-Shift key points of §3.4.2) BEFORE the entropy layer, which is the input TASE Fig. 9
+   assumes; then re-measure whether the corner cut splits the closed T perimeter that
+   deviation 4 and the author correspondence both flag.
 
 Author correspondence (Yuankai Zhang, first author, 2026-08-27)
 ---------------------------------------------------------------
@@ -117,6 +158,9 @@ from .radius_pca import connected_components, voxel_downsample
 LOBB_RADIUS_MM = 2.5          # TASE §III, "according to the weld width"
 ROI_K = 30                    # RCIM §3.3 k-NN expansion; no value published
 POLY_DEGREE = 3               # RCIM §3.4.3 `times`; no value published
+N_SAMPLES = 80                # RCIM §4.1/§4.3, "uniformly interpolated to 80 points"
+EDGE_RADIUS_SCALE = 1.5       # RCIM eq. 1-2's 3 x 3 pixel window, in units of point spacing
+EDGE_RADIUS_MM_LEGACY = 3.0   # the pre-audit fixed metric ball; kept reachable, see dev. 1
 
 
 # --------------------------------------------------------------------------------
@@ -133,18 +177,66 @@ def part_labels_oracle(object_id: np.ndarray) -> np.ndarray:
     return np.asarray(object_id).astype(np.int64)
 
 
+def mean_point_spacing(pts: np.ndarray, sample: int = 20_000, seed: int = 0) -> float:
+    """Mean nearest-neighbour distance — the cloud's **own resolution**, in millimetres.
+
+    RCIM eq. 1-2's neighbourhood is `n x n` PIXELS with `n = 3` (§4.1) on a 1280 x 1024
+    sensor whose near field of view is 220 mm, i.e. ~0,17 mm/px — so their window is three
+    samples wide, not three millimetres. The scale-equivalent of a `3 x 3` window at sample
+    spacing `s` is a ball of radius ~`1,5 s`, which is what `edge_radius_for` returns. This
+    is the `s`.
+
+    Subsampled above `sample` points and seeded, so it stays **deterministic**: `lit-lobb`
+    is one of the methods whose zero seed spread is a reported finding.
+    """
+    pts = np.asarray(pts, dtype=float)
+    if len(pts) < 2:
+        return 0.0
+    if cKDTree is None:                                # pragma: no cover
+        raise ImportError("lit-lobb needs scipy.spatial.cKDTree")
+    q = pts
+    if len(pts) > int(sample):
+        idx = np.random.default_rng(seed).choice(len(pts), int(sample), replace=False)
+        q = pts[np.sort(idx)]
+    d = cKDTree(pts).query(q, k=2, workers=-1)[0][:, 1]
+    d = d[np.isfinite(d)]
+    return float(d.mean()) if len(d) else 0.0
+
+
+def edge_radius_for(pts: np.ndarray, edge_radius_mm: float | None = None,
+                    scale: float = EDGE_RADIUS_SCALE,
+                    spacing: float | None = None) -> float:
+    """The RCIM eq. 1-2 window as a metric ball. `None` = resolution-relative, the default.
+
+    `edge_radius_mm=None` means *"`scale` x the measured mean point spacing"* — the faithful
+    reading, because the paper's window is a pixel count and this cloud has no pixels. An
+    explicit value overrides it; `EDGE_RADIUS_MM_LEGACY` (3,0 mm) is the number this module
+    used before the audit, kept reachable so the old rung stays runnable. Pass `spacing` to
+    reuse a measurement already taken rather than paying for a second k-d tree.
+    """
+    if edge_radius_mm is not None:
+        return float(edge_radius_mm)
+    s = float(spacing) if spacing is not None else mean_point_spacing(pts)
+    return float(scale) * s if s > 0 else EDGE_RADIUS_MM_LEGACY
+
+
 def part_boundary_points(pts: np.ndarray, labels: np.ndarray,
-                         edge_radius_mm: float) -> np.ndarray:
+                         edge_radius_mm: float | None = None) -> np.ndarray:
     """RCIM eq. 2 in 3D: a point is an edge point when its neighbourhood holds two masks.
 
     Their test is over an `n x n` pixel window on the segmented image; a pixel window has no
-    fixed size in millimetres, so the window becomes a metric ball. Same predicate.
+    fixed size in millimetres, so the window becomes a metric ball — but it is a ball with a
+    **resolution-relative** radius, not a fixed one. `edge_radius_mm=None` (the default)
+    takes `EDGE_RADIUS_SCALE x mean_point_spacing(pts)`, which reproduces the `3 x 3` window
+    of RCIM §4.1 at whatever density the cloud happens to have. Pass a float for a fixed
+    ball (3,0 mm is what this module used before the audit).
 
     Computed as "how far to the nearest point of a different component?", which is the same
     question and the form that finishes: one tree per component instead of a Python-level
     loop over half a million neighbour lists.
     """
     pts = np.asarray(pts, dtype=float)
+    edge_radius_mm = edge_radius_for(pts, edge_radius_mm)
     labels = np.asarray(labels)
     out = np.zeros(len(pts), dtype=bool)
     if len(pts) == 0:
@@ -200,6 +292,15 @@ def lobb_features(pts: np.ndarray, radius_mm: float = LOBB_RADIUS_MM,
         centre offset  d = |(x_Q - l/2, y_Q - w/2)|          (eq. 7)
         corner entropy s = std(l, w, h)                      (eq. 8)
 
+    TASE §III-A is explicit that the box is *"an OBB with length l, width w, and height h
+    for set P, where **l >= w >= h**"*. Eigen*value* order does not guarantee extent order —
+    `λ1 >= λ2 >= λ3` orders variances, and a neighbourhood that is long-and-sparse along e1
+    but wide-and-dense along e2 can come out with `w > l`. So the three extents are sorted
+    descending and the axes permuted **with** them, which keeps `h` the thin direction in
+    eq. 4 and `(l/2, w/2)` the box centre eq. 7 measures against. Without the sort, a
+    swapped pair puts a thick direction in the numerator of `f` and the descriptor reports
+    creases where there are none.
+
     **`f` is not `λ₃/Σλ`.** `ours` and `lit-regiongrow` both use a ratio of eigen*values* —
     variances, so an RMS over the neighbourhood. This is a ratio of bounding-box *extents*,
     which is a max-minus-min. Same geometric intent, a different statistic, and the
@@ -234,7 +335,10 @@ def lobb_features(pts: np.ndarray, radius_mm: float = LOBB_RADIUS_MM,
             axes = v_[:, ::-1]                          # columns e1, e2, e3, lam desc
             loc = c @ axes                              # neighbourhood in the PCA frame
             lo = loc.min(axis=0)
-            l_, w_box, h_ = loc.max(axis=0) - lo        # box extents along e1, e2, e3
+            ext = loc.max(axis=0) - lo                  # box extents along e1, e2, e3
+            order = np.argsort(-ext, kind="stable")     # TASE §III-A: l >= w >= h
+            axes, lo, ext = axes[:, order], lo[order], ext[order]
+            l_, w_box, h_ = ext
             denom = np.hypot(l_, w_box)
             out["flatness"][i] = h_ / denom if denom > 1e-12 else 0.0
             q = (pts[i] - nb.mean(axis=0)) @ axes - lo  # the query point, box-corner frame
@@ -291,6 +395,31 @@ def kmeans_1d_binary(x: np.ndarray, iters: int = 100) -> np.ndarray:
     return hi
 
 
+def corner_points(pts: np.ndarray, radius_mm: float = LOBB_RADIUS_MM,
+                  k: int | None = None, nonlinear_activation: bool = True) -> np.ndarray:
+    """TASE Fig. 9's **edge point cloud layer** — corner points among the edge points.
+
+    The third level of the hierarchy, and the only one whose feature is recomputed rather
+    than reused: *"On the extracted edge line point cloud, LOBB is established for all
+    points respectively"* (§III-B2). That is the whole mechanism — over the **edge cloud
+    alone** a line point's neighbourhood is a band, so `l >> w, h` and the side-length
+    standard deviation `s` is large; a corner, where two edge lines meet, spreads in two
+    directions, so `l`, `w`, `h` are *"relatively uniform"* and `s` is small. Computing `s`
+    over the full ROI instead would destroy the distinction: there every neighbourhood is a
+    disc.
+
+    So the corner cluster is the **low**-`s` cluster, not the high one. Points with no LOBB
+    (too few neighbours, `s == 0`) are excluded rather than swept into it.
+    """
+    pts = np.asarray(pts, dtype=float)
+    if len(pts) == 0:
+        return np.zeros(0, dtype=bool)
+    s_ = lobb_features(pts, radius_mm, k)["corner_entropy"]
+    v = activate(s_) if nonlinear_activation else s_
+    line = kmeans_1d_binary(v)                          # high entropy = a band = a line
+    return (~line) & (s_ > 0)
+
+
 # --------------------------------------------------------------------------------
 # RCIM §3.4.2-3.4.3 — key points and the curve
 # --------------------------------------------------------------------------------
@@ -329,8 +458,8 @@ def mean_shift_keypoints(pts: np.ndarray, bandwidth_mm: float, iters: int = 20,
     return cur
 
 
-def fit_dominant_axis(pts: np.ndarray, degree: int = POLY_DEGREE, n_samples: int = 40
-                      ) -> np.ndarray | None:
+def fit_dominant_axis(pts: np.ndarray, degree: int = POLY_DEGREE,
+                      n_samples: int = N_SAMPLES) -> np.ndarray | None:
     """RCIM §3.4.3 / eq. 8 — polynomial fit against whichever axis the seam runs along.
 
     *"If the change magnitude along the x direction is greater than that along the y
@@ -341,6 +470,9 @@ def fit_dominant_axis(pts: np.ndarray, degree: int = POLY_DEGREE, n_samples: int
     aimed roughly normal to the seam. This dataset is in world coordinates with the joint
     at an arbitrary yaw, so `x` and `y` carry no such guarantee; the dominant axis is taken
     from the data's own extent, which is what their rule computes and not what it assumes.
+
+    `n_samples` is RCIM's own output sampling: §4.1 and §4.3 both interpolate the fitted
+    curve to **80 points** before error analysis, so that is the default.
     """
     pts = np.asarray(pts, dtype=float)
     if len(pts) < degree + 2:
@@ -378,6 +510,9 @@ class LobbResult:
     features: dict[str, np.ndarray] = field(default_factory=dict)
     crease: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=bool))
     boundary: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=bool))
+    #: TASE Fig. 9's edge-cloud layer — corner points among `boundary | crease`. Empty when
+    #: `corner_layer=False`. The crease points are CUT at these before the curve fit.
+    corner: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=bool))
     params: dict[str, Any] = field(default_factory=dict)
     #: True when component labels were supplied. K-Net produces them at 97,35% mIoU; here
     #: they come from `object_id`, which is the SAME input `ours` calls an oracle.
@@ -396,17 +531,20 @@ class LobbResult:
 def detect(pts: np.ndarray,
            object_id: np.ndarray | None = None,
            voxel_mm: float | None = 1.0,
-           edge_radius_mm: float = 3.0,
+           edge_radius_mm: float | None = None,
            roi_k: int = ROI_K,
            lobb_radius_mm: float = LOBB_RADIUS_MM,
            lobb_k: int | None = None,
            nonlinear_activation: bool = True,
+           kmeans: str = "hierarchical",
            drop_boundary: bool = True,
+           corner_layer: bool = False,
            mean_shift: bool = False,
            mean_shift_bandwidth_mm: float | None = None,
            link_mm: float | None = None,
            min_cluster_pts: int = 8,
            poly_degree: int = POLY_DEGREE,
+           n_samples: int = N_SAMPLES,
            roi_mask: np.ndarray | None = None) -> LobbResult:
     """Run `lit-lobb` end to end. Lengths in **millimetres**.
 
@@ -421,29 +559,55 @@ def detect(pts: np.ndarray,
         lobb_radius_mm: TASE's 2,5 mm, chosen "according to the weld width" — so it is a
             **weld-width** parameter, not a resolution one, and should not be swept as if it
             were free.
+        edge_radius_mm: RCIM eq. 1-2's neighbourhood. `None` (the default) means
+            `EDGE_RADIUS_SCALE x` the cloud's measured mean point spacing — the paper's
+            window is `3 x 3` **pixels**, so it scales with resolution, not with millimetres.
+            Pass `3.0` for the fixed ball this module used before the audit.
         nonlinear_activation: TASE eq. 9. On by default, because the paper shows the K-means
             split failing without it. Switchable because that is a claim worth checking.
+        kmeans: `"hierarchical"` (default, TASE Fig. 9) runs the boundary split on the
+            centre offset over the ROI and then the crease split on the flatness over the
+            **non-boundary subset only** — *"the boundary layer is performed first, and then
+            the crease layer is performed"*. `"flat"` is what this module did before the
+            audit: both splits over the whole ROI, then `crease & ~boundary`. They differ
+            because a K-means threshold depends on the population it is fitted to: with the
+            rim points still in the pot the flatness split is pulled towards them, and face
+            points on the far side land in the crease cluster. The activation still
+            normalises over the whole ROI, which is where Fig. 9 forms `T_f` and `T_d`;
+            only the clustering support is hierarchical.
         drop_boundary: TASE §III-C splits boundary from non-boundary by centre offset before
             splitting face from crease. A plate's own rim is a boundary, not a crease, so
             this is the step that is supposed to keep rims out of the answer — the same job
-            `two_surface_edges` does in `lit-regiongrow`, by a different feature.
+            `two_surface_edges` does in `lit-regiongrow`, by a different feature. With
+            `drop_boundary=False` there is no boundary layer to subtract, so `kmeans` has
+            nothing to be hierarchical about and both settings collapse to `"flat"`.
+        corner_layer: TASE Fig. 9's third level — a binary K-means on the corner entropy
+            recomputed over `boundary | crease`, cutting the crease components at the
+            corners before the fit. **Off by default**: see deviation 6.
+        n_samples: points on each returned polyline. RCIM interpolates to **80** (§4.1).
         mean_shift: RCIM §3.4.2. **Off by default** — its justification is a structured-light
             density artefact this generator does not simulate. See deviation 3.
     """
+    if str(kmeans) not in ("hierarchical", "flat"):
+        raise ValueError(f"kmeans must be 'hierarchical' or 'flat', got {kmeans!r}")
     pts = np.asarray(pts, dtype=float)
     P = voxel_downsample(pts, float(voxel_mm)) if voxel_mm else pts
     vox = float(voxel_mm) if voxel_mm else 1.0
     link_mm = float(link_mm) if link_mm else 3.0 * vox
     bw = float(mean_shift_bandwidth_mm) if mean_shift_bandwidth_mm else 2.0 * lobb_radius_mm
-    params = dict(voxel_mm=voxel_mm, edge_radius_mm=edge_radius_mm, roi_k=roi_k,
+    spacing = mean_point_spacing(P) if len(P) > 1 else 0.0
+    edge_r = edge_radius_for(P, edge_radius_mm, spacing=spacing)
+    params = dict(voxel_mm=voxel_mm, edge_radius_mm=edge_r,
+                  edge_radius_arg=edge_radius_mm, point_spacing_mm=spacing, roi_k=roi_k,
                   lobb_radius_mm=lobb_radius_mm, lobb_k=lobb_k,
-                  nonlinear_activation=nonlinear_activation, drop_boundary=drop_boundary,
+                  nonlinear_activation=nonlinear_activation, kmeans=str(kmeans),
+                  drop_boundary=drop_boundary, corner_layer=corner_layer,
                   mean_shift=mean_shift, link_mm=link_mm, poly_degree=poly_degree,
-                  n_input=len(P))
+                  n_samples=n_samples, n_input=len(P))
     empty = np.zeros(len(P), dtype=bool)
 
     if len(P) < 8:
-        return LobbResult([], [], P, empty, {}, empty, empty, params, False,
+        return LobbResult([], [], P, empty, {}, empty, empty, empty, params, False,
                           "cloud too small")
 
     # --- RCIM §3.1-3.3, the coarse stage -----------------------------------------------
@@ -457,38 +621,61 @@ def detect(pts: np.ndarray,
         used_oracle = True
         _, idx = cKDTree(pts).query(P, k=1, workers=-1)
         labels = part_labels_oracle(np.asarray(object_id)[idx])
-        roi = roi_by_extension(P, part_boundary_points(P, labels, edge_radius_mm), roi_k)
+        roi = roi_by_extension(P, part_boundary_points(P, labels, edge_r), roi_k)
     else:
         roi = np.ones(len(P), dtype=bool)               # L1: no coarse stage at all
 
     sub = np.flatnonzero(roi)
     if len(sub) < 8:
-        return LobbResult([], [], P, roi, {}, empty, empty, params, used_oracle,
+        return LobbResult([], [], P, roi, {}, empty, empty, empty, params, used_oracle,
                           "ROI too small after the coarse stage")
 
-    # --- TASE §III, features then hierarchical K-means ----------------------------------
+    # --- TASE §III + Fig. 9, features then HIERARCHICAL K-means -------------------------
+    # Fig. 9's initial point cloud layer: T_d and T_f are formed and activated over the
+    # WHOLE ROI, the boundary layer is clustered first, and the crease layer is clustered
+    # on what the boundary layer left behind. `kmeans="flat"` keeps the pre-audit path,
+    # where both splits saw the whole ROI and the boundary mask was merely subtracted.
     feats = lobb_features(P[sub], lobb_radius_mm, lobb_k)
-    def split(name: str) -> np.ndarray:
-        v = feats[name]
-        return kmeans_1d_binary(activate(v) if nonlinear_activation else v)
+    act = {k: (activate(v) if nonlinear_activation else v) for k, v in feats.items()}
 
-    boundary = split("center_offset")
-    crease = split("flatness")
-    if drop_boundary:
-        crease = crease & ~boundary
+    boundary = kmeans_1d_binary(act["center_offset"])
+    hier = str(kmeans) == "hierarchical" and drop_boundary
+    if hier:
+        crease = np.zeros(len(sub), dtype=bool)
+        rest = np.flatnonzero(~boundary)                # the non-boundary subset
+        if len(rest) >= 2:
+            crease[rest] = kmeans_1d_binary(act["flatness"][rest])
+    else:
+        crease = kmeans_1d_binary(act["flatness"])
+        if drop_boundary:
+            crease = crease & ~boundary
+
+    # Fig. 9's edge point cloud layer: corner entropy recomputed over `boundary | crease`.
+    corner = np.zeros(len(sub), dtype=bool)
+    if corner_layer:
+        eidx = np.flatnonzero(boundary | crease)
+        if len(eidx) >= min_cluster_pts:
+            corner[eidx] = corner_points(P[sub[eidx]], lobb_radius_mm, lobb_k,
+                                         nonlinear_activation)
 
     crease_full = np.zeros(len(P), dtype=bool)
     crease_full[sub[crease]] = True
     bound_full = np.zeros(len(P), dtype=bool)
     bound_full[sub[boundary]] = True
+    corner_full = np.zeros(len(P), dtype=bool)
+    corner_full[sub[corner]] = True
     feats_full = {k: np.zeros(len(P)) for k in feats}
     for k, v in feats.items():
         feats_full[k][sub] = v
 
-    cpts = P[crease_full]
+    # The corners are a CUT, not a detection: a crease point that is also a corner is
+    # dropped before the components are formed, so a run that turns through a corner comes
+    # back as two components and gets one polynomial each.
+    fit_mask = crease_full & ~corner_full if corner_layer else crease_full
+    cpts = P[fit_mask]
     if len(cpts) < min_cluster_pts:
-        return LobbResult([], [], P, roi, feats_full, crease_full, bound_full, params,
-                          used_oracle, f"{len(cpts)} crease point(s) — no seam")
+        return LobbResult([], [], P, roi, feats_full, crease_full, bound_full, corner_full,
+                          params, used_oracle, f"{len(cpts)} crease point(s) — no seam")
 
     # --- RCIM §3.4.2-3.4.3, key points and the curve ------------------------------------
     if mean_shift:
@@ -500,12 +687,12 @@ def detect(pts: np.ndarray,
         m = comp == c
         if int(m.sum()) < min_cluster_pts:
             continue
-        poly = fit_dominant_axis(cpts[m], poly_degree)
+        poly = fit_dominant_axis(cpts[m], poly_degree, n_samples)
         if poly is None:
             continue
         seams.append(poly)
         clusters.append(cpts[m])
 
     note = "" if seams else "crease points found but no cluster survived the fit"
-    return LobbResult(seams, clusters, P, roi, feats_full, crease_full, bound_full, params,
-                      used_oracle, note)
+    return LobbResult(seams, clusters, P, roi, feats_full, crease_full, bound_full,
+                      corner_full, params, used_oracle, note)

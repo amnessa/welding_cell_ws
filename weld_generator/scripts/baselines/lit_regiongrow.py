@@ -8,17 +8,21 @@ A faithful reimplementation of the extractor in:
 
 Their pipeline is coarse-to-fine, and only the fine half is a seam extractor:
 
-    §III-C  FastSAM on the RGB image segments each workpiece SURFACE; the
-            intersection of two surfaces is the approximate seam, and the cloud is
-            cropped to it                              -> `seam_region_oracle` (an ORACLE)
+    §III-C  a TRAINED WELD-KEYPOINT detector clicks each seam; those clicks prompt
+            FastSAM, and the cloud is cropped to the resulting masks, keeping ~12,7 %
+            of it (Table II, p. 6: 81 730 -> 10 356 points, "over 80% ... removed")
+                                                       -> `keypoint_crop` (an ORACLE)
     §III-D  pass-through filter + voxel downsample + KD-tree   -> `preprocess`
             region growing on curvature and normal angle       -> `region_grow`
             edge points that lie between TWO regions           -> `two_surface_edges`
             plane fit, project, fit (x,y), sample the path     -> `fit_seam`
 
 The §III-C crop is the same shape of dependency `lit-ransac` has on its PointNet++, so it is
-supplied the same way and reported the same way: `seam_region_oracle` is the L0 arm,
-withholding it is L1.
+supplied the same way and reported the same way: the crop is the L0 arm, withholding it is
+L1. **Which** crop is the whole question, and getting it wrong was the method's headline
+failure on this corpus — see Deviation 6. `keypoint_crop` is the one that matches §III-C;
+`surface_intersection_crop` and `seam_region_oracle` are the older, far more generous
+stand-ins and are kept only so the difference stays measurable.
 
 Published numbers, which are the reproduction target:
 
@@ -86,6 +90,32 @@ Deviations, and why each one exists
    direction as well would*. Two independent methods reaching the same wall is the more
    interesting version of that finding, and neither paper could have found it — their
    workpieces are large steel structures whose seams are nowhere near each other.
+6. **§III-C is a KEYPOINT crop, and it is severe.** It is not "segment every surface and
+   intersect them all": §III-C is a *trained weld-keypoint detector* whose clicks prompt
+   FastSAM — *"only 4 key points need to be labeled for an open square weldment"* (p. 3,
+   right column). Table II (p. 6) prices what that leaves behind: 81 730 -> 10 356 points,
+   **12,7 % kept**, *"over 80% of redundant point clouds"* removed. Cropping instead on the
+   intersections of all 12 faces of a two-plate joint (`surface_intersection_crop`) keeps
+   54-97 % of these scenes, i.e. most of the workpiece, and the fine stage then over-detects
+   grossly: an audit of this corpus measured **9-31 % of all points marked as edges, of
+   which only 10-15 % lie within 3 mm of a seam**. That is a failure of the coarse stage we
+   supplied, not of Alg. 1. `keypoint_crop` is the stand-in that keeps the paper's fraction.
+   It is an **ORACLE** — it reads the truth polylines, exactly as `seam_region_oracle` does
+   for `lit-ransac` — and it is labelled as one everywhere it is reported.
+7. **The harness runs a 1,5 mm voxel; §IV-A (p. 5) publishes 3 mm.** `VOXEL_MM` stays 3,0
+   because that is the published value, but `harness._run_lit_regiongrow` passes
+   `voxel_mm=1.5` and that is a **deviation**, measured: 3 mm is worse on this corpus. The
+   paper's workpieces are metre-scale steel structures; ours are 8 mm plates, and a 3 mm
+   grid displaces every point by up to ~1,5 mm — a fifth of the feature — before the method
+   sees it. The published value is kept as the module default and the harness value is
+   recorded in `params["voxel_mm"]` next to `params["voxel_mm_published"]`.
+8. **§III-D's edge test is a conjunction and the first implementation dropped half of it.**
+   *"[weld] seam edges not only need to have high curvature but also need to represent the
+   intersection between two surfaces"* (p. 4, right column). `two_surface_edges` tested only
+   the second clause; `edge_curv_thresh` restores the first. Likewise `_edge_from_labels`
+   accepted a `labels` argument and never used it, so the supplied-surface arm ran no
+   label-boundary test at all — it now requires the neighbourhood to span two surfaces as
+   well as the normal to turn.
 
 Everything is **millimetres**.
 """
@@ -121,6 +151,115 @@ VOXEL_MM = 3.0
 K_NEIGHBORS = 10
 SMOOTHNESS_DEG = 20.0
 CURVATURE_THRESH = 0.03
+# Table II (p. 6): the coarse stage takes 81 730 points to 10 356, and §IV-B states it
+# "can remove over 80% of redundant point clouds". That ratio is the only quantitative
+# description of the §III-C crop the paper gives, so it is what `keypoint_crop` targets.
+KEYPOINT_CROP_FRACTION = 10_356 / 81_730                       # 0,1267
+# NOT the paper's. A floor and a ceiling on the crop radius so the search cannot degenerate:
+# below ~5 mm the crop is thinner than a voxel band and holds no surface to grow, and above
+# 60 mm it is wider than the plates in this corpus and crops nothing.
+KEYPOINT_RADIUS_BOUNDS_MM = (5.0, 60.0)
+
+
+# --------------------------------------------------------------------------------
+# §III-C — the coarse stage, as an ORACLE
+# --------------------------------------------------------------------------------
+
+def keypoint_crop(pts: np.ndarray, seam_polylines,
+                  radius_mm: float | None = None,
+                  target_fraction: float = KEYPOINT_CROP_FRACTION,
+                  radius_bounds_mm: tuple[float, float] = KEYPOINT_RADIUS_BOUNDS_MM,
+                  ) -> tuple[np.ndarray, dict[str, Any]]:
+    """§III-C's keypoint-prompted crop, supplied as an **ORACLE**. Returns `(mask, info)`.
+
+    **This is an oracle and must be reported as one.** It reads the truth polylines, the
+    same way `lit_ransac.seam_region_oracle` reads them for that paper's PointNet++ and
+    `surface_labels_oracle` reads `face_id` for this paper's FastSAM. It stands in for a
+    stage this project does not implement: a *trained weld-keypoint detector* that clicks
+    each seam, whose clicks prompt FastSAM, whose masks crop the cloud (§III-C, p. 3-4).
+
+    Why it exists at all. The previous stand-in — `surface_intersection_crop` over every
+    face pair — kept 54-97 % of these scenes, while §III-C keeps **12,7 %** (Table II,
+    p. 6: 81 730 -> 10 356 points; *"over 80% of redundant point clouds"* removed). Handing
+    the fine stage most of a workpiece is what produced the over-detection this module was
+    audited for: 9-31 % of all points returned as edges, 10-15 % of them within 3 mm of a
+    seam. A keypoint detector does not find twelve faces, it finds the seams — so the
+    honest stand-in keeps a band around the seams at the paper's own retained fraction.
+
+    The radius is **searched, not assumed**. `target_fraction` is the published quantity;
+    the radius that realises it depends on the scene's extent and sampling density, so it is
+    found by bisection on the point-to-seam distances and clamped to `radius_bounds_mm`. The
+    realised radius and the realised fraction both come back in `info` and belong in any
+    table this crop appears in, because a scene whose geometry cannot reach 12,7 % inside
+    the bounds is a scene where the crop is *not* the paper's.
+
+    Args:
+        pts: `(N, 3)` cloud, millimetres.
+        seam_polylines: the truth seams — **the oracle input**.
+        radius_mm: skip the search and use this radius. `info["searched"]` records which.
+        target_fraction: fraction of the cloud to retain. Defaults to Table II's ratio.
+        radius_bounds_mm: `(min, max)` clamp on the searched radius.
+
+    Returns:
+        `(mask, info)`, `mask` a boolean of length `N`; `info` carries `radius_mm`,
+        `fraction`, `target_fraction`, `n_kept`, `n_total`, `searched` and `note`.
+    """
+
+    pts = np.asarray(pts, dtype=float)
+    polys = [np.asarray(g, dtype=float) for g in (seam_polylines or [])
+             if len(np.asarray(g)) >= 2]
+    lo_b, hi_b = (float(radius_bounds_mm[0]), float(radius_bounds_mm[1]))
+    info: dict[str, Any] = {"target_fraction": float(target_fraction),
+                            "n_total": int(len(pts)), "searched": radius_mm is None,
+                            "radius_bounds_mm": (lo_b, hi_b), "note": ""}
+    if len(pts) == 0 or not polys:
+        # No truth to crop against: keep everything and say so, rather than silently
+        # returning an empty cloud that the fine stage would report as "no seam".
+        mask = np.ones(len(pts), dtype=bool)
+        info.update(radius_mm=float("inf"), fraction=1.0, n_kept=int(len(pts)),
+                    note="no seam polylines — crop is a no-op and this is NOT §III-C")
+        return mask, info
+
+    # nearest polyline VERTEX via a KD-tree: the truth polylines are stored at 0,1 mm
+    # spacing, so the vertex distance is within 0,05 mm of the segment distance, which is
+    # nothing against a 5-60 mm radius - and 100x faster than the exact per-segment loop.
+    from scipy.spatial import cKDTree
+    from .metrics import _sample_polyline
+    dense = np.vstack([_sample_polyline(pl, 0.5) for pl in polys])   # coarse polylines densified first
+    d, _ = cKDTree(dense).query(pts, k=1, workers=-1)
+    if radius_mm is not None:
+        r = float(radius_mm)
+    else:
+        # Bisection on the radius, evaluated against the sorted distances so each step is a
+        # binary search rather than a pass over the cloud.
+        ds = np.sort(d)
+        target_n = int(round(float(target_fraction) * len(pts)))
+        lo, hi = lo_b, hi_b
+        for _ in range(64):
+            mid = 0.5 * (lo + hi)
+            if int(np.searchsorted(ds, mid, side="right")) < target_n:
+                lo = mid
+            else:
+                hi = mid
+        r = float(min(max(0.5 * (lo + hi), lo_b), hi_b))
+        # The distances are discrete — a regular scan puts whole rows of points at the same
+        # distance — so the bisection lands on a jump and always overshoots it. Step back to
+        # the radius just below the tie block if that lands closer to the target.
+        k_hi = int(np.searchsorted(ds, r, side="right"))
+        below = ds[ds < r]
+        if len(below):
+            r_lo = float(below[-1])
+            k_lo = int(np.searchsorted(ds, r_lo, side="right"))
+            if k_lo > 0 and r_lo >= lo_b and abs(k_lo - target_n) < abs(k_hi - target_n):
+                r = r_lo
+    mask = d <= r
+    frac = float(mask.mean()) if len(mask) else 0.0
+    info.update(radius_mm=r, fraction=frac, n_kept=int(mask.sum()))
+    if abs(frac - float(target_fraction)) > 0.03:
+        info["note"] = (f"realised {frac:.3f} of the cloud, not the paper's "
+                        f"{float(target_fraction):.3f} — the radius hit a bound "
+                        f"({lo_b:g}-{hi_b:g} mm)")
+    return mask, info
 
 
 # --------------------------------------------------------------------------------
@@ -194,7 +333,8 @@ def local_pca(pts: np.ndarray, k: int = K_NEIGHBORS, radius_mm: float | None = N
 def region_grow(pts: np.ndarray, normals: np.ndarray, curvature: np.ndarray,
                 k: int = K_NEIGHBORS, smoothness_deg: float = SMOOTHNESS_DEG,
                 curvature_thresh: float = CURVATURE_THRESH,
-                min_region_pts: int = 30, radius_mm: float | None = None
+                min_region_pts: int = 30, radius_mm: float | None = None,
+                seed_edges: bool = True
                 ) -> tuple[np.ndarray, np.ndarray]:
     """Alg. 1. Returns `(labels, is_edge)`; label `-1` is unassigned.
 
@@ -212,6 +352,17 @@ def region_grow(pts: np.ndarray, normals: np.ndarray, curvature: np.ndarray,
     * `curvature_thresh` (Threshold2) decides **whether a neighbour may itself seed**, which
       stops growth from continuing through a fold.
 
+    `seed_edges` is Alg. 1 lines 12-14 read literally, and it is the default because that is
+    what the pseudocode says. Lines 7-10 sort the neighbour into `S_edges` or `S_surfaces`;
+    lines 12-14 then test `Curvature < Threshold2` on **every** neighbour, the edge ones
+    included, and the first implementation here `continue`d out of the loop body after
+    marking an edge so that branch never ran. In practice the difference is small — an edge
+    point is by construction a high-curvature point, so it rarely passes Threshold2 — but
+    "small" is a measurement, not an assumption, and `seed_edges=False` restores the older
+    behaviour so the two can be compared. Edge points are still never *labelled*: Alg. 1
+    puts them in `S_edges`, not in a surface, and the two-surface test of §III-D needs them
+    to stay unassigned so a ball around one can see labelled surface on both sides.
+
     Normal signs are arbitrary out of an eigen-decomposition, so the angle test folds to
     `|cos|` — otherwise a flat surface splits in two wherever the sign happens to flip.
     """
@@ -226,6 +377,10 @@ def region_grow(pts: np.ndarray, normals: np.ndarray, curvature: np.ndarray,
     cos_thresh = np.cos(np.radians(float(smoothness_deg)))
     order = np.argsort(curvature)                      # smoothest first
     label = 0
+    # Edge points are never labelled, so `labels != -1` cannot stop one being re-queued.
+    # This is the visited set Alg. 1 omits (Deviation 1), restricted to the edge branch so
+    # that `seed_edges=False` reproduces the older behaviour exactly.
+    queued_edge = np.zeros(n, dtype=bool)
 
     for start in order:
         if labels[start] != -1:
@@ -242,11 +397,15 @@ def region_grow(pts: np.ndarray, normals: np.ndarray, curvature: np.ndarray,
                 if j == s or labels[j] != -1:
                     continue
                 if abs(float(normals[s] @ normals[j])) < cos_thresh:
-                    is_edge[j] = True                  # Alg. 1 line 8
+                    is_edge[j] = True                  # Alg. 1 line 8: S_edges
+                    if seed_edges and not queued_edge[j]:
+                        queued_edge[j] = True
+                        if curvature[j] < curvature_thresh:   # Alg. 1 lines 12-13, which
+                            seeds.append(j)                   # apply to EVERY neighbour
                     continue
-                labels[j] = label                      # Alg. 1 line 10
+                labels[j] = label                      # Alg. 1 line 10: S_surfaces
                 members += 1
-                if curvature[j] < curvature_thresh:    # Alg. 1 line 12-13
+                if curvature[j] < curvature_thresh:    # Alg. 1 lines 12-13
                     seeds.append(j)
         if members < min_region_pts:                   # too small to be a surface
             labels[labels == label] = -1
@@ -271,12 +430,27 @@ def _labels_for(src_pts: np.ndarray, src_labels: np.ndarray, dst_pts: np.ndarray
 
 
 def _edge_from_labels(pts: np.ndarray, labels: np.ndarray, normals: np.ndarray, k: int,
-                      smoothness_deg: float, radius_mm: float | None) -> np.ndarray:
-    """Alg. 1's Threshold1 test, run against supplied surfaces instead of grown ones.
+                      smoothness_deg: float, radius_mm: float | None,
+                      label_radius_mm: float | None = None,
+                      require_label_span: bool = True) -> np.ndarray:
+    """Alg. 1's edge test, run against supplied surfaces instead of grown ones.
 
-    A point is an edge when a neighbour's normal turns by more than `smoothness_deg`. With
-    the surfaces given, that is the only part of Alg. 1 still doing work — the growth was
-    only ever a way to obtain the surfaces.
+    Two clauses, and the first implementation ran only one of them — it took `labels` and
+    never read it, so the supplied-surface arm had no label-boundary test at all and every
+    normal wobble in the cloud came back as an edge. Both clauses now run, AND-combined:
+
+    * **the normal turns** by more than `smoothness_deg` somewhere in the neighbourhood.
+      This is Alg. 1 line 7 (Threshold1) verbatim.
+    * **the neighbourhood spans two surfaces.** Alg. 1's growth sorts a neighbour into
+      `S_edges` or `S_surfaces` *relative to the region it is growing*, so "edge" means
+      "where this surface stops". With the surfaces handed over, the same statement is
+      "where two of the supplied labels meet", tested at `label_radius_mm` — about one
+      voxel, i.e. the smallest neighbourhood in which two labels can be adjacent at all.
+      Widen it and the band thickens by the same amount on each side.
+
+    Own label included, so a point sitting alone in an unlabelled pocket does not qualify;
+    negative labels are unassigned and never count as a surface. `require_label_span=False`
+    restores the older normal-only behaviour for an A/B.
     """
     tree = cKDTree(pts)
     cos_thresh = np.cos(np.radians(float(smoothness_deg)))
@@ -286,31 +460,80 @@ def _edge_from_labels(pts: np.ndarray, labels: np.ndarray, normals: np.ndarray, 
         # once per scene per arm across a 100-scene corpus.
         idx = np.atleast_2d(tree.query(pts, k=min(k, len(pts)), workers=-1)[1])
         cos = np.abs(np.einsum("nkj,nj->nk", normals[idx], normals))
-        return cos.min(axis=1) < cos_thresh
-    out = np.zeros(len(pts), dtype=bool)
-    for i, nb in enumerate(tree.query_ball_point(pts, radius_mm, workers=-1)):
-        if len(nb) and np.min(np.abs(normals[np.asarray(nb, dtype=int)] @ normals[i])) \
-                < cos_thresh:
-            out[i] = True
-    return out
+        angle = cos.min(axis=1) < cos_thresh
+    else:
+        angle = np.zeros(len(pts), dtype=bool)
+        for i, nb in enumerate(tree.query_ball_point(pts, radius_mm, workers=-1)):
+            if len(nb) and np.min(np.abs(normals[np.asarray(nb, dtype=int)] @ normals[i])) \
+                    < cos_thresh:
+                angle[i] = True
+    if not require_label_span:
+        return angle
+    return angle & _spans_two_labels(pts, labels, label_radius_mm, k, tree)
+
+
+def _spans_two_labels(pts: np.ndarray, labels: np.ndarray, radius_mm: float | None,
+                      k: int, tree=None) -> np.ndarray:
+    """Does each point's ~1-voxel ball contain **two** distinct surfaces? §III-D's clause 2.
+
+    A bounded k-NN query rather than `query_ball_point`, because this runs once per point
+    per scene over a 100-scene corpus and the ball form is a Python loop. Anything past the
+    radius comes back as `inf` and is dropped, so up to the neighbour count this is a true
+    ball test. That count is floored at 12: at a one-voxel radius on a voxel grid only the
+    point itself and its six face-adjacent voxels are inside, so 12 leaves headroom for the
+    irregular spacing voxel *centroids* actually have.
+    """
+    pts = np.asarray(pts, dtype=float)
+    labels = np.asarray(labels).astype(np.int64)
+    n = len(pts)
+    if n == 0:
+        return np.zeros(0, dtype=bool)
+    if radius_mm is None or not np.isfinite(radius_mm):
+        return np.ones(n, dtype=bool)
+    tree = tree if tree is not None else cKDTree(pts)
+    kk = int(min(max(int(k), 12), n))
+    dist, idx = tree.query(pts, k=kk, workers=-1,
+                           distance_upper_bound=float(radius_mm))
+    dist = np.atleast_2d(dist)
+    idx = np.atleast_2d(idx)
+    inside = np.isfinite(dist)
+    lab = np.where(inside, labels[np.minimum(idx, n - 1)], -1)
+    lab = np.where(lab >= 0, lab, -1)
+    s = np.sort(lab, axis=1)                           # -1 (unassigned) sorts to the front
+    distinct = ((s[:, 1:] != s[:, :-1]) & (s[:, 1:] >= 0)).sum(axis=1) + (s[:, 0] >= 0)
+    return distinct >= 2
 
 
 def two_surface_edges(pts: np.ndarray, labels: np.ndarray, is_edge: np.ndarray,
-                      edge_radius_mm: float, min_region_share: float = 0.15
-                      ) -> np.ndarray:
-    """§III-D: an edge point must also *"represent the intersection between two surfaces"*.
+                      edge_radius_mm: float, min_region_share: float = 0.15,
+                      curvature: np.ndarray | None = None,
+                      edge_curv_thresh: float = CURVATURE_THRESH) -> np.ndarray:
+    """§III-D's edge test, **both clauses**: high curvature AND between two surfaces.
 
-    High curvature alone is not enough and the paper says so — a plate's own outer rim is a
-    boundary too. Kept here only if the point's neighbourhood spans **two** grown regions,
-    each holding at least `min_region_share` of it, so a stray neighbour or two does not
-    qualify a rim point.
+    *"the welding seam edges not only need to have high curvature but also need to represent
+    the intersection between two surfaces"* (p. 4, right column). This function tested only
+    the second clause until the over-detection audit; `curvature` supplies the first.
+
+    Clause 1, the curvature gate: `δ = λ₀/(λ₀+λ₁+λ₂)` of eq. 3 must be at least
+    `edge_curv_thresh`. The default is `CURVATURE_THRESH` (0,03) — the same value Alg. 1
+    uses for Threshold2 and the same value `ours` thresholds on, so the gate introduces no
+    new tuned constant, and the three quantities stay comparable by construction. Passing
+    `curvature=None` disables the gate and is the pre-audit behaviour, kept for the A/B.
+
+    Clause 2, the two-surface test: high curvature alone is not enough and the paper says so
+    — a plate's own outer rim is a boundary too. Kept only if the point's neighbourhood
+    spans **two** regions, each holding at least `min_region_share` of it, so a stray
+    neighbour or two does not qualify a rim point.
 
     This is `ours`' cross-object gate with the oracle removed: the regions come from the
     method's own segmentation rather than from `object_id`. That substitution is the single
     most transferable idea in this paper for the rest of Phase 4.
     """
     pts = np.asarray(pts, dtype=float)
-    cand = np.flatnonzero(is_edge)
+    gate = np.asarray(is_edge, dtype=bool)
+    if curvature is not None:                          # §III-D clause 1: "high curvature"
+        gate = gate & (np.asarray(curvature, dtype=float) >= float(edge_curv_thresh))
+    cand = np.flatnonzero(gate)
     keep = np.zeros(len(pts), dtype=bool)
     if len(cand) == 0:
         return keep
@@ -427,6 +650,11 @@ def detect(pts: np.ndarray,
            min_region_pts: int = 30,
            edge_radius_mm: float | None = None,
            min_region_share: float = 0.15,
+           edge_curvature_gate: bool = True,
+           edge_curv_thresh: float | None = None,
+           seed_edges: bool = True,
+           label_span: bool = True,
+           label_span_radius_mm: float | None = None,
            link_mm: float | None = None,
            min_cluster_pts: int = 8,
            curve: str = "line",
@@ -456,9 +684,25 @@ def detect(pts: np.ndarray,
             that only spans the band sees nothing but `-1` and the two-surface test starves.
             Measured on the T scenes, `1,5 x voxel` keeps 164 seam points and `4-5 x voxel`
             keeps over a thousand, for the same input.
+        edge_curvature_gate: §III-D clause 1, *"not only ... high curvature but also ..."*.
+            **Default ON.** With it off (the pre-audit behaviour) any label or region
+            boundary is an edge, however flat the surface is across it, and on this corpus
+            that returned 9-31 % of the cloud as seam.
+        edge_curv_thresh: the δ the gate compares against. Defaults to `curvature_thresh`,
+            i.e. Alg. 1's own Threshold2 and `ours`' threshold for the same feature — so the
+            gate adds **no new tuned constant**.
+        seed_edges: Alg. 1 lines 12-14 applied to every neighbour, edges included, which is
+            what the pseudocode says. Default ON; `False` is the older reading.
+        label_span: with `region_labels` supplied, require the neighbourhood to span two
+            surfaces as well as the normal to turn. Default ON — see `_edge_from_labels`.
+        label_span_radius_mm: radius of that test. Defaults to **one voxel**: the smallest
+            ball in which two labels can be adjacent at all. Widening it thickens the
+            returned band symmetrically.
         curve: `"line"` for the paper's three linear workpieces, `"poly"` for its curved one.
-        segmentation_mask: the §III-C crop, supplied as an **oracle**. Two different masks
-            are defensible and they are not interchangeable — see `region_labels`.
+        segmentation_mask: the §III-C crop, supplied as an **oracle**. Which crop is the
+            question — `keypoint_crop` keeps the paper's 12,7 %, `surface_intersection_crop`
+            keeps 54-97 % of these scenes, and the difference is the method's headline
+            failure mode here. See Deviation 6 and `region_labels`.
         region_labels: per-point **surface** labels, supplied instead of grown. This is what
             §III-C's FastSAM actually returns: it is prompted at the centre of each workpiece
             *surface* and gives one mask per surface, and the weld region is then *derived*
@@ -479,15 +723,36 @@ def detect(pts: np.ndarray,
     radius_mm = float(radius_mm) if radius_mm else 2.0 * vox
     edge_radius_mm = float(edge_radius_mm) if edge_radius_mm else 4.0 * vox
     link_mm = float(link_mm) if link_mm else 2.0 * vox
+    label_span_radius_mm = (float(label_span_radius_mm) if label_span_radius_mm
+                            else 1.0 * vox)
+    edge_curv_thresh = (float(edge_curv_thresh) if edge_curv_thresh is not None
+                        else float(curvature_thresh))
     ball = radius_mm if neighbourhood == "radius" else None
     if neighbourhood not in ("knn", "radius"):
         raise ValueError(f"unknown neighbourhood {neighbourhood!r}")
 
-    params: dict[str, Any] = dict(voxel_mm=voxel_mm, k=k, smoothness_deg=smoothness_deg,
-                  curvature_thresh=curvature_thresh, neighbourhood=neighbourhood,
-                  radius_mm=radius_mm, edge_radius_mm=edge_radius_mm,
-                  min_region_share=min_region_share, link_mm=link_mm, curve=curve,
-                  n_input=len(P))
+    params: dict[str, Any] = dict(
+        voxel_mm=voxel_mm, k=k, smoothness_deg=smoothness_deg,
+        curvature_thresh=curvature_thresh, neighbourhood=neighbourhood,
+        radius_mm=radius_mm, edge_radius_mm=edge_radius_mm,
+        min_region_share=min_region_share, link_mm=link_mm, curve=curve,
+        min_region_pts=min_region_pts, min_cluster_pts=min_cluster_pts,
+        edge_curvature_gate=bool(edge_curvature_gate),
+        edge_curv_thresh=edge_curv_thresh if edge_curvature_gate else None,
+        seed_edges=bool(seed_edges), label_span=bool(label_span),
+        label_span_radius_mm=label_span_radius_mm,
+        # §IV-A publishes 3 mm; the harness passes 1,5 because 3 measures worse on 8 mm
+        # plates (Deviation 7). Both values travel with the row so the deviation is never
+        # read off as the paper's setting.
+        voxel_mm_published=VOXEL_MM,
+        # NOT the paper's — it publishes no value for any of these. Named here so that any
+        # result turning on one of them is legible as a result about this reimplementation.
+        # `k`, `smoothness_deg` and `curvature_thresh` are unpublished too (Deviation 2) and
+        # are already above; these five are additionally *invented*, having no counterpart
+        # in the paper at all.
+        invented=("min_region_pts", "min_cluster_pts", "link_mm", "edge_radius_mm",
+                  "min_region_share"),
+        n_input=len(P))
     empty = np.zeros((0, 3))
     if len(P) < max(k, 4):
         return RegionGrowResult([], [], [], P, np.zeros(len(P), int), np.zeros(len(P)),
@@ -497,14 +762,16 @@ def detect(pts: np.ndarray,
     normals, curv = local_pca(P, k, ball)
     if region_labels is None:
         labels, is_edge = region_grow(P, normals, curv, k, smoothness_deg, curvature_thresh,
-                                      min_region_pts, ball)
+                                      min_region_pts, ball, seed_edges)
     else:
         # Supplied surfaces replace Alg. 1's growth, not its edge test: §III-D still has to
         # decide which points sit ON a junction, and that is the normal-angle threshold.
         labels = _labels_for(pts, region_labels, P)
-        is_edge = _edge_from_labels(P, labels, normals, k, smoothness_deg, ball)
+        is_edge = _edge_from_labels(P, labels, normals, k, smoothness_deg, ball,
+                                    label_span_radius_mm, label_span)
         params["region_labels"] = "supplied"
-    seam_mask = two_surface_edges(P, labels, is_edge, edge_radius_mm, min_region_share)
+    seam_mask = two_surface_edges(P, labels, is_edge, edge_radius_mm, min_region_share,
+                                  curv if edge_curvature_gate else None, edge_curv_thresh)
 
     idx = np.flatnonzero(seam_mask)
     if len(idx) < min_cluster_pts:

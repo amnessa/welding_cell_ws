@@ -435,6 +435,101 @@ the visibility fix: `lit-lobb` T/circle full-view 0,06 → 0,41 (the far side of
 is now correctly invisible), `lit-quadric` pooled L0 0,90 → 0,88, straight-to-curved
 means as in the paper's Table II; every finding stands.
 
+### 1.2.2b `lit-modelreg` on every stratum (2026-09-14)
+
+The user saw no M6 row on the tube, swept, arc and grooved strata: its model builder
+sampled slabs and prisms only. `lit_modelreg.build_model` now takes tubes, swept slabs and
+prepared plates from their exact D34 meshes (`from_object(...).mesh()`, surfaces by area,
+edges by dihedral angle > 25°; the analytic plate samplers are untouched, so plate numbers
+do not move); `run_phase4_batch.py` lifts the plate-only subset; test
+`test_curved_primitives_build_a_model_from_their_meshes`. Smoke test, one scene per
+stratum, full scan / single view F1: circle 0,84 / 0,00, saddle 1,00 / 0,00, ellipse
+0,82 / 0,86, swept 1,00 / 0,50, rounded rect 0,76 / 0,10, grooved 0,23 / 0,00, arc
+0,94 / 0,58 — the registration, not the mechanism, is what fails (the single-view zeros
+are slides on near-symmetric partial clouds). Seven chunks (coverage × 2, noise × 2,
+task 2, dense features, global init) appended over the 420 scenes as parallel workers;
+notebook 15 and the paper refreshed behind them.
+
+**Fidelity review against Fang & Tian (user, 2026-09-14, "do we use modelreg correctly?").**
+Confirmed: the basic model (built from the scene's own geometry, canonical joint frame)
+is registered ONTO the scan — never the scan onto itself; similarity + coherent
+deformation (eq. 3) as classical CPD in place of their Bayesian CPD (documented
+substitution). Two gaps closed the same day: (1) §3.3 fits a **B-spline** through the
+transferred seam points — now `spline=True` (cubic, periodic for closed seams, ~0,05 mm
+tolerance); (2) the target feature set X comes, in the paper, from a **classical
+sharp-edge detector** on the scan (its ref. [23], Demarsin et al. 2007), not from truth —
+`target_features="edges"` (PCA normals, neighbour-normal deviation > 30°) is now a ladder
+rung `modelreg_edge_features` beside `oracle` (truth-guided stand-in, the batch's arm since
+Phase 4) and `dense`. §3.4's angle histograms plan the torch orientation and are not
+scored (seam polylines only). Smoke test, full scan F1 oracle / edges / dense: T line
+0,99 / 0,98 / 0,98, T circle 1,00 / 1,00 / 1,00, butt square 0,99 / 1,00 / 0,23, corner
+0,99 / 0,06 / 0,27 — the classical edge stage is where a corner registration slides.
+Because the spline changes every M6 output, all nine M6 chunks (incl. fixture) were
+deleted (`pre_meshmodel_modelreg_chunks/`) and recomputed over the full 720 scenes.
+
+### 1.2.4 Fidelity audit of the seven reimplementations (2026-09-14, user: "have we implemented the other methods faithfully?")
+
+Six parallel audits, each reading the paper PDF (`papers/implemented_papers/`) against
+`scripts/baselines/lit_*.py`, then six parallel fixes confined to each module + its tests
+(143 baseline/harness tests green afterwards). What was wrong, what changed, what it does
+to the numbers (smoke tests, first scene per stratum, full scan):
+
+* **lit-pcaslice — our reading failed, not the method.** Their §4.2 never sees a whole
+  ring: each camera view is an open crescent (Figs. 7/8c/11), sliced along ITS OWN PCA
+  axis; §4.3 stitches the four views and fits a CLOSED NURBS (Fig. 13b). We handed the
+  slicer the whole closed band → centres in mid-air. Now `ring_mode="arcs"` (default):
+  closed bands (auto-detected, or the seam's `closed` flag from the harness) are split
+  into four overlapping sectors, sliced per arc, stitched, periodic B-spline. Circle
+  0,09 → 0,77, ellipse 0,05 → 0,80, rounded rect 0,04 → 0,57; open seams bit-identical.
+  `ring_mode="whole"` kept as the ablation rung. Also: a code comment attributed
+  "empirically set to 5 mm" to the paper for the ball radius r — the paper gives no value;
+  struck. Torch-frame signs fixed to eq. (12); single-pass WTLSD documented.
+* **lit-regiongrow — our reading failed, not the method.** Measured failure was gross
+  OVER-detection (9-31 % of points as edges), not the root gap starving the two-region
+  test as the paper draft said. Their §III-C crop is FastSAM prompted by a trained
+  weld-keypoint detector and keeps 12,7 % of the cloud (Table II); ours kept 54-97 %.
+  `keypoint_crop` (an oracle: points within a searched radius of the truth seams, 12,7 %
+  retained) is now the L0 coarse stage; §III-D's curvature condition restored; the
+  supplied-label edge test now reads its labels; Alg. 1 seeding applied to edge
+  neighbours. T line 0,00 → 0,78, corner 0,23 → 0,93 (43 → 3 seams); square butt still
+  0. Old crop kept as `regiongrow_surface_crop` rung.
+* **lit-quadric — an accuracy upgrade the paper does not have.** Their seam points are
+  the MEASURED points within a threshold of the fitted intersection (§3.3, "< 1 mm"
+  claimed); ours projected them onto the analytic intersection → 0,01 mm. `output="points"`
+  is now the headline, `"projected"` a rung: F1 within 0,03, RMSE 0,02-0,2 → 1,3-1,8 mm
+  (set by the selection threshold). Per-axis flat/curved test (their Fig. 4) added, no
+  verdict changed. Docstring now states the oracle is surfaces + PART MEMBERSHIP and that
+  the headline ordering is our corrected chain (the published distance ordering is a rung).
+* **lit-lobb — two reading choices moved.** (1) T-ASE Fig. 9's hierarchy: the crease
+  split runs on the NON-boundary subset (we ran both splits on the whole ROI);
+  (2) the edge window is 3×3 PIXELS at ~0,17 mm/px in the paper, i.e. ~1,5× the point
+  spacing — ours was a 3 mm ball (≈ 4× spacing). Now `edge_radius_mm=None` → 1,5 ×
+  measured spacing; extents sorted l ≥ w ≥ h; 80 output points. Edge 0,41 → 0,83, corner
+  max error 4,3 → 0,4 mm (the paper's < 0,7 mm RMSE / 1,2 mm ME now met and pinned by
+  the test); BUT the faithful window cannot cross a root gap wider than the spacing, so
+  gapped butts return no boundary (F1 0 either way; before, a wrong seam). Old reading
+  kept as `lobb_flat_3mm` rung. Corner layer implemented but off (precondition fails on
+  our band-wide crease; TODO in docstring).
+* **lit-ppf — the gate is theirs, the tolerance is ours.** Alg. 1 gates on
+  `is_orthogonal` with no tolerance (yet their Table 2 has V welds); our 15° is invented.
+  Rungs added: `pair_rule="intersecting"`, tol 30°, 45° (corner 0,00 → 1,00 at 30°, so
+  the T-vs-angle-joint claim must be stated with its tolerance). Dedup of collinear pairs
+  + dominant-cluster outlier removal added as defaults — but they change almost nothing:
+  the curved-strata false positives are the top-face and bottom-face creases 8 mm apart,
+  through the thickness, i.e. per-pair emission (theirs pools one F per scene). Documented.
+* **lit-ransac — honest, two invented parameters on the corpus edge.** Defaults
+  unchanged (results stand). Rungs: `pair_rule="intersecting"` (the invented 30°
+  orthogonality gate sits exactly at the corpus's 60°/120° extremes — within one ulp),
+  `dist_thresh_rule="3x_spacing"` (their rule vs their 2 mm answer), `outlier_filter`
+  (their eq. 9). Corner 0,00 → 0,27 under the generous gate; grooved butt 0 under all.
+* **lit-modelreg** — see §1.2.2b (B-spline, classical edge features).
+
+All headline chunks of the five changed methods deleted (`pre_audit_chunks/`) and
+recomputed with the new defaults; 51 chunks (incl. 14 new rungs) queued eight-wide
+(`p4_queue.sh`), ~5 h; ransac and modelreg headline chunks untouched. Paper text to
+revise afterwards: the mechanism paragraph (pcaslice ring claim, regiongrow root-gap
+claim, quadric 0,01 mm), the ISO angle-joint sentence (tolerance), Tables/figures.
+
 ### 1.2.3 The render found the fix's own error (2026-09-12) — exit crossings are not occluders
 
 The train_v1 render's twin gate failed a cut-tube scene on *precision* (recall 1,0, residual

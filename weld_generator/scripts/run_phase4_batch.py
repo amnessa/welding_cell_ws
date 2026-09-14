@@ -75,10 +75,11 @@ from baselines.harness import run_task2  # noqa: E402
 METHODS_ALL = ["lit-ransac", "lit-regiongrow", "lit-lobb", "lit-ppf",
                "lit-pcaslice", "lit-modelreg", "lit-quadric"]   # 7th added 2026-09-08
 
-# `lit-modelreg` rebuilds its CAD model from scene.json, and its samplers cover slab
-# and prism primitives only (its papers register plate assemblies) - so its chunks run
-# on the plate-primitive subset and the coverage restriction is printed, not hidden.
-PLATE_PRIMS = {"slab", "prism"}
+# `lit-modelreg` rebuilds its CAD model from scene.json. Until 2026-09-14 its samplers
+# covered slab and prism primitives only (its papers register plate assemblies) and its
+# chunks ran on the plate subset; the model now comes from the exact D34 meshes for the
+# other primitives (lit_modelreg.mesh_*_points), so it runs on every scene like the rest.
+PLATE_PRIMS = {"slab", "prism"}   # kept for the scope print below
 
 # lit-quadric runs with the CORRECTED chain ordering in every standard chunk and the
 # as-published distance ordering as a ladder rung (2026-09-09 swap). Reason: the
@@ -87,7 +88,9 @@ PLATE_PRIMS = {"slab", "prism"}
 # fold is a documented reading (lit_quadric.py, reading 5) and its price is measured
 # on the rung; the standard chunks measure the mechanism.
 def _kw(m):
-    return {"lit-quadric": {"ordering": "chain"}} if m == "lit-quadric" else {}
+    # lit-quadric headline: corrected chain ordering + the paper's MEASURED seam points
+    # (output="points"; the projected refinement is a rung) - 2026-09-14 fidelity audit
+    return {"lit-quadric": {"ordering": "chain", "output": "points"}} if m == "lit-quadric" else {}
 
 
 # measured seconds per scene per run (L0, clean, bench hardware) - for --list only
@@ -129,10 +132,38 @@ def chunks(seeds_ransac: int):
     for cond in ("full_exterior", "single"):
         out.append(dict(group="ladder", name=f"quadric_distance_{cond}",
                         methods=["lit-quadric"], view=cond, oracle=True, noise=0.0,
-                        seeds=2, method_kw={"lit-quadric": {"ordering": "distance"}}))
+                        seeds=2, method_kw={"lit-quadric": {"ordering": "distance", "output": "points"}}))
+    # ---- 2026-09-14 fidelity-audit rungs (each prices one reading choice; defaults are the headline)
+    for cond in ("full_exterior", "single"):
+        out.append(dict(group="ladder", name=f"quadric_projected_{cond}",
+                        methods=["lit-quadric"], view=cond, oracle=True, noise=0.0,
+                        seeds=2, method_kw={"lit-quadric": {"ordering": "chain", "output": "projected"}}))
+        out.append(dict(group="ladder", name=f"pcaslice_whole_ring_{cond}",
+                        methods=["lit-pcaslice"], view=cond, oracle=True, noise=0.0,
+                        seeds=2, method_kw={"lit-pcaslice": {"ring_mode": "whole"}}))
+    out.append(dict(group="ladder", name="lobb_flat_3mm_full_exterior",
+                    methods=["lit-lobb"], view="full_exterior", oracle=True, noise=0.0,
+                    seeds=2, method_kw={"lit-lobb": {"kmeans": "flat", "edge_radius_mm": 3.0}}))
+    out.append(dict(group="ladder", name="regiongrow_surface_crop_full_exterior",
+                    methods=["lit-regiongrow"], view="full_exterior", oracle=True, noise=0.0,
+                    seeds=2, method_kw={"lit-regiongrow": {"crop": "surfaces"}}))
+    for tag, kw in (("perpair", {"dedup": False, "keep_clusters": "all"}), ("intersecting", {"pair_rule": "intersecting"}),
+                    ("tol30", {"ortho_tol_deg": 30.0}), ("tol45", {"ortho_tol_deg": 45.0})):
+        out.append(dict(group="ladder", name=f"ppf_{tag}_full_exterior",
+                        methods=["lit-ppf"], view="full_exterior", oracle=True, noise=0.0,
+                        seeds=2, method_kw={"lit-ppf": kw}))
+    for tag, kw in (("intersecting", {"pair_rule": "intersecting"}), ("thresh3x", {"dist_thresh_rule": "3x_spacing"}),
+                    ("outlierfilter", {"outlier_filter": True})):
+        out.append(dict(group="ladder", name=f"ransac_{tag}_full_exterior",
+                        methods=["lit-ransac"], view="full_exterior", oracle=True, noise=0.0,
+                        seeds=seeds_ransac, method_kw={"lit-ransac": kw}))
     out.append(dict(group="ladder", name="modelreg_global_init",
                     methods=["lit-modelreg"], view="full_exterior", oracle=True,
                     noise=0.0, seeds=2, method_kw={"lit-modelreg": {"init": "global"}}))
+    # the paper's own target stage (classical sharp-edge detection, its ref. [23]) - 2026-09-14
+    out.append(dict(name="modelreg_edge_features", group="ladder",
+                    methods=["lit-modelreg"], view="full_exterior", oracle=True,
+                    noise=0.0, seeds=2, method_kw={"lit-modelreg": {"target_features": "edges"}}))
     # the Task-2 chunks (6c(c)): MPS selection + localization, single view, clean.
     # Truth is the WELDABLE seam set (primary_only=False) because mps_rule-0.1 argmaxes
     # over weldable, not primary; D39's endpoint rule is inside run_task2.
@@ -300,10 +331,10 @@ def main():
             a["fixture"], b["fixture"] = False, True
             df = pd.concat([a, b], ignore_index=True)
         else:
-            cdirs = plate_dirs if "lit-modelreg" in c["methods"] else dirs
-            if cdirs is plate_dirs:
-                print(f"    lit-modelreg scope: {len(plate_dirs)}/{len(dirs)} scenes "
-                      f"(slab/prism primitives only)", flush=True)
+            cdirs = dirs
+            if "lit-modelreg" in c["methods"]:
+                print(f"    lit-modelreg: {len(dirs)} scenes ({len(plate_dirs)} plate-only, "
+                      f"the rest from D34 meshes since 2026-09-14)", flush=True)
             old_df = None
             if f.exists():                             # --append-missing
                 old_df = pd.read_csv(f, low_memory=False)

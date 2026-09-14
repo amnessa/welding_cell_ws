@@ -122,3 +122,69 @@ def test_deterministic_and_constitutively_l0():
     assert df.f1.nunique() == 1
     assert not REGISTRY["lit-modelreg"].randomised
     assert REGISTRY["lit-modelreg"].oracle_name == "model"
+
+
+def test_curved_primitives_build_a_model_from_their_meshes():
+    """2026-09-14: the model for tubes / swept slabs / prepared plates comes from the exact
+    D34 meshes, so `lit-modelreg` has a row on every stratum. Surface samples lie on the
+    parts; sharp-edge samples are fewer and also on the parts."""
+    import json
+    from weldgen.geom import from_object
+    from weldgen.render.gate import distance_to_mesh
+    corpus = ROOT / "out" / "bench_phase4"
+    picked = []
+    for cls, want in (("T", "tube"), ("T", "swept_slab"), ("butt", "prepared_prism")):
+        idx = corpus / cls / "index.jsonl"
+        for ln in (idx.read_text().splitlines() if idx.exists() else []):
+            r = json.loads(ln)
+            if not r.get("emitted") or "scene_id" not in r:
+                continue
+            sd = corpus / cls / r["scene_id"]
+            if not (sd / "scene.json").exists():
+                continue
+            sc = json.loads((sd / "scene.json").read_text())
+            if any(o.get("primitive") == want for o in sc["objects"]):
+                picked.append(sc); break
+    if len(picked) < 3:
+        pytest.skip("bench_phase4 corpus not present")
+    for sc in picked:
+        parts = [from_object(o) for o in sc["objects"] if o["role"] == "workpiece"]
+        gt = [np.zeros((2, 3))]
+        W_edges, _, Twj = build_model(sc, gt, edges_only=True)
+        W_surf, _, _ = build_model(sc, gt, edges_only=False)
+        assert len(W_surf) > len(W_edges) > 20
+        for W in (W_edges, W_surf):
+            world = W @ Twj[:3, :3].T + Twj[:3, 3]
+            d = np.min(np.column_stack([distance_to_mesh(world, p.mesh()) for p in parts]), axis=1)
+            assert np.percentile(d, 99) < 0.3, "model points must lie on the parts"
+
+
+def test_spline_seam_stays_on_the_polyline_open_and_closed():
+    from baselines.lit_modelreg import spline_seam
+    t = np.linspace(0.0, 1.0, 1200)
+    line = np.column_stack([200.0 * t, 5.0 * np.sin(2 * np.pi * t), np.zeros_like(t)])
+    S = spline_seam(line, closed=False)
+    d = np.min(np.linalg.norm(S[:, None, :] - line[None, :, :], axis=2), axis=1)
+    assert 20 < len(S) < len(line) and d.max() < 0.2
+    th = np.linspace(0.0, 2 * np.pi, 1500, endpoint=False)
+    ring = np.column_stack([40.0 * np.cos(th), 40.0 * np.sin(th), np.zeros_like(th)])
+    R = spline_seam(ring, closed=True)
+    r = np.linalg.norm(R[:, :2], axis=1)
+    assert abs(r - 40.0).max() < 0.2 and len(R) > 100
+
+
+def test_sharp_edge_points_find_the_box_edges_not_its_faces():
+    from baselines.lit_modelreg import sharp_edge_points
+    rng = np.random.default_rng(0)
+    n = 4000
+    faces = []
+    for axis in range(3):
+        for sign in (-1.0, 1.0):
+            q = rng.uniform(-50.0, 50.0, size=(n, 3)); q[:, axis] = 50.0 * sign
+            faces.append(q)
+    box = np.vstack(faces)
+    E = sharp_edge_points(box, k=16, angle_deg=30.0)
+    assert 0 < len(E) < 0.35 * len(box)
+    # every edge feature lies within a few mm of a box edge (two coordinates near +-50)
+    near = (np.abs(np.abs(E) - 50.0) < 4.0).sum(axis=1)
+    assert (near >= 2).mean() > 0.9

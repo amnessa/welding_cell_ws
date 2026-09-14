@@ -204,42 +204,56 @@ def _run_ours(prep: PreparedScene, seed: int, oracle: bool, view: str, ns: float
     return r.band, {"n_clusters": r.n_clusters, "window_open": lo < hi}
 
 
-def _run_lit_ransac(prep: PreparedScene, seed: int, oracle: bool, view: str, ns: float):
+def _run_lit_ransac(prep: PreparedScene, seed: int, oracle: bool, view: str, ns: float, **kw):
     from .lit_ransac import detect
     c = prep.cloud(view, ns)
     mask = prep.oracle("band", view, ns) if oracle else None
-    r = detect(c["xyz"], seed=seed, prefilter_density_per_mm2=1.0, segmentation_mask=mask)
-    return r.polylines, {"n_planes": len(r.planes)}
+    r = detect(c["xyz"], seed=seed, prefilter_density_per_mm2=1.0, segmentation_mask=mask, **kw)
+    return r.polylines, {"n_planes": len(r.planes), **{k: kw[k] for k in ("pair_rule", "dist_thresh_rule", "outlier_filter") if k in kw}}
 
 
-def _run_lit_regiongrow(prep: PreparedScene, seed: int, oracle: bool, view: str, ns: float):
-    from .lit_regiongrow import detect
+def _run_lit_regiongrow(prep: PreparedScene, seed: int, oracle: bool, view: str, ns: float,
+                        crop: str = "keypoint", **kw):
+    """L0 coarse stage: `crop="keypoint"` (default since 2026-09-14) = the paper's
+    keypoint-prompted FastSAM crop, stood in by `keypoint_crop` (points within a searched
+    radius of the truth seams, ~12,7 % of the cloud as in their Table II) with the surface
+    labels; `crop="surfaces"` = the pre-audit reading (surface-intersection crop over all
+    faces, 54-97 % retained), kept as a ladder rung."""
+    from .lit_regiongrow import detect, keypoint_crop
     c = prep.cloud(view, ns)
     if oracle:
-        crop, lab = prep.oracle("surfaces", view, ns)
+        scrop, lab = prep.oracle("surfaces", view, ns)
+        aux = {}
+        if crop == "keypoint":
+            scrop, kp = keypoint_crop(c["xyz"], prep.gt)
+            aux = {"crop_radius_mm": kp["radius_mm"], "crop_fraction": kp["fraction"]}
+        elif crop != "surfaces":
+            raise ValueError(f'crop must be "keypoint" or "surfaces", got {crop!r}')
         r = detect(c["xyz"], voxel_mm=1.5, edge_radius_mm=6.0, link_mm=3.0,
-                   segmentation_mask=crop, region_labels=lab[crop])
-    else:
-        r = detect(c["xyz"], voxel_mm=1.5, edge_radius_mm=6.0, link_mm=3.0)
+                   segmentation_mask=scrop, region_labels=lab[scrop], **kw)
+        return r.polylines, {"n_regions": r.n_regions, "crop": crop, **aux}
+    r = detect(c["xyz"], voxel_mm=1.5, edge_radius_mm=6.0, link_mm=3.0, **kw)
     return r.polylines, {"n_regions": r.n_regions}
 
 
 def _run_lit_ppf(prep: PreparedScene, seed: int, oracle: bool, view: str, ns: float,
-                 normals: str = "estimate"):
+                 normals: str = "estimate", **kw):
     from .lit_ppf import detect
     c = prep.cloud(view, ns)
     r = detect(c["xyz"], normals=normals,
                normals_xyz=c["normals"] if normals == "exact" else None,
-               segmentation_mask=prep.oracle("band", view, ns) if oracle else None)
-    return r.polylines, {"n_planes": len(r.planes), "normals": normals}
+               segmentation_mask=prep.oracle("band", view, ns) if oracle else None, **kw)
+    return r.polylines, {"n_planes": len(r.planes), "normals": normals,
+                         **{k: r.params[k] for k in ("pair_rule", "ortho_tol_deg", "dedup", "keep_clusters") if k in r.params}}
 
 
-def _run_lit_lobb(prep: PreparedScene, seed: int, oracle: bool, view: str, ns: float):
+def _run_lit_lobb(prep: PreparedScene, seed: int, oracle: bool, view: str, ns: float, **kw):
     from .lit_lobb import detect
     c = prep.cloud(view, ns)
     r = detect(c["xyz"], object_id=prep.oracle("objects", view, ns) if oracle else None,
-               voxel_mm=1.0)
-    return r.polylines, {"n_crease": int(r.crease.sum())}
+               voxel_mm=1.0, **kw)
+    return r.polylines, {"n_crease": int(r.crease.sum()),
+                         **{k: r.params[k] for k in ("kmeans", "edge_radius_mm") if k in r.params}}
 
 
 def _length(poly) -> float:
@@ -258,7 +272,7 @@ def _coarsen(poly: np.ndarray, step_mm: float) -> np.ndarray:
     return np.column_stack([np.interp(t, cum, poly[:, k]) for k in range(3)])
 
 
-def _run_lit_pcaslice(prep: PreparedScene, seed: int, oracle: bool, view: str, ns: float):
+def _run_lit_pcaslice(prep: PreparedScene, seed: int, oracle: bool, view: str, ns: float, **kw):
     from .lit_pcaslice import detect
     from .lit_ransac import seam_region_oracle
     c = prep.cloud(view, ns)
@@ -267,8 +281,12 @@ def _run_lit_pcaslice(prep: PreparedScene, seed: int, oracle: bool, view: str, n
         # One band PER TRUTH SEAM - their YOLO boxes each weld instance separately, and
         # the per-slice geometric centre cannot survive two seams in one strip.
         masks = [seam_region_oracle(c["xyz"], [g], end_margin_mm=0.0) for g in prep.gt]
-    r = detect(c["xyz"], instance_masks=masks, seed=seed)
-    return r.polylines, {"n_instances": r.params["n_instances"]}
+        # the seam's own closed flag (their §4.3 stitches the four views into a closed ring);
+        # L1 has no per-seam flag and auto-detects
+        kw.setdefault("closed", [bool(m.get("closed", False)) for m in prep.gt_meta] if prep.gt_meta else None)
+    r = detect(c["xyz"], instance_masks=masks, seed=seed, **kw)
+    return r.polylines, {"n_instances": r.params["n_instances"],
+                         **{k: r.params[k] for k in ("ring_mode", "n_closed") if k in r.params}}
 
 
 def _run_lit_modelreg(prep: PreparedScene, seed: int, oracle: bool, view: str, ns: float,
@@ -288,7 +306,7 @@ def _run_lit_modelreg(prep: PreparedScene, seed: int, oracle: bool, view: str, n
 
 
 def _run_lit_quadric(prep: PreparedScene, seed: int, oracle: bool, view: str, ns: float,
-                     ordering: str = "distance"):
+                     ordering: str = "distance", **kw):
     # L0 = their two-part split made explicit: per-face SURFACE labels (what the fit
     # needs) plus part membership (what restricts the pairs). L1 grows the surfaces
     # itself and has no part membership - every adjacent pair is a candidate.
@@ -297,13 +315,14 @@ def _run_lit_quadric(prep: PreparedScene, seed: int, oracle: bool, view: str, ns
     if oracle:
         _, lab = prep.oracle("surfaces", view, ns)
         r = detect(c["xyz"], region_labels=lab, part_labels=c["object_id"],
-                   ordering=ordering, seed=seed)
+                   ordering=ordering, seed=seed, **kw)
     else:
-        r = detect(c["xyz"], ordering=ordering, seed=seed)
+        r = detect(c["xyz"], ordering=ordering, seed=seed, **kw)
     census = {}
     for pr in r.pairs:
         census[pr["status"]] = census.get(pr["status"], 0) + 1
     return r.polylines, {"n_surfaces": len(r.surfaces), "ordering": ordering,
+                         "output": r.params.get("output"), "flat_test": r.params.get("flat_test"),
                          "n_curved": sum(1 for s in r.surfaces if s["kind"] == "curved"),
                          "pairs_seam": census.get("seam", 0)}
 

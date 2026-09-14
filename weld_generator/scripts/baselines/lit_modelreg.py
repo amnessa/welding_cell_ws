@@ -54,6 +54,23 @@ CPD is implemented as classical CPD (Myronenko) — similarity first, then a coh
 Gaussian-kernel deformation — the same eq.-3 family without the Bayesian priors; the
 difference is a robustness refinement, not a different mechanism.
 
+Two fidelity items closed on 2026-09-14 (user review against the paper):
+
+* **§3.3 B-spline fit.** The paper fits a B-spline to the transferred seam points before
+  planning; the transferred polyline used to be returned as-is. `spline=True` (default)
+  now fits a cubic B-spline (periodic for closed seams) through the transferred points -
+  `lit_pcaslice.bspline_path`'s curve family - and returns its samples.
+* **Target feature extraction.** The paper's target feature set X comes from a classical
+  sharp-edge detector on the scan (Demarsin et al. 2007, its ref. [23]), not from a learned
+  stage and not from truth. `target_features="edges"` implements that reading: per-point
+  PCA normals, a point is an edge feature when a neighbour's normal deviates by more than
+  `edge_angle_deg`. `"oracle"` (scan points near the true-posed model edges - the stand-in
+  the batch has used since Phase 4) and `"dense"` (raw surfaces) stay as ladder rungs, so
+  the three inputs are priced side by side rather than one replacing another.
+* **§3.4 torch pose** (angle histograms of the local point set about each seam point,
+  eq. 1) plans the torch orientation; it is carried by P and P' and not scored here,
+  because the benchmark scores seam polylines only.
+
 Deterministic: EM from a fixed PCA-based initialisation, no sampling anywhere.
 Everything is **millimetres**.
 """
@@ -68,6 +85,7 @@ import numpy as np
 from .radius_pca import voxel_downsample
 
 AUX_OFFSET_MM = 15.0          # §3.1, l_p "set to 15 mm based on experience"
+PLATE_PRIMS = {"slab", "prism"}   # sampled analytically below; every other primitive from its D34 mesh
 
 
 # --------------------------------------------------------------------------------
@@ -195,6 +213,52 @@ def prism_edge_points(outline_uv, thickness, T_world_part,
     return P @ T[:3, :3].T + T[:3, 3]
 
 
+def _part_mesh_world(o: dict):
+    """The exact D34 mesh of an `objects[]` entry, in WORLD frame (`weldgen.geom.from_object`)."""
+    import sys
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    from weldgen.geom import from_object
+    return from_object(o).mesh()
+
+
+def mesh_surface_points(mesh, T: np.ndarray, step_mm: float = 6.0, seed: int = 0) -> np.ndarray:
+    """Area-uniform samples of a world-frame mesh at ~one point per `step_mm`², carried
+    through `T` (here world -> joint). Deterministic: a fixed-seed generator, so the model
+    is the same on every call."""
+    V, Fc = np.asarray(mesh.vertices, dtype=float), np.asarray(mesh.faces)
+    area = np.asarray(mesh.area_faces, dtype=float)
+    n = int(max(200, round(area.sum() / (float(step_mm) ** 2))))
+    rng = np.random.default_rng(seed)
+    fi = rng.choice(len(Fc), size=n, p=area / area.sum())
+    r1, r2 = np.sqrt(rng.uniform(size=n)), rng.uniform(size=n)
+    a, b, c = V[Fc[fi, 0]], V[Fc[fi, 1]], V[Fc[fi, 2]]
+    pts = (1.0 - r1)[:, None] * a + (r1 * (1.0 - r2))[:, None] * b + (r1 * r2)[:, None] * c
+    return pts @ T[:3, :3].T + T[:3, 3]
+
+
+def mesh_edge_points(mesh, T: np.ndarray, step_mm: float = 4.0, angle_deg: float = 25.0) -> np.ndarray:
+    """Points along the mesh's SHARP edges (dihedral angle above `angle_deg`): rims and cut
+    curves of a tube, the band edges of a swept slab, the groove edges of a prepared plate -
+    the analogue of `slab_edge_points` for the curved primitives, i.e. the edge features the
+    paper's target stage would extract. World frame in, `T` out."""
+    ang = np.asarray(mesh.face_adjacency_angles, dtype=float)
+    E = np.asarray(mesh.face_adjacency_edges)[ang > np.radians(float(angle_deg))]
+    V = np.asarray(mesh.vertices, dtype=float)
+    out = []
+    for i, j in E:
+        a, b = V[i], V[j]
+        k = max(2, int(np.ceil(np.linalg.norm(b - a) / float(step_mm))) + 1)
+        t = np.linspace(0.0, 1.0, k)[:, None]
+        out.append(a + t * (b - a))
+    if not out:
+        return np.zeros((0, 3))
+    P = np.unique(np.round(np.vstack(out), 3), axis=0)
+    return P @ T[:3, :3].T + T[:3, 3]
+
+
 def build_model(scene: dict, gt_world: list, step_mm: float = 6.0,
                 edges_only: bool = True) -> tuple[np.ndarray, list, np.ndarray]:
     """The basic model in the JOINT frame: `(W_points, P_seams, T_world_joint)`.
@@ -204,6 +268,10 @@ def build_model(scene: dict, gt_world: list, step_mm: float = 6.0,
     scene put it — the "identical workpiece, new placement" scenario the paper is for.
     The model's seam trajectories P are the stored truth mapped into the same frame:
     CAD-by-construction, and the reason every number here carries the L0 label.
+    Slabs and prisms are sampled analytically (the original implementation, kept so their
+    numbers do not move); tubes, swept slabs and prepared plates come from their exact D34
+    meshes (`from_object`), surfaces by area and edges by dihedral angle - added 2026-09-14
+    so the method has a row on every stratum instead of the plate subset only.
     """
     Twj = np.asarray(scene["T_world_joint"], dtype=float)
     inv = np.linalg.inv(Twj)
@@ -212,7 +280,13 @@ def build_model(scene: dict, gt_world: list, step_mm: float = 6.0,
         if o.get("role") != "workpiece":
             continue
         Tp = inv @ np.asarray(o["T_world_part"], dtype=float)
-        if o.get("primitive", "slab") == "prism":
+        kind = o.get("primitive", "slab")
+        if kind not in PLATE_PRIMS:
+            m = _part_mesh_world(o)                        # world frame -> pull into joint frame
+            clouds.append(mesh_edge_points(m, inv, min(step_mm, 4.0)) if edges_only
+                          else mesh_surface_points(m, inv, step_mm))
+            continue
+        if kind == "prism":
             if edges_only:
                 clouds.append(prism_edge_points(
                     o["outline_uv"], o["thickness_mm"], Tp, min(step_mm, 4.0)))
@@ -455,12 +529,59 @@ def _near_init_pose(scene: dict, rot_deg: float, trans_mm: float) -> np.ndarray:
     return np.asarray(scene["T_world_joint"], dtype=float) @ np.linalg.inv(T)
 
 
+def sharp_edge_points(pts: np.ndarray, k: int = 16, angle_deg: float = 30.0,
+                      max_points: int = 120_000) -> np.ndarray:
+    """Classical sharp-edge features of a scan (the paper's ref. [23], reduced to its normal
+    test): PCA normals over k neighbours; a point is an edge feature when the normal of
+    any neighbour deviates from its own by more than `angle_deg`. No truth, no learning."""
+    from scipy.spatial import cKDTree
+    P = np.asarray(pts, dtype=float)
+    if len(P) > max_points:
+        P = P[:: int(np.ceil(len(P) / max_points))]
+    if len(P) < k + 1:
+        return P
+    tree = cKDTree(P)
+    _, nb = tree.query(P, k=k + 1, workers=-1)
+    Q = P[nb]                                          # (n, k+1, 3)
+    C = Q - Q.mean(axis=1, keepdims=True)
+    cov = np.einsum("nki,nkj->nij", C, C) / float(k)
+    _, vec = np.linalg.eigh(cov)                       # ascending eigenvalues
+    nrm = vec[:, :, 0]                                 # smallest -> normal
+    cosang = np.abs(np.einsum("nj,nkj->nk", nrm, nrm[nb[:, 1:]]))
+    edge = cosang.min(axis=1) < np.cos(np.radians(float(angle_deg)))
+    return P[edge]
+
+
+def spline_seam(seam: np.ndarray, closed: bool, step_mm: float = 1.0) -> np.ndarray:
+    """§3.3: a cubic B-spline through the transferred seam points, sampled at `step_mm`.
+    Periodic for closed seams. Falls back to the polyline when it is too short."""
+    from scipy.interpolate import splev, splprep
+    S = np.asarray(seam, dtype=float)
+    if len(S) < 8:
+        return S
+    d = np.linalg.norm(np.diff(S, axis=0), axis=1)
+    length = float(d.sum())
+    if length < 4.0 * step_mm:
+        return S
+    keep = np.r_[True, d > 1e-9]                       # splprep rejects repeated points
+    S = S[keep]
+    n_ctrl = int(np.clip(length / 10.0, 8, 200))       # one control point per ~10 mm
+    sub = S[np.linspace(0, len(S) - 1, min(len(S), 4 * n_ctrl)).astype(int)]
+    try:
+        tck, _ = splprep(sub.T, k=3, s=0.05 ** 2 * len(sub), per=bool(closed))   # ~0.05 mm RMS tolerance
+    except Exception:
+        return S
+    u = np.linspace(0.0, 1.0, max(int(length / step_mm), 8), endpoint=not closed)
+    return np.column_stack(splev(u, tck))
+
+
 def detect(pts: np.ndarray, scene: dict, gt_world: list,
            mode: str = "nonrigid", init: str = "near", target_features: str = "oracle",
            init_rot_deg: float = 10.0,
            init_trans_mm: float = 20.0, model_step_mm: float = 5.0,
            target_voxel_mm: float = 6.0, n_max: int = 900, beta_mm: float = 40.0,
-           lam: float = 3.0, iters: int = 60, w: float = 0.1) -> ModelRegResult:
+           lam: float = 3.0, iters: int = 60, w: float = 0.1, spline: bool = True,
+           edge_angle_deg: float = 30.0) -> ModelRegResult:
     """Register the basic model onto the scan and carry its seam across.
 
     Args:
@@ -509,8 +630,14 @@ def detect(pts: np.ndarray, scene: dict, gt_world: list,
         near = pts[:: max(1, len(pts) // 60000)][d <= 2.0 * float(target_voxel_mm)]
         if len(near) >= 30:
             X = _cap(voxel_downsample(near, float(target_voxel_mm) / 2.0), n_max)
+    elif target_features == "edges":
+        # the paper's own target stage: classical sharp-edge detection on the scan
+        E = sharp_edge_points(pts, angle_deg=float(edge_angle_deg))
+        if len(E) >= 30:
+            X = _cap(voxel_downsample(E, float(target_voxel_mm) / 2.0), n_max)
+        params["n_edge_features"] = int(len(E))
     elif target_features != "dense":
-        raise ValueError(f'target_features must be "oracle" or "dense", '
+        raise ValueError(f'target_features must be "oracle", "edges" or "dense", '
                          f'got {target_features!r}')
     if init == "near":
         T0 = _near_init_pose(scene, init_rot_deg, init_trans_mm)
@@ -530,5 +657,11 @@ def detect(pts: np.ndarray, scene: dict, gt_world: list,
         TY = TY2
     elif mode != "similarity":
         raise ValueError(f'mode must be "similarity" or "nonrigid", got {mode!r}')
+
+    params["spline"] = bool(spline)
+    if spline:                                          # §3.3: B-spline through the transferred points
+        closed_flags = [bool(sm.get("closed", False)) for sm in scene.get("seams", [])]
+        seams = [spline_seam(p, closed_flags[i] if i < len(closed_flags) else False)
+                 for i, p in enumerate(seams)]
 
     return ModelRegResult(seams, TY, s, R, t, params)

@@ -84,6 +84,37 @@ measured rather than argued.
    `False` returns the matrix exactly as printed. The seam *geometry* is unaffected either
    way, and the geometry is what the Phase 4 metrics currently score.
 
+7. **Orthogonality tolerance (§6).** §6 opens "for each pair of orthogonal steel plates"
+   and never says how far from 90 deg a pair may sit; `orthogonal_tol_deg = 30` is this
+   reimplementation's invention, not the paper's number. It is not a neutral one on this
+   corpus: the generator samples included angles over 60-120 deg, and both extremes land
+   on `|fold - 90| = 30` **exactly**, i.e. on the gate itself, where a fraction of a degree
+   of fit noise decides the verdict. Default `pair_rule="orthogonal"` keeps that reading.
+   `pair_rule="intersecting"` is the generous one — any pair whose fold angle lies in
+   `intersect_range_deg = (20, 160)` deg — which accepts every groove the corpus makes and
+   rejects only the near-parallel pairs eq. 21 cannot use anyway. A fitted pair cannot
+   tell a 60 deg fold from a 120 deg one (see `LitRansacSeam.dihedral_deg`), so the window
+   is tested against both readings and passes if either lands inside.
+
+8. **Distance threshold (§5.2).** `T_d2 = 2,0 mm` is the *outcome* of the paper's rule,
+   not the rule. §5.2 measures the tested workpiece's resolution with a KD-tree nearest
+   neighbour search at 0,6427 mm and concludes that "plane fitting stabilizes when the
+   threshold approximates three times the point cloud resolution" — 3 x 0,6427 = 1,93, so
+   2 mm. This corpus sweeps sampling density over 0,25-4 pts/mm² (0,5-2 mm spacing), where
+   the fixed number and the rule are different experiments. `dist_thresh_rule="fixed"`
+   (default) keeps 2,0 mm; `"3x_spacing"` measures the mean nearest-neighbour distance of
+   the cloud §5 is actually handed and uses 3x it. Both the realised threshold and the
+   measured spacing are recorded in `result.params` either way.
+
+9. **Statistical outlier removal (eq. 9).** The pipeline filters the segmented cloud —
+   "the segmented point cloud undergoes outlier removal to enhance data quality" (§1) —
+   with the criterion `||p_k - p_j|| / sigma_j > tau` of eq. 9 over a k-NN neighbourhood.
+   This reimplementation skipped it, because the generator's clouds carry no sensor
+   flyers. `outlier_filter=True` restores it. The paper states neither `k` nor `tau`, so
+   the defaults are the usual PCL reading of that criterion: `outlier_k=20` neighbours,
+   drop a point whose mean neighbour distance exceeds `mean + outlier_std_ratio * std`
+   over the cloud, with `outlier_std_ratio=1.0`. Default `False`, recorded in params.
+
 What the mechanism cannot express
 ---------------------------------
 §6 opens "for each pair of orthogonal steel plates, the intersection line represents a
@@ -276,6 +307,70 @@ def surface_intersection_crop(pts: np.ndarray, labels: np.ndarray,
     seed_pts = pts[np.concatenate(seeds)]
     d, _ = cKDTree(seed_pts).query(pts, k=1, workers=-1)
     return d <= float(half_width_mm)
+
+
+# --------------------------------------------------------------------------------
+# §5.2 point cloud resolution, and eq. 9 statistical filtering
+# --------------------------------------------------------------------------------
+
+def estimate_point_spacing(pts: np.ndarray, max_samples: int = 20_000,
+                           seed: int = 0) -> float:
+    """Mean nearest-neighbour distance — §5.2's "point cloud resolution", in mm.
+
+    §5.2: *"a KD-tree nearest neighbor search was employed to calculate point-wise
+    distances, quantifying the resolution of the tested workpiece at 0.6427 mm"*. That
+    single number is what their 2 mm threshold is three times of, so measuring it is what
+    makes `dist_thresh_rule="3x_spacing"` the paper's rule rather than its answer.
+
+    The tree is built over **every** point and only the queries are subsampled, so the
+    estimate is of the whole cloud's spacing and not of a sparser copy of it. Duplicate
+    points (a voxel grid never makes them, a raw sensor cloud can) would pull the mean to
+    zero, so exact coincidences are excluded from the mean rather than counted as spacing.
+    `max_samples` is a cost cap, not a statistical choice: 20 000 nearest-neighbour
+    distances estimate a mean to well under the precision anyone reads off it.
+    """
+    pts = np.asarray(pts, dtype=float)
+    if len(pts) < 2:
+        return float("nan")
+    if cKDTree is None:                                # pragma: no cover
+        raise ImportError("estimate_point_spacing needs scipy.spatial.cKDTree")
+    tree = cKDTree(pts)
+    if len(pts) > max_samples:
+        idx = np.random.default_rng(seed).choice(len(pts), size=max_samples,
+                                                 replace=False)
+        q = pts[idx]
+    else:
+        q = pts
+    dist, _ = tree.query(q, k=2, workers=-1)
+    nn = dist[:, 1]
+    nn = nn[nn > 0.0]
+    if len(nn) == 0:                                   # pragma: no cover
+        return float("nan")
+    return float(nn.mean())
+
+
+def statistical_outlier_filter(pts: np.ndarray, k: int = 20,
+                               std_ratio: float = 1.0) -> np.ndarray:
+    """Boolean keep-mask, eq. 9. See deviation 9 for the two constants the paper omits.
+
+    Eq. 9 rejects a point when `||p_k - p_j|| / sigma_j > tau`, with `sigma_j` "the
+    standard deviation of the distances to neighboring points" and `tau` "a predefined
+    threshold" — a value the paper never prints, in a ratio it never centres. Implemented
+    as the standard form that criterion is the shorthand for: per-point mean distance to
+    its `k` nearest neighbours, then keep the points whose mean is at most
+    `mean + std_ratio * std` over the whole cloud. One-sided on purpose — a point that is
+    *closer* to its neighbours than average is dense sampling, not an outlier.
+    """
+    pts = np.asarray(pts, dtype=float)
+    keep = np.ones(len(pts), dtype=bool)
+    if len(pts) <= k:
+        return keep
+    if cKDTree is None:                                # pragma: no cover
+        raise ImportError("statistical_outlier_filter needs scipy.spatial.cKDTree")
+    dist, _ = cKDTree(pts).query(pts, k=int(k) + 1, workers=-1)
+    mean_d = dist[:, 1:].mean(axis=1)                  # column 0 is the point itself
+    cutoff = float(mean_d.mean() + float(std_ratio) * mean_d.std())
+    return mean_d <= cutoff
 
 
 # --------------------------------------------------------------------------------
@@ -624,6 +719,18 @@ def seam_endpoints(pts: np.ndarray, a: Plane, b: Plane, p_line: np.ndarray,
 # result and driver
 # --------------------------------------------------------------------------------
 
+def _fold_in_window(fold_deg: float, window: tuple[float, float]) -> bool:
+    """Is this fold inside `window`? Deviation 7's `"intersecting"` test.
+
+    `fold_deg` is `arccos|n1.n2|`, which lives in [0, 90] because a fitted normal's sign is
+    arbitrary: a 60 deg fold and a 120 deg one are the same number here and no test can
+    separate them. So the window is checked against both readings and passes if either
+    lands inside, which for the symmetric default (20, 160) is simply `fold >= 20`.
+    """
+    lo, hi = float(window[0]), float(window[1])
+    return (lo <= fold_deg <= hi) or (lo <= 180.0 - fold_deg <= hi)
+
+
 @dataclass
 class LitRansacSeam:
     """One extracted weld: geometry from §6.1-6.2, pose from eq. 24."""
@@ -657,7 +764,8 @@ class LitRansacResult:
     seams: list[LitRansacSeam]
     planes: list[Plane]
     #: Every plane pair §6 considered, and what became of it: `{i, j, fold_deg, status}`
-    #: with status one of `seam`, `parallel`, `not_orthogonal`, `no_support`,
+    #: with status one of `seam`, `parallel`, `not_orthogonal` (`pair_rule=
+    #: "orthogonal"`), `not_intersecting` (`pair_rule="intersecting"`), `no_support`,
     #: `no_endpoints`, `too_short`. The coverage claim in `dataset_plan.md` §4 is a claim
     #: about *one* of these values, so it is recorded rather than described - an edge joint
     #: rejecting every pair as `parallel` is the mechanism limit, in data.
@@ -685,12 +793,16 @@ class LitRansacResult:
 
 def detect(pts: np.ndarray,
            dist_thresh_mm: float = T_D2_MM,
+           dist_thresh_rule: str = "fixed",
            min_inlier_ratio: float = T_MPP,
            confidence: float = ETA_0,
            seed: int = 0,
            segmentation_mask: np.ndarray | None = None,
            voxel_mm: float | None = None,
            prefilter_density_per_mm2: float | None = None,
+           outlier_filter: bool = False,
+           outlier_k: int = 20,
+           outlier_std_ratio: float = 1.0,
            max_planes: int = 20,
            max_iterations: int = 1000,
            iteration_rule: str = "adaptive",
@@ -698,6 +810,7 @@ def detect(pts: np.ndarray,
            refit_k: int = 200,
            pair_rule: str = "orthogonal",
            orthogonal_tol_deg: float = 30.0,
+           intersect_range_deg: tuple[float, float] = (20.0, 160.0),
            parallel_tol: float = 1e-6,
            support_radius_mm: float | None = None,
            min_pair_support: int = 10,
@@ -711,6 +824,12 @@ def detect(pts: np.ndarray,
     Args:
         pts: (N,3) cloud, millimetres. `cloud_for(view="full")` is the closest analogue of
             the paper's input, which is a multi-view registered reconstruction (§4).
+        dist_thresh_rule: `"fixed"` (default) uses `dist_thresh_mm` as given — the
+            paper's 2,0 mm. `"3x_spacing"` ignores it and uses three times the measured
+            mean nearest-neighbour spacing of the cloud §5 is handed, which is the rule
+            §5.2 states and of which 2,0 mm is that paper's *answer*. See deviation 8;
+            `params["dist_thresh_mm"]` always carries the realised value and
+            `params["point_spacing_mm"]` the measurement.
         dist_thresh_mm: `T_d2`. The paper's 2,0 mm comes from a sensitivity sweep on a
             0,64 mm-resolution cloud with 6 mm plate, and §5.2 is explicit that it must
             exceed the surface deviation and stay below the plate thickness. **That is a
@@ -721,15 +840,24 @@ def detect(pts: np.ndarray,
         segmentation_mask: boolean per-point mask restricting the input, standing in for
             §3's PointNet++. Use `seam_region_oracle` to build it. **An oracle** — recorded
             in the result and reported alongside every number produced with it.
+        outlier_filter: apply eq. 9's statistical outlier removal to the segmented
+            cloud before fitting. Default `False`; see deviation 9 for the constants,
+            which the paper does not print. `outlier_k` and `outlier_std_ratio` are them.
         prefilter_density_per_mm2: voxel-downsample to about this density first. Set it for
             any cross-scene comparison, for the same reason `ours` needs it: the generator
             samples density over 0,25-4 pts/mm², and `T_mpp` is a *ratio*, so an
             uncontrolled density silently changes what counts as a plane.
         pair_rule: `"orthogonal"` (default) applies §6's own premise, "each pair of
-            orthogonal steel plates"; `"intersecting"` accepts any non-parallel pair. The
-            generous reading exists so the coverage result cannot be dismissed as a
+            orthogonal steel plates", as `|fold - 90| <= orthogonal_tol_deg`;
+            `"intersecting"` accepts any pair whose fold lies in `intersect_range_deg`.
+            The generous reading exists so the coverage result cannot be dismissed as a
             handicap — a V-groove at 60 deg is not orthogonal but is still a fillet-like
-            fold this machinery can express.
+            fold this machinery can express — and because 30 deg is an invented tolerance
+            that this corpus's own extremes sit exactly on. See deviation 7.
+        orthogonal_tol_deg: half-width of the `"orthogonal"` window, in degrees. Ignored
+            by `pair_rule="intersecting"`.
+        intersect_range_deg: `(lo, hi)` window on the fold angle for
+            `pair_rule="intersecting"`. Ignored by `"orthogonal"`.
         support_radius_mm: how close a plane's points must come to the intersection line
             for that line to count as a real edge. Default `3 x dist_thresh_mm`. See
             deviation 5 — off the segmented input this check is what stops mid-air seams.
@@ -748,13 +876,42 @@ def detect(pts: np.ndarray,
     if voxel_mm:
         pts = voxel_downsample(pts, float(voxel_mm))
 
+    # Eq. 9 runs on the cloud §5 is about to fit — after the §3 mask and after the voxel
+    # merge, which is the order the paper's own pipeline has (segment, then filter, then
+    # fit) and the only order under which the measured spacing below describes the cloud
+    # the threshold is applied to.
+    n_before_filter = len(pts)
+    if outlier_filter and len(pts) >= 3:
+        pts = pts[statistical_outlier_filter(pts, outlier_k, outlier_std_ratio)]
+
+    if pair_rule not in ("orthogonal", "intersecting"):
+        raise ValueError(f"unknown pair_rule {pair_rule!r}")
+    if dist_thresh_rule not in ("fixed", "3x_spacing"):
+        raise ValueError(f"unknown dist_thresh_rule {dist_thresh_rule!r}")
+    spacing = estimate_point_spacing(pts) if len(pts) >= 2 else float("nan")
+    if dist_thresh_rule == "3x_spacing" and len(pts) >= 3:
+        if not np.isfinite(spacing) or spacing <= 0.0:      # pragma: no cover
+            raise ValueError("cannot measure point spacing for dist_thresh_rule="
+                             "'3x_spacing'; this cloud has no two distinct points")
+        dist_thresh_mm = 3.0 * spacing                      # §5.2's rule, not its answer
+
     support_radius_mm = (3.0 * dist_thresh_mm if support_radius_mm is None
                          else float(support_radius_mm))
-    params = dict(dist_thresh_mm=dist_thresh_mm, min_inlier_ratio=min_inlier_ratio,
+    params = dict(dist_thresh_mm=dist_thresh_mm, dist_thresh_rule=dist_thresh_rule,
+                  point_spacing_mm=spacing,
+                  min_inlier_ratio=min_inlier_ratio,
                   confidence=confidence, seed=seed, iteration_rule=iteration_rule,
-                  plane_refit=plane_refit, pair_rule=pair_rule,
+                  plane_refit=plane_refit, refit_k=refit_k, pair_rule=pair_rule,
                   orthogonal_tol_deg=orthogonal_tol_deg,
+                  intersect_range_deg=tuple(float(x) for x in intersect_range_deg),
                   support_radius_mm=support_radius_mm, min_pair_support=min_pair_support,
+                  min_seam_length_mm=min_seam_length_mm,
+                  max_extrapolation_mm=max_extrapolation_mm,
+                  coord_bounds_mm=coord_bounds_mm, right_handed=right_handed,
+                  max_planes=max_planes, max_iterations=max_iterations,
+                  outlier_filter=bool(outlier_filter), outlier_k=outlier_k,
+                  outlier_std_ratio=outlier_std_ratio,
+                  n_outliers_removed=n_before_filter - len(pts),
                   endpoint_source=endpoint_source, voxel_mm=voxel_mm, n_input=len(pts))
 
     if len(pts) < 3:
@@ -797,10 +954,12 @@ def detect(pts: np.ndarray,
                 continue
             p_line, d_weld = line
 
-            if pair_rule not in ("orthogonal", "intersecting"):
-                raise ValueError(f"unknown pair_rule {pair_rule!r}")
-            if pair_rule == "orthogonal" and abs(fold_deg - 90.0) > orthogonal_tol_deg:
-                verdict(i, j, fold_deg, "not_orthogonal")
+            if pair_rule == "orthogonal":
+                if abs(fold_deg - 90.0) > orthogonal_tol_deg:
+                    verdict(i, j, fold_deg, "not_orthogonal")
+                    continue
+            elif not _fold_in_window(fold_deg, intersect_range_deg):
+                verdict(i, j, fold_deg, "not_intersecting")
                 continue
 
             # deviation 5 — does this line touch both plates, or is it in mid-air?
