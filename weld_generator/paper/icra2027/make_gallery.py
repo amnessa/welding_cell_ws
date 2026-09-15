@@ -54,7 +54,7 @@ for cls, src in ORDER:
     tiles.append((LABEL[(cls, src)], np.array(Image.fromarray(ov[y0:y1, x0:x1].astype(np.uint8)).resize((220, 220)))))
 if tiles:
     tiles = tiles[:8]; ncol = 4; nrow = int(np.ceil(len(tiles) / ncol))
-    fig, axes = plt.subplots(nrow, ncol, figsize=(7.1, 1.45 * nrow + 0.2), gridspec_kw={"wspace": 0.03, "hspace": 0.18})
+    fig, axes = plt.subplots(nrow, ncol, figsize=(7.1, 1.35 * nrow + 0.2), gridspec_kw={"wspace": 0.03, "hspace": 0.18})
     for ax in np.atleast_1d(axes).ravel(): ax.set_axis_off()
     for ax, (lab, im) in zip(np.atleast_1d(axes).ravel(), tiles):
         ax.imshow(im); ax.set_title(lab, fontsize=7, pad=2)

@@ -77,7 +77,7 @@ def cov_table(view, col="f1"):
     s = scene_level(cov[cov.condition == view], col)
     return s.pivot_table(index="stratum", columns="method", values=col, aggfunc="median").reindex(ORDER_STRATA)[METHODS]
 T_full, T_single = cov_table("full_exterior"), cov_table("single")
-fig, axes = plt.subplots(1, 2, figsize=(FULLW, 2.45), gridspec_kw={"wspace": 0.55})
+fig, axes = plt.subplots(1, 2, figsize=(FULLW, 2.3), gridspec_kw={"wspace": 0.55})
 heat(T_full, axes[0], cbar=False); axes[0].set_title("(a) Task 1: full exterior scan", loc="left")
 heat(T_single, axes[1], ylabels=[""] * 12, cbar_label="median F1 @ 3 mm"); axes[1].set_title("(b) single view", loc="left")
 plt.savefig(FIG / "fig_coverage.pdf", bbox_inches="tight"); plt.close()
@@ -191,7 +191,7 @@ if len(md): num("modelregDenseButt", md[md.joint_type == "butt"].groupby("scene_
 n0 = cov[cov.condition == "single"].assign(ns=0.0)
 nn = DF[DF.chunk.str.startswith("noise")].assign(ns=lambda d: d.noise_scale)
 N = pd.concat([n0, nn]); N = N[N.method != "lit-modelreg"]
-fig, axes = plt.subplots(1, 3, figsize=(FULLW, 1.4), sharey=True, gridspec_kw={"wspace": 0.12})
+fig, axes = plt.subplots(1, 3, figsize=(FULLW, 1.3), sharey=True, gridspec_kw={"wspace": 0.12})
 for ax, prof in zip(axes, ["d435i", "stereo_good", "stereo_poor"]):
     sub = N[N.sensor_profile == prof]
     g = sub.groupby(["method", "ns", "scene_id"]).f1.median().groupby(["method", "ns"]).median().unstack("ns")

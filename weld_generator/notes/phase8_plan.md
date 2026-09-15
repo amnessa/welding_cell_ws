@@ -592,7 +592,15 @@ content must be disclosed in the acknowledgment naming the system and the sectio
 PaperPlaza. Anonymity (user, 2026-09-13): *statement only* — the paper says the generator,
 corpus and renders are released upon acceptance; no repository or dataset link, anonymised or
 not, in the submission; real links go into the camera-ready. The optional video attachment
-is skipped (nothing to film: no physical welding in scope). Framing: benchmark + findings (constructed truth; seven reimplemented methods;
+is skipped (nothing to film: no physical welding in scope). Editorial rules (user,
+2026-09-15): no debugging narrative in the paper (the fidelity audit is not mentioned as
+such; alternative readings are presented as rungs the benchmark prices); the methods are
+stated as rigorously reimplemented from their papers because none is open source, and
+"we sought confirmation from the original authors and incorporated the answers we
+received" (all were contacted, one replied); future work names three steps — an
+extractor of our own, a learned detector trained on the rendered tier, a real scanned
+dataset; and the sim-to-real aim is stated (ISO geometry, derived sensor model, Isaac Sim
+with published reflectances). Framing: benchmark + findings (constructed truth; seven reimplemented methods;
 the plane-intersection collapse, the oracle ladder, the 1,4 mm annotation floor). The curved
 strata's macros are NaN until the Phase 4 re-run lands — re-run `make_figures.py` then.
 
