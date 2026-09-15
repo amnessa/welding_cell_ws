@@ -77,7 +77,7 @@ def cov_table(view, col="f1"):
     s = scene_level(cov[cov.condition == view], col)
     return s.pivot_table(index="stratum", columns="method", values=col, aggfunc="median").reindex(ORDER_STRATA)[METHODS]
 T_full, T_single = cov_table("full_exterior"), cov_table("single")
-fig, axes = plt.subplots(1, 2, figsize=(FULLW, 2.7), gridspec_kw={"wspace": 0.55})
+fig, axes = plt.subplots(1, 2, figsize=(FULLW, 2.45), gridspec_kw={"wspace": 0.55})
 heat(T_full, axes[0], cbar=False); axes[0].set_title("(a) Task 1: full exterior scan", loc="left")
 heat(T_single, axes[1], ylabels=[""] * 12, cbar_label="median F1 @ 3 mm"); axes[1].set_title("(b) single view", loc="left")
 plt.savefig(FIG / "fig_coverage.pdf", bbox_inches="tight"); plt.close()
@@ -85,6 +85,7 @@ num("ransacTline", T_full.loc["T/line", "lit-ransac"]); num("quadricTline", T_fu
 curved = [s for s in ORDER_STRATA if s.startswith("T/") and s != "T/line"]
 num("ransacCurvedMax", T_full.loc[curved, "lit-ransac"].max()); num("ppfCurvedMin", T_full.loc[curved, "lit-ppf"].min()); num("ppfCurvedMax", T_full.loc[curved, "lit-ppf"].max())
 num("quadricCurvedMean", T_full.loc[curved, "lit-quadric"].mean()); num("lobbCurvedMean", T_full.loc[curved, "lit-lobb"].mean())
+num("pcasliceCurvedMean", T_full.loc[curved, "lit-pcaslice"].mean()); num("regiongrowCurvedMean", T_full.loc[curved, "lit-regiongrow"].mean())
 num("groovedMax", T_full.loc["butt/line_grooved"].drop("lit-modelreg").max())
 num("nStrataNonzeroLobb", int((T_full["lit-lobb"] > 0.05).sum()), "{:d}")
 (TAB / "coverage_full.tex").write_text(T_full.rename(columns=PAPERTAG).rename(index=STRATA_LABEL).to_latex(float_format="%.2f", na_rep="--"))
@@ -108,6 +109,56 @@ for m in ("lit-ppf", "lit-lobb", "lit-ransac"):
 rs = cov[(cov.condition == "full_exterior") & (cov.method == "lit-ransac")].groupby("scene_id").f1.agg(["min", "max"])
 num("ransacBimodalShare", 100 * ((rs["min"] <= 0.0) & (rs["max"] >= 0.9)).mean(), "{:.0f}")
 
+# --- 2026-09-14 fidelity-audit rungs: each prices one reading choice against the headline
+def rung_table(chunk, col="f1"):
+    d = DF[DF.chunk == chunk]
+    if not len(d): return None
+    return d.groupby(["stratum", "scene_id"])[col].median().groupby("stratum").median().reindex(ORDER_STRATA)
+closed = ["T/circle", "T/ellipse", "T/rounded_rect"]
+r = rung_table("pcaslice_whole_ring_full_exterior")
+if r is not None:
+    num("pcasliceWholeClosedMax", r.loc[closed].max()); num("pcasliceClosedMin", T_full.loc[closed, "lit-pcaslice"].min())
+r = rung_table("quadric_projected_full_exterior", "rmse_med"); h = cov_table("full_exterior", "rmse_med")
+if r is not None:
+    rings = ["T/circle", "T/ellipse", "T/saddle"]
+    num("quadricProjRingRmseMax", r.loc[rings].max()); num("quadricRingRmseMax", h.loc[rings, "lit-quadric"].max())
+    num("quadricProjRingRmseMin", r.loc[rings].min(), "{:.3f}"); num("quadricRingRmseMin", h.loc[rings, "lit-quadric"].min())
+    rf = rung_table("quadric_projected_full_exterior"); num("quadricProjCurvedMean", rf.loc[curved].mean())
+r = rung_table("regiongrow_surface_crop_full_exterior")
+if r is not None:
+    num("regiongrowSurfaceCropMax", r.max()); num("regiongrowTline", T_full.loc["T/line", "lit-regiongrow"]); num("regiongrowCorner", T_full.loc["corner/line", "lit-regiongrow"])
+    num("regiongrowButtMax", T_full.loc[["butt/line", "butt/line_grooved", "butt/arc_butt"], "lit-regiongrow"].max())
+r = rung_table("lobb_flat_3mm_full_exterior")
+if r is not None:
+    num("lobbFlatEdge", r.loc["edge/line"]); num("lobbEdge", T_full.loc["edge/line", "lit-lobb"]); num("lobbFlatButt", r.loc["butt/line"]); num("lobbButt", T_full.loc["butt/line", "lit-lobb"])
+for tag in ("tol30", "tol45", "intersecting", "perpair"):
+    cap = {"tol30": "TolThirty", "tol45": "TolFortyfive", "intersecting": "Intersecting", "perpair": "Perpair"}[tag]
+    d = DF[DF.chunk == f"ppf_{tag}_full_exterior"]
+    if len(d):
+        d = d.assign(angled=d.iso_17659_term.astype(str).str.startswith("angle"))
+        tl = d[d.stratum == "T/line"].groupby(["angled", "scene_id"]).f1.median().groupby("angled").median()
+        num(f"ppf{cap}Angle", tl.get(True, float("nan"))); num(f"ppf{cap}Tjoint", tl.get(False, float("nan")))
+        num(f"ppf{cap}Corner", d[d.stratum == "corner/line"].groupby("scene_id").f1.median().median())
+        num(f"ppf{cap}CurvedPrec", d[d.stratum.isin(curved)].groupby(["stratum", "scene_id"]).precision.median().groupby("stratum").median().max())
+for tag in ("intersecting", "thresh3x", "outlierfilter"):
+    cap = {"intersecting": "Intersecting", "thresh3x": "ThreshThreex", "outlierfilter": "Outlierfilter"}[tag]
+    d = DF[DF.chunk == f"ransac_{tag}_full_exterior"]
+    if len(d):
+        num(f"ransac{cap}Corner", d[d.stratum == "corner/line"].groupby("scene_id").f1.median().median())
+        num(f"ransac{cap}Tline", d[d.stratum == "T/line"].groupby("scene_id").f1.median().median())
+        num(f"ransac{cap}Grooved", d[d.stratum == "butt/line_grooved"].groupby("scene_id").f1.median().median())
+num("quadricPooledRmse", h["lit-quadric"].median())
+dets = ["lit-ransac", "lit-regiongrow", "lit-lobb", "lit-ppf", "lit-pcaslice"]
+num("quadricBestDetectors", int((T_full["lit-quadric"] >= T_full[dets].max(axis=1) - 0.005).sum()), "{:d}")
+num("ransacCurvedZeros", int((T_full.loc[curved, "lit-ransac"] < 0.005).sum()), "{:d}")
+num("cornerGapMax", float(FACTS[FACTS.joint_type == "corner"].root_gap_mm.max()), "{:.1f}")
+num("lobbCorner", T_full.loc["corner/line", "lit-lobb"])
+rr = rung_table("lobb_flat_3mm_full_exterior")
+if rr is not None: num("lobbFlatCorner", rr.loc["corner/line"])
+num("regiongrowGrooved", T_full.loc["butt/line_grooved", "lit-regiongrow"]); num("quadricGroovedF", T_full.loc["butt/line_grooved", "lit-quadric"])
+num("modelregCurvedMean", T_full.loc[curved, "lit-modelreg"].mean()); num("modelregGrooved", T_full.loc["butt/line_grooved", "lit-modelreg"])
+num("modelregArc", T_full.loc["butt/arc_butt", "lit-modelreg"])
+
 # ------------------------------------------------------------------ 2. straight vs curved, per method (table)
 straight = T_full.loc["T/line"]; curv = T_full.loc[curved].mean()
 sc = pd.DataFrame({"T line": straight, "curved T (mean of 5)": curv}).T
@@ -118,15 +169,20 @@ sc.index.name = None; sc.columns.name = None
 l0 = scene_level(cov[cov.condition == "full_exterior"], "f1").rename(columns={"f1": "L0"})
 l1 = scene_level(DF[DF.chunk.str.startswith("l1_")], "f1").rename(columns={"f1": "L1"})
 lad = l0.merge(l1, on=["method", "stratum", "joint_type", "scene_id"])
-tbl = lad.groupby(["method", "joint_type"])[["L0", "L1"]].median().unstack("joint_type")
+# T is six families and pooling them hides the straight/curved split (user, 2026-09-15): split the row
+lad["row"] = np.where(lad.stratum == "T/line", "T straight", np.where(lad.joint_type == "T", "T curved", lad.joint_type))
+ORDER_ROWS = ["T straight", "T curved", "corner", "butt", "lap", "edge"]
+tbl = lad.groupby(["method", "row"])[["L0", "L1"]].median().unstack("row")
 LM = [m for m in METHODS if m != "lit-modelreg"]
-L0t, L1t = tbl["L0"][ORDER_JT].reindex(LM), tbl["L1"][ORDER_JT].reindex(LM)
-fig, axes = plt.subplots(1, 2, figsize=(FULLW, 1.85), gridspec_kw={"wspace": 0.35, "width_ratios": [1, 1]})
-heat(L0t.T, axes[0], xlabels=[PAPERTAG[m] for m in LM], ylabels=ORDER_JT, cbar=False); axes[0].set_title("(a) L0: with the paper's own coarse stage (oracle)", loc="left")
-heat(L1t.T, axes[1], xlabels=[PAPERTAG[m] for m in LM], ylabels=ORDER_JT, cbar_label="median F1"); axes[1].set_title("(b) L1: coarse stage withheld", loc="left")
+L0t, L1t = tbl["L0"][ORDER_ROWS].reindex(LM), tbl["L1"][ORDER_ROWS].reindex(LM)
+fig, axes = plt.subplots(1, 2, figsize=(FULLW, 1.7), gridspec_kw={"wspace": 0.35, "width_ratios": [1, 1]})
+heat(L0t.T, axes[0], xlabels=[PAPERTAG[m] for m in LM], ylabels=ORDER_ROWS, cbar=False); axes[0].set_title("(a) L0: with the paper's own coarse stage (oracle)", loc="left")
+heat(L1t.T, axes[1], xlabels=[PAPERTAG[m] for m in LM], ylabels=ORDER_ROWS, cbar_label="median F1"); axes[1].set_title("(b) L1: coarse stage withheld", loc="left")
 plt.savefig(FIG / "fig_ladder.pdf", bbox_inches="tight"); plt.close()
 pooled0 = lad.groupby("method").L0.median(); pooled1 = lad.groupby("method").L1.median()
 num("quadricLzero", pooled0["lit-quadric"]); num("quadricLone", pooled1["lit-quadric"]); num("lobbLzero", pooled0["lit-lobb"]); num("lobbLone", pooled1["lit-lobb"])
+for m in ("lit-regiongrow", "lit-pcaslice"):
+    num(f"{SHORT[m]}Lzero", pooled0[m]); num(f"{SHORT[m]}Lone", pooled1[m])
 md = DF[DF.chunk == "modelreg_dense_features"]
 if len(md): num("modelregDenseButt", md[md.joint_type == "butt"].groupby("scene_id").f1.median().median()); num("modelregButt", l0[(l0.method == "lit-modelreg") & (l0.joint_type == "butt")].L0.median())
 (TAB / "ladder.tex").write_text(pd.DataFrame({"L0": pooled0, "L1": pooled1}).reindex(LM).rename(index=PAPERTAG).to_latex(float_format="%.2f"))
@@ -135,7 +191,7 @@ if len(md): num("modelregDenseButt", md[md.joint_type == "butt"].groupby("scene_
 n0 = cov[cov.condition == "single"].assign(ns=0.0)
 nn = DF[DF.chunk.str.startswith("noise")].assign(ns=lambda d: d.noise_scale)
 N = pd.concat([n0, nn]); N = N[N.method != "lit-modelreg"]
-fig, axes = plt.subplots(1, 3, figsize=(FULLW, 1.6), sharey=True, gridspec_kw={"wspace": 0.12})
+fig, axes = plt.subplots(1, 3, figsize=(FULLW, 1.4), sharey=True, gridspec_kw={"wspace": 0.12})
 for ax, prof in zip(axes, ["d435i", "stereo_good", "stereo_poor"]):
     sub = N[N.sensor_profile == prof]
     g = sub.groupby(["method", "ns", "scene_id"]).f1.median().groupby(["method", "ns"]).median().unstack("ns")
@@ -187,7 +243,7 @@ ct.columns.names = [None, None]; ct.index.name = None
 
 # ------------------------------------------------------------------ 8. Phase 5 annotation floor
 ann = pd.read_csv(ROOT / "out/annotation/annotation_scores.csv"); br = ann[ann.role == "briefed"]
-fig, ax = plt.subplots(figsize=(COLW, 1.65))
+fig, ax = plt.subplots(figsize=(COLW, 1.4))
 order = ["edge", "corner", "T", "butt", "lap"]
 data = [br[br.joint_type == jt].lat_rmse.dropna().values for jt in order]
 bp = ax.boxplot(data, tick_labels=order, widths=0.5, patch_artist=True, showfliers=True, flierprops=dict(marker="o", markersize=2.5, markerfacecolor=GRAY, markeredgecolor="none"))

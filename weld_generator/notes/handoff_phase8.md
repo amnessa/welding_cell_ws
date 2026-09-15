@@ -9,7 +9,7 @@ memory: everything an earlier session knew that is not derivable from the repo i
 ## 0. Where the project stands, in one paragraph
 
 Phases 0–7 are complete and the Phase 4 batch has been run over the final corpus: seven
-literature methods on 720 scenes (60 per seam family, 12 strata), 184 680 rows in
+literature methods on 720 scenes (60 per seam family, 12 strata), 268 320 rows in
 `out/phase4_batch/phase4_batch.csv.gz` (re-run 2026-09-12 → 14 on the six curved strata
 after the tier-1 visibility fix, `phase8_plan.md` §1.2; every chunk repaired in place with
 `--retire` / `--append-missing`, fixture chunks recomputed), fully analysed in

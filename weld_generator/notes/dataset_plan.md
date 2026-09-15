@@ -2135,7 +2135,11 @@ notebook 15 are the re-run's — the plain circle's far side is now correctly in
 a single view, which moved `lit-lobb`'s T/circle full-view F1 from 0,06 to 0,41 and left
 every headline finding in place). **2026-09-14: `lit-modelreg` extended to every stratum**
 (model from the exact D34 meshes for tubes, swept bands and prepared plates;
-`phase8_plan.md` §1.2.2b), so the seven-method table has no by-scope gaps. `lit-quadric` ran in
+`phase8_plan.md` §1.2.2b), so the seven-method table has no by-scope gaps. **2026-09-14 fidelity audit** (`phase8_plan.md` §1.2.4): five
+methods' headline chunks recomputed under corrected readings of their papers (the slicer's
+per-view arcs, the region grower's keypoint crop, the quadric method's measured points, the
+crease detector's pixel-window and hierarchy, PPF's dedup) with every earlier reading kept
+as a labelled rung; 268 320 rows. `lit-quadric` ran in
 every group with the corrected chain ordering; the as-published distance ordering is the
 `quadric_distance_*` rung (scoring its folded rings cost 8,9 h for one chunk — the fold
 is a documented reading, its price is on the rung: 0,41 vs 1,00 on circles). Measured:

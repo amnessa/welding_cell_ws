@@ -526,9 +526,19 @@ to the numbers (smoke tests, first scene per stratum, full scan):
 
 All headline chunks of the five changed methods deleted (`pre_audit_chunks/`) and
 recomputed with the new defaults; 51 chunks (incl. 14 new rungs) queued eight-wide
-(`p4_queue.sh`), ~5 h; ransac and modelreg headline chunks untouched. Paper text to
-revise afterwards: the mechanism paragraph (pcaslice ring claim, regiongrow root-gap
-claim, quadric 0,01 mm), the ISO angle-joint sentence (tolerance), Tables/figures.
+(`p4_queue.sh`); ransac and modelreg headline chunks untouched. **Landed 2026-09-15
+00:00 UTC** (10,5 h under a shared CPU): 268 320 rows. Full-scan medians that moved:
+`lit-pcaslice` circle 0,06 → 0,85, ellipse 0,03 → 0,66, rounded rect 0,07 → 0,65;
+`lit-regiongrow` T line 0,00 → 0,58, corner 0,00 → 0,51, grooved 0,00 → 0,47 (the one
+detector that reads the groove), curved mean 0,67; `lit-quadric` ring/saddle RMSE 0,01 →
+1,7–2,5 mm (F1 within 0,03; pooled L0 0,88 → 0,87); `lit-lobb` edge 0,29 → 0,63 but
+corner 0,99 → 0,00 and butt 0,59 → 0,27 (the paper's window cannot cross a root gap; the
+3 mm rung keeps 1,00 / 0,60); `lit-ppf` unchanged within 0,02 (tol-30° rung: angle joints
+0,03 → 0,60, corner 0,00 → 0,50). Noise: `lit-lobb` and `lit-regiongrow` no longer
+degrade (dropout removes the rim points that fed their phantoms). Paper revised
+accordingly (Results V.A/V.B, ladder, noise, fixture, methods audit sentence, discussion;
+straight-to-curved table dropped for space; 8 pages); notebook 15 rebuilt with an audit
+addendum cell and corrected reading cells.
 
 ### 1.2.3 The render found the fix's own error (2026-09-12) — exit crossings are not occluders
 
@@ -881,7 +891,10 @@ materials-1.1** (user, 2026-09-13: both parts of a scene must carry matching tex
 1.0 renders moved to `out/train_v1_renders_materials10/`, the eight Fig. 2 scenes rendered
 first for the paper, then the whole corpus with `--resume` (the eight are skipped — draws are
 a function of scene id and render id, so a pilot render and a batch render are the same
-bytes).
+bytes). **Done 2026-09-15 02:xx UTC:** 3600/3600 scenes, 36 000 frames, 23,5 h wall
+(render), 0 twin-gate failures; sweep: 0/36 000 views re-masked (masks were final), re-gate
+3600/3600 PASS (`out/train_v1/twin_gate_sweep.json`), `verify-render` 3600/3600. The 1.0
+renders remain in `out/train_v1_renders_materials10/` (delete when no longer wanted, ~60 GB).
 - `scripts/render_tier2.py --corpus out/bench_phase4 --render-config configs/render/lab_v1.yaml
   [--only <class>] [--resume]`, run as `nohup /isaac-sim/python.sh … > log 2>&1 &` with a
   watcher (handoff §2 lessons; never `pkill -f` from a shell containing the pattern).
