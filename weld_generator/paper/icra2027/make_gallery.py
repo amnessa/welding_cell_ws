@@ -24,14 +24,15 @@ for ax, (cls, src) in zip(axes.ravel(), ORDER):
     sd = first_scene("bench_phase4", cls, src, 1 if src == "line" else 0)
     scene = json.loads((sd / "scene.json").read_text()); c = np.load(sd / "cloud.npz"); s = np.load(sd / "seams.npz")
     xyz = c["xyz"]; sub = np.random.default_rng(0).choice(len(xyz), min(5000, len(xyz)), replace=False)
-    ax.scatter(xyz[sub, 0], xyz[sub, 1], xyz[sub, 2], s=0.3, c=np.where(c["object_id"][sub] == 0, "#aeb6c0", "#d6c7a6"), depthshade=False, linewidths=0, zorder=1)
+    ax.scatter(xyz[sub, 0], xyz[sub, 1], xyz[sub, 2], s=0.3, c=np.where(c["object_id"][sub] == 0, "#aeb6c0", "#d6c7a6"), depthshade=False, linewidths=0, zorder=1, rasterized=True)
     for sm in scene["seams"]:
         if sm["weldable"]:
-            p = s[f"seam_{sm['id']}"]; ax.plot(p[:, 0], p[:, 1], p[:, 2], color="#d03b3b" if sm["matches_joint_type"] else "#eda100", linewidth=1.6, zorder=10)
+            p = s[f"seam_{sm['id']}"]; ax.plot(p[:, 0], p[:, 1], p[:, 2], color="#d03b3b" if sm["matches_joint_type"] else "#eda100", linewidth=1.6, zorder=10, rasterized=True)
     lo, hi = xyz.min(0), xyz.max(0); ctr, span = (lo + hi) / 2, (hi - lo).max() / 2
     ax.set_xlim(ctr[0] - span, ctr[0] + span); ax.set_ylim(ctr[1] - span, ctr[1] + span); ax.set_zlim(ctr[2] - span, ctr[2] + span)
     ax.view_init(elev=32, azim=-55); ax.set_axis_off(); ax.set_title(LABEL[(cls, src)], fontsize=7, pad=-4)
-plt.savefig(FIG / "fig_gallery.pdf", bbox_inches="tight", pad_inches=0.02); plt.close()
+# rasterized point layers: 12 x 5000 vector markers overran the PaperCept redistiller (2026-09-15)
+plt.savefig(FIG / "fig_gallery.pdf", bbox_inches="tight", pad_inches=0.02, dpi=400); plt.close()
 # tier-2 strip: view 0 rgb with the seam mask, for strata that have renders (WELDGEN_RENDER_CORPUS, default train_v1)
 RCORPUS = os.environ.get("WELDGEN_RENDER_CORPUS", "train_v1")
 tiles = []
