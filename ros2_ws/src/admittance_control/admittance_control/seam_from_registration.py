@@ -355,10 +355,111 @@ def compute_seams(parts, access: dict[str, Any] | None = None,
             "approach": None if c.approach is None else [float(x) for x in c.approach],
             "polyline_mm": poly.astype(float).tolist(),
         })
+    # Canonical direction: the two fillets of one joint come out anti-parallel (the
+    # intersection direction flips with the face normal), which would number the tacks
+    # of the two sides from opposite ends. Orient every seam so its dominant component
+    # is positive; both sides then count from the same end.
+    for s in seams:
+        if s["p0_mm"] is None or s["length_mm"] <= 1e-6:
+            continue
+        d = np.asarray(s["p1_mm"]) - np.asarray(s["p0_mm"])
+        if d[int(np.argmax(np.abs(d)))] < 0:
+            s["p0_mm"], s["p1_mm"] = s["p1_mm"], s["p0_mm"]
+            s["polyline_mm"] = s["polyline_mm"][::-1]
     seams.sort(key=lambda s: (not s["weldable"], -s["length_mm"]))
     for k, s in enumerate(seams):
         s["id"] = k
     return seams
+
+
+def compute_tacks(parts, seams: Sequence[dict[str, Any]], scene_id: str = "cell",
+                  params: dict[str, float] | None = None, weldgen_path: str | None = None
+                  ) -> dict[str, Any]:
+    """Tack welds on the weldable seams by the generator's `tackrule-0.1` (D38).
+
+    The rule is a pure function of the seams (length, polyline) and the members'
+    gauges, so the cell reuses it unchanged: tack length clip(4t, 10, 50) mm, spacing
+    ceiling min(33t, 400), floor 10t, end margin max(2t, tack length), both effective
+    ends always tacked, evenly spaced between. `t` is the thinnest member.
+
+    Every tack carries two numberings, because they answer different questions:
+      * `tack_no`  - 1-based position ALONG ITS SEAM from `p0_mm` (1, 2, 3, 4 ...),
+                     with `n_on_seam`; this is the label to show and to reach by.
+      * `order`    - 0-based scene-wide WELD SEQUENCE the rule prescribes: ends first,
+                     then bisection, same-class seams interleaved round-robin so heat
+                     alternates between them.
+    A tack is a short weld, not a point: `p0_mm`/`p1_mm` bound its `tack_length_mm`
+    along the seam polyline about `point_mm`; `approach` is its seam's torch axis.
+    """
+    acc, _, _ = import_weldgen(weldgen_path)
+    from weldgen import tacks as wt
+    objects = [{"role": p.role, "primitive": type(p).__name__.lower(),
+                "thickness_mm": float(p.thickness_mm), "params": getattr(p, "params", None)}
+               for p in parts]
+    scene_seams, arrays = [], {}
+    for s_ in seams:
+        if not s_["weldable"] or len(s_["polyline_mm"]) < 2:
+            continue
+        key = f"seam_{s_['id']}"
+        scene_seams.append({"id": s_["id"], "weldable": True, "matches_joint_type": True,
+                            "closed": False, "length_mm": s_["length_mm"],
+                            "seam_class": s_["seam_class"], "sampled": {"array": key}})
+        arrays[f"seams.npz:{key}"] = np.asarray(s_["polyline_mm"], dtype=float)
+    if not scene_seams:
+        return {"rule_version": wt.RULE_VERSION, "params": None, "tacks": []}
+    block = wt.tack_rule({"scene_id": scene_id, "objects": objects, "seams": scene_seams},
+                         arrays, params)
+    by_seam = {s_["id"]: s_ for s_ in seams}
+    tacks = []
+    for k, sid in enumerate(block["seam_id"]):
+        seam = by_seam[sid]
+        poly = np.asarray(seam["polyline_mm"], dtype=float)
+        s_mid = float(block["arclength_mm"][k]); half = 0.5 * float(block["tack_length_mm"][k])
+        ends = wt._interp(poly, False, np.array([s_mid - half, s_mid + half]))
+        tacks.append({"id": k, "seam_id": int(sid), "seam_class": seam["seam_class"],
+                      "order": int(block["order"][k]), "arclength_mm": s_mid,
+                      "point_mm": [float(v) for v in block["points_mm"][k]],
+                      "p0_mm": [float(v) for v in ends[0]], "p1_mm": [float(v) for v in ends[1]],
+                      "tack_length_mm": float(block["tack_length_mm"][k]),
+                      "approach": seam["approach"]})
+    # 1-based position along each seam, by arclength from the seam's p0
+    for sid in set(t["seam_id"] for t in tacks):
+        on = sorted((t for t in tacks if t["seam_id"] == sid), key=lambda t: t["arclength_mm"])
+        for i, t in enumerate(on):
+            t["tack_no"] = i + 1
+            t["n_on_seam"] = len(on)
+    tacks.sort(key=lambda t: t["order"])
+    return {"rule_version": block["rule_version"], "params": block["params"], "tacks": tacks}
+
+
+def tacks_points_m(tacks: Sequence[dict[str, Any]], step_mm: float = 1.0
+                   ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """`(xyz_m, rgb, tack_index)` of every tack's short segment, coloured by weld
+    order (first = yellow ... last = blue) so RViz shows the sequence."""
+    pts, cols, idx = [], [], []
+    n = max(1, len(tacks))
+    for t in tacks:
+        a, b = np.asarray(t["p0_mm"], float), np.asarray(t["p1_mm"], float)
+        m = max(2, int(np.linalg.norm(b - a) / step_mm) + 1)
+        seg = a[None, :] + (b - a)[None, :] * np.linspace(0, 1, m)[:, None]
+        f = t["order"] / max(1, n - 1)
+        c = np.array([255 * (1 - f), 220 * (1 - f) + 60 * f, 255 * f], np.uint8)
+        pts.append(seg / 1000.0); cols.append(np.tile(c, (m, 1)))
+        idx.append(np.full(m, t["id"], np.int32))
+    if not pts:
+        return np.zeros((0, 3)), np.zeros((0, 3), np.uint8), np.zeros(0, np.int32)
+    return np.vstack(pts), np.vstack(cols), np.concatenate(idx)
+
+
+def summarize_tacks(tacks: Sequence[dict[str, Any]]) -> str:
+    if not tacks:
+        return "0 tacks"
+    per = {}
+    for t in tacks:
+        per[t["seam_id"]] = t["n_on_seam"]
+    seq = " > ".join(f"s{t['seam_id']}#{t['tack_no']}" for t in sorted(tacks, key=lambda t: t["order"]))
+    return (f"{len(tacks)} tacks (" + ", ".join(f"seam {k}: {v}" for k, v in sorted(per.items()))
+            + f"), {tacks[0]['tack_length_mm']:.0f} mm each; weld order {seq}")
 
 
 def seams_points_m(seams: Sequence[dict[str, Any]], weldable_only: bool = True

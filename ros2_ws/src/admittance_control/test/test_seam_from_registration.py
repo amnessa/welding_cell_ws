@@ -214,3 +214,33 @@ def test_tilted_plate_seam_runs_as_far_as_the_member_is_within_tolerance():
         assert 150.0 < s["length_mm"] < 185.0            # up to where the gap reaches 10 mm
         f = sfr.abutting_fitup(s)
         assert f[1] < 0.5 and f[2] > 11.0
+
+
+def test_tacks_follow_the_generator_rule_and_are_numbered_along_each_seam():
+    reg, objs = _t_joint()                                          # t = 4: tack 16 mm, margin 16
+    parts = sfr.posed_parts(objs, reg)
+    seams = sfr.compute_seams(parts)
+    tk = sfr.compute_tacks(parts, seams)
+    assert tk["rule_version"] == "tackrule-0.1" and tk["params"]["t_mm"] == pytest.approx(4.0)
+    tacks = tk["tacks"]
+    assert len(tacks) == 6                                          # 3 per 200 mm fillet
+    for sid in (0, 1):
+        on = sorted((t for t in tacks if t["seam_id"] == sid), key=lambda t: t["tack_no"])
+        assert [t["tack_no"] for t in on] == [1, 2, 3] and all(t["n_on_seam"] == 3 for t in on)
+        assert [round(t["arclength_mm"]) for t in on] == [16, 100, 184]   # ends at the margin
+        assert all(t["tack_length_mm"] == pytest.approx(16.0) for t in on)
+        for t in on:                                                # a short weld ON the seam
+            p0, p1 = np.asarray(t["p0_mm"]), np.asarray(t["p1_mm"])
+            assert np.linalg.norm(p1 - p0) == pytest.approx(16.0, abs=1e-6)
+            assert abs(p0[2] - 2.0) < 1e-6 and abs(p1[2] - 2.0) < 1e-6
+    # both sides of the joint count from the same end
+    first = [t for t in tacks if t["tack_no"] == 1]
+    assert np.linalg.norm(np.asarray(first[0]["point_mm"]) - np.asarray(first[1]["point_mm"])) < 10.0
+    # scene-wide sequence: a permutation, ends first, the two seams interleaved
+    order = sorted(t["order"] for t in tacks)
+    assert order == list(range(6))
+    seq = [(t["seam_id"], t["tack_no"]) for t in sorted(tacks, key=lambda t: t["order"])]
+    assert [n for _, n in seq] == [1, 1, 3, 3, 2, 2] and [s for s, _ in seq] == [0, 1, 0, 1, 0, 1]
+    xyz, rgb, idx = sfr.tacks_points_m(tacks)
+    assert len(set(idx.tolist())) == 6 and np.abs(xyz).max() < 0.3
+    assert json.dumps(tk)

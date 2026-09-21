@@ -159,7 +159,7 @@ from sensor_msgs.msg import PointCloud2, PointField
 from sensor_msgs_py import point_cloud2
 from std_srvs.srv import Trigger
 from tf2_ros import Buffer, TransformBroadcaster, TransformListener, TransformException
-from visualization_msgs.msg import Marker
+from visualization_msgs.msg import Marker, MarkerArray
 
 from admittance_control.geometry import quat_to_rotmat, rotmat_to_quat
 from admittance_control.icp import (
@@ -359,6 +359,11 @@ class IcpPoseRefinerNode(Node):
         #   gap / penetration is reported per seam as fitup_mm, never used to reject.
         self.declare_parameter('weld_seam_density_per_mm', 1.0)
         self.declare_parameter('weld_fallback_pca', True)
+        # Tack welds on the mode-A seams by the generator's tackrule-0.1: each tack
+        # carries tack_no (1-based along its seam) and order (scene-wide weld sequence).
+        self.declare_parameter('weld_tacks', True)
+        self.declare_parameter('weld_tacks_topic', '/perception/icp/welding_tacks')
+        self.declare_parameter('weld_tack_labels_topic', '/perception/icp/welding_tack_labels')
 
         self._camera_frame = str(self.get_parameter('camera_frame').value)
         self._object_frame = str(self.get_parameter('object_frame').value)
@@ -464,6 +469,10 @@ class IcpPoseRefinerNode(Node):
             PointCloud2, str(self.get_parameter('sepc_topic').value), latched)
         self._weld_pub = self.create_publisher(
             PointCloud2, str(self.get_parameter('weld_points_topic').value), latched)
+        self._tack_pub = self.create_publisher(
+            PointCloud2, str(self.get_parameter('weld_tacks_topic').value), latched)
+        self._tack_label_pub = self.create_publisher(
+            MarkerArray, str(self.get_parameter('weld_tack_labels_topic').value), latched)
         self._tf = TransformBroadcaster(self)
         self._tf_buffer = Buffer()
         self._tf_listener = TransformListener(self._tf_buffer, self)
@@ -923,8 +932,43 @@ class IcpPoseRefinerNode(Node):
         except Exception as exc:  # noqa: BLE001 - persistence is best-effort
             note += f' (warning: could not write welding_seams.json: {exc})'
         summary = sfr.summarize(seams)
+        if bool(self.get_parameter('weld_tacks').value):
+            tacks = sfr.compute_tacks(parts, seams, scene_id=str(self._save_dir), weldgen_path=wg)
+            txyz, trgb, _ = sfr.tacks_points_m(tacks['tacks'])
+            self._tack_pub.publish(make_xyzrgb_cloud(header, txyz, trgb))
+            self._tack_label_pub.publish(self._tack_labels(tacks['tacks'], header))
+            try:
+                (self._save_dir / 'welding_tacks.json').write_text(json.dumps({
+                    'method': 'registration', 'frame': self._static_frame, 'units': 'mm',
+                    **tacks}, indent=1))
+            except Exception as exc:  # noqa: BLE001
+                note += f' (warning: could not write welding_tacks.json: {exc})'
+            summary += '; ' + sfr.summarize_tacks(tacks['tacks'])
         self.get_logger().info(f'mode A seams: {summary}. {note}')
         return True, f'mode A: {summary}'
+
+    def _tack_labels(self, tacks, header):
+        """One text marker per tack: "<seam>.<tack_no> (w<order+1>)" above the tack."""
+        arr = MarkerArray()
+        wipe = Marker(); wipe.header = header; wipe.ns = 'tack_labels'; wipe.action = Marker.DELETEALL
+        arr.markers.append(wipe)
+        for t in tacks:
+            mk = Marker()
+            mk.header = header
+            mk.ns = 'tack_labels'
+            mk.id = int(t['id'])
+            mk.type = Marker.TEXT_VIEW_FACING
+            mk.action = Marker.ADD
+            p = np.asarray(t['point_mm'], float) / 1000.0
+            a = np.asarray(t['approach'] or [0.0, 0.0, 1.0], float)
+            p = p + 0.012 * a                      # lift the label off the seam
+            mk.pose.position.x, mk.pose.position.y, mk.pose.position.z = map(float, p)
+            mk.pose.orientation.w = 1.0
+            mk.scale.z = 0.012
+            mk.color.r, mk.color.g, mk.color.b, mk.color.a = 1.0, 1.0, 1.0, 1.0
+            mk.text = f"{t['seam_id']}.{t['tack_no']} (w{t['order'] + 1})"
+            arr.markers.append(mk)
+        return arr
 
     def _welding_points_pca(self):
         """Radius-PCA seam detection on the SEPC (the pre-mode-A method, kept as fallback).

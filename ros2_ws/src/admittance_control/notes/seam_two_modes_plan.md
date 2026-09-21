@@ -52,6 +52,12 @@ RGB-D → SAM2 mask → PPF classifier names the part → FoundationPose 6D → 
    within the tolerance (`clip_registered`). A weldgen bug surfaced by the real poses
    (`_mutually_visible` probing a degenerate segment, which lost both fillets of a T at
    any non-exact rotation) is fixed in `weld_generator` with a regression test.
+3b. **Tacks (done 2026-09-21).** `compute_tacks` applies the generator's `tackrule-0.1`
+   unchanged to the mode-A seams; each tack has `tack_no` (1-based along its seam) and
+   `order` (scene-wide weld sequence, ends first, sides interleaved) so the robot's
+   reach ordering can start from either. Published as a cloud + text labels, written to
+   `welding_tacks.json`. The thesis' DP tack selection over a quality field is the
+   later, richer replacement for the same slot.
 4. **Optional measured refinement (mode A+).** `_run_once` already builds the segmented,
    background-subtracted sensor points of each part and discards them after ICP. Keep
    them per part in `static_frame` at `save_object`; label each point by the nearest

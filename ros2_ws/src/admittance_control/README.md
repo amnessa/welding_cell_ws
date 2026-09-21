@@ -633,9 +633,24 @@ python scripts/build_weldgen_registry.py --verify   # models/weldgen_objects.jso
                                                     #   against the mesh; others UNSUPPORTED
 ros2 service call /icp_pose_refiner/welding_points std_srvs/srv/Trigger
 #   -> /perception/icp/welding_points  (weldable seams, one colour each)
+#   -> /perception/icp/welding_tacks   (tack segments, yellow = first ... blue = last)
+#   -> /perception/icp/welding_tack_labels (MarkerArray text "seam.tack_no (w<order>)")
 #   -> <save_dir>/welding_seams.json   (every candidate, mm, static_frame)
+#   -> <save_dir>/welding_tacks.json   (tackrule-0.1: point, segment, tack_no, order)
 #   -> <save_dir>/welding_points.npy/.ply (weldable points, as before)
 ```
+
+**Tacks.** The same call places tack welds on the weldable seams with the generator's
+`tackrule-0.1` (`weld_tacks`, default true): tack length clip(4t, 10, 50) mm, spacing
+ceiling min(33t, 400) mm, both effective ends always tacked, evenly spaced between, `t`
+the thinnest member. Each tack in `welding_tacks.json` carries two numbers: `tack_no`, its
+1-based position along its seam from the seam's `p0_mm` (1, 2, 3 ...; `n_on_seam` says
+how many), and `order`, the scene-wide weld sequence the rule prescribes (ends first,
+then bisection, the two sides of a joint interleaved so heat alternates). Seams are
+oriented consistently (dominant axis positive), so both fillets of one T count from the
+same end. A tack is a short weld: `p0_mm`/`p1_mm` bound its `tack_length_mm` on the seam
+polyline, `approach` is the torch axis. The reply prints the sequence, e.g.
+`6 tacks (seam 0: 3, seam 1: 3), 16 mm each; weld order s0#1 > s1#1 > s0#3 > s1#3 > s0#2 > s1#2`.
 
 Parameters: `weldgen_path` (the `weld_generator` checkout), `weldgen_registry`
 (default `model_dir/weldgen_objects.json`), `weld_pose_tol_mm` (10 mm), 
