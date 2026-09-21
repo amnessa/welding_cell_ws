@@ -653,16 +653,28 @@ fit-up: every seam carries `fitup_mm` - the signed distance of each member's nea
 to the other's face plane (gap > 0, penetration < 0) - and the service reply prints it
 (`fillet 250mm (A:+wxB:-w) penetration 8.1..10.8mm`). That number is the fit-up
 diagnostic of the plan and what the fiducial-board bound on the poses has to explain;
-once that bound is measured it replaces the 10 mm default. Because the tolerance may
+once that bound is measured it replaces the 10 mm default. A member tilted end to end
+(the bench's third assembly: 2 mm into the base at one end, 11 mm above it at the other)
+gets its seam as far as it stays within the tolerance - at 15 mm the full 250 mm, at
+10 mm the run up to where the gap reaches 10 mm - never longer than the parts
+themselves. Because the tolerance may
 exceed the sheet thickness, the generator's thickness cap is replaced by a face-extent
 rule (each face must reach past the other's plane by more than the tolerance), which
 keeps a plate's own underside from pairing with the standing plate. Its stated limit:
 a lapping sheet thinner than the pose tolerance cannot be told from a penetrating one,
 so its toes come back `member_within_pose_tol` until the pose bound is tighter than the
 sheet - laps on 2-3 mm sheet need the fiducial bound, T-fillets do not.
-Non-box parts (pipe stubs, the `270circle` band, bent plates) get hand-written registry
-entries when they enter the library (`tube` / `swept_slab` in the same JSON, verified by
-`--verify` against the D34 chord budget); until then they fall back to radius-PCA.
+The registry accepts an exact box (`approx: exact`) and a plate with small edge notches,
+locating tabs or holes as its envelope slab (`approx: envelope`, the ignored fraction in
+`envelope_deficit`, at most 10 %) - the slotted `test_objv1` parts are such plates. The
+features are ignored: a seam across a notch is labelled at its nominal length, and a tab
+that passes through the other part reads as a nominal penetration of the tab length in
+`fitup_mm`. Non-box parts (pipe stubs, the `270circle` band, bent plates, the L-shaped
+composites) get hand-written registry entries when they enter the library (`tube` /
+`swept_slab` in the same JSON, or a `hand_edited` slab, verified by `--verify` against the
+D34 chord budget); until then the service falls back to radius-PCA and says so in the
+node log (`mode A (registration seam) unavailable: <part>: <reason>`), or fails with that
+reason when `weld_fallback_pca` is false.
 Mode B (no CAD, sensor points, quadric intersection) is the next step of the plan.
 
 

@@ -168,12 +168,67 @@ def _extends_beyond(part, face: str, plane, pose_tol: float) -> str:
     return "behind" if (front <= 1e-6 or back > front) else "short"
 
 
+def clip_registered(part, face: str, point: np.ndarray, direction: np.ndarray,
+                    slack_mm: float) -> tuple[float, float] | None:
+    """`Slab.face_clip_line` for a face at a REGISTERED pose.
+
+    The generator's clip grants the slack only to an in-face coordinate the line holds
+    exactly constant, and waives a near-constant one only when the strict clip is
+    empty - right for exact geometry, where a seam that overhangs its plate by the
+    slack would then be measured as a separation. At registered poses the standing
+    plate is tilted end to end (2 mm into the base at one end, 11 mm above it at the
+    other, measured), so the seam line crosses its side face at a small angle: the
+    strict clip keeps only the run where the plate reaches the base plane (44 of
+    250 mm), and the waiver never fires because that run is not empty. Here the
+    in-face axis the line holds nearly constant is granted the slack as an interval:
+    the seam runs as far as that member stays within the tolerance, and stops where
+    it floats further. The other axis stays strict, so the run is never extended
+    along the seam. Non-slab parts fall back to their own clip.
+    """
+    if type(part).__name__ != "Slab":
+        return part.face_clip_line(face, point, direction, slack_mm=slack_mm)
+    half = np.asarray(part.dims_mm, dtype=float) / 2.0
+    R = part.T_world_part[:3, :3]
+    c = part.T_world_part[:3, 3]
+    p_loc = (np.asarray(point, dtype=float) - c) @ R
+    d_loc = np.asarray(direction, dtype=float) @ R
+    axis = "uvw".index(face[1])
+    in_face = [k for k in range(3) if k != axis]
+    slack = float(slack_mm)
+
+    # The in-face axis the line holds NEARLY constant (the smaller direction component)
+    # gets the slack: its interval is the run over which its breach stays within the
+    # tolerance. The other axis is clipped strictly, so the run is never extended
+    # along the seam. Exactly parallel lines reduce to the generator's rule.
+    k_const = min(in_face, key=lambda k: abs(d_loc[k]))
+
+    def axis_interval(k):
+        grow = slack if k == k_const else 0.0
+        if abs(d_loc[k]) < 1e-12:
+            if abs(p_loc[k]) > half[k] + grow + 1e-9:
+                return None
+            return (-np.inf, np.inf)
+        a = (-half[k] - grow - p_loc[k]) / d_loc[k]
+        b = (half[k] + grow - p_loc[k]) / d_loc[k]
+        return (min(a, b), max(a, b))
+
+    ivs = [axis_interval(k) for k in in_face]
+    if any(v is None for v in ivs):
+        return None
+    lo = max(v[0] for v in ivs)
+    hi = min(v[1] for v in ivs)
+    if hi - lo > 1e-9 and np.isfinite(lo) and np.isfinite(hi):
+        return float(lo), float(hi)
+    return None
+
+
 def judge_registered(A, fa: str, B, fb: str, ref: tuple[str, str], solids, access,
                      acc, samples_along: int = 5):
     """D4 for two faces at registered poses; returns (Candidate, fitup) or None.
 
     Same arms as `weldgen.accessibility._judge`; the differences are the ones the
-    registration forces: the clip slack and the separation gate are the pose tolerance,
+    registration forces: the clip is `clip_registered` (slack on a tilted member's
+    near-constant coordinate), the separation gate is the pose tolerance,
     the mutual-visibility probe (which needs the solids not to interpenetrate) is
     replaced by the material probe both ways, and the abutting edge's fit-up is measured
     and returned. A penetration is registration error, not geometry, so it does not
@@ -203,8 +258,8 @@ def judge_registered(A, fa: str, B, fb: str, ref: tuple[str, str], solids, acces
     if hit is None:
         return None
     point, direction = hit
-    ia = A.face_clip_line(fa, point, direction, slack_mm=tol)
-    ib = B.face_clip_line(fb, point, direction, slack_mm=tol)
+    ia = clip_registered(A, fa, point, direction, tol)
+    ib = clip_registered(B, fb, point, direction, tol)
     if ia is None or ib is None:
         return None
     lo, hi = max(ia[0], ib[0]), min(ia[1], ib[1])

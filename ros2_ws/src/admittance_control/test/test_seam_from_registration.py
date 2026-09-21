@@ -183,3 +183,34 @@ def test_points_for_rviz_are_in_metres_and_coloured_per_seam():
     xyz, rgb, idx = sfr.seams_points_m(seams)
     assert xyz.shape[1] == 3 and np.abs(xyz).max() < 0.2 and len(set(idx.tolist())) == 2
     assert json.dumps(seams)                                      # serialisable as written
+
+
+def test_notched_plate_is_its_envelope_slab_and_a_composite_is_not():
+    ply = PKG / "models" / "test_objv1_base.ply"
+    if not ply.exists():
+        pytest.skip("library mesh not present")
+    e = derive_box(trimesh.load(str(ply), force="mesh"))
+    assert e["primitive"] == "slab" and e["approx"] == "envelope"
+    assert sorted(e["dims_mm"], reverse=True) == pytest.approx([180.0, 100.0, 4.0])
+    assert 0.0 < e["envelope_deficit"] < 0.02                     # four 5x10 mm notches
+    import weldgen
+    assert verify_entry(e, trimesh.load(str(ply), force="mesh"), weldgen) < 0.05
+    # a plate with a big cut-out is not a slab: half the envelope missing
+    a = _box(100, 100, 4); hole = _box(60, 60, 6)
+    cut = a.difference(hole) if hasattr(a, "difference") else None
+    if cut is not None and cut.is_volume:
+        assert derive_box(cut)["primitive"] is None
+
+
+def test_tilted_plate_seam_runs_as_far_as_the_member_is_within_tolerance():
+    # one end 0.5 mm into the base, the other 12 mm above it (measured on the bench)
+    reg, objs = _t_joint_posed(dz_mm=6.0, tilt_deg=np.degrees(np.arctan(12.5 / 200.0)))
+    parts = sfr.posed_parts(objs, reg)
+    full = [s for s in sfr.compute_seams(parts, sfr.runtime_access(parts, pose_tol_mm=15.0)) if s["weldable"]]
+    assert len(full) == 2 and all(abs(s["length_mm"] - 200.0) < 1.0 for s in full)   # never longer
+    part = [s for s in sfr.compute_seams(parts, sfr.runtime_access(parts, pose_tol_mm=10.0)) if s["weldable"]]
+    assert len(part) == 2
+    for s in part:
+        assert 150.0 < s["length_mm"] < 185.0            # up to where the gap reaches 10 mm
+        f = sfr.abutting_fitup(s)
+        assert f[1] < 0.5 and f[2] > 11.0

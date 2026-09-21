@@ -8,8 +8,9 @@ primitive's canonical local frame - the SEPC poses (`pose_static`) place the CAD
 frame, the primitive lives in its own frame.
 
 `derive_box` reads that description off a box-shaped mesh automatically and VERIFIES it
-(every vertex on the box surface, volume match); anything it cannot verify is recorded
-as unsupported with the reason, never guessed. Non-box primitives (a pipe stub, a curved
+(every vertex on the box surface, volume match), accepting a plate with small notches,
+tabs or holes as its envelope slab with the ignored fraction recorded; anything it
+cannot verify is recorded as unsupported with the reason, never guessed. Non-box primitives (a pipe stub, a curved
 band) are written by hand in the same JSON when such parts enter the library, and
 `verify_entry` checks them against the mesh the same way.
 
@@ -33,11 +34,27 @@ def _load_mesh(path):
     return trimesh.load(str(path), force="mesh")
 
 
-def derive_box(mesh, tol_mm: float = 0.05) -> dict[str, Any]:
-    """A slab entry for a box mesh, or `{"primitive": None, "reason": ...}`.
+def derive_box(mesh, tol_mm: float = 0.05, max_deficit: float = 0.10) -> dict[str, Any]:
+    """A slab entry for a box-like mesh, or `{"primitive": None, "reason": ...}`.
 
     Axes: u = longest extent, v = middle, w = shortest (the thickness - weldgen's broad
     faces are +/-w). The frame is right-handed by construction, centred on the box.
+
+    Two acceptances, both recorded in `approx`:
+      * `"exact"`   - every vertex is a box corner and the volume is L*W*t: the CAD IS
+                      the slab.
+      * `"envelope"` - every vertex lies ON the oriented bounding box's surface and the
+                      mesh fills at least `1 - max_deficit` of it: a plate with small
+                      features cut from or added to its outline (edge notches, locating
+                      tabs, holes) - the lab's slotted `test_objv1` parts. The slab is
+                      the envelope; the features are ignored, so a seam that runs across
+                      a notch is labelled at its nominal length and a tab that passes
+                      through the other part shows up as a nominal penetration of the
+                      tab length in `fitup_mm`. `envelope_deficit` records how much was
+                      ignored. Hand-edit `dims_mm` / `T_cad_prim` and set
+                      `"hand_edited": true` to describe the body instead.
+    Anything else (an L-shaped composite, a curved band, a mesh with interior vertices)
+    is unsupported with the reason, never guessed.
     """
     v = np.asarray(mesh.vertices, dtype=float)
     if len(v) < 8:
@@ -53,19 +70,30 @@ def derive_box(mesh, tol_mm: float = 0.05) -> dict[str, Any]:
     T = np.eye(4)
     T[:3, :3] = axes
     T[:3, 3] = T_obb[:3, 3]
-    # every vertex must sit on the box surface: |coord| == half-extent on each axis
     local = (v - T[:3, 3]) @ axes
     half = np.array([L, W, t]) / 2.0
+    box_vol = L * W * t
+    entry = {"primitive": "slab", "dims_mm": [L, W, t], "T_cad_prim": T.tolist()}
+    # exact box: every vertex is a corner (|coord| == half-extent on EVERY axis)
     dev = np.abs(np.abs(local) - half).max()
-    if dev > tol_mm:
+    vol_err = abs(float(mesh.volume) - box_vol) / box_vol
+    if dev <= tol_mm and vol_err <= 0.01:
+        return {**entry, "approx": "exact", "max_dev_mm": float(dev),
+                "volume_rel_err": float(vol_err)}
+    # envelope: every vertex on the box SURFACE (inside it, and on at least one face)
+    per_axis = np.abs(np.abs(local) - half)                        # (n, 3)
+    inside = (np.abs(local) <= half + tol_mm).all(axis=1)
+    on_face = per_axis.min(axis=1) <= tol_mm
+    if not (inside & on_face).all():
         return {"primitive": None,
                 "reason": f"vertices deviate {dev:.3f} mm from a box (tol {tol_mm})"}
-    vol_err = abs(float(mesh.volume) - L * W * t) / (L * W * t)
-    if vol_err > 0.01:
+    deficit = 1.0 - float(mesh.volume) / box_vol
+    if not (-0.01 <= deficit <= max_deficit):
         return {"primitive": None,
-                "reason": f"volume differs from L*W*t by {vol_err:.1%} - not a solid box"}
-    return {"primitive": "slab", "dims_mm": [L, W, t], "T_cad_prim": T.tolist(),
-            "max_dev_mm": float(dev), "volume_rel_err": float(vol_err)}
+                "reason": (f"fills only {1 - deficit:.0%} of its envelope "
+                           f"(features > {max_deficit:.0%}) - not a slab")}
+    return {**entry, "approx": "envelope", "max_dev_mm": float(dev),
+            "envelope_deficit": float(deficit)}
 
 
 def verify_entry(entry: dict[str, Any], mesh, weldgen, tol_mm: float = 0.25) -> float:
@@ -90,14 +118,15 @@ def verify_entry(entry: dict[str, Any], mesh, weldgen, tol_mm: float = 0.25) -> 
 def build_registry(models_dir, existing: dict[str, Any] | None = None,
                    tol_mm: float = 0.05) -> dict[str, Any]:
     """Every `*.ply` under `models_dir` -> an entry. Hand-written entries in `existing`
-    (anything whose `primitive` is not `slab`) are kept and re-verified, not overwritten."""
+    (anything whose `primitive` is not `slab`, or marked `hand_edited`) are kept and
+    re-verified, not overwritten."""
     models_dir = Path(models_dir)
     reg: dict[str, Any] = {"version": REGISTRY_VERSION, "units": "mm", "parts": {}}
     old = (existing or {}).get("parts", {})
     for ply in sorted(models_dir.glob("*.ply")):
         name = ply.stem
         prev = old.get(name)
-        if prev and prev.get("primitive") not in (None, "slab"):
+        if prev and (prev.get("primitive") not in (None, "slab") or prev.get("hand_edited")):
             reg["parts"][name] = prev                              # hand-written: keep
             continue
         mesh = _load_mesh(ply)

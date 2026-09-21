@@ -1356,6 +1356,15 @@ class IcpPoseRefinerNode(Node):
                 mk.points.append(Point(x=float(c[0]), y=float(c[1]), z=float(c[2])))
         self._box_pub.publish(mk)
 
+    def _delete_cropbox(self):
+        mk = Marker()
+        mk.header.frame_id = self._object_frame
+        mk.header.stamp = self.get_clock().now().to_msg()
+        mk.ns = 'icp_crop_box'
+        mk.id = 0
+        mk.action = Marker.DELETE
+        self._box_pub.publish(mk)
+
     # ── TF + Model-Based Background Subtraction (assembly) ────────────────
     def _lookup_tf(self, target, source, stamp=None):
         """4x4 mapping points in ``source`` frame into ``target`` frame, or None.
@@ -1441,6 +1450,15 @@ class IcpPoseRefinerNode(Node):
 
         self._tracking = False                  # ready for the next object
         self._current_pose = None
+        # The part now lives in the SEPC (static frame). The green model cloud and
+        # the scene crop were latched in the CAMERA frame at their last stamp: with
+        # the eye-in-hand camera moving on, RViz keeps re-placing that old cloud with
+        # the current TF and it drifts through the assembly - a leftover box that
+        # looks like a wrong pose. Clear them, and the crop box drawn in the now
+        # frozen object frame, exactly as reset_environment clears the SEPC topics.
+        self._publish_empty_cloud(self._model_pub)
+        self._publish_empty_cloud(self._scene_pub)
+        self._delete_cropbox()
         n = len(self._saved)
         self.get_logger().info(
             f'saved object #{n} ({self._model_name}) into SEPC: '

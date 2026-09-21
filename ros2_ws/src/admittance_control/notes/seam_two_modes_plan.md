@@ -47,7 +47,9 @@ RGB-D → SAM2 mask → PPF classifier names the part → FoundationPose 6D → 
    error, which is why the fillets survive it; the pen-mark check is what tells whether
    the line is right in the world. Stated limit: a lapping sheet thinner than the pose
    tolerance is undecidable (`member_within_pose_tol`) — laps on 2–3 mm sheet need the
-   fiducial bound first; T-fillets do not. A weldgen bug surfaced by the real poses
+   fiducial bound first; T-fillets do not. Live on the bench (third assembly, ear
+   tilted 2 mm in / 11 mm out end to end): the seam runs as far as the member stays
+   within the tolerance (`clip_registered`). A weldgen bug surfaced by the real poses
    (`_mutually_visible` probing a degenerate segment, which lost both fillets of a T at
    any non-exact rotation) is fixed in `weld_generator` with a regression test.
 4. **Optional measured refinement (mode A+).** `_run_once` already builds the segmented,
