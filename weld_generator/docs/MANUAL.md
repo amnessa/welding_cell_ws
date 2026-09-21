@@ -80,9 +80,12 @@ what is a gate.
   analytic stereo-noise model. No renderer, no simulator, no GPU — `trimesh` + NumPy
   only (decision D9: a generator that needs Isaac Sim and an RTX card is as
   inaccessible as the datasets it criticises).
-- **Tier 2** (Phase 8, next): the same scenes rendered (RGB + depth) with materials,
-  lighting and structured-light failure modes — a pluggable backend behind the same
-  schema, paired to tier 1 by seed.
+- **Tier 2** (Phase 8, complete 2026-09-15): the same scenes rendered through Isaac Sim /
+  Replicator (RGB, depth, validity, seam / tack / object masks) with published material
+  reflectances and CC0 assets — a render layer beside the untouched tier-1 files, paired
+  by seed, and gated so the rendered depth lands on the exact surfaces within 0,25 mm.
+  `train_v1`: 3600 scenes × 10 views. The "structured-light failure modes" of the plan
+  were deliberately not tuned by eye; they wait for real-camera measurements (Phase 9).
 - **Real subset** (Phase 9): scanned MDF workpieces at known poses, the reality check.
 
 ---
@@ -226,7 +229,7 @@ difficulty axes for free.
 ### 3.5 What is *not* stored
 
 The noise realisation (D14) — parameters only, `apply_noise` is released. Meshes —
-`--emit-meshes` regenerates them deterministically (Phase 8 will). Any convention
+`scripts/emit_meshes.py` regenerates them deterministically (done for the corpora). Any convention
 (§10) — recomputable from the stored files.
 
 ---
@@ -438,7 +441,7 @@ identity intact.
 | 6c | MPS rule, approach-cone regime, Task-2 chunk |
 | 7 | tack rule (D38/D39), notebook 13 |
 | — | post-run: `PreparedPrism` (grooved outlines), fixture twins, rule blocks applied, self-healing batch |
-| 8 | **next** — tier-2 rendering (Isaac Sim / Replicator chosen; RGB + depth from one render pass; the D16 noise model applied to clean rendered depth so the sensor axis is shared across tiers; camera pinned to the stored pose, only materials/lighting randomised) |
+| 8 | **done** — tier-2 rendering (Isaac Sim / Replicator; `weldgen/render/`; RGB + depth + masks from one pass; D16 applied to the clean rendered depth so the sensor axis is shared across tiers; camera pinned to the stored pose, materials / lighting / extra views drawn from `sha256(scene_id, render_id)`; the twin gate found and fixed three tier-1 ray-test bugs; `train_v1` 36 000 frames rendered and gated). Missing: the tier-2 analysis notebook and a trained detector. The ICRA 2027 paper (`paper/icra2027/`) was submitted 2026-09-15 on the tier-1 results |
 | 9 | real MDF subset via the ICP pipeline; held-out geometry splits (D11); GitHub + Zenodo release |
 
 Open on the runway: `lit-nurbs` (an eighth method), the `camera_raster` and

@@ -5,19 +5,28 @@ seam geometry is computed in closed form from the placement transforms, so there
 annotator, no estimator, and no intra-rater-consistency hand-waving anywhere in the label
 path.
 
-Status: **Phases 1–7 complete, the Phase 4 batch run (2026-09-05, 173 000 rows).** Five
-plate joint types with the D4 accessibility rule, fixture, camera + visibility + analytic
-sensor noise (Phases 1–3); seven literature methods reimplemented (the seventh, `lit-quadric`, after the run), harnessed and **run over
-the 720-scene per-family corpus** — the plane-intersection mechanism scores zero on every
-curved family, the crease detector (`lit-lobb`) wins and fails only by over-reporting
-creases, grooved butts defeat every method; the seventh, `lit-quadric`, is exact given its
-welding surfaces and nothing without them (Phase 4, `notebooks/15_phase4_results.ipynb`);
-the annotation study measured — **the label-noise floor of the literature's own protocol
-is 1,4 mm median lateral RMSE, 2,4× the ~0,6 mm accuracy those papers report against such
-labels** (Phase 5); Phase 6 in both halves — 6a broke the axis-alignment shortcut and made
-the seam classes disjoint by construction, 6b added the curved seam families, non-planar
-primitives and ISO 9692-1 groove preparations, 6c the MPS rule and camera regimes — and
-Phase 7 the tack rule, all under the same exactness contract. See **Phase 6 findings** below. **Continuing on another machine? Read [`notes/handoff_phase8.md`](notes/handoff_phase8.md) first** (what `git pull` does not carry, the rulings, the Phase 8 plan). **New readers start with [`docs/MANUAL.md`](docs/MANUAL.md)** —
+Status (2026-09-21): **Phases 1–8 complete; the ICRA 2027 paper is submitted; Phase 9
+(real subset + release) is next.** Five plate joint types with the D4 accessibility rule,
+fixture, camera + visibility + analytic sensor noise (Phases 1–3); seven literature
+methods reimplemented from their papers, audited against them, and **run over the
+720-scene per-family corpus** — the plane-intersection mechanism scores zero on every
+curved family, every method's headline is mostly its unpublished segmentation stage (the
+oracle ladder), the quadric-intersection method leads wherever its welding surfaces are
+given, and grooved butts defeat almost everyone (Phase 4, `notebooks/15_phase4_results.ipynb`,
+268 320 rows); the annotation study measured — **the label-noise floor of the literature's
+own protocol is 1,4 mm median lateral RMSE, 2,4× the ~0,6 mm those papers report** (Phase 5);
+Phase 6 in three parts (6a broke the axis-alignment shortcut, 6b added the curved families,
+non-planar primitives and ISO 9692-1 grooves, 6c the MPS rule and camera regimes); Phase 7
+the tack rule; and **Phase 8 the rendered tier** — the same scenes through Isaac Sim /
+Replicator with seam, tack and object masks, gated so the rendered depth lands on the exact
+surfaces within 0,25 mm, and a 3600-scene × 10-view training corpus (`train_v1`, 36 000
+frames) rendered and gated on every scene. See **Phase 8 — tier 2** below.
+
+**Two machines.** The RTX 5070 Ti desktop holds the authoritative data (`out/` on its
+render disk: the final `bench_phase4`, the 268 320-row batch, `train_v1`, backgrounds and
+render assets); a laptop checkout carries the code but a stale `out/`. Read
+[`notes/handoff_phase8.md`](notes/handoff_phase8.md) and [`notes/phase8_plan.md`](notes/phase8_plan.md)
+before computing any number. **New readers start with [`docs/MANUAL.md`](docs/MANUAL.md)** —
 the teaching document: the point, the pipeline step by step, the vocabulary, the
 baselines, the results, and a five-minute version. Plan: [`notes/dataset_plan.md`](notes/dataset_plan.md);
 Phase 6 patch notes: [`notes/patch_phase6.md`](notes/patch_phase6.md),
@@ -42,6 +51,13 @@ python scripts/qa_d28_gate.py out/bench6a out/bench6b   # anti-shortcut + D34 ga
 python scripts/make_bench6b.py --per-family 60 --out out/bench_phase4   # the Phase 4 corpus
 python scripts/make_fixture_twins.py out/bench_phase4   # D12 twins -> out/bench_phase4_fx
 python scripts/apply_rule_blocks.py out/bench_phase4 out/bench_phase4_fx  # mps + tacks, in place
+python scripts/emit_meshes.py out/bench_phase4 --check          # D34 meshes next to each scene
+
+# Phase 8 (tier 2) - Isaac Sim's Python, headless; see notes/phase8_plan.md §4
+cd /tmp && PYTHONUNBUFFERED=1 /isaac-sim/python.sh scripts/tier2_gate.py out/bench_phase4/T/<scene>
+cd /tmp && PYTHONUNBUFFERED=1 /isaac-sim/python.sh scripts/render_tier2.py \
+    --config configs/render/lab_v1.yaml out/train_v1/T/* --resume
+python -m weldgen verify-render --out out/train_v1/T                   # re-hash the render layer
 ```
 
 The D12 fixture ablation is two runs over the **same seed range**, one per arm:
@@ -55,8 +71,9 @@ Fixture presence is a config axis rather than a per-scene draw, so the workpiece
 is bit-identical across a twin. `twin_key` pairs them:
 `df.groupby(["twin_key", "fixture_present"])` is the whole ablation.
 
-Two notebooks, both of which need a **kernel restart** after you change `weldgen/` —
-`sys.path.insert` will not re-import a module that is already loaded:
+The notebooks, in order (all need a **kernel restart** after you change `weldgen/` —
+`sys.path.insert` will not re-import a module that is already loaded; 11 and 15 are
+generated by `notebooks/build_*.py`, edit the script and re-execute):
 
 - `notebooks/01_inspect_scene.ipynb` — the constructed ground truth: cloud, seams, the
   reference curves (D19 triple / D36 `groove_root` / curved per-point frames — the cell
@@ -91,10 +108,10 @@ Two notebooks, both of which need a **kernel restart** after you change `weldgen
 - `notebooks/09_lit_pcaslice.ipynb` — `lit-pcaslice` (Wang et al. 2026): the slicing
   direction from the data, the two-seams-one-mask failure pinned, and the per-instance
   oracle named for what it is — instance segmentation of the seam-separation problem.
-- `notebooks/13_seven_methods.ipynb` — the seven-method comparison, every figure a
-  groupby over the batch job's csv: the coverage table, both tasks side by side, the seed
-  box plots with the measured-zero-spread column, the L0→L1 price of each paper's
-  unpublished stage, the noise table, the fixture ablation, and the ladder extras.
+- `notebooks/10_lit_modelreg.ipynb` — `lit-modelreg` (Fang & Tian 2024): the seam
+  transferred, never detected; CAD-by-construction from `scene.json`; registration error
+  as the whole of the error; and the symmetric-counterpart failure outside the
+  roughly-positioned envelope.
 - `notebooks/11_lit_quadric.ipynb` — `lit-quadric` (Li, Wang & Wang 2026): the seventh
   method and the only quadric surface model — the flat/curved verdict in the paper's two
   readings, the TLS plane and homogeneous quadric fits, the three intersection types exact
@@ -105,22 +122,22 @@ Two notebooks, both of which need a **kernel restart** after you change `weldgen
   balanced corpus: gap, thickness, occlusion, joint type (both conditions), density,
   dihedral, fixture on/off on the paired twin corpus, sensor profile, and the D19
   conversion table as a function of g.
-- `notebooks/10_lit_modelreg.ipynb` — `lit-modelreg` (Fang & Tian 2024): the seam
-  transferred, never detected; CAD-by-construction from `scene.json`; registration error
-  as the whole of the error; and the symmetric-counterpart failure outside the
-  roughly-positioned envelope.
-- `notebooks/15_phase4_results.ipynb` — **the Phase 4 results**, every figure a groupby over
-  the batch csv on `bench_phase4`: corpus composition, the coverage heatmaps (both views),
-  the straight-to-curved dumbbell, localization, repeatability, the oracle ladder, noise ×
-  sensor profile, Task 2 selection/localization and the MPS margin per stratum, the paired
-  fixture price, covariates and the ISO 17659 T/angle split, cost, and the discussion.
+- `notebooks/13_seven_methods.ipynb` — the seven-method comparison, every figure a
+  groupby over the batch job's csv: the coverage table, both tasks side by side, the seed
+  box plots with the measured-zero-spread column, the L0→L1 price of each paper's
+  unpublished stage, the noise table, the fixture ablation, and the ladder extras.
 - `notebooks/14_inspect_tacks.ipynb` — `tackrule-0.1` (Phase 7) drawn on all five plate
   joints and all six curved families: tacks at true length with the weld order
   annotated, margins and thickness-scaled spacing checked against the rule's bounds,
   the D39 closed-loop phase and per-ring antipodal pairing, the round-robin stagger,
   and the degenerate one-tack collapse.
+- `notebooks/15_phase4_results.ipynb` — **the Phase 4 results**, every figure a groupby over
+  the batch csv on `bench_phase4`: corpus composition, the coverage heatmaps (both views),
+  the straight-to-curved dumbbell, localization, repeatability, the oracle ladder, noise ×
+  sensor profile, Task 2 selection/localization and the MPS margin per stratum, the paired
+  fixture price, covariates and the ISO 17659 T/angle split, cost, and the discussion.
 
-Notebooks 03–10 are the method entries of the Phase 4 comparison; see `notes/dataset_plan.md` §4
+Notebooks 03–11 are the method entries of the Phase 4 comparison (03 = `ours`, excluded from the run); see `notes/dataset_plan.md` §4
 and **Baselines** below.
 
 ---
@@ -157,16 +174,40 @@ weldgen/         the generator - trimesh + NumPy only, no simulator import (D9)
   hashing.py         canonical JSON, content hash, config_id, twin_key
   scene.py           assembles a schema-conforming plate scene
   scene_curved.py    the curved pipeline - same contract, writer, schema, hash
+  mps.py             mps_rule-0.1 (Task 2's label, D25) - a versioned rule, never truth
+  tacks.py           tackrule-0.1 (Phase 7, D38/D39) - the same pattern
   viz.py             assembly frame, cross-sections - figures, never truth
   writer.py          scene.json / cloud.npz / seams.npz / index.jsonl
-  cli.py             `python -m weldgen generate | verify` (routes on `seam_families`)
+  cli.py             `python -m weldgen generate | verify | verify-render`
+  render/            Phase 8, tier 2 - `pxr`/`omni` imported inside functions only (D9):
+    conventions.py     USD camera + intrinsics, pixel-centre back-projection, depth codec
+    config.py          render config -> render_id (paths excluded, asset set hashes included)
+    draws.py           the render substream: alloy, condition, photo, dome, lights, views 1-9
+    materials.py       materials-1.1: F0 from RTR4 Table 9.2 + CC0 ambientCG surface sets
+    hdr.py             Radiance reader + the measured dome-intensity rule
+    usd_stage.py       exact meshes, substrate plane, dome + key light, pinned camera
+    replicator.py      render product + rgb / depth / id / normals annotators
+    masks.py           maskrule-0.1: seam + tack masks, constructed from seams.npz
+    sensor.py          D16 on rendered depth (validity stored, realisation on demand)
+    gate.py            the twin gate: residual, coverage, object ids
+    writer.py          views/<k>/*, render.json, render.sha256, verify_render
 
-scripts/         evaluation, NOT part of the generator (Phases 4-6)
-  run_phase4_batch.py   the batch job: 44 resumable chunks -> one csv.gz every
-                        comparison plot reads (notebooks/12)
+scripts/         evaluation and corpus tooling, NOT part of the generator
+  run_phase4_batch.py   the batch job: resumable chunks (coverage, L1, noise, ladder
+                        rungs, task2, fixture) -> one csv.gz every plot reads; --retire /
+                        --append-missing repair it after a stratum rebuild
   qa_d28_gate.py        the corpus-level anti-shortcut gate + the binding D34 chord
                         sweep + the reported curved statistic (see Phase 6 findings)
-  make_bench6b.py       builds out/bench6b - the family-balanced Phase 6b corpus
+  make_bench6b.py       corpus builder: bench6b, `--per-family 60` = bench_phase4,
+                        `--per-family 300 --base-seed 3000000` = train_v1
+  make_fixture_twins.py D12 twins of a corpus's plate strata (`<corpus>_fx`)
+  rebuild_stratum.py    regenerate one stratum in place, retiring the old ids
+  apply_rule_blocks.py  mps + tacks written into a finished corpus, hashes rewritten
+  emit_meshes.py        mesh_<id>.ply per scene (+ `--check` round-trip gate)
+  fetch_render_assets.py CC0 HDRIs + surface sets with a licence/hash manifest
+  tier2_gate.py         the twin gate on N scenes, one Isaac app, writes nothing
+  render_tier2.py       the tier-2 pass: views, masks, sensor validity, gate, render.json
+  tier2_regate.py / tier2_remask.py   recompute the gate / the masks from stored files
   annotation/           Phase 5: export scenes for CloudCompare hand-labelling
                         (no truth ships), score clicks against analytic truth,
                         emit the annotator perturbation model
@@ -174,20 +215,26 @@ scripts/         evaluation, NOT part of the generator (Phases 4-6)
                      lit_regiongrow.py (Wei et al. 2024),
                      lit_lobb.py (Zhang et al. 2025), lit_ppf.py (Wang et al.
                      2024), lit_pcaslice.py (Wang et al. 2026), lit_modelreg.py
-                     (Fang & Tian 2024), harness.py (the repeat harness),
-                     metrics.py, dataset.py
+                     (Fang & Tian 2024), lit_quadric.py (Li, Wang & Wang 2026),
+                     harness.py (the repeat harness + run_task2), metrics.py, dataset.py
 
 configs/         phase1, phase2, phase2_fixture, phase3, phase3_raster,
                  bench_{T,corner,butt,lap,edge}  <- the pre-6a benchmark corpus,
                  bench6a_{...}  <- yaw + outlines + class disjoint,
                  grooved_butt, curved_smoke, amb_lap / amb_T (the D32 stratum),
-                 smoke, reference_tjoint, playground (the notebooks' preset)
-tests/           408 tests: geometry, determinism, schema conformance, ISO limits, viz,
-                 the phase gates, the baselines, and the Phase 6 additions (outlines,
-                 class disjointness, curves, constructors, curved verification and
-                 scenes, grooves, the QA gate's curved arm)
-notes/           the plan, the patch notes, the handoff, and the standards PDFs
-papers/          literature
+                 smoke, reference_tjoint, playground (the notebooks' preset),
+                 render/lab_v1.yaml  <- the tier-2 render config (render_id)
+docs/            + render.schema.json (the render.json contract) and MANUAL.md (the
+                 teaching document - start there)
+tests/           564 tests: geometry, determinism, schema conformance, ISO limits, viz,
+                 the phase gates, the seven baselines + harness + task2, the Phase 6
+                 additions, the tack and MPS rules, from_object, and the tier-2 gate /
+                 sensor / writer (pure; the Isaac test skips without `isaacsim`)
+notes/           the plan, the patch notes, the handoffs, phase8_plan.md (the render
+                 machine's log), correspondence/, and the standards PDFs
+papers/          literature; papers/implemented_papers/ the seven reimplemented ones
+paper/icra2027/  the submitted paper: main.tex, make_figures.py / make_gallery.py
+                 (every figure, table and number from the batch csv), submission/
 ```
 
 ---
@@ -472,11 +519,30 @@ as a novel extractor — the contribution is the dataset and the comparison
 | `lit_lobb.py` | `lit-lobb` — Zhang et al., *RCIM* 95 (2025) 102987 with the LOBB descriptor of *IEEE T-ASE* 22 (2025) 75: bounding-box flatness, tanh activation, binary K-means, polynomial fit | per-**component** masks (their K-Net) |
 | `lit_ppf.py` | `lit-ppf` — Wang et al., *Sci. Rep.* 14 (2024) 21137: PPF-coplanarity planes, orthogonal-pair Hough voting, farthest-pair corners. **Deterministic as published**, and the first method here that consumes normals | a weld-box crop (their Faster R-CNN) |
 | `lit_pcaslice.py` | `lit-pcaslice` — Wang et al., *Welding in the World* (2026): PCA-adaptive slicing, per-slice geometric centres, cubic B-spline path. The per-slice centre cannot survive two seams in one strip, so the coarse stage is structural | **per-instance** weld masks (their YOLO11 + DeepLab) |
-| `lit_modelreg.py` | `lit-modelreg` — Fang & Tian, *RCIM* 89 (2024) 102772: a basic model (CAD-by-construction from `scene.json`) registered by CPD; the seam is **transferred, never detected**. Constitutively L0 — the ladder's top rung | the model itself, plus model-derived target features |
+| `lit_modelreg.py` | `lit-modelreg` — Fang & Tian, *RCIM* 89 (2024) 102772: a basic model (CAD-by-construction from `scene.json`, exact D34 meshes for tubes / swept bands / prepared plates) registered by CPD, B-spline through the transferred seam; the seam is **transferred, never detected**. Constitutively L0 — the ladder's top rung | the model itself; target features `oracle` / `edges` (a classical sharp-edge detector, the paper's) / `dense` as rungs |
+| `lit_quadric.py` | `lit-quadric` — Li, Wang & Wang, *J. Mech. Sci. Technol.* 40 (2026) 2039: PCA-normal statistics decide flat vs curved per welding surface, least-squares plane or general quadric, seam = the measured points within a threshold of the fitted intersection, graph-walk initial point. The only non-planar surface model in the comparison | welding-surface labels + part membership (their region growing) |
 
-**All seven methods are now implemented** — `ours` plus six literature reimplementations —
-each tested against known geometry, each run through the repeat harness with its own
-paper's coarse stage, and each with an executed notebook.
+**Seven literature methods are implemented, audited and run; `ours` is excluded from the
+comparison by ruling** (2026-09-03: it brings no mechanism the literature lacks, and the
+project's own contribution is the improvement built on whichever method wins). Each is
+tested against known geometry, run through the repeat harness with its own paper's coarse
+stage, and has an executed notebook (04–11).
+
+**The fidelity audit (2026-09-14).** Every module was re-read against its paper's PDF and
+six readings were corrected, each old reading kept as a labelled ladder rung so the batch
+prices it: `lit-pcaslice` slices closed rings as four open arcs and fits a periodic
+spline, as its paper's four camera views do (circle 0,06 → 0,85); `lit-regiongrow` gets
+its paper's keypoint crop (12,7 % of the cloud, Table II) and its curvature condition
+(T line 0,00 → 0,58, and it is the one detector that reads a groove, 0,47); `lit-quadric`
+reports the measured points, not their projection onto the fitted intersection (RMSE
+0,01 → 1,7–2,5 mm, F1 unchanged); `lit-lobb`'s edge window is its paper's 3×3 pixels
+≈ 1,5 point spacings, which cannot cross a root gap (edge 0,29 → 0,63, corner 0,99 →
+0,00; the 3 mm window stays as a rung); `lit-ppf` and `lit-ransac` gain their invented
+tolerances as explicit rungs; `lit-modelreg` runs on every stratum. Two outright bugs
+went with it (an unused `labels` argument in regiongrow's edge test; both signs of
+pcaslice's eq. 12 torch frame). The paragraphs below record the *first* measurements of
+each method, made before the audit, and are kept as the record of what a reading costs;
+the current numbers are notebook 15's.
 
 **The input conditions are fixed, and exteriority is a condition, not a gate.** A per-point
 `exterior` flag — perfect multi-view scan reachability, computed analytically at generation
@@ -687,40 +753,69 @@ prefix at the intended proportions. All gates pass over the finished corpus.
 
 ---
 
-## Not yet implemented
+## Phase 8 — tier 2
 
-Every schema field is now filled by some phase — the placeholder table that lived here
-retired with Phase 7: `tacks` became `tackrule-0.1` (`weldgen/tacks.py`, D38/D39,
-emitted under `emit_tacks`), a versioned shop-practice rule over exact geometry —
-thickness-scaled spacing with the 400 mm ceiling, tacks as short welds with an end
-margin, even opposite-pair placement on closed loops with a recorded rotation phase,
-and a stored scene-global weld sequence that staggers same-class seams. Convention,
-never truth (D8): the constants are parameters, and the block is a pure function of
-stored files, computable retroactively on any corpus.
+The same scenes, rendered. A tier-2 scene is a tier-1 scene directory **plus** a render
+layer, and the render layer never touches tier 1: `scene.json`, the `.npz` files and
+`scene.sha256` are byte-identical rendered or not, so `generate(config, seed)` on a clean
+machine still reproduces the released hash and a tier-1-only user can ignore tier 2.
 
-Where the tack methodology comes from: these are **shop-practice conventions, not code
-requirements**, and each constant carries its attribution. The thickness-scaled spacing
-(`d_max = 33t`) and the absolute 400 mm ceiling follow the tack-spacing tables of
-**JASS 6** (Japanese Architectural Standard Specification for steel structure work) as
-reproduced in the **Kobelco welding handbook**; the tack length `clip(4t, 10, 50) mm`
-and the end-margin idea are attributed to **EN 1011-2** (attributed, not verified — we
-do not hold the standard's text); the opposite-pair sequence on closed loops and the
-staggered heat-balance ordering across seams follow the distortion-control practice
-surveyed in **Tomków, Sobota & Krajewski (2020)**, the literature anchor named by the
-dataset plan. Because every one of these numbers is a parameter of `tackrule-0.1`,
-disagreement with any source is resolved by re-running the rule, not by editing labels.
+```
+<scene_id>/
+  scene.json, cloud.npz, seams.npz, scene.sha256    # tier 1, untouched
+  mesh_A.ply, mesh_B.ply                            # unhashed convenience (emit_meshes.py)
+  render.json, render.sha256                        # render_id, draws, twin-gate report, views
+  views/0/            THE TWIN: the tier-1 camera, K and resolution verbatim
+    rgb.png           8-bit (D10: stored, never benchmarked on)
+    depth.png         uint16 at 0,05 mm per unit, 0 = no return - the CLEAN ray cast
+    depth_valid.png   the deterministic half of D16 (grazing dropout + blind zone);
+                      the noisy realisation is derived on demand, as in tier 1
+    mask_seam.png     seam id + 1, from seams.npz, kept where the analytic ray cast says
+                      unoccluded, 2 mm physical width (maskrule-0.1)
+    mask_tack.png     tack index + 1: the tacks block's arclength intervals, 3 mm wide
+    mask_object.png   object_id + 1; 255 fixture; 254 environment (the renderer's id buffer)
+    view.json         K, T_world_cam, width, height, view_kind, per-file hashes
+  views/1..9/         drawn training views (elevation 25-70°, framing 0,5-1,0, aim jitter
+                      0,35, redrawn until a primary seam is >= 10 % visible and >= 100 px)
+```
 
-`joint.prep` and the curved families are filled as of Phase 6b. One run remains by design
-rather than omission: the Phase 4 batch over the Phase 6 corpora (bench6a + bench6b in
-one run — pre/post-D31 lap and edge numbers are not comparable by definition, so the
-re-run replaces rather than extends the old table). The Phase 5 annotation study is
-measured (20 bench6a scenes, independent briefed annotator; scores and the per-annotator
-perturbation model under `out/annotation/`) — three of its findings worth quoting: which
-D19 curve a human clicks depends on the joint type exactly as the visible crease predicts
-(gap-mid on butt, root on T), lap is the catastrophic class for humans too (8,5 mm — the
-same class every baseline struggles with is the one humans cannot label), and the
-author's own demo pass was *worse* than the briefed annotator's, which is why the
-contamination rule excludes it as a different measurement, not a better one. The D11
-split note stands: with prisms, tubes, swept bands and prepared slabs in the corpus,
-held-out geometry now means more than a dimensions split — but say precisely which axes
-are held out.
+Every mask is **constructed, never detected** — both are *proposal* labels on a bare joint
+(where to weld, where to tack); nothing is drawn on the parts. Appearance is a versioned
+rule too: `materials-1.1` takes alloy base reflectance from Real-Time Rendering 4e
+Table 9.2 (seven alloys, one stock per scene) and surface condition from CC0 ambientCG
+sets; lighting is CC0 Poly Haven workshop HDRIs and two lab panoramas, normalised by
+measured luminance; the substrate under the parts is one of 41 lab/bench photographs
+with a tagged span. Every draw comes from `sha256(scene_id, render_id)` on substream 7,
+so a rendered scene is a pure function of its scene id and the render config, and the
+asset manifests' hashes are part of `render_id`.
+
+**The twin gate.** View 0's clean depth back-projects onto the exact tier-1 primitives with
+a p99 residual under 0,25 mm (measured: ≤ 0,03 mm), its coverage agrees with tier 1's
+`visible_from_cam` (≥ 0,99) and its id buffer with the exact meshes (1,00). It holds on
+12/12 benchmark strata and on all 3600 scenes of `train_v1`. **It earned its place by
+finding three bugs in tier 1's own ray test** — a sampled containment test that stepped
+through thin tube walls, a mesh cache keyed before re-posing, and exit crossings counted
+as occluders — each fixed with an exact Möller–Trumbore cast and the benchmark regenerated
+before the paper's numbers were computed. Two independent exact implementations of one
+truth disagree only where one is wrong.
+
+**`train_v1`**: 12 strata × 300 scenes under base seed 3 000 000 (no seed shared with the
+benchmark), 10 views each = 36 000 frames, rendered twice (materials-1.0, then 1.1) at
+~0,1–1 s per frame; `verify-render` 3600/3600. The benchmark corpus stays held out.
+Not done yet: the tier-1 vs tier-2 analysis notebook (`16_tier2.ipynb`), and any learned
+detector trained on the renders.
+
+---
+
+## Phase 9 and what remains
+
+Phase 9 is the real subset and the release: MDF (and possibly steel) workpieces
+scanned at known poses through the lab's `admittance_control` pipeline (D435i → SAM2 →
+FoundationPose → ICP-to-CAD), with the seam truth *constructed* from the registered part
+poses under the same rule as everything else and the pose uncertainty stated rather than
+hidden; held-out geometry splits (D11); the generator on GitHub with all seeds and a
+frozen Zenodo release. Also open (`notes/dataset_plan.md` §10): determinism across numpy
+versions (pin for the release), the `d435i` profile constants against the real camera and
+the 10× sim-noise discrepancy in the ROS twin, the annotator's intra-rater repeat, the
+advisor's written no-welding scope, lap-overlap and tack-rule citations in hand, and the
+reply from the lit-quadric authors (asked 2026-09-09).
