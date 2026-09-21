@@ -2331,7 +2331,7 @@ SCHEMA.md §6.1). Its draws, in this order, appended only:
 
 There is **no MDF workpiece material** (user, 2026-09-11): the MDF board is the *substrate*
 photo under the parts, never a part. The Phase 9 real-subset twin therefore renders the
-real MDF parts with the closest alloy look and relies on depth, not RGB, for the
+real parts (metal since 2026-09-21; the MDF option was dropped) with the closest alloy look and relies on depth, not RGB, for the
 tier-2 → real comparison — which is what D10 says anyway.
 
 **Materials are `materials-1.0`, from two published sources, so nothing is tuned by eye
@@ -2481,12 +2481,33 @@ renderer.
 
 ### Phase 9 — Real subset + release
 
-- [ ] Scan MDF workpieces at known poses via the existing ICP pipeline → the reality-check subset.
-      **This is the other half of the geometry diversity story** (~~D17~~ withdrawn): scanned parts
-      carry saw kerf, edge break, warp and paint texture that no procedural feature vocabulary would
-      have reproduced honestly
+*Execution plan: `notes/phase9_plan.md` (2026-09-21) — inventory vs generator ranges, the parts
+ordered, the 11-stratum × 10-configuration matrix, the pose-truth pipeline and the capture protocol.*
+
+**Decided 2026-09-21: the real subset is METAL, not MDF.** The lab's 1 / 2 / 3 mm steel and
+stainless sheet plus ordered pipe (Ø42,4–114,3 × 2 mm) and RHS (60×60, 80×80, 50×100);
+MDF parts would have tested geometry transfer while flattering the sensor (matte paint
+returns clean active-stereo depth; specular steel does not), and the sensor gap is the
+thing a real subset exists to measure. Consequences: no plate above 3 mm → **no grooved
+butts in the real set** (ISO 9692-1 has no bevel row below 3 mm anyway), 11 strata;
+2 mm walls and 3 mm stiffener bands sit just below the synthetic ranges and are flagged
+per scene as extensions — the twins are built from *measured* dimensions, so the
+comparison stays exact. Parts are fixed by a hidden fixture tack, magnets or clamps;
+the joint stays bare.
+
+- [ ] Scan the metal workpieces at registered poses via the existing ICP pipeline
+      (`admittance_control`: D435i → SAM2 → FoundationPose → ICP-to-CAD) → the reality-check
+      subset. **Truth is constructed from the registered poses** (`scripts/label_real_scan.py`:
+      measured dims + `T_A`, `T_B` → `scene.json` / `seams.npz` under the schema, the scan as a
+      tier-3 `cloud.npz`), never annotated. Scanned parts carry saw kerf, edge break, warp and
+      real reflectance that no procedural vocabulary reproduces honestly (~~D17~~ withdrawn)
 - [ ] Document the pose-uncertainty of the real subset honestly — it is *not* exact truth, and
-      saying so protects the synthetic claim
+      saying so protects the synthetic claim: per scene the ICP residual, a repeatability re-scan,
+      and on a subset a fiducial-board / jig bound, stored as `provenance.real.pose_uncertainty_mm`
+- [ ] Measure the `d435i` constants on a flat target at three ranges in the same sessions →
+      a `d435i_measured` profile (never edit `d435i`: profile constants sit in the hashed config)
+- [ ] Views: 5 per configuration from the tier-1 camera sampler, executed as robot targets, the
+      eye-in-hand kinematics giving each view's `T_world_cam`; the set is TEST-ONLY (never trained on)
 - [ ] Splits by held-out part geometry and joint configuration (D11). **State the scope**: a genuine
       held-out *geometry* split exists only over Phase 6 primitives and the real subset; over
       Phases 1–5 it is a held-out *dimensions* split

@@ -809,8 +809,8 @@ detector trained on the renders.
 
 ## Phase 9 and what remains
 
-Phase 9 is the real subset and the release: MDF (and possibly steel) workpieces
-scanned at known poses through the lab's `admittance_control` pipeline (D435i → SAM2 →
+Phase 9 is the real subset and the release (`notes/phase9_plan.md`): the lab's metal
+workpieces (1–3 mm sheet, pipe, RHS; 12 strata × 10 configurations × 5 views) scanned at registered poses through the lab's `admittance_control` pipeline (D435i → SAM2 →
 FoundationPose → ICP-to-CAD), with the seam truth *constructed* from the registered part
 poses under the same rule as everything else and the pose uncertainty stated rather than
 hidden; held-out geometry splits (D11); the generator on GitHub with all seeds and a
