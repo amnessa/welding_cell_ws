@@ -345,6 +345,20 @@ class IcpPoseRefinerNode(Node):
         # also fires there. Keeping only edge points that see a *different*
         # object within weld_radius_m leaves just the joint between the parts.
         self.declare_parameter('weld_require_cross_object', True)
+        # Mode A (notes/seam_two_modes_plan.md): the seam is COMPUTED from the saved
+        # parts' registered poses with weld_generator's D4 rule, never detected. The
+        # registry says which weldgen primitive each library CAD is
+        # (scripts/build_weldgen_registry.py). A part without an entry falls back to
+        # the radius-PCA detector above when weld_fallback_pca is true.
+        self.declare_parameter('weld_method', 'registration')     # registration | radius_pca
+        self.declare_parameter('weldgen_path', '/workspaces/welding_cell_ws/weld_generator')
+        self.declare_parameter('weldgen_registry', '')             # '' -> model_dir/weldgen_objects.json
+        self.declare_parameter('weld_pose_tol_mm', 10.0)          # relative pose error the two
+        #   registrations may have and still be one joint (the bench showed 8-11 mm);
+        #   replace by the fiducial-board bound once measured. Not a fit-up tolerance:
+        #   gap / penetration is reported per seam as fitup_mm, never used to reject.
+        self.declare_parameter('weld_seam_density_per_mm', 1.0)
+        self.declare_parameter('weld_fallback_pca', True)
 
         self._camera_frame = str(self.get_parameter('camera_frame').value)
         self._object_frame = str(self.get_parameter('object_frame').value)
@@ -849,7 +863,71 @@ class IcpPoseRefinerNode(Node):
         return np.repeat(np.arange(len(counts)), counts)
 
     def _welding_points(self):
-        """Find the seam where two near-orthogonal CAD clouds meet.
+        """Dispatch: mode A (seam from the registered poses) or the radius-PCA detector."""
+        method = str(self.get_parameter('weld_method').value).lower()
+        if method == 'registration':
+            try:
+                return self._welding_seams_registration()
+            except Exception as exc:  # noqa: BLE001 - RegistryError or an import failure
+                if not bool(self.get_parameter('weld_fallback_pca').value):
+                    raise
+                self.get_logger().warn(
+                    f'mode A (registration seam) unavailable: {exc}; falling back to '
+                    'radius-PCA on the SEPC')
+        return self._welding_points_pca()
+
+    def _welding_seams_registration(self):
+        """Mode A: every seam of the saved assembly, computed from `pose_static`.
+
+        The SEPC is the CAD at the ICP poses, so the seam is implied by the poses:
+        the placed primitives' surface intersections, judged by the D4 accessibility
+        rule (weldable / reject reason / torch approach). Publishes the weldable seams
+        as a coloured cloud (one colour per seam) for RViz and writes
+        welding_seams.json (every candidate, negatives included) next to
+        welding_points.npy/.ply (weldable points only, for existing consumers).
+        """
+        from admittance_control import seam_from_registration as sfr
+        from admittance_control.weldgen_registry import load_registry
+
+        self._sepc_or_load()                     # also restores self._saved after a restart
+        if len(self._saved) < 2:
+            return False, ('mode A needs at least two saved objects (assembly.json); '
+                           f'have {len(self._saved)}')
+        reg_path = str(self.get_parameter('weldgen_registry').value)
+        if not reg_path:
+            model_dir = str(self.get_parameter('model_dir').value) or \
+                str(Path(str(self.get_parameter('model_path').value)).expanduser().parent)
+            reg_path = str(Path(model_dir).expanduser() / 'weldgen_objects.json')
+        registry = load_registry(reg_path)
+        objects = [(o['model'], np.asarray(o['pose_static'], dtype=np.float64).reshape(4, 4))
+                   for o in self._saved]
+        wg = str(self.get_parameter('weldgen_path').value) or None
+        parts = sfr.posed_parts(objects, registry, pose_units='m', weldgen_path=wg)
+        access = sfr.runtime_access(
+            parts, pose_tol_mm=float(self.get_parameter('weld_pose_tol_mm').value))
+        seams = sfr.compute_seams(
+            parts, access, density_per_mm=float(self.get_parameter('weld_seam_density_per_mm').value),
+            weldgen_path=wg)
+
+        xyz, rgb, _ = sfr.seams_points_m(seams, weldable_only=True)
+        header = self._make_header(self._static_frame, self.get_clock().now().to_msg())
+        self._weld_pub.publish(make_xyzrgb_cloud(header, xyz, rgb))
+        self._weld = xyz
+        note = self._persist_weld(xyz)
+        try:
+            (self._save_dir / 'welding_seams.json').write_text(json.dumps({
+                'method': 'registration', 'registry': reg_path,
+                'access': access, 'frame': self._static_frame, 'units': 'mm',
+                'objects': [{'model': n, 'pose_static': T.tolist()} for n, T in objects],
+                'seams': seams}, indent=1))
+        except Exception as exc:  # noqa: BLE001 - persistence is best-effort
+            note += f' (warning: could not write welding_seams.json: {exc})'
+        summary = sfr.summarize(seams)
+        self.get_logger().info(f'mode A seams: {summary}. {note}')
+        return True, f'mode A: {summary}'
+
+    def _welding_points_pca(self):
+        """Radius-PCA seam detection on the SEPC (the pre-mode-A method, kept as fallback).
 
         The SEPC holds the CAD clouds of the assembled parts, separated by a
         physical gap. A radius (not kNN) PCA neighbourhood spans that gap, so

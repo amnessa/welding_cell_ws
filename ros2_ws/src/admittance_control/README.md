@@ -614,6 +614,58 @@ by a lock, since the services now genuinely run concurrently with the tick.
 
 ### 8. Weld‑seam extraction (`~/welding_points`)
 
+> **Plan of record (2026-09-21): [`notes/seam_two_modes_plan.md`](notes/seam_two_modes_plan.md).** The SEPC is the CAD at its ICP poses, so the seam is *computed* from the poses (mode A) and detected only when there is no CAD (mode B, sensor-only).
+
+**Mode A — the seam computed from the registered poses (default since 2026-09-21).**
+`~/welding_points` now dispatches on `weld_method`: `registration` (default) or
+`radius_pca` (the detector below, also the automatic fallback when a saved part has no
+registry entry and `weld_fallback_pca` is true). Mode A places each saved part's
+`weld_generator` primitive at its `pose_static` and runs the generator's D4 accessibility
+rule on the assembly (`admittance_control/seam_from_registration.py`): every inter-part
+face pair becomes a candidate with an analytic polyline, a class (`fillet`, `butt`,
+`lap_toe`, `edge`), the cleared torch approach axis, and `weldable` or a reject reason -
+the negatives are kept because the planner must avoid them. Its only error is the
+registration's; the ICP metrics belong next to it.
+
+```
+python scripts/build_weldgen_registry.py --verify   # models/weldgen_objects.json:
+                                                    #   box CADs -> slab + frame, verified
+                                                    #   against the mesh; others UNSUPPORTED
+ros2 service call /icp_pose_refiner/welding_points std_srvs/srv/Trigger
+#   -> /perception/icp/welding_points  (weldable seams, one colour each)
+#   -> <save_dir>/welding_seams.json   (every candidate, mm, static_frame)
+#   -> <save_dir>/welding_points.npy/.ply (weldable points, as before)
+```
+
+Parameters: `weldgen_path` (the `weld_generator` checkout), `weldgen_registry`
+(default `model_dir/weldgen_objects.json`), `weld_pose_tol_mm` (10 mm), 
+`weld_seam_density_per_mm`, `weld_fallback_pca`.
+
+**Registered parts do not touch.** The generator's D4 gates assume exact contact; the
+bench's ICP poses put the standing plate of the T 8-11 mm *inside* the base in one run and
+1-8 mm above it, tilted, in the next (`scripts/sam6d_results`, `foundationpose_results/
+previous_assemblies/20260812-113902`) - a thin plate sliding in its own plane is what
+single-view ICP cannot observe. The seam line is the intersection of the two face
+*planes* and is invariant to exactly that slide, so mode A judges each face pair with a
+**pose tolerance** (`weld_pose_tol_mm`: how far a registered face may miss the other part
+and still be the same joint) rather than a contact tolerance, and never rejects on
+fit-up: every seam carries `fitup_mm` - the signed distance of each member's near edge
+to the other's face plane (gap > 0, penetration < 0) - and the service reply prints it
+(`fillet 250mm (A:+wxB:-w) penetration 8.1..10.8mm`). That number is the fit-up
+diagnostic of the plan and what the fiducial-board bound on the poses has to explain;
+once that bound is measured it replaces the 10 mm default. Because the tolerance may
+exceed the sheet thickness, the generator's thickness cap is replaced by a face-extent
+rule (each face must reach past the other's plane by more than the tolerance), which
+keeps a plate's own underside from pairing with the standing plate. Its stated limit:
+a lapping sheet thinner than the pose tolerance cannot be told from a penetrating one,
+so its toes come back `member_within_pose_tol` until the pose bound is tighter than the
+sheet - laps on 2-3 mm sheet need the fiducial bound, T-fillets do not.
+Non-box parts (pipe stubs, the `270circle` band, bent plates) get hand-written registry
+entries when they enter the library (`tube` / `swept_slab` in the same JSON, verified by
+`--verify` against the D34 chord budget); until then they fall back to radius-PCA.
+Mode B (no CAD, sensor points, quadric intersection) is the next step of the plan.
+
+
 Full derivation in [`notes/welding_edge_sampling.md`](notes/welding_edge_sampling.md).
 Input is the SEPC — the CAD clouds of two near‑orthogonal parts separated by a
 small physical gap. Output is the line where they meet.

@@ -745,8 +745,19 @@ def _mutually_visible(A: Slab, fa: str, B: Slab, fb: str,
         target = _closest_on_face(part, face, pts)
         # Sample strictly between the line and the face, excluding both endpoints so a
         # point lying exactly on a surface is never counted as inside it.
+        #
+        # Where the line already lies ON the face (distance ~0, the usual case for the
+        # face that generated it) there is nothing between them to probe: every sample
+        # collapses onto the endpoint, and at a pose given to floating precision that
+        # endpoint sits ~1e-7 mm inside the plate and the `tol=-1e-6` guard cannot save
+        # it. The generator never hit this - its poses are exact - but a T-joint at a
+        # registered (arbitrary-rotation) pose lost both fillets to it. Skip such samples.
+        span = np.linalg.norm(target - pts, axis=1)
+        keep = span > 1e-3
+        if not keep.any():
+            continue
         for f in (0.25, 0.5, 0.75):
-            probe = pts + (target - pts) * f
+            probe = pts[keep] + (target[keep] - pts[keep]) * f
             for s in solids:
                 if s.contains(probe, tol=-1e-6).any():
                     return False

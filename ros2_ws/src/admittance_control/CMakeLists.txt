@@ -82,6 +82,8 @@ install(
     admittance_control/sam6d_io.py
     admittance_control/icp.py
     admittance_control/assembly_mesh.py
+    admittance_control/weldgen_registry.py
+    admittance_control/seam_from_registration.py
   DESTINATION ${PYTHON_INSTALL_DIR}/${PROJECT_NAME}
 )
 
@@ -103,6 +105,7 @@ install(PROGRAMS
   scripts/cartesian_admittance_controller.py
   scripts/drawing_action_server.py
   scripts/drawing_dispatcher.py
+  scripts/build_weldgen_registry.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
