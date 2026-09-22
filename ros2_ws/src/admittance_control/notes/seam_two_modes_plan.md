@@ -126,6 +126,9 @@ accuracy known from the same benchmark — and the two are scored on the same re
    the fit-up diagnostic.
 3. PPF "no match" on the server; mode B path; refuse library save without CAD.
 4. Phase 9 real subset = the validation campaign for all of the above.
+4b. Pen-marking the tacks on the UR5e (approach, force-gated touch, mark):
+   `notes/pen_marking_plan.md` (2026-09-22) — the placement check this pipeline is
+   validated by.
 5. Quality field on the new seams; plot `q(s)` before any selection code (the week-two
    experiment of `quality_field_k_point_selection.md`).
 
