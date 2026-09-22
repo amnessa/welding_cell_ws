@@ -108,11 +108,42 @@ marking. Use travel: nearest-neighbour over the tacks with arch transfers, seam 
 seam, `tack_no` ascending within a seam. Keep `order` in the file for the day the torch
 replaces the pen; the sequence field in `tack_marks.json` says which one was used.
 
+## Decisions (2026-09-22)
+
+A1 (own stack + capsule/box collision model), B1 (force-gated LIN descent), C1 first
+(dot), elbow-up by branch lock with the free roll, ascending `tack_no` seam by seam.
+Facts from the bench: pen tip ≈ 0.19 m from the flange along tool0 +Z, not
+spring-loaded → **F_touch = 1.5 N**; the D435i rides on the pen holder on the side
+opposite the connector, its pose in tool0 is the hand-eye calibration
+(`notebooks/T_tcp_to_cam.npy`: origin (24, 91, 34) mm, optical axis along the pen);
+parts are held by magnets on holders above the table, so the table is a plane the
+pen never reaches and there are no fixtures to model yet. RViz: the SEPC stays put;
+only the green model cloud moved (a camera-frame leftover, cleared at `save_object`
+since 2026-09-21).
+
+## Milestone 1 — the tool model (built 2026-09-22)
+
+`config/pen_tool.json` + `admittance_control/tool_model.py` + `scripts/tool_model_marker_node.py`
+(tests: `test/test_tool_model.py`). One description in tool0, metres: pen tip, touch
+force, standoff, a conservative envelope (flange adapter box, holder capsule, pen
+capsule, camera arm box) and the camera box placed BY THE CALIBRATION, never typed.
+`ToolModel.T_tool0_for_tip(tip, axis, roll)` is the pose solver the marking node will
+use: tip on the tack, pen along the axis, roll free.
+
+To verify: run the marker node, add `/tool_model/markers` in RViz, jog the arm and
+check the orange boxes cover the real holder and the blue box covers the camera; edit
+the numbers in the JSON until they do (they are envelopes - err large).
+
+Tip touch-off (refines `pen_tip_m`): jog the pen onto one fixed point of the bench
+from 3–4 different wrist orientations, record `tool0` from TF each time; the tip offset
+`d` in tool0 is the least-squares solution of `R_i d + t_i = p` for all i (unknown `p`
+too) — the classic 4-point TCP. The UR pendant's TCP wizard gives the same number;
+either way it goes into `pen_tip_m`.
+
 ## Milestones
 
-1. **Pen TCP.** Measure the pen: tool length along tool0 +Z and the tip offset, by
-   touch-off on a known point (or the UR's 4-point TCP). Store it as `pen_tcp` in a
-   config the marking node and the collision model both read.
+1. **Pen TCP + tool envelope.** DONE 2026-09-22 (see above); the touch-off refinement
+   and the RViz check of the envelope remain on the bench.
 2. **Collision model + tests** (`admittance_control/collision.py`): capsules for the six
    UR5e links from FK, the pen capsule, boxes from `weldgen_objects.json` at
    `assembly.json` poses, the table half-space; `_is_valid(q)` in the RRT uses it.
@@ -133,14 +164,24 @@ replaces the pen; the sequence field in `tack_marks.json` says which one was use
 
 * **Controller switching.** Transit runs on `scaled_joint_trajectory_controller`; the
   admittance node commands Servo, which needs `forward_position_controller` (or the
-  Servo-side JTC). Confirm what the UR driver has active and whether we switch per phase
-  (`controller_manager/switch_controller`) or run the descent as a slow trajectory with
-  a wrench watchdog that cancels it (simpler, no switch, but no force *holding*).
-* **F_touch.** UR5e FT noise is ~0.5 N; 2–3 N is a safe threshold for a pen against
-  steel/MDF. Confirm the pen is compliant enough (spring-loaded holder?) that 3 N does
-  not bend it.
-* **Table and fixture geometry** for the collision model: the bench plane (`ground_z_m`
-  is already measured for the ground cut) and any clamp — box it by hand for now.
+  Servo-side JTC). To see what the driver has, with the robot connected:
+  ```
+  ros2 control list_controllers                      # active / inactive, and their types
+  ros2 param get /servo_node moveit_servo.command_out_type   # trajectory_msgs/JointTrajectory or std_msgs/Float64MultiArray
+  ros2 param get /servo_node moveit_servo.command_out_topic
+  ros2 control switch_controllers --deactivate scaled_joint_trajectory_controller --activate forward_position_controller
+  ros2 control switch_controllers --deactivate forward_position_controller --activate scaled_joint_trajectory_controller
+  ```
+  If Servo is configured with `command_out_type: trajectory_msgs/JointTrajectory` on the
+  scaled JTC's topic, no switch is needed at all; the two phases share one controller.
+  Otherwise the marking node switches per phase through `controller_manager`, and the
+  check that the switch works is: after the descent, does the arm still accept a
+  trajectory. Do it once by hand before it is automated.
+* **F_touch = 1.5 N** (decided): UR5e FT noise is ~0.5 N; the descent stops at 1.5 N
+  and the low-pass in the admittance node (`force_low_pass_alpha`) must not delay that
+  by more than ~1 mm of travel at 20 mm/s (50 ms).
+* **Table** is a plane below the holders; `ground_z_m` from the ground cut is the
+  estimate, a flange force touch gives it exactly if ever needed. No fixtures (magnets).
 
 ## RViz: parts moving when the robot moves
 

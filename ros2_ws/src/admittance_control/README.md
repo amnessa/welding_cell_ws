@@ -696,7 +696,20 @@ reason when `weld_fallback_pca` is false.
 Mode B (no CAD, sensor points, quadric intersection) is the next step of the plan.
 
 
-Full derivation in [`notes/welding_edge_sampling.md`](notes/welding_edge_sampling.md).
+**Next: pen-marking the tacks** ([`notes/pen_marking_plan.md`](notes/pen_marking_plan.md)):
+force-gated approach along each tack's axis, dot at contact, elbow-up with the free roll
+about the pen. Milestone 1 is in: the tool model `config/pen_tool.json` (pen tip, 1.5 N
+touch force, 35 mm standoff, collision envelope of holder + pen + camera arm, camera box
+at the hand-eye calibration) read by `admittance_control/tool_model.py`; check it on the
+robot with
+
+```
+ros2 run admittance_control tool_model_marker_node.py --ros-args \
+  -p extrinsic_path:=<ws>/src/admittance_control/notebooks/T_tcp_to_cam.npy
+#   RViz: MarkerArray on /tool_model/markers, in tool0 - the boxes must cover the real holder
+```
+
+Full derivation of the radius-PCA fallback in [`notes/welding_edge_sampling.md`](notes/welding_edge_sampling.md).
 Input is the SEPC — the CAD clouds of two near‑orthogonal parts separated by a
 small physical gap. Output is the line where they meet.
 

@@ -1,0 +1,34 @@
+{
+  "_comment": [
+    "Pen tool on the UR5e flange: the one place the marking node and the collision model",
+    "read the tool from (notes/pen_marking_plan.md, milestone 1). Frame: tool0, metres.",
+    "tool0 +Z points out of the flange along the pen; the camera bracket is on the side",
+    "OPPOSITE the end-effector connector. Every primitive is a CONSERVATIVE envelope of the",
+    "holder (penholder_assembly.step): correct it against the RViz markers",
+    "(tool_model_marker_node.py) and against a touch-off for the tip.",
+    "pen_tip_m: user-measured ~0.19 m from the flange (2026-09-22); refine by touch-off.",
+    "camera: pose from the hand-eye calibration file (tool0 -> camera_color_optical_frame);",
+    "  body_m is the D435i (90 x 25 x 25 mm) with margin, centred on the optical origin",
+    "  because which side of the origin the body extends to is not known here."
+  ],
+  "version": "pen_tool-0.1",
+  "parent_frame": "tool0",
+  "pen_tip_m": [0.0, 0.0, 0.19],
+  "touch_force_n": 1.5,
+  "standoff_m": 0.035,
+  "primitives": [
+    {"name": "flange_adapter", "type": "box", "centre": [0.0, 0.0, 0.025],
+     "half": [0.047, 0.047, 0.025]},
+    {"name": "holder_body", "type": "capsule", "p0": [0.0, 0.0, 0.05], "p1": [0.0, 0.0, 0.12],
+     "radius": 0.042},
+    {"name": "pen", "type": "capsule", "p0": [0.0, 0.0, 0.12], "p1": [0.0, 0.0, 0.19],
+     "radius": 0.008},
+    {"name": "camera_arm", "type": "box", "centre": [0.0, 0.0525, 0.032],
+     "half": [0.026, 0.0525, 0.032]}
+  ],
+  "camera": {
+    "extrinsic_path": "notebooks/T_tcp_to_cam.npy",
+    "frame": "camera_color_optical_frame",
+    "body_half_m": [0.05, 0.016, 0.016]
+  }
+}

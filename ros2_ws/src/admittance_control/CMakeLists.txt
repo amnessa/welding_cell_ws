@@ -84,6 +84,7 @@ install(
     admittance_control/assembly_mesh.py
     admittance_control/weldgen_registry.py
     admittance_control/seam_from_registration.py
+    admittance_control/tool_model.py
   DESTINATION ${PYTHON_INSTALL_DIR}/${PROJECT_NAME}
 )
 
@@ -106,6 +107,7 @@ install(PROGRAMS
   scripts/drawing_action_server.py
   scripts/drawing_dispatcher.py
   scripts/build_weldgen_registry.py
+  scripts/tool_model_marker_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
