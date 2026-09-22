@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Show the pen tool's collision envelope on the robot in RViz.
 
-Publishes the primitives of `config/pen_tool.json` (holder, pen, camera arm, and the
-camera box at its CALIBRATED pose) as a latched MarkerArray in `tool0`, plus a sphere at
-the pen tip. They ride along with the robot model, so a wrong number in the config
+Publishes the primitives of `config/pen_tool.json` (holder, pen, camera arm, camera
+body) as a latched MarkerArray in `tool0`, plus a sphere at the pen tip and, in green,
+the CALIBRATED camera optical origin and axis - that green dot must sit on the lens face
+of the blue camera box; if it does not, the hand-eye calibration is off. They ride along with the robot model, so a wrong number in the config
 shows up as a box that does not cover the real bracket. Milestone 1 of
 notes/pen_marking_plan.md: fix the envelope here before the collision model trusts it.
 
@@ -52,7 +53,8 @@ class ToolModelMarkerNode(Node):
     def _marker(self, mid: int, ns: str, rgb) -> Marker:
         mk = Marker()
         mk.header.frame_id = self._tool.parent_frame
-        mk.header.stamp = self.get_clock().now().to_msg()
+        # stamp 0 = "latest transform": a stamp of now is newer than the last joint
+        # state and RViz refuses to extrapolate ("No transform to fixed frame")
         mk.ns, mk.id, mk.action = ns, mid, Marker.ADD
         mk.color.r, mk.color.g, mk.color.b, mk.color.a = (*rgb, self._alpha)
         mk.pose.orientation.w = 1.0
@@ -62,7 +64,7 @@ class ToolModelMarkerNode(Node):
         arr = MarkerArray()
         mid = 0
         for p in self._tool.primitives_tool0():
-            colour = (0.2, 0.6, 1.0) if p['name'] == 'camera' else (1.0, 0.6, 0.1)
+            colour = (0.2, 0.6, 1.0) if p['name'] == 'camera_body' else (1.0, 0.6, 0.1)
             if p['type'] == 'capsule':
                 a, b = np.asarray(p['p0']), np.asarray(p['p1'])
                 mk = self._marker(mid, p['name'], colour); mid += 1
@@ -105,6 +107,23 @@ class ToolModelMarkerNode(Node):
                        Point(x=float(self._tool.tip_tool0[0]), y=float(self._tool.tip_tool0[1]),
                              z=float(self._tool.tip_tool0[2]))]
         arr.markers.append(axis)
+        if self._tool.T_tool0_cam is not None:
+            # the CALIBRATED optical origin: must sit on the lens face of the blue box
+            o = self._tool.T_tool0_cam[:3, 3]
+            dot = self._marker(mid, 'camera_optical_origin', (0.1, 1.0, 0.3)); mid += 1
+            dot.type = Marker.SPHERE
+            dot.color.a = 1.0
+            dot.pose.position.x, dot.pose.position.y, dot.pose.position.z = map(float, o)
+            dot.scale.x = dot.scale.y = dot.scale.z = 0.01
+            arr.markers.append(dot)
+            ray = self._marker(mid, 'camera_optical_axis', (0.1, 1.0, 0.3)); mid += 1
+            ray.type = Marker.ARROW
+            ray.color.a = 1.0
+            ray.scale.x, ray.scale.y, ray.scale.z = 0.003, 0.008, 0.012
+            e = o + 0.05 * self._tool.T_tool0_cam[:3, 2]
+            ray.points = [Point(x=float(o[0]), y=float(o[1]), z=float(o[2])),
+                          Point(x=float(e[0]), y=float(e[1]), z=float(e[2]))]
+            arr.markers.append(ray)
         self._pub.publish(arr)
 
 

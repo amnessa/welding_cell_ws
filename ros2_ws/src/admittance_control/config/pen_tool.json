@@ -7,9 +7,14 @@
     "holder (penholder_assembly.step): correct it against the RViz markers",
     "(tool_model_marker_node.py) and against a touch-off for the tip.",
     "pen_tip_m: user-measured ~0.19 m from the flange (2026-09-22); refine by touch-off.",
-    "camera: pose from the hand-eye calibration file (tool0 -> camera_color_optical_frame);",
-    "  body_m is the D435i (90 x 25 x 25 mm) with margin, centred on the optical origin",
-    "  because which side of the origin the body extends to is not known here."
+    "pen capsule: its end caps are round, so p1 sits one radius short of the tip and the cap",
+    "  ends AT the tip; keep p1 = pen_tip_m - radius when either changes.",
+    "camera_body: the D435i as a box in tool0 from the bench (2026-09-22): centre ~9 cm along",
+    "  +y, 0 along x, body centre ~4.5 cm along z with the lens face at ~6 cm; 90 x 25 x 25 mm",
+    "  plus margin, long axis along tool0 x. Correct it against the RViz markers.",
+    "camera.extrinsic_path: the hand-eye calibration (tool0 -> camera_color_optical_frame),",
+    "  used for the reference marker at the calibrated optical origin, which must sit on the",
+    "  lens face - if it does not, the calibration is off and the whole pipeline inherits it."
   ],
   "version": "pen_tool-0.1",
   "parent_frame": "tool0",
@@ -17,18 +22,41 @@
   "touch_force_n": 1.5,
   "standoff_m": 0.035,
   "primitives": [
-    {"name": "flange_adapter", "type": "box", "centre": [0.0, 0.0, 0.025],
-     "half": [0.047, 0.047, 0.025]},
-    {"name": "holder_body", "type": "capsule", "p0": [0.0, 0.0, 0.05], "p1": [0.0, 0.0, 0.12],
-     "radius": 0.042},
-    {"name": "pen", "type": "capsule", "p0": [0.0, 0.0, 0.12], "p1": [0.0, 0.0, 0.19],
-     "radius": 0.008},
-    {"name": "camera_arm", "type": "box", "centre": [0.0, 0.0525, 0.032],
-     "half": [0.026, 0.0525, 0.032]}
+    {
+      "name": "flange_adapter",
+      "type": "box",
+      "centre": [0.0, 0.0, 0.025],
+      "half": [0.047, 0.047, 0.025]
+    },
+    {
+      "name": "holder_body",
+      "type": "capsule",
+      "p0": [0.0, 0.0, 0.05],
+      "p1": [0.0, 0.0, 0.12],
+      "radius": 0.042
+    },
+    {
+      "name": "pen",
+      "type": "capsule",
+      "p0": [0.0, 0.0, 0.12],
+      "p1": [0.0, 0.0, 0.182],
+      "radius": 0.008
+    },
+    {
+      "name": "camera_arm",
+      "type": "box",
+      "centre": [0.0, 0.0525, 0.032],
+      "half": [0.026, 0.0525, 0.032]
+    },
+    {
+      "name": "camera_body",
+      "type": "box",
+      "centre": [0.0, 0.09, 0.045],
+      "half": [0.05, 0.02, 0.02]
+    }
   ],
   "camera": {
     "extrinsic_path": "notebooks/T_tcp_to_cam.npy",
-    "frame": "camera_color_optical_frame",
-    "body_half_m": [0.05, 0.016, 0.016]
+    "frame": "camera_color_optical_frame"
   }
 }

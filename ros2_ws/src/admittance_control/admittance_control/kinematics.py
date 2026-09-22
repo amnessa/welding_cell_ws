@@ -139,6 +139,27 @@ def ur5e_fk(q: np.ndarray) -> np.ndarray:
     return T
 
 
+def ur5e_link_frames(q: np.ndarray) -> dict:
+    """Every joint frame of the same chain as `ur5e_fk`, in base_link.
+
+    Keys: 'shoulder' (after shoulder_pan), 'lift' (after shoulder_lift), 'elbow',
+    'wrist_1', 'wrist_2', 'wrist_3', 'tool0'. The collision model hangs the arm's
+    capsules between these origins; `tool0` equals `ur5e_fk(q)`.
+    """
+    PI = math.pi
+    q = np.asarray(q, dtype=float)
+    frames = {}
+    T = _rotz(PI)
+    T = T @ _trans(0, 0, 0.1625) @ _rotz(q[0]);          frames['shoulder'] = T
+    T = T @ _rpy(PI/2, 0, 0) @ _rotz(q[1]);              frames['lift'] = T
+    T = T @ _trans(-0.425, 0, 0) @ _rotz(q[2]);          frames['elbow'] = T
+    T = T @ _trans(-0.3922, 0, 0.1333) @ _rotz(q[3]);    frames['wrist_1'] = T
+    T = T @ _trans(0, -0.0997, 0) @ _rpy(PI/2, 0, 0) @ _rotz(q[4]);   frames['wrist_2'] = T
+    T = T @ _trans(0, 0.0996, 0) @ _rpy(PI/2, PI, PI) @ _rotz(q[5]);  frames['wrist_3'] = T
+    T = T @ _rpy(0, -PI/2, -PI/2) @ _rpy(PI/2, 0, PI/2); frames['tool0'] = T
+    return frames
+
+
 def ur5e_jacobian(q: np.ndarray, eps: float = 1e-6) -> np.ndarray:
     """
     Numerical Jacobian (6×6) via central finite differences.
@@ -329,14 +350,20 @@ def _is_valid(q: np.ndarray) -> bool:
     return _in_limits(q)
 
 
-def _edge_valid(q1: np.ndarray, q2: np.ndarray, resolution: float = 0.05) -> bool:
-    """Check if a straight-line path in C-space is valid (discretized)."""
+def _edge_valid(q1: np.ndarray, q2: np.ndarray, resolution: float = 0.05,
+                is_valid=None) -> bool:
+    """Check if a straight-line path in C-space is valid (discretized).
+
+    `is_valid` is the configuration test (default: joint limits only); the collision
+    model passes its own, which also checks the arm and tool against the scene.
+    """
+    valid = is_valid or _is_valid
     dist = _joint_distance(q1, q2)
     n_steps = max(int(math.ceil(dist / resolution)), 1)
     for i in range(1, n_steps + 1):
         alpha = i / n_steps
         q_interp = q1 + alpha * (q2 - q1)
-        if not _is_valid(q_interp):
+        if not valid(q_interp):
             return False
     return True
 
@@ -347,15 +374,16 @@ _TRAPPED = 'trapped'
 
 
 def _extend(tree: List[_TreeNode], q_target: np.ndarray,
-            step_size: float) -> Tuple[str, _TreeNode]:
+            step_size: float, is_valid=None) -> Tuple[str, _TreeNode]:
     """Extend the tree towards q_target by one step."""
+    valid = is_valid or _is_valid
     near = _nearest(tree, q_target)
     q_new = _steer(near.q, q_target, step_size)
 
-    if not _is_valid(q_new):
+    if not valid(q_new):
         return _TRAPPED, near
 
-    if not _edge_valid(near.q, q_new):
+    if not _edge_valid(near.q, q_new, is_valid=valid):
         return _TRAPPED, near
 
     node = _TreeNode(q_new, near)
@@ -367,12 +395,12 @@ def _extend(tree: List[_TreeNode], q_target: np.ndarray,
 
 
 def _connect(tree: List[_TreeNode], q_target: np.ndarray,
-             step_size: float) -> Tuple[str, _TreeNode]:
+             step_size: float, is_valid=None) -> Tuple[str, _TreeNode]:
     """Greedily extend the tree towards q_target until REACHED or TRAPPED."""
     status = _ADVANCED
     node = tree[0]
     while status == _ADVANCED:
-        status, node = _extend(tree, q_target, step_size)
+        status, node = _extend(tree, q_target, step_size, is_valid)
     return status, node
 
 
@@ -392,6 +420,7 @@ def rrt_connect(
     step_size: float = 0.2,
     max_iter: int = 5000,
     goal_bias: float = 0.1,
+    is_valid=None,
 ) -> Optional[List[np.ndarray]]:
     """
     RRT-Connect bi-directional planner in joint space.
@@ -411,7 +440,8 @@ def rrt_connect(
     q_start = np.asarray(q_start, dtype=float)
     q_goal = np.asarray(q_goal, dtype=float)
 
-    if not _is_valid(q_start) or not _is_valid(q_goal):
+    valid = is_valid or _is_valid
+    if not valid(q_start) or not valid(q_goal):
         return None
 
     tree_a = [_TreeNode(q_start)]
@@ -425,10 +455,10 @@ def rrt_connect(
             q_rand = _random_config()
 
         # Extend tree_a toward q_rand
-        status_a, node_a = _extend(tree_a, q_rand, step_size)
+        status_a, node_a = _extend(tree_a, q_rand, step_size, valid)
         if status_a != _TRAPPED:
             # Try to connect tree_b to the new node
-            status_b, node_b = _connect(tree_b, node_a.q, step_size)
+            status_b, node_b = _connect(tree_b, node_a.q, step_size, valid)
             if status_b == _REACHED:
                 # Trees connected — extract path
                 path_a = _extract_path(node_a)

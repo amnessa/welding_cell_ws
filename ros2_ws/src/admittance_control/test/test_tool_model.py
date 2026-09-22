@@ -27,11 +27,12 @@ def test_package_config_loads_with_tip_and_calibrated_camera():
     assert tool.touch_force_n == pytest.approx(1.5)
     names = [p["name"] for p in tool.primitives]
     assert {"pen", "holder_body", "flange_adapter", "camera_arm"} <= set(names)
+    cam = next(p for p in tool.primitives if p["name"] == "camera_body")
+    assert np.allclose(cam["centre"], [0.0, 0.09, 0.045]) and cam["half"][0] >= 0.045
     if (PKG / "notebooks" / "T_tcp_to_cam.npy").exists():
-        assert "camera" in names and tool.T_tool0_cam is not None
-        cam = next(p for p in tool.primitives if p["name"] == "camera")
-        assert np.allclose(cam["centre"], tool.T_tool0_cam[:3, 3])
-        assert np.linalg.norm(cam["centre"]) < 0.2          # on the bracket, not across the room
+        assert tool.T_tool0_cam is not None
+        # the calibrated optical origin lies on the bracket side, near the body box
+        assert np.linalg.norm(tool.T_tool0_cam[:3, 3] - cam["centre"]) < 0.06
     assert "tip" in tool.describe()
 
 
@@ -41,8 +42,8 @@ def test_primitives_move_rigidly_with_tool0():
     T = ur5e_fk(q)
     placed = tool.primitives_in(T)
     pen = next(p for p in placed if p["name"] == "pen")
-    assert np.allclose(pen["p1"], tool.tip_in(T))               # the pen ends at the tip
-    assert np.linalg.norm(pen["p1"] - pen["p0"]) == pytest.approx(0.07)
+    # the round cap of the pen capsule ends AT the tip: p1 is one radius short of it
+    assert np.allclose(pen["p1"] + pen["radius"] * T[:3, 2], tool.tip_in(T), atol=1e-12)
     box = next(p for p in placed if p["type"] == "box")
     assert np.allclose(box["R"] @ box["R"].T, np.eye(3), atol=1e-9)
 

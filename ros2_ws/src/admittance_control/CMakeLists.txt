@@ -85,6 +85,7 @@ install(
     admittance_control/weldgen_registry.py
     admittance_control/seam_from_registration.py
     admittance_control/tool_model.py
+    admittance_control/collision.py
   DESTINATION ${PYTHON_INSTALL_DIR}/${PROJECT_NAME}
 )
 

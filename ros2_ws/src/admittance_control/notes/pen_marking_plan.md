@@ -140,15 +140,35 @@ from 3–4 different wrist orientations, record `tool0` from TF each time; the t
 too) — the classic 4-point TCP. The UR pendant's TCP wizard gives the same number;
 either way it goes into `pen_tip_m`.
 
+## Milestone 2 — the collision model (built 2026-09-22)
+
+`admittance_control/collision.py` (tests: `test/test_collision.py`, 7). The arm is six
+capsules on the joint frames (`kinematics.ur5e_link_frames`, new), the upper-arm and
+forearm tubes displaced off the joint line by the URDF's shoulder / elbow offsets
+(0.138 / 0.007 m); the tool is the milestone-1 envelope placed by FK; the scene is the
+registered parts as boxes (`boxes_from_parts` on mode A's posed slabs, mm → m) and the
+table as a plane. Distances are closed form (segment–segment, golden-section
+segment–box, separating-axis box–box, lowest point vs plane); `CollisionModel.is_valid`
+is joint limits AND clearance, and `rrt_connect(..., is_valid=model.is_valid)` plans with
+it (the RRT gained an optional validity callback; the drawing stack's default is
+unchanged). `report(q)` prints the worst pairs in mm. Stated gaps: no full
+self-collision (the tool is checked against the base column, shoulder and upper arm;
+the branch lock does the rest), no fixtures (magnets), box–box is a yes/no test.
+
+Usage sketch for the next milestone:
+```python
+tool  = load_tool_model()
+parts = posed_parts(objects, registry)            # mode A, from assembly.json
+model = CollisionModel(tool, boxes_from_parts(parts), table_z=ground_z, clearance=0.01)
+path  = rrt_connect(q_now, q_app, is_valid=model.is_valid)
+print(model.report(q_app))
+```
+
 ## Milestones
 
 1. **Pen TCP + tool envelope.** DONE 2026-09-22 (see above); the touch-off refinement
    and the RViz check of the envelope remain on the bench.
-2. **Collision model + tests** (`admittance_control/collision.py`): capsules for the six
-   UR5e links from FK, the pen capsule, boxes from `weldgen_objects.json` at
-   `assembly.json` poses, the table half-space; `_is_valid(q)` in the RRT uses it.
-   Tests: a configuration that sweeps the pen through the standing plate is rejected;
-   the parked pose is accepted; the drawing stack's regression paths still plan.
+2. **Collision model + tests.** DONE 2026-09-22 (see above).
 3. **Reachability report, no motion.** For the live `welding_tacks.json`: every tack's
    pose on the locked branch, the roll chosen per seam, joint moves between tacks,
    collision margin at P_app and at the tack. Published as markers (pen axis at every

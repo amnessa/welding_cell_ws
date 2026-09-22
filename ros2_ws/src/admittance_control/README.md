@@ -709,6 +709,10 @@ ros2 run admittance_control tool_model_marker_node.py --ros-args \
 #   RViz: MarkerArray on /tool_model/markers, in tool0 - the boxes must cover the real holder
 ```
 
+Milestone 2, the collision model, is in too: `admittance_control/collision.py` (arm
+capsules on the joint frames, the tool envelope, the registered parts as boxes, the table
+as a plane; `CollisionModel.is_valid` plugs into `rrt_connect(..., is_valid=...)`).
+
 Full derivation of the radius-PCA fallback in [`notes/welding_edge_sampling.md`](notes/welding_edge_sampling.md).
 Input is the SEPC — the CAD clouds of two near‑orthogonal parts separated by a
 small physical gap. Output is the line where they meet.

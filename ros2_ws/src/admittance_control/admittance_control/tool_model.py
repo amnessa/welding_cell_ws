@@ -11,9 +11,12 @@ ROS; the marker node wraps it for RViz.
     tool.primitives_in(T_base_tool0)         # the same, placed by FK
     tool.tip_in(T_base_tool0)
 
-The camera is not typed by hand: its pose is the hand-eye calibration
-(`T_tcp_to_cam.npy`, tool0 -> camera_color_optical_frame), so the envelope moves if the
-calibration does. Its body is a box about the optical origin, D435i-sized with margin.
+The camera body is a box in tool0 measured on the bench like the rest of the envelope
+(deriving it from the calibrated sensor origin put it in the wrong place: where the body
+sits around the colour sensor is not something the calibration knows). The hand-eye
+calibration (`T_tcp_to_cam.npy`, tool0 -> camera_color_optical_frame) is loaded as
+`T_tool0_cam` for reference only: the marker node draws its origin, and it has to sit on
+the lens face.
 
 Primitives are plain dicts so the collision module can consume them without a class
 hierarchy: `{"type": "capsule", "p0", "p1", "radius"}` and
@@ -63,7 +66,7 @@ class ToolModel:
     touch_force_n: float
     standoff_m: float
     primitives: list[dict[str, Any]]                 # in tool0, camera body included
-    T_tool0_cam: np.ndarray | None                   # tool0 -> camera optical frame
+    T_tool0_cam: np.ndarray | None                   # tool0 -> camera optical frame (reference)
     camera_frame: str | None
     source: dict[str, Any] = field(default_factory=dict)
 
@@ -148,9 +151,6 @@ def load_tool_model(path: str | Path | None = None,
             ep = (cfg_path.parent.parent / ep)
         if ep.exists():
             T_cam = np.asarray(np.load(ep), float).reshape(4, 4)
-            prims.append({"name": "camera", "type": "box", "centre": T_cam[:3, 3].copy(),
-                          "R": T_cam[:3, :3].copy(),
-                          "half": np.asarray(cam["body_half_m"], float)})
     return ToolModel(version=str(cfg.get("version", "pen_tool")),
                      parent_frame=str(cfg.get("parent_frame", "tool0")),
                      tip_tool0=np.asarray(cfg["pen_tip_m"], float),
