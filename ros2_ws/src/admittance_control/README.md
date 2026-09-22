@@ -241,10 +241,13 @@ parts, and it *is* the geometry the weld seam is extracted from.
                           │                                 │
            ~/welding_points│                   ~/export_mesh│
                           ▼                                 ▼
-     radius-PCA curvature → cross-object       re-instantiate each part's CAD at its
-     filter → voxel merge                      stored pose_static → boolean-union
-     → /perception/icp/welding_points (red)    → watertight faced mesh (mm)
-     → foundationpose_results/welding_points.ply → foundationpose_results/assembly_mesh.ply
+     mode A: weldgen primitives at the        re-instantiate each part's CAD at its
+     poses → D4 rule (pose tolerance)         stored pose_static → boolean-union
+     → seams + fit-up, tacks (tackrule-0.1)   → watertight faced mesh (mm)
+     → /perception/icp/welding_points,        → foundationpose_results/assembly_mesh.ply
+       welding_tacks, welding_tack_labels
+     → foundationpose_results/welding_seams.json,
+       welding_tacks.json, welding_points.ply
                                                         │
                                     set bridge model_ply_path + ~/add_model
                                                         ▼
@@ -260,7 +263,7 @@ parts, and it *is* the geometry the weld seam is extracted from.
 SEPC keeps subtracting itself out of the live crop, so ICP goes blind exactly
 where the next part gets placed. `~/reset_environment` drops the SEPC, the
 saved‑object list and the tracking state, blanks the latched RViz clouds, and
-moves `static_env.*` / `assembly.json` / `welding_points.*` / `assembly_mesh.ply`
+moves `static_env.*` / `assembly.json` / `welding_points.*` / `welding_seams.json` / `welding_tacks.json` / `assembly_mesh.ply`
 into `<save_dir>/previous_assemblies/<timestamp>/`.
 
 The files have to *move*, not just be forgotten: `welding_points` and
@@ -884,7 +887,7 @@ as its own ground truth — available directly because the CADs and poses were k
 | `~/run_icp` (icp_pose_refiner) | `std_srvs/Trigger` | Phase‑1 init: segment (mask) + ICP‑refine the best detection, seed the tracker, and (if `auto_track`) start Phase‑2 tracking. |
 | `~/stop_tracking` / `~/start_tracking` (icp_pose_refiner) | `std_srvs/Trigger` | Pause / resume the Phase‑2 tracking loop. |
 | `~/save_object` (icp_pose_refiner) | `std_srvs/Trigger` | Freeze the tracked CAD at its refined pose into the SEPC; persist `static_env.*` + `assembly.json`; clear tracking for the next part. |
-| `~/welding_points` (icp_pose_refiner) | `std_srvs/Trigger` | Extract the weld seam from the SEPC, publish it red, persist `welding_points.*`. Needs ≥ 2 saved objects. |
+| `~/welding_points` (icp_pose_refiner) | `std_srvs/Trigger` | Mode A: compute every seam of the saved assembly from the poses (D4 rule, pose tolerance `weld_pose_tol_mm`, fit-up reported) and the tacks (tackrule-0.1, `tack_no` + `order`); publish seams, tacks and labels; persist `welding_seams.json`, `welding_tacks.json`, `welding_points.*`. Needs ≥ 2 saved objects with registry entries; otherwise falls back to radius-PCA (or fails, `weld_fallback_pca=false`). |
 | `~/export_mesh` (icp_pose_refiner) | `std_srvs/Trigger` | Boolean-union the saved parts' CADs at their poses → watertight `assembly_mesh.ply` (mm), ready to feed the bridge's `~/add_model`. Needs `trimesh`+`manifold3d`. |
 | `~/reset_environment` (icp_pose_refiner) | `std_srvs/Trigger` | Start a new assembly: drop the SEPC + saved objects + tracking state, blank the latched SEPC/weld clouds, and archive the on-disk assembly into `previous_assemblies/<timestamp>/`. Call it after `add_model`, or the stale SEPC keeps subtracting itself out of the live crop. |
 | `~/go` (move_to_object) | `std_srvs/Trigger` | Execute the standoff move (safety gate). |
@@ -904,7 +907,9 @@ as its own ground truth — available directly because the CADs and poses were k
 | `/perception/icp/{scene_cloud,model_cloud}` | `PointCloud2` | icp_pose_refiner → RViz |
 | `/perception/icp/crop_box` | `visualization_msgs/Marker` | icp_pose_refiner → RViz (dynamic CropBox wireframe) |
 | `/perception/icp/static_env` | `PointCloud2` | icp_pose_refiner → RViz (orange SEPC, `base_link`) |
-| `/perception/icp/welding_points` | `PointCloud2` | icp_pose_refiner → RViz (red weld seam, `base_link`) |
+| `/perception/icp/welding_points` | `PointCloud2` | icp_pose_refiner → RViz (weldable seams, one colour each; red in the radius-PCA fallback; `base_link`) |
+| `/perception/icp/welding_tacks` | `PointCloud2` | icp_pose_refiner → RViz (tack segments, yellow = first … blue = last in weld order) |
+| `/perception/icp/welding_tack_labels` | `visualization_msgs/MarkerArray` | icp_pose_refiner → RViz (text `seam.tack_no (w<order>)` above each tack) |
 | `/perception/icp/refined_pose` | `PoseStamped` | icp_pose_refiner → RViz / downstream |
 | `/force_torque_sensor_broadcaster/wrench` | `WrenchStamped` | FT broadcaster → admittance controller |
 | `/servo_node/delta_twist_cmds` | `TwistStamped` | admittance controller → MoveIt Servo |
@@ -1053,9 +1058,13 @@ ros2 service call /foundationpose_bridge/trigger        std_srvs/srv/Trigger
 ros2 service call /icp_pose_refiner/run_icp    std_srvs/srv/Trigger
 ros2 service call /icp_pose_refiner/save_object std_srvs/srv/Trigger
 
-# --- the joint between them, in red ---
+# --- the joint between them: seams + tacks computed from the two poses (mode A) ---
 ros2 service call /icp_pose_refiner/welding_points std_srvs/srv/Trigger
-# → "99 welding points from 314 edge points (of 5000 SEPC points)"
+# → "mode A: 2 weldable seam(s): fillet 180mm (A:+wxB:-w) gap 0.0..4.8mm, fillet 180mm
+#    (A:+wxB:+w) gap 0.0..4.8mm; rejected {'too_short': 2}; 6 tacks (seam 0: 3,
+#    seam 1: 3), 16 mm each; weld order s0#1 > s1#1 > s0#3 > s1#3 > s0#2 > s1#2"
+# A reply starting "N welding points from ..." is the radius-PCA fallback: a saved part
+# has no registry entry - the node log names it (see §8 / build_weldgen_registry.py).
 
 # --- export the assembly as a new CAD model and teach the server ---
 ros2 service call /icp_pose_refiner/export_mesh std_srvs/srv/Trigger   # → foundationpose_results/assembly_mesh.ply
@@ -1076,18 +1085,28 @@ in‑memory SEPC (so background subtraction does stop), but `welding_points` and
 call after a restart quietly resurrects the previous assembly.
 
 The classified `obj_name` must resolve to `models/<obj_name>.ply` on the ROS side,
-which must be the **same CAD** the server holds in its library. The seam is written
-to `foundationpose_results/welding_points.ply` and published on
-`/perception/icp/welding_points` in `base_link`. `export_mesh` needs `trimesh` +
-`manifold3d` in the ROS‑side Python env (`pip install trimesh manifold3d`).
+which must be the **same CAD** the server holds in its library, and to an entry in
+`models/weldgen_objects.json` for mode A. The seams are written to
+`foundationpose_results/welding_seams.json` (+ `welding_points.ply/.npy`), the tacks to
+`welding_tacks.json`, and published on `/perception/icp/welding_points`,
+`/perception/icp/welding_tacks` and `/perception/icp/welding_tack_labels` in
+`base_link`. `export_mesh` needs `trimesh` + `manifold3d` in the ROS‑side Python env
+(`pip install trimesh manifold3d`); mode A needs `trimesh` and the `weld_generator`
+checkout (`weldgen_path`).
 
 `welding_points` reloads `static_env.npy` + `assembly.json` from `save_dir` if
-the node was restarted, so you can re‑run the extraction (with different `R` or
-threshold) without re‑locating the parts:
+the node was restarted, so you can re‑run it with other knobs without re‑locating
+the parts:
 
 ```bash
-ros2 param set /icp_pose_refiner weld_radius_m 0.006          # must exceed the gap...
-ros2 param set /icp_pose_refiner weld_curvature_thresh 0.03   # ...and stay under part thickness
+ros2 param set /icp_pose_refiner weld_pose_tol_mm 15.0        # pose error the two registrations may have
+ros2 param set /icp_pose_refiner weld_tacks true              # tacks on the weldable seams
+ros2 param set /icp_pose_refiner weld_fallback_pca false      # fail with the reason instead of falling back
+ros2 service call /icp_pose_refiner/welding_points std_srvs/srv/Trigger
+
+ros2 param set /icp_pose_refiner weld_method radius_pca       # the old detector, if you want it
+ros2 param set /icp_pose_refiner weld_radius_m 0.006          #   must exceed the gap...
+ros2 param set /icp_pose_refiner weld_curvature_thresh 0.03   #   ...and stay under part thickness
 ros2 service call /icp_pose_refiner/welding_points std_srvs/srv/Trigger
 ```
 

@@ -53,15 +53,55 @@ Multi-object assembly (Model-Based Background Subtraction)
     detection's ``obj_name`` -> ``model_dir/<name>.ply``); ``model_path`` is only
     the fallback/override for when classification is off or names an unknown part.
 
-Triggers
---------
-    ros2 service call /icp_pose_refiner/run_icp        std_srvs/srv/Trigger
-    ros2 service call /icp_pose_refiner/stop_tracking  std_srvs/srv/Trigger
-    ros2 service call /icp_pose_refiner/start_tracking std_srvs/srv/Trigger
-    ros2 service call /icp_pose_refiner/save_object    std_srvs/srv/Trigger
-    ros2 service call /icp_pose_refiner/welding_points std_srvs/srv/Trigger
-    ros2 service call /icp_pose_refiner/export_mesh    std_srvs/srv/Trigger
+Services (all std_srvs/srv/Trigger; the reply's `message` says what happened)
+-----------------------------------------------------------------------------
+    ros2 service call /icp_pose_refiner/run_icp           std_srvs/srv/Trigger
+        Phase 1. Needs a fresh capture from the bridge (`/foundationpose_bridge/
+        trigger`) in <results_dir>. Loads the classified part's CAD, cuts the
+        object out of the cloud with the mask, ICP-refines the detected pose,
+        seeds the tracker and (auto_track) starts Phase 2. Reply: fitness / RMSE
+        of the seed. Call it again to re-seed after tracking is lost.
+    ros2 service call /icp_pose_refiner/stop_tracking     std_srvs/srv/Trigger
+    ros2 service call /icp_pose_refiner/start_tracking    std_srvs/srv/Trigger
+        Pause / resume the Phase-2 loop (start needs a pose: run_icp first).
+    ros2 service call /icp_pose_refiner/save_object       std_srvs/srv/Trigger
+        Freeze the tracked CAD at its refined pose into the SEPC (static_frame),
+        write static_env.ply/.npy + assembly.json to <save_dir>, stop tracking,
+        clear the latched model/scene clouds and the crop box. Reply: object
+        number and SEPC size. One call per placed part.
+    ros2 service call /icp_pose_refiner/welding_points    std_srvs/srv/Trigger
+        Needs >= 2 saved objects. Mode A (weld_method=registration, default):
+        the seams COMPUTED from the saved poses with weld_generator's D4 rule,
+        plus tack welds by tackrule-0.1. Reply, e.g.
+          "mode A: 2 weldable seam(s): fillet 180mm (A:+wxB:-w) gap 0.0..4.8mm,
+           ...; rejected {'too_short': 2}; 6 tacks (seam 0: 3, seam 1: 3), 16 mm
+           each; weld order s0#1 > s1#1 > s0#3 > s1#3 > s0#2 > s1#2"
+        Publishes the seams (<weld_points_topic>), the tack segments
+        (<weld_tacks_topic>) and their text labels (<weld_tack_labels_topic>);
+        writes welding_seams.json, welding_tacks.json, welding_points.npy/.ply.
+        Knobs: weld_pose_tol_mm (how far a registered face may miss the other
+        part and still be one joint; 10 mm default, set it from the fiducial
+        bound), weld_tacks (on/off). If a saved part has no registry entry
+        (models/weldgen_objects.json) the call falls back to the radius-PCA
+        detector and the log says why; weld_fallback_pca=false makes it fail
+        with that reason instead. weld_method=radius_pca forces the detector
+        (weld_radius_m / weld_curvature_thresh / weld_voxel_m). Reloads the
+        assembly from disk after a restart, so it can be re-run with other
+        knobs without re-locating the parts.
+    ros2 service call /icp_pose_refiner/export_mesh       std_srvs/srv/Trigger
+        Boolean-union the saved parts' CADs at their poses into a watertight
+        assembly_mesh.ply (mm), written to <save_dir> and copied into
+        model_dir; feed it to the bridge's ~/add_model. Needs trimesh+manifold3d.
     ros2 service call /icp_pose_refiner/reset_environment std_srvs/srv/Trigger
+        Start the next assembly: drop the SEPC, saved objects and tracking
+        state, blank the latched clouds, archive static_env.* / assembly.json /
+        welding_* / assembly_mesh.ply into <save_dir>/previous_assemblies/<ts>/.
+
+    A full cycle:
+        (bridge) trigger -> run_icp -> save_object      # part A
+        (bridge) trigger -> run_icp -> save_object      # part B, placed against A
+        welding_points                                  # seams + tacks
+        export_mesh -> (bridge) add_model -> reset_environment
 
 Starting the next assembly
 --------------------------
@@ -88,14 +128,23 @@ Starting the next assembly
 
 Welding points
 --------------
-    Once the assembly is frozen into the SEPC, ``welding_points`` extracts the
-    seam where two near-orthogonal parts meet: a *radius* PCA neighbourhood
-    (weld_radius_m, which must exceed the gap between the parts) makes surface
-    variation spike on the edges bounding the gap, the threshold
-    (weld_curvature_thresh) keeps only those, and a voxel grid coarser than the
-    gap (weld_voxel_m) averages the two parallel edge lines into a single seam.
-    The result is published red on <weld_points_topic> and written to
-    <save_dir>/welding_points.ply/.npy.
+    Mode A (default): the SEPC is the parts' CAD at their ICP poses, so the seam
+    is implied by the poses. `seam_from_registration` places each saved part's
+    weld_generator primitive (registry models/weldgen_objects.json, built by
+    scripts/build_weldgen_registry.py) at its pose_static and judges every
+    face pair with the D4 accessibility rule under a POSE tolerance: weldable
+    seams with class, polyline, torch approach axis and a fit-up figure (gap /
+    penetration of the abutting edge - the registration's error, reported, never
+    used to reject); rejected candidates are kept with their reason. Tacks by
+    tackrule-0.1 on top, each with tack_no (1-based along its seam) and order
+    (scene-wide weld sequence). README §8 has the details and the limits.
+
+    Fallback (weld_method=radius_pca, or a part without a registry entry): a
+    *radius* PCA neighbourhood (weld_radius_m, which must exceed the gap between
+    the parts) makes surface variation spike on the edges bounding the gap, the
+    threshold (weld_curvature_thresh) keeps only those, and a voxel grid coarser
+    than the gap (weld_voxel_m) averages the two parallel edge lines into a
+    single seam, published red on <weld_points_topic>.
 
 Init inputs (from the pose-bridge capture, read fresh on run_icp)
 ----------------------------------------------------------------
@@ -117,7 +166,10 @@ Publishes
   <refined_pose_topic> geometry_msgs/PoseStamped
   <crop_box_topic>     visualization_msgs/Marker  the dynamic CropBox wireframe
   <sepc_topic>         sensor_msgs/PointCloud2  frozen assembly cloud (orange, static_frame)
-  <weld_points_topic>  sensor_msgs/PointCloud2  weld seam points (red, static_frame)
+  <weld_points_topic>  sensor_msgs/PointCloud2  weld seams (one colour each; red in the
+                                                radius-PCA fallback), static_frame
+  <weld_tacks_topic>   sensor_msgs/PointCloud2  tack segments, yellow (first) -> blue (last)
+  <weld_tack_labels_topic> visualization_msgs/MarkerArray  "seam.tack_no (w<order>)" texts
   TF: <camera_frame> -> <object_frame>          refined model->camera transform
 
 The point-to-plane / Fast-ICP solver and geometry live in
@@ -808,7 +860,8 @@ class IcpPoseRefinerNode(Node):
     def _archive_assembly(self) -> str:
         """Move the on-disk assembly artifacts into a timestamped subdirectory."""
         names = ('static_env.npy', 'static_env.ply', 'assembly.json',
-                 'assembly_mesh.ply', 'welding_points.npy', 'welding_points.ply')
+                 'assembly_mesh.ply', 'welding_points.npy', 'welding_points.ply',
+                 'welding_seams.json', 'welding_tacks.json')
         present = [n for n in names if (self._save_dir / n).is_file()]
         if not present:
             return 'nothing on disk to archive.'
