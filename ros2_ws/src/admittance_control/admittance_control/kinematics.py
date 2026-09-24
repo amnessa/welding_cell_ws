@@ -374,7 +374,7 @@ _TRAPPED = 'trapped'
 
 
 def _extend(tree: List[_TreeNode], q_target: np.ndarray,
-            step_size: float, is_valid=None) -> Tuple[str, _TreeNode]:
+            step_size: float, is_valid=None, resolution: float = 0.05) -> Tuple[str, _TreeNode]:
     """Extend the tree towards q_target by one step."""
     valid = is_valid or _is_valid
     near = _nearest(tree, q_target)
@@ -383,7 +383,7 @@ def _extend(tree: List[_TreeNode], q_target: np.ndarray,
     if not valid(q_new):
         return _TRAPPED, near
 
-    if not _edge_valid(near.q, q_new, is_valid=valid):
+    if not _edge_valid(near.q, q_new, resolution=resolution, is_valid=valid):
         return _TRAPPED, near
 
     node = _TreeNode(q_new, near)
@@ -395,12 +395,12 @@ def _extend(tree: List[_TreeNode], q_target: np.ndarray,
 
 
 def _connect(tree: List[_TreeNode], q_target: np.ndarray,
-             step_size: float, is_valid=None) -> Tuple[str, _TreeNode]:
+             step_size: float, is_valid=None, resolution: float = 0.05) -> Tuple[str, _TreeNode]:
     """Greedily extend the tree towards q_target until REACHED or TRAPPED."""
     status = _ADVANCED
     node = tree[0]
     while status == _ADVANCED:
-        status, node = _extend(tree, q_target, step_size, is_valid)
+        status, node = _extend(tree, q_target, step_size, is_valid, resolution)
     return status, node
 
 
@@ -421,6 +421,7 @@ def rrt_connect(
     max_iter: int = 5000,
     goal_bias: float = 0.1,
     is_valid=None,
+    edge_resolution: float = 0.05,
 ) -> Optional[List[np.ndarray]]:
     """
     RRT-Connect bi-directional planner in joint space.
@@ -455,10 +456,10 @@ def rrt_connect(
             q_rand = _random_config()
 
         # Extend tree_a toward q_rand
-        status_a, node_a = _extend(tree_a, q_rand, step_size, valid)
+        status_a, node_a = _extend(tree_a, q_rand, step_size, valid, edge_resolution)
         if status_a != _TRAPPED:
             # Try to connect tree_b to the new node
-            status_b, node_b = _connect(tree_b, node_a.q, step_size, valid)
+            status_b, node_b = _connect(tree_b, node_a.q, step_size, valid, edge_resolution)
             if status_b == _REACHED:
                 # Trees connected — extract path
                 path_a = _extract_path(node_a)
@@ -466,11 +467,15 @@ def rrt_connect(
                 path_b.reverse()  # b goes from connection point back to b-root
 
                 # tree_a grows from start, tree_b from goal
-                # But we swap trees, so check which is which
+                # But we swap trees, so check which is which. After an odd number
+                # of swaps tree_a is rooted at the GOAL: path_a runs goal -> node_a
+                # and the reversed path_b runs node_b -> start, so both must be
+                # reversed again or the start and goal meet in the middle of the
+                # returned path (found by the pen planner's consecutive-edge check).
                 if tree_a[0].q is q_start or np.allclose(tree_a[0].q, q_start):
                     return path_a + path_b
                 else:
-                    return path_b + path_a
+                    return path_b[::-1] + path_a[::-1]
 
         # Swap trees for balanced growth
         tree_a, tree_b = tree_b, tree_a

@@ -1,0 +1,32 @@
+{
+  "_comment": [
+    "Pen-marking motion settings (notes/pen_marking_plan.md, milestone 3+).",
+    "home_q: the scan home in UR order [pan, lift, elbow, wrist_1, wrist_2, wrist_3], rad -",
+    "  the user's elbow-up camera pose (2026-09-24, /joint_states). Its branch is the lock:",
+    "  every IK solution must keep the signs of lift, elbow and wrist_2 (branch_joints).",
+    "standoff_m / clearance_m / roll_step_deg / lin_steps: the approach point above each",
+    "  tack along the PEN axis; the required gap for the collision model (the tool envelope",
+    "  already carries margin, so 5 mm); the roll sampling about the pen axis; the number of",
+    "  Cartesian steps checked on the LIN descent.",
+    "work_angles_deg: admissible tilts of the pen off the seam's bisector, in the plane of",
+    "  the two face normals (rotation about the seam tangent); 0 is the bisector. A 90 deg",
+    "  corner leaves the holder 7.5 mm from both plates at 0; on plates that lean, a tilt",
+    "  away from the closer plate is what makes the tack reachable. The best (tilt, roll)",
+    "  per seam is the one with the largest minimum clearance, then the least joint travel.",
+    "max_joint_step_rad: the largest single-joint move allowed between consecutive tack",
+    "  poses of one seam (no aggressive turns); larger -> the roll is rejected.",
+    "table_z_m: null -> no table plane (parts sit on holders well above it); set it once",
+    "  the flange touch-off measures it."
+  ],
+  "home_q": [-0.34471112886537725, -1.4443891805461426, -1.5552871227264404,
+             -1.5529543210617085, 1.9432356357574463, -0.8597829977618616],
+  "branch_joints": [1, 2, 4],
+  "standoff_m": 0.035,
+  "clearance_m": 0.005,
+  "roll_step_deg": 30.0,
+  "work_angles_deg": [0.0, -10.0, 10.0, -20.0, 20.0],
+  "lin_steps": 6,
+  "max_joint_step_rad": 1.2,
+  "wrist_singularity_margin_rad": 0.35,
+  "table_z_m": null
+}

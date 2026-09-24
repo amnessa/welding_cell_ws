@@ -1,0 +1,233 @@
+{
+ "config": {
+  "home_q": [
+   -0.34471112886537725,
+   -1.4443891805461426,
+   -1.5552871227264404,
+   -1.5529543210617085,
+   1.9432356357574463,
+   -0.8597829977618616
+  ],
+  "branch_joints": [
+   1,
+   2,
+   4
+  ],
+  "standoff_m": 0.035,
+  "clearance_m": 0.005,
+  "roll_step_deg": 30.0,
+  "lin_steps": 6,
+  "max_joint_step_rad": 1.2,
+  "wrist_singularity_margin_rad": 0.35,
+  "work_angles_deg": [
+   0.0,
+   -10.0,
+   10.0,
+   -20.0,
+   20.0
+  ],
+  "table_z_m": null,
+  "source": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/config/marking.json"
+ },
+ "branch_signature": [
+  -1,
+  -1,
+  1
+ ],
+ "seams": [
+  {
+   "seam_id": 0,
+   "ok": true,
+   "roll_deg": 270.0,
+   "tilt_deg": 0.0,
+   "min_clearance_m": 0.0058,
+   "score": 4.4729063199434655,
+   "n_tacks": 2
+  },
+  {
+   "seam_id": 1,
+   "ok": true,
+   "roll_deg": 330.0,
+   "tilt_deg": 0.0,
+   "min_clearance_m": 0.0091,
+   "score": 4.5822302580409,
+   "n_tacks": 2
+  }
+ ],
+ "tacks": [
+  {
+   "tack_id": 0,
+   "seam_id": 0,
+   "tack_no": 1,
+   "ok": true,
+   "reason": "ok",
+   "roll_deg": 270.0,
+   "tilt_deg": 0.0,
+   "q_app": [
+    0.27815337961245484,
+    -2.327305125643238,
+    -1.4416801145582911,
+    -1.3870691497570447,
+    0.8823731977383594,
+    -1.0705678905984175
+   ],
+   "q_tack": [
+    0.24599496168514556,
+    -2.3509682158881113,
+    -1.4812434773445666,
+    -1.2999410435620216,
+    0.8684297163912629,
+    -1.1084714929046144
+   ],
+   "clearance_app_m": 0.021336468135033485,
+   "clearance_tack_m": 0.005855726688776895,
+   "worst_pair_app": "holder_body x part_A",
+   "worst_pair_tack": "holder_body x part_B",
+   "pen_gap_m": 0.0,
+   "lin_min_clearance_m": 0.009848390924285882,
+   "joint_step_from_prev_rad": 0.0,
+   "point_m": [
+    -0.662169416204755,
+    0.16408954075717308,
+    -0.027784531401480905
+   ],
+   "axis_m": [
+    0.14424810268576171,
+    0.7022580861272595,
+    -0.6971556966276877
+   ]
+  },
+  {
+   "tack_id": 1,
+   "seam_id": 0,
+   "tack_no": 2,
+   "ok": true,
+   "reason": "ok",
+   "roll_deg": 270.0,
+   "tilt_deg": 0.0,
+   "q_app": [
+    0.43735642752741094,
+    -1.9985697104622702,
+    -1.9980359203236562,
+    -1.2670570270795976,
+    0.9578355249925973,
+    -0.8943502533513096
+   ],
+   "q_tack": [
+    0.3977092243380348,
+    -2.0351891243826783,
+    -2.0418723957327543,
+    -1.162120711396525,
+    0.937520350662866,
+    -0.9362788205143127
+   ],
+   "clearance_app_m": 0.02133246622754529,
+   "clearance_tack_m": 0.0058424806648944075,
+   "worst_pair_app": "holder_body x part_B",
+   "worst_pair_tack": "holder_body x part_B",
+   "pen_gap_m": 0.0,
+   "lin_min_clearance_m": 0.00984961221895142,
+   "joint_step_from_prev_rad": 0.556355805765365,
+   "point_m": [
+    -0.4794064012702923,
+    0.12909048926248384,
+    -0.025224341138201534
+   ],
+   "axis_m": [
+    0.14424810268576171,
+    0.7022580861272595,
+    -0.6971556966276877
+   ]
+  },
+  {
+   "tack_id": 2,
+   "seam_id": 1,
+   "tack_no": 1,
+   "ok": true,
+   "reason": "ok",
+   "roll_deg": 330.0,
+   "tilt_deg": 0.0,
+   "q_app": [
+    -0.384019726995627,
+    -2.3836486424444296,
+    -1.385069115857667,
+    -1.142969067452316,
+    2.3209338160287443,
+    -0.9377479860924033
+   ],
+   "q_tack": [
+    -0.3508177794663123,
+    -2.4066177164477516,
+    -1.4297331178375774,
+    -1.044813581101487,
+    2.3276306678665204,
+    -0.8928898142152266
+   ],
+   "clearance_app_m": 0.023322814499470844,
+   "clearance_tack_m": 0.009101298589174828,
+   "worst_pair_app": "holder_body x part_B",
+   "worst_pair_tack": "holder_body x part_B",
+   "pen_gap_m": 0.0,
+   "lin_min_clearance_m": 0.01334728194119543,
+   "joint_step_from_prev_rad": 0.0,
+   "point_m": [
+    -0.6606744174876426,
+    0.17196452411068985,
+    -0.027934707446999295
+   ],
+   "axis_m": [
+    -0.12144910561964956,
+    -0.6866334004317298,
+    -0.7167877567005082
+   ]
+  },
+  {
+   "tack_id": 3,
+   "seam_id": 1,
+   "tack_no": 2,
+   "ok": true,
+   "reason": "ok",
+   "roll_deg": 330.0,
+   "tilt_deg": 0.0,
+   "q_app": [
+    -0.4499911597363014,
+    -2.0738082757629406,
+    -1.9470561220067701,
+    -0.9499571587765524,
+    2.3065952348355356,
+    -1.0248230743173556
+   ],
+   "q_tack": [
+    -0.40670811698961584,
+    -2.1127395686381663,
+    -1.9949529548804859,
+    -0.8246444854241262,
+    2.316934621120785,
+    -0.9678198262129427
+   ],
+   "clearance_app_m": 0.023355090274470636,
+   "clearance_tack_m": 0.009072887681680006,
+   "worst_pair_app": "holder_body x part_B",
+   "worst_pair_tack": "holder_body x part_B",
+   "pen_gap_m": 0.0,
+   "lin_min_clearance_m": 0.013351561742427388,
+   "joint_step_from_prev_rad": 0.5619870061491032,
+   "point_m": [
+    -0.47791140255318,
+    0.1369654726160007,
+    -0.02537451718371993
+   ],
+   "axis_m": [
+    -0.12144910561964956,
+    -0.6866334004317298,
+    -0.7167877567005082
+   ]
+  }
+ ],
+ "all_ok": true,
+ "source": {
+  "tacks": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/scripts/foundationpose_results/welding_tacks.json",
+  "assembly": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/scripts/foundationpose_results/assembly.json",
+  "frame": "base_link"
+ }
+}

@@ -164,16 +164,47 @@ path  = rrt_connect(q_now, q_app, is_valid=model.is_valid)
 print(model.report(q_app))
 ```
 
+## Milestone 3 — reachability, before anything moves (built 2026-09-24)
+
+`config/marking.json` (scan home = branch lock, standoff 35 mm, clearance 5 mm, roll
+grid 30°, work angles 0/±10/±20°), `admittance_control/tack_reach.py`,
+`scripts/tack_reachability.py` (CLI → `<save_dir>/tack_reach.json`),
+`scripts/tack_reach_marker_node.py` (RViz: pen axis per tack, green/red, label
+`seam.tack_no t<tilt> r<roll>`, arm capsules at the approach pose). Tests:
+`test/test_tack_reach.py` (4).
+
+Branch lock: `/joint_states` is alphabetical; in UR order the scan home is
+(−0.34, −1.44, −1.56, −1.55, +1.94, −0.86) and the lock is the signs of lift, elbow
+and wrist_2 = (−, −, +). IK (damped LS) is seeded from the previous solution and the
+home pose and any solution off the branch is discarded. Per seam every (tilt, roll)
+is tried on all tacks ascending; admissible = branch-locked approach pose + tack pose
++ LIN descent all clear, joint step ≤ 69° between tacks; the winner has the largest
+minimum clearance, then the least travel. Pose-only checks of the tool envelope run
+before IK, so the grid is cheap.
+
+**What the first run on the bench says** (`test_objv2` T-joint, ear leaning 8°):
+the obtuse side (98°) is reachable at tilt 0, roll 330°, 10.6 mm minimum clearance;
+the acute side (82°) is NOT at 5 mm: the holder body (radius 42 mm, 70 mm up the pen)
+reaches 70·sin(41°) − 42 = 3.9 mm from the plates at the bisector, and no tilt improves
+a max–min at the bisector. That is geometry, not planning: **a longer pen reach or a
+slimmer holder** raises it (each +10 mm of reach adds ~6.6 mm in an 82° corner), or the
+run accepts 3 mm (`--clearance 0.003`) knowing the envelope is conservative. The pen
+gap at the tack pose is 0.0 (touching), as it should be.
+
+**Two fixes in the shared kinematics that came out of milestone 3's tests** (they
+affect the drawing stack too): `rrt_connect` assembled the path in the wrong order
+when the trees connected after an odd number of swaps (start and goal ended up
+adjacent in the middle of the returned path) - fixed; and its edge check gained an
+`edge_resolution` parameter (default 0.05 rad unchanged; the pen planner uses 0.01,
+~5 mm of tip travel per sample, so an 8 mm plate cannot slip between two samples).
+
 ## Milestones
 
 1. **Pen TCP + tool envelope.** DONE 2026-09-22 (see above); the touch-off refinement
    and the RViz check of the envelope remain on the bench.
 2. **Collision model + tests.** DONE 2026-09-22 (see above).
-3. **Reachability report, no motion.** For the live `welding_tacks.json`: every tack's
-   pose on the locked branch, the roll chosen per seam, joint moves between tacks,
-   collision margin at P_app and at the tack. Published as markers (pen axis at every
-   tack) so RViz shows the plan before the robot moves. This alone answers "can the arm
-   reach the seams elbow-up" on the current fixture.
+3. **Reachability report, no motion.** DONE 2026-09-24 (see above); the bench answer
+   is "one side yes, the acute side only at 3 mm" — decide pen reach vs clearance.
 4. **Dry run in the digital twin** (`digital_twin_pointcloud.launch.py` + Isaac): the
    full four phases with the twin's contact-less descent stopping at the point.
 5. **Real robot, one tack:** transit, force-gated descent, dot, retract, and the first

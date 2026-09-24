@@ -88,6 +88,8 @@ Services (all std_srvs/srv/Trigger; the reply's `message` says what happened)
         (weld_radius_m / weld_curvature_thresh / weld_voxel_m). Reloads the
         assembly from disk after a restart, so it can be re-run with other
         knobs without re-locating the parts.
+        "ros2 param set /icp_pose_refiner weld_pose_tol_mm " default is 10mm but increase it when weldline is shorter than expected.
+
     ros2 service call /icp_pose_refiner/export_mesh       std_srvs/srv/Trigger
         Boolean-union the saved parts' CADs at their poses into a watertight
         assembly_mesh.ply (mm), written to <save_dir> and copied into
@@ -186,6 +188,14 @@ folder is enough to make every classified part resolve:
 
 To pin one CAD regardless of classification (classifier off, or replaying a
 capture), set ``model_path`` and the un-classified detections fall back to it.
+
+
+
+reachability check
+python scripts/tack_reachability.py                 # -> foundationpose_results/tack_reach.json
+ros2 run admittance_control tack_reach_marker_node.py --ros-args -p report:=<save_dir>/tack_reach.json
+
+
 """
 
 from __future__ import annotations

@@ -123,12 +123,20 @@ def test_rrt_with_the_model_plans_around_a_standing_plate(tool):
     q1 = _q_for_tip(tool, [0.45, 0.20, 0.30], [0, 0, -1], SEED)
     assert model.is_valid(q0) and model.is_valid(q1)
     assert not _edge_valid(q0, q1, is_valid=model.is_valid)     # the straight line hits it
-    rng = np.random.default_rng(0)
-    np.random.seed(0)
-    path = rrt_connect(q0, q1, step_size=0.15, max_iter=4000, is_valid=model.is_valid)
+    import random
+    path = None
+    for attempt in range(3):                                    # sampling-based: allow retries
+        random.seed(attempt)                                    # the RRT draws from `random`
+        # edge resolution 0.01 rad: ~5 mm of tip travel per sample at 0.5 m reach, so an
+        # 8 mm plate cannot slip between two samples
+        path = rrt_connect(q0, q1, step_size=0.15, max_iter=6000, is_valid=model.is_valid,
+                           edge_resolution=0.01)
+        if path is not None:
+            break
     assert path is not None and len(path) >= 2
+    assert np.allclose(path[0], q0) and np.allclose(path[-1], q1)     # start ... goal, in order
     for a, b in zip(path[:-1], path[1:]):
-        assert _edge_valid(a, b, resolution=0.02, is_valid=model.is_valid)
+        assert _edge_valid(a, b, resolution=0.01, is_valid=model.is_valid)
 
 
 def test_boxes_from_mode_a_parts_are_in_metres():

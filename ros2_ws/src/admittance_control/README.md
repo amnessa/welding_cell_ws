@@ -709,6 +709,13 @@ ros2 run admittance_control tool_model_marker_node.py --ros-args \
 #   RViz: MarkerArray on /tool_model/markers, in tool0 - the boxes must cover the real holder
 ```
 
+Milestone 3 answers "can the arm reach every tack, elbow-up, without touching anything
+but the tack" before any motion: `python scripts/tack_reachability.py` (reads the save
+dir's `welding_tacks.json` + `assembly.json`, `config/marking.json` holds the scan home
+whose branch is locked; one work-angle tilt and roll per seam; per tack the approach /
+tack / descent clearances), then `tack_reach_marker_node.py -p report:=<save_dir>/tack_reach.json`
+draws the pen axis at every tack in RViz, green or red.
+
 Milestone 2, the collision model, is in too: `admittance_control/collision.py` (arm
 capsules on the joint frames, the tool envelope, the registered parts as boxes, the table
 as a plane; `CollisionModel.is_valid` plugs into `rrt_connect(..., is_valid=...)`).
