@@ -127,8 +127,13 @@ accuracy known from the same benchmark — and the two are scored on the same re
 3. PPF "no match" on the server; mode B path; refuse library save without CAD.
 4. Phase 9 real subset = the validation campaign for all of the above.
 4b. Pen-marking the tacks on the UR5e (approach, force-gated touch, mark):
-   `notes/pen_marking_plan.md` (2026-09-22) — the placement check this pipeline is
-   validated by.
+   `notes/pen_marking_plan.md` — the placement check this pipeline is validated by.
+   **DONE 2026-09-24: mode A validated on the robot** — contact depth −0.4 / −0.6 mm
+   along the pen axis after the extrinsic re-solve and the pendant TCP; ~8 mm lateral
+   residual under attribution. Everything open is in `notes/todo.md`.
+4c. Draw the weldable SEAMS with the pen (stroke, C2), not only the tacks — the seam
+   polylines are already in `welding_seams.json`; UR's force mode or the admittance
+   node along the pen axis. Then mode B (4d = item 3 above) and more CAD + MDF parts.
 5. Quality field on the new seams; plot `q(s)` before any selection code (the week-two
    experiment of `quality_field_k_point_selection.md`).
 

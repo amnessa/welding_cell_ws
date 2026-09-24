@@ -67,6 +67,10 @@ class MarkingConfig:
     work_angles_deg: tuple[float, ...] = (0.0, -10.0, 10.0, -20.0, 20.0)
     table_z_m: float | None = None
     source: str = ""
+    #: when set, ONLY these rolls (deg) are tried - the attribution experiment: the same
+    #: tack at rolls 90 deg apart moves a TOOL error with the wrist and leaves a WORLD
+    #: error (camera, registration) where it is
+    roll_list_deg: tuple[float, ...] | None = None
 
     @property
     def branch_signature(self) -> tuple[int, ...]:
@@ -299,7 +303,8 @@ def plan_tacks(tacks: Sequence[dict[str, Any]], tool, model: CollisionModel,
                cfg: MarkingConfig, seed: int = 0) -> dict[str, Any]:
     """One roll per seam, every tack judged; returns the report as a dict."""
     rng = np.random.default_rng(seed)
-    rolls = np.deg2rad(np.arange(0.0, 360.0, cfg.roll_step_deg))
+    rolls = np.deg2rad(np.asarray(cfg.roll_list_deg, float) if cfg.roll_list_deg
+                       else np.arange(0.0, 360.0, cfg.roll_step_deg))
     tilts = np.deg2rad(np.asarray(cfg.work_angles_deg, float))
     by_seam: dict[int, list[dict[str, Any]]] = {}
     for t_ in tacks:

@@ -45,6 +45,11 @@ def main() -> int:
     ap.add_argument("--table-z", type=float, default=None, help="table plane (m); overrides marking.json")
     ap.add_argument("--clearance", type=float, default=None,
                     help="required gap (m); overrides marking.json - e.g. 0.003 when the envelope is known conservative")
+    ap.add_argument("--roll", type=float, default=None,
+                    help="force this roll (deg) about the pen for every seam - the attribution "
+                         "experiment: run the same tack at 0/90/180/270 and see whether the "
+                         "lateral error turns with the wrist (tool) or stays put (world)")
+    ap.add_argument("--tilt", type=float, default=None, help="force this work angle (deg) off the bisector")
     ap.add_argument("--out", default=None, help="report JSON (default: <save-dir>/tack_reach.json)")
     args = ap.parse_args()
 
@@ -60,6 +65,10 @@ def main() -> int:
         cfg.table_z_m = args.table_z
     if args.clearance is not None:
         cfg.clearance_m = args.clearance
+    if args.roll is not None:
+        cfg.roll_list_deg = (float(args.roll),)
+    if args.tilt is not None:
+        cfg.work_angles_deg = (float(args.tilt),)
     tool = load_tool_model(args.tool, args.extrinsic)
     model = CollisionModel(tool=tool, scene_boxes=boxes_from_parts(parts),
                            table_z=cfg.table_z_m, clearance=cfg.clearance_m)

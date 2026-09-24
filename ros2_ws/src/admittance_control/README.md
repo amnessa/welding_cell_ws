@@ -696,7 +696,11 @@ reason when `weld_fallback_pca` is false.
 Mode B (no CAD, sensor points, quadric intersection) is the next step of the plan.
 
 
-**Next: pen-marking the tacks** ([`notes/pen_marking_plan.md`](notes/pen_marking_plan.md)):
+**Status 2026-09-24: mode A validated on the robot** — the pen reached the registered
+tack to −0.4 / −0.6 mm along its axis; a ~8 mm lateral residual is under attribution.
+The full open list of both projects is [`notes/todo.md`](notes/todo.md).
+
+**Pen-marking the tacks** ([`notes/pen_marking_plan.md`](notes/pen_marking_plan.md)):
 force-gated approach along each tack's axis, dot at contact, elbow-up with the free roll
 about the pen. Milestone 1 is in: the tool model `config/pen_tool.json` (pen tip, 1.5 N
 touch force, 35 mm standoff, collision envelope of holder + pen + camera arm, camera box

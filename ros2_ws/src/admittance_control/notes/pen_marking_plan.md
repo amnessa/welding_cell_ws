@@ -325,6 +325,16 @@ the dry run keeps virtual joints so its gates follow the pretended motion; a goa
 controller rejects is reported as such, with the usual cause (External Control program
 not running after the pendant was used - press Play).
 
+**Milestone 5 result (2026-09-24, night), recalibrated extrinsic + pendant TCP:**
+tack 1.2 contact at 1.54 N, **−0.4 mm**; repeat 1.87 N, **−0.6 mm** along the pen axis.
+Tack 1.1 no contact within the 3 mm overshoot. By eye the mark is **~8 mm off
+laterally**. The depth says the registration is right to a millimetre along the pen;
+the lateral error is what remains. Attribution experiments and fixes, in order, in
+`todo.md` ("NEXT"): roll test (tool vs world), `pose_jitter_probe.py` (ICP noise
+floor), hand-eye recapture with wrist rolls (rotation spread 3.6° → ~9 mm at 0.5 m is
+the right size), calibrated FK, then a pen probe that measures the root laterally.
+`tack_reachability.py --roll/--tilt` force one orientation for the roll test.
+
 ## Milestones
 
 1. **Pen TCP + tool envelope.** DONE 2026-09-22 (see above); the touch-off refinement
@@ -334,8 +344,8 @@ not running after the pendant was used - press Play).
    is "one side yes, the acute side only at 3 mm" — decide pen reach vs clearance.
 4. **Marking node + dry run.** DONE 2026-09-24 (see above); the on-robot dry run
    (`~/plan` with the arm at the scan home, tip path in RViz) is the last check before 5.
-5. **Real robot, one tack:** transit, force-gated descent, dot, retract, and the first
-   `tack_marks.json` entry with its contact depth. Then all six.
+5. **Real robot, one tack.** DONE 2026-09-24: contact depth −0.4 / −0.6 mm; lateral ~8 mm
+   under attribution (todo.md).
 6. **Stroke marking (C2)** on the same assembly; compare the marks with the seam by photo.
 
 ## Open questions (they change the work)
