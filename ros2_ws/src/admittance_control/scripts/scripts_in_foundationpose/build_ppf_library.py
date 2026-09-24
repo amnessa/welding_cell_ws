@@ -30,7 +30,7 @@ CODE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, CODE_DIR)
 sys.path.insert(0, os.path.join(CODE_DIR, 'scripts'))
 
-from ppf_classifier import PPFLibrary, PPFParams, find_ply_files  # noqa: E402
+from ros2_ws.src.admittance_control.scripts.scripts_in_foundationpose.ppf_classifier import PPFLibrary, PPFParams, find_ply_files  # noqa: E402
 
 DEFAULT_CAD_DIR = os.path.join(CODE_DIR, "Data", "Input")
 DEFAULT_OUT = os.path.join(CODE_DIR, "Data", "ppf_library.npz")

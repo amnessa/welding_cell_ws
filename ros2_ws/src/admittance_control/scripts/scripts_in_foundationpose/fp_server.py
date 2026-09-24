@@ -112,7 +112,7 @@ from estimater import (  # noqa: E402
 from Utils import draw_posed_3d_box, draw_xyz_axis, symmetry_tfs_from_info  # noqa: E402
 
 sys.path.insert(0, os.path.join(CODE_DIR, "scripts"))
-from ppf_classifier import (  # noqa: E402
+from ros2_ws.src.admittance_control.scripts.scripts_in_foundationpose.ppf_classifier import (  # noqa: E402
     PPFLibrary,
     PPFParams,
     QueryParams,

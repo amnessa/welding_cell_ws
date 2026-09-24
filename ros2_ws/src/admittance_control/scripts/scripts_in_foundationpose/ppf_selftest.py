@@ -35,7 +35,7 @@ CODE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, CODE_DIR)
 sys.path.insert(0, os.path.join(CODE_DIR, 'scripts'))
 
-from ppf_classifier import PPFLibrary, QueryParams  # noqa: E402
+from ros2_ws.src.admittance_control.scripts.scripts_in_foundationpose.ppf_classifier import PPFLibrary, QueryParams  # noqa: E402
 
 DEFAULT_LIBRARY = os.path.join(CODE_DIR, "Data", "ppf_library.npz")
 K = np.array([[600.0, 0, 320], [0, 600.0, 240], [0, 0, 1]])
