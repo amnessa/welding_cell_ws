@@ -213,9 +213,23 @@ adjacent in the middle of the returned path) - fixed; and its edge check gained 
 
 ## Open questions (they change the work)
 
-* **Controller switching.** Transit runs on `scaled_joint_trajectory_controller`; the
-  admittance node commands Servo, which needs `forward_position_controller` (or the
-  Servo-side JTC). To see what the driver has, with the robot connected:
+* **Controller switching — DECIDED 2026-09-24: none.** The bench check showed no Servo
+  node in the running stack (`/servo_node` not found) and no `ros2controlcli` installed.
+  So the descent does not go through Servo: it is a slow JointTrajectory on the
+  controller that is already there (`scaled_joint_trajectory_controller`), sent as an
+  action goal, with a wrench watchdog that CANCELS the goal at |F| > 1.5 N and holds
+  the current joints. At 20 mm/s with ~30–50 ms of cancel latency the overshoot is
+  under 1 mm. Force *holding* (needed for the C2 stroke) is done the same way with
+  short incremental trajectories, i.e. a 1-DoF admittance loop on the JTC at ~20 Hz,
+  not with Servo. The admittance node stays for when Servo is launched. Useful checks
+  (no `ros2 control` needed):
+  ```
+  ros2 service call /controller_manager/list_controllers controller_manager_msgs/srv/ListControllers
+  ros2 topic hz /force_torque_sensor_broadcaster/wrench
+  ros2 action list | grep follow_joint_trajectory
+  sudo apt install ros-jazzy-ros2controlcli        # if you want `ros2 control` back
+  ```
+  The old question, for the record: to see what the driver has, with the robot connected:
   ```
   ros2 control list_controllers                      # active / inactive, and their types
   ros2 param get /servo_node moveit_servo.command_out_type   # trajectory_msgs/JointTrajectory or std_msgs/Float64MultiArray

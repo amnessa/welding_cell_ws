@@ -1014,6 +1014,7 @@ class IcpPoseRefinerNode(Node):
         """One text marker per tack: "<seam>.<tack_no> (w<order+1>)" above the tack."""
         arr = MarkerArray()
         wipe = Marker(); wipe.header = header; wipe.ns = 'tack_labels'; wipe.action = Marker.DELETEALL
+        wipe.id = 1_000_000                    # never the id of a label (RViz rejects duplicates)
         arr.markers.append(wipe)
         for t in tacks:
             mk = Marker()
