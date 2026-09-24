@@ -199,13 +199,19 @@ def build_marking_plan(report: dict[str, Any], tool, model: CollisionModel,
             step.reason = (step.reason + "; " if step.reason else "") + "descent IK chain broke"
             all_ok = False
         else:
-            # the whole chain must stay clear except for the pen meeting the part
+            # The chain must stay clear (except for the pen meeting the part) up to the
+            # tack point. Beyond it lies the overshoot, which the pen only reaches when
+            # the real surface is farther than registered - and then the plates are
+            # farther too - so there only "not inside anything" is required.
             for q in chain:
+                tip = tool.tip_in(ur5e_fk(q))
+                past = float((tip - step.point_m) @ step.axis_m) > 1e-4
+                need = 0.0 if past else cfg.clearance_m
                 d = min((p[0] for p in model.pair_distances(q)
                          if not (p[1] == "pen" and p[2].startswith("part_"))), default=np.inf)
-                if d < cfg.clearance_m:
+                if d < need or (past and d <= 0.0):
                     step.reason = (step.reason + "; " if step.reason else "") + \
-                        f"descent clearance {d * 1000:.1f} mm"
+                        f"descent clearance {d * 1000:.1f} mm{' (overshoot)' if past else ''}"
                     all_ok = False
                     break
             else:

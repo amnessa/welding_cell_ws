@@ -116,6 +116,27 @@ class ToolModel:
         return "\n".join(lines)
 
 
+def solve_tip_offset(T_tool0_list) -> tuple[np.ndarray, np.ndarray, float]:
+    """The pen tip in tool0 from touch-off poses (the classic 4-point TCP).
+
+    With the tip held on ONE fixed point p from several wrist orientations,
+    R_i d + t_i = p for every recorded tool0 pose (R_i, t_i); d (the tip in tool0) and
+    p (the point in base) are the least-squares solution of the stacked system
+    [R_i  -I] [d; p] = -t_i. Returns (d, p, rms_mm): the RMS of the residuals is how
+    well the touches agree, i.e. the repeatability of the touch-off (aim for < 1 mm).
+    Needs >= 3 poses with genuinely different orientations, or the system is singular.
+    """
+    Ts = [np.asarray(T, float) for T in T_tool0_list]
+    if len(Ts) < 3:
+        raise ValueError("need at least 3 touch-off poses")
+    A = np.vstack([np.hstack([T[:3, :3], -np.eye(3)]) for T in Ts])
+    b = np.concatenate([-T[:3, 3] for T in Ts])
+    x, *_ = np.linalg.lstsq(A, b, rcond=None)
+    res = A @ x - b
+    rms = float(np.sqrt(np.mean(np.sum(res.reshape(-1, 3) ** 2, axis=1)))) * 1000.0
+    return x[:3], x[3:], rms
+
+
 def load_tool_model(path: str | Path | None = None,
                     extrinsic_path: str | Path | None = None) -> ToolModel:
     """Read `pen_tool.json` (+ the calibration it names) into a `ToolModel`.

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Reachability report for the tacks of a saved assembly - no ROS, no motion.
 
-    python scripts/tack_reachability.py                       # foundationpose_results/
-    python scripts/tack_reachability.py --save-dir scripts/foundationpose_results \\
-        --registry models/weldgen_objects.json --out tack_reach.json
+    python src/admittance_control/scripts/tack_reachability.py                       # foundationpose_results/
+    python src/admittance_control/scripts/tack_reachability.py --save-dir src/admittance_control/scripts/foundationpose_results \\
+        --registry src/admittance_control/models/weldgen_objects.json --out tack_reach.json
 
 Reads `welding_tacks.json` + `assembly.json` from the save dir (what the ICP node wrote
 after `~/welding_points`), rebuilds the parts as collision boxes through mode A's

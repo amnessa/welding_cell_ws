@@ -6,7 +6,10 @@
     "OPPOSITE the end-effector connector. Every primitive is a CONSERVATIVE envelope of the",
     "holder (penholder_assembly.step): correct it against the RViz markers",
     "(tool_model_marker_node.py) and against a touch-off for the tip.",
-    "pen_tip_m: user-measured ~0.19 m from the flange (2026-09-22); refine by touch-off.",
+    "pen_tip_m: the pendant's 4-point TCP calibration, 2026-09-24, CAP OFF: (0, 0, 183.78) mm",
+    "  in the flange frame (with the cap: 192.5 - not used). The planner's FK is the nominal",
+    "  UR5e chain; the robot's is factory-calibrated: ~3 mm apart at the tip (tcp_offset_probe",
+    "  read 2.9, -0.9, 182.5 against the pendant's 0, 0, 183.78) - the known pen-side error.",
     "pen capsule: its end caps are round, so p1 sits one radius short of the tip and the cap",
     "  ends AT the tip; keep p1 = pen_tip_m - radius when either changes.",
     "camera_body: the D435i as a box in tool0 from the bench (2026-09-22): centre ~9 cm along",
@@ -18,7 +21,7 @@
   ],
   "version": "pen_tool-0.1",
   "parent_frame": "tool0",
-  "pen_tip_m": [0.0, 0.0, 0.19],
+  "pen_tip_m": [0.0, 0.0, 0.18378],
   "touch_force_n": 1.5,
   "standoff_m": 0.035,
   "primitives": [
@@ -39,7 +42,7 @@
       "name": "pen",
       "type": "capsule",
       "p0": [0.0, 0.0, 0.12],
-      "p1": [0.0, 0.0, 0.182],
+      "p1": [0.0, 0.0, 0.17578],
       "radius": 0.008
     },
     {

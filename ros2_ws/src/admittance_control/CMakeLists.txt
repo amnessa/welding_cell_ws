@@ -114,6 +114,8 @@ install(PROGRAMS
   scripts/tack_reachability.py
   scripts/tack_reach_marker_node.py
   scripts/tack_marking_node.py
+  scripts/pen_tip_touchoff.py
+  scripts/tcp_offset_probe.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

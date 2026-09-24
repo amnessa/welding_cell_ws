@@ -266,6 +266,49 @@ check the green dot sits on the lens face, re-register both parts, `welding_poin
 `tack_reachability.py`, `~/plan` dry, then `~/next`: the depths should fall from
 19–29 mm to the pen-tip level. Whatever remains, consistently, is the TCP offset.
 
+**Second touch, with the re-solved extrinsic (2026-09-24):** both tacks of the
+reachable seam ran to the overshoot with no contact; by eye the depth along Z looks
+right and the error is in the table plane. Z right + XY off is the signature of a pen
+tip that is not on the flange axis: `pen_tip_m` was ASSUMED (0, 0, 0.19). A lateral
+tip offset moves every touch in the plane by that offset and leaves the depth alone,
+and it is invisible to everything on the camera side. Measure it, do not guess it:
+`scripts/pen_tip_touchoff.py` (4-point TCP: the tip on one fixed point from 4+ wrist
+orientations, `~/record` each, `~/solve` prints `pen_tip_m` and the RMS). The touched
+point `p` is then a bench point known from the robot alone - register a part with a
+mark there and the camera path is tested with nothing unknown on the pen side. The
+pendant TCP question stays open too (compose with `resolve_handeye.py --tcp-offset`).
+
+**The 6 cm, located (2026-09-24, evening).** The re-solved optical origin is (59, 78, 32)
+mm in tool0; the camera body you confirmed in RViz is centred at (0, 90, 45). Same
+radius from the flange axis (~98 vs 90 mm), 37° apart in azimuth: the solution is the
+camera as seen from a TCP frame ROTATED about the tool axis relative to tool0 (plus a
+small shift), which is what a pendant TCP defined for the pen tool does. The residual
+cannot see it. `scripts/tcp_offset_probe.py` measures D = T_tool0_tcp live from
+`tcp_pose_broadcaster` vs FK and prints the `--tcp-offset` line; compose, republish,
+re-register, touch again. If D comes out zero, the discrepancy is real and a recapture
+with the pendant TCP set to zero is the fix.
+
+**Resolved (2026-09-24, night).** The pendant's TCP is now the pen tip, calibrated on the
+pendant: **(0, 0, 183.78) mm cap off** (192.5 with the cap, not used) - in the tool
+model. The July hand-eye capture ran under an unknown pendant TCP, so it cannot be
+repaired by composition: **recapture** with the TCP known and pass it to the script
+(`extract_extrinsics.py --tcp-offset 0 0 0.18378 0 0 0`), which now composes it and
+saves the camera in tool0, and prints the residual judge. A good capture: 15–20 poses,
+board 30–50 cm from the camera and filling a good part of the frame, rotations of
+±30° or more about two axes between poses, the arm at rest ~1 s before each capture.
+Then re-register, `welding_points`, `tack_reachability.py`, `plan`, `next`.
+
+Known error terms on the pen side now: the planner's FK is the nominal UR5e chain,
+the robot's kinematics are factory-calibrated (`config/ur5e_calibration.yaml`): the
+probe read the tip at (2.9, −0.9, 182.5) against the pendant's (0, 0, 183.78), i.e.
+~3 mm at the tip. Follow-up if the marks need better than that: load the calibrated
+DH deltas into `kinematics.py`, or take tool0 from TF instead of FK when recording
+contacts.
+
+With the tip at 183.78 mm the holder sits 63.8 mm above it and clears the plates of a
+90° T by 3.1 mm at best, so the default clearance is now **3 mm** (`marking.json`); the
+marking node judges with the clearance recorded in `tack_reach.json`, never its own.
+
 ## Milestones
 
 1. **Pen TCP + tool envelope.** DONE 2026-09-22 (see above); the touch-off refinement

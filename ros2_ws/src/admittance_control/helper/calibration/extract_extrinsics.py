@@ -105,6 +105,19 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_DEBUG_FRAME_PATH,
         help="Path where the latest failed detection frame will be saved.",
     )
+    parser.add_argument(
+        "--tcp-offset",
+        nargs=6,
+        type=float,
+        default=None,
+        metavar=("X", "Y", "Z", "RX", "RY", "RZ"),
+        help=(
+            "The pendant's ACTIVE TCP during this capture (m, axis-angle rad), e.g. the pen tip "
+            "'0 0 0.18378 0 0 0'. The robot poses are read in that frame; the solved extrinsic "
+            "is composed with it so the saved file is the camera in tool0 (the flange), which "
+            "is the frame ROS attaches it to. Required for eye-in-hand unless the TCP is zero."
+        ),
+    )
     parser.add_argument("--width", type=int, default=1280, help="RGB stream width.")
     parser.add_argument("--height", type=int, default=720, help="RGB stream height.")
     parser.add_argument("--fps", type=int, default=30, help="RGB stream frames per second.")
@@ -243,6 +256,36 @@ def create_board(args: argparse.Namespace):
     return board, aruco_detector
 
 
+def detect_board_pose(image_gray, board, aruco_detector, intrinsics_matrix, distortion_coeffs):
+    """Markers -> ChArUco corners -> board pose, on any OpenCV from 4.7 to 5.x.
+
+    OpenCV 5 (and 4.8+ without the legacy module) dropped `interpolateCornersCharuco`
+    and `estimatePoseCharucoBoard`; the replacement is `CharucoDetector.detectBoard`
+    plus `CharucoBoard.matchImagePoints` + `solvePnP`. Both paths return the same tuple:
+    (marker_corners, marker_ids, charuco_corners, charuco_ids, rvec, tvec, found).
+    """
+    K = np.asarray(intrinsics_matrix, dtype=float)
+    dist = np.asarray(distortion_coeffs, dtype=float)
+    if hasattr(cv2.aruco, "interpolateCornersCharuco"):
+        corners, ids, _rejected = aruco_detector.detectMarkers(image_gray)
+        if ids is None or len(ids) == 0:
+            return corners, ids, None, None, None, None, False
+        _n, ch_corners, ch_ids = cv2.aruco.interpolateCornersCharuco(corners, ids, image_gray, board)
+        if ch_corners is None or ch_ids is None or len(ch_corners) <= 3:
+            return corners, ids, ch_corners, ch_ids, None, None, False
+        ok, rvec, tvec = cv2.aruco.estimatePoseCharucoBoard(ch_corners, ch_ids, board, K, dist, None, None)
+        return corners, ids, ch_corners, ch_ids, rvec, tvec, bool(ok)
+    detector = cv2.aruco.CharucoDetector(board)
+    ch_corners, ch_ids, corners, ids = detector.detectBoard(image_gray)
+    if ch_corners is None or ch_ids is None or len(ch_corners) <= 3:
+        return corners, ids, ch_corners, ch_ids, None, None, False
+    obj_pts, img_pts = board.matchImagePoints(ch_corners, ch_ids)
+    if obj_pts is None or len(obj_pts) < 4:
+        return corners, ids, ch_corners, ch_ids, None, None, False
+    ok, rvec, tvec = cv2.solvePnP(obj_pts, img_pts, K, dist, flags=cv2.SOLVEPNP_ITERATIVE)
+    return corners, ids, ch_corners, ch_ids, rvec, tvec, bool(ok)
+
+
 def save_reference_board(board, output_path: Path) -> Path:
     output_path = output_path.expanduser().resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -344,17 +387,28 @@ def solve_extrinsics(
 
     # eye-in-hand: cv2 returns cam->gripper, i.e. the camera pose in the TCP frame.
     # eye-to-hand (with inverted robot poses): cv2 returns cam->base instead.
-    rotation, translation = cv2.calibrateHandEye(
-        calibration_rotations,
-        calibration_translations,
-        board_rotations,
-        board_translations,
-        method=cv2.CALIB_HAND_EYE_TSAI,
-    )
-
-    transform = np.eye(4, dtype=float)
-    transform[:3, :3] = rotation
-    transform[:3, 3] = translation.reshape(3)
+    if hasattr(cv2, "calibrateHandEye"):
+        rotation, translation = cv2.calibrateHandEye(
+            calibration_rotations,
+            calibration_translations,
+            board_rotations,
+            board_translations,
+            method=cv2.CALIB_HAND_EYE_TSAI,
+        )
+        transform = np.eye(4, dtype=float)
+        transform[:3, :3] = rotation
+        transform[:3, 3] = translation.reshape(3)
+        solver_label = "OpenCV TSAI"
+    else:
+        # OpenCV 5 dropped calibrateHandEye: the numpy Park-Martin solver is the solve
+        print("cv2.calibrateHandEye not available in this OpenCV: solving with Park-Martin (numpy).")
+        sys.path.insert(0, str(SCRIPT_PATH.parent))
+        from resolve_handeye import park_martin
+        transform = park_martin(np.stack(calibration_rotations),
+                                np.stack(calibration_translations).reshape(-1, 3),
+                                np.stack(board_rotations),
+                                np.stack(board_translations).reshape(-1, 3))
+        solver_label = "Park-Martin (numpy)"
 
     # Judge the solve on its own samples: mapped through the result, the board must sit
     # at ONE place in the base frame. The 2026-07 file carried a 120 mm spread from a
@@ -366,13 +420,33 @@ def solve_extrinsics(
             from resolve_handeye import describe, park_martin
             Rg = np.stack(robot_rotations); tg = np.stack(robot_translations).reshape(-1, 3)
             Rb = np.stack(board_rotations); tb = np.stack(board_translations).reshape(-1, 3)
-            print(describe(transform, "OpenCV TSAI", Rg, tg, Rb, tb))
-            print(describe(park_martin(Rg, tg, Rb, tb), "Park-Martin (numpy)", Rg, tg, Rb, tb))
+            print(describe(transform, solver_label, Rg, tg, Rb, tb))
+            if solver_label != "Park-Martin (numpy)":
+                print(describe(park_martin(Rg, tg, Rb, tb), "Park-Martin (numpy)", Rg, tg, Rb, tb))
             print("If TSAI is BAD and Park-Martin GOOD, write the latter: "
                   "python helper/calibration/resolve_handeye.py --write notebooks/T_tcp_to_cam.npy")
         except Exception as exc:  # noqa: BLE001 - the judge must never block the capture
             print(f"(residual check unavailable: {exc})")
     return transform
+
+
+def compose_tcp_offset(transform: np.ndarray, tcp_offset) -> np.ndarray:
+    """T_tool0_cam = T_tool0_tcp @ T_tcp_cam: the pendant's TCP taken back out."""
+    if tcp_offset is None:
+        print(
+            "WARNING: no --tcp-offset given. The saved extrinsic is in the pendant's TCP frame; "
+            "if that TCP is not zero, ROS will place the camera wrongly by exactly that offset "
+            "(2026-09-24: 6 cm in the table plane). Pass the pendant's TCP or set it to zero."
+        )
+        return transform
+    off = np.asarray(tcp_offset, dtype=float)
+    rot, _ = cv2.Rodrigues(off[3:].reshape(3, 1))
+    D = np.eye(4)
+    D[:3, :3] = rot
+    D[:3, 3] = off[:3]
+    out = D @ transform
+    print(f"composed with the pendant TCP {off.tolist()}: camera origin in tool0 {np.round(out[:3, 3] * 1000, 1)} mm")
+    return out
 
 
 def main() -> int:
@@ -439,36 +513,20 @@ def main() -> int:
             image_gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
             display_image = image.copy()
 
-            corners, ids, _rejected = aruco_detector.detectMarkers(image_gray)
+            (corners, ids, charuco_corners, charuco_ids,
+             rvec, tvec, success) = detect_board_pose(
+                image_gray, board, aruco_detector, intrinsics_matrix, distortion_coeffs)
             marker_count = 0 if ids is None else len(ids)
-            rejected_count = len(_rejected)
-            detected_ids = [] if ids is None else ids.reshape(-1).tolist()
+            rejected_count = 0
+            detected_ids = [] if ids is None else np.asarray(ids).reshape(-1).tolist()
             board_found = False
-            rvec = None
-            tvec = None
-            charuco_count = 0
+            charuco_count = 0 if charuco_ids is None else len(charuco_ids)
 
             if ids is not None and len(ids) > 0:
                 cv2.aruco.drawDetectedMarkers(display_image, corners, ids)
-                _retval, charuco_corners, charuco_ids = cv2.aruco.interpolateCornersCharuco(
-                    corners, ids, image_gray, board
-                )
-
-                if charuco_ids is not None:
-                    charuco_count = len(charuco_ids)
-
                 if charuco_corners is not None and charuco_ids is not None and len(charuco_corners) > 3:
                     cv2.aruco.drawDetectedCornersCharuco(
                         display_image, charuco_corners, charuco_ids, (0, 255, 0)
-                    )
-                    success, rvec, tvec = cv2.aruco.estimatePoseCharucoBoard(
-                        charuco_corners,
-                        charuco_ids,
-                        board,
-                        intrinsics_matrix,
-                        distortion_coeffs,
-                        None,
-                        None,
                     )
                     if success:
                         board_found = True
@@ -567,8 +625,12 @@ def main() -> int:
             args.calibration_setup,
         )
 
+        if args.calibration_setup == "eye-in-hand":
+            transform = compose_tcp_offset(transform, args.tcp_offset)
+
         print("\n=== Extrinsic Result ===")
-        print(f"{RESULT_LABELS[args.calibration_setup]}:")
+        print(f"{RESULT_LABELS[args.calibration_setup]}"
+              f"{' (composed into tool0)' if args.tcp_offset is not None else ''}:")
         print(np.round(transform, 4))
 
         save_outputs(

@@ -177,6 +177,12 @@ class TackMarkingNode(Node):
         objects = [(o['model'], np.asarray(o['pose_static'], float).reshape(4, 4))
                    for o in assembly['objects']]
         parts = sfr.posed_parts(objects, load_registry(str(self.get_parameter('registry').value)))
+        # the clearance the reachability report was made with (it may have been overridden
+        # on its command line); the plan must judge with the same number or the two disagree
+        rep_cfg = report.get('config', {})
+        self._cfg.clearance_m = float(rep_cfg.get('clearance_m', self._cfg.clearance_m))
+        if rep_cfg.get('table_z_m') is not None:
+            self._cfg.table_z_m = float(rep_cfg['table_z_m'])
         self._model = CollisionModel(tool=self._tool, scene_boxes=boxes_from_parts(parts),
                                      table_z=self._cfg.table_z_m, clearance=self._cfg.clearance_m)
         self._report = report
