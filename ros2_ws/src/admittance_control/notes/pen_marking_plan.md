@@ -309,6 +309,22 @@ With the tip at 183.78 mm the holder sits 63.8 mm above it and clears the plates
 90° T by 3.1 mm at best, so the default clearance is now **3 mm** (`marking.json`); the
 marking node judges with the clearance recorded in `tack_reach.json`, never its own.
 
+**Capture script vs OpenCV 5 (2026-09-24).** The venv carries `opencv-python 5.0.0`
+(shadowing `opencv-contrib-python 4.13`), which dropped `interpolateCornersCharuco`,
+`estimatePoseCharucoBoard` and `calibrateHandEye`. `extract_extrinsics.py` now detects
+through `CharucoDetector.detectBoard` + `matchImagePoints` + `solvePnP` when the legacy
+functions are absent, and solves hand-eye with the numpy Park-Martin when
+`calibrateHandEye` is absent (`test/test_charuco_detection.py` renders a board at a known
+pose and recovers it to < 3 mm on this OpenCV). Two OpenCV wheels in one venv is
+fragile; if nothing needs 5.0, `pip uninstall opencv-python` leaves the contrib 4.13.
+
+**Marking node, bench feedback 2026-09-24 (late):** the transit is re-planned from the
+arm's CURRENT joints at `~/next` / `~/home` (the plan froze it at `~/plan` time, and
+jogging the arm in between - TCP wizard, freedrive - made the first point 48–60° away);
+the dry run keeps virtual joints so its gates follow the pretended motion; a goal the
+controller rejects is reported as such, with the usual cause (External Control program
+not running after the pendant was used - press Play).
+
 ## Milestones
 
 1. **Pen TCP + tool envelope.** DONE 2026-09-22 (see above); the touch-off refinement

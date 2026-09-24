@@ -286,6 +286,20 @@ def detect_board_pose(image_gray, board, aruco_detector, intrinsics_matrix, dist
     return corners, ids, ch_corners, ch_ids, rvec, tvec, bool(ok)
 
 
+def draw_charuco_corners(display_image, charuco_corners, charuco_ids, colour=(0, 255, 0)) -> None:
+    """Corners + ids drawn by hand: `cv2.aruco.drawDetectedCornersCharuco` asserts on the
+    array shapes the OpenCV 5 detector returns, and a drawing call must never abort a
+    capture."""
+    if charuco_corners is None or charuco_ids is None:
+        return
+    pts = np.asarray(charuco_corners, dtype=float).reshape(-1, 2)
+    ids = np.asarray(charuco_ids).reshape(-1)
+    for (u, v), cid in zip(pts, ids):
+        cv2.circle(display_image, (int(round(u)), int(round(v))), 5, colour, 2)
+        cv2.putText(display_image, str(int(cid)), (int(round(u)) + 6, int(round(v)) - 6),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, colour, 1, cv2.LINE_AA)
+
+
 def save_reference_board(board, output_path: Path) -> Path:
     output_path = output_path.expanduser().resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -523,21 +537,18 @@ def main() -> int:
             charuco_count = 0 if charuco_ids is None else len(charuco_ids)
 
             if ids is not None and len(ids) > 0:
-                cv2.aruco.drawDetectedMarkers(display_image, corners, ids)
-                if charuco_corners is not None and charuco_ids is not None and len(charuco_corners) > 3:
-                    cv2.aruco.drawDetectedCornersCharuco(
-                        display_image, charuco_corners, charuco_ids, (0, 255, 0)
-                    )
-                    if success:
-                        board_found = True
-                        cv2.drawFrameAxes(
-                            display_image,
-                            intrinsics_matrix,
-                            distortion_coeffs,
-                            rvec,
-                            tvec,
-                            0.1,
-                        )
+                try:
+                    cv2.aruco.drawDetectedMarkers(display_image, corners, ids)
+                except cv2.error:
+                    pass                                   # cosmetic only
+                draw_charuco_corners(display_image, charuco_corners, charuco_ids)
+                if success:
+                    board_found = True
+                    try:
+                        cv2.drawFrameAxes(display_image, intrinsics_matrix, distortion_coeffs,
+                                          rvec, tvec, 0.1)
+                    except cv2.error:
+                        pass                               # cosmetic only
 
             if board_found:
                 last_status = f"Pose solved ({charuco_count} corners)"

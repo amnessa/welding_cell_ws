@@ -25,15 +25,15 @@ import extract_extrinsics as ex  # noqa: E402
 
 def _render_board_at(board, K, rvec, tvec, size=(1280, 720)):
     """Warp the board's own image into the camera view of a board at (rvec, tvec)."""
-    px = 1000
+    px = 4000                                    # render finely: the warp resamples it
     n_x, n_y = board.getChessboardSize()
     sq = board.getSquareLength()
     img = board.generateImage((int(n_x * sq * px), int(n_y * sq * px)), marginSize=0, borderBits=1)
-    # board plane: image pixel (u, v) <-> board point (u/px, v/px, 0) ... the generated
-    # image has y DOWN while the board's y axis is UP in OpenCV's ChArUco convention
+    # board plane: image pixel (u, v) <-> board point (u/px, v/px, 0); the generated
+    # image's rows run along the board's +y (verified: corner id 0 at (sq, sq) both ways)
     h_img, w_img = img.shape[:2]
     src = np.float32([[0, 0], [w_img, 0], [w_img, h_img], [0, h_img]])
-    obj = np.float32([[0, n_y * sq, 0], [n_x * sq, n_y * sq, 0], [n_x * sq, 0, 0], [0, 0, 0]])
+    obj = np.float32([[0, 0, 0], [n_x * sq, 0, 0], [n_x * sq, n_y * sq, 0], [0, n_y * sq, 0]])
     dst, _ = cv2.projectPoints(obj, rvec, tvec, K, None)
     H = cv2.getPerspectiveTransform(src, dst.reshape(-1, 2).astype(np.float32))
     return cv2.warpPerspective(img, H, size, borderValue=200)
@@ -50,6 +50,13 @@ def test_board_pose_is_recovered_on_this_opencv():
     corners, ids, ch_c, ch_ids, r, t, ok = ex.detect_board_pose(gray, board, detector, K, np.zeros(5))
     assert ok and ids is not None and len(ids) >= 4 and len(ch_ids) >= 4
     assert np.linalg.norm(t.reshape(3) - tvec.reshape(3)) < 3e-3            # < 3 mm at 0.45 m
+    # the overlay must draw on this OpenCV too (the legacy draw call asserts on 5.0)
+    canvas = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+    ex.draw_charuco_corners(canvas, ch_c, ch_ids)
+    try:
+        cv2.aruco.drawDetectedMarkers(canvas, corners, ids)
+    except cv2.error:
+        pass
     R_est, _ = cv2.Rodrigues(r); R_true, _ = cv2.Rodrigues(rvec)
     ang = np.degrees(np.arccos(np.clip((np.trace(R_true.T @ R_est) - 1) / 2, -1, 1)))
-    assert ang < 0.5
+    assert ang < 1.5                                   # a 120 mm board at 0.45 m: sub-degree

@@ -105,6 +105,7 @@ class TackMarkingNode(Node):
         self._marks: list[dict] = []
 
         self._q = None
+        self._q_sim = None                 # where the DRY RUN pretends the arm is
         self._q_lock = threading.Lock()
         self._force = np.zeros(3)
         self._force_bias = np.zeros(3)
@@ -163,6 +164,29 @@ class TackMarkingNode(Node):
         with self._q_lock:
             return None if self._q is None else self._q.copy()
 
+    def _where(self) -> np.ndarray | None:
+        """The arm's joints for planning and gating: the real ones, or in a dry run the
+        end of the last pretended motion (nothing moves, so /joint_states never follows)."""
+        if self.dry_run and self._q_sim is not None:
+            return self._q_sim.copy()
+        return self._current_q()
+
+    def _replan_transit(self, target: np.ndarray, label: str):
+        """The plan froze the transit at the joints of `~/plan`; if the arm has been jogged
+        since (a TCP calibration, freedrive), re-plan from where it is now instead of
+        refusing. Returns (path or None, message)."""
+        from admittance_control.marking import transit_path
+        q_now = self._where()
+        if q_now is None:
+            return None, f'{label}: no joint states'
+        if self._model.in_collision(q_now):
+            return None, f'{label}: current joints are in collision - ' + self._model.report(q_now)
+        path = transit_path(q_now, target, self._model)
+        if path is None:
+            return None, f'{label}: no collision-free transit from the current joints'
+        return path, ''
+
+
     def _say(self, text: str) -> None:
         self.get_logger().info(text)
         self._status_pub.publish(String(data=text))
@@ -206,6 +230,7 @@ class TackMarkingNode(Node):
             return response
         self._plan = build_marking_plan(self._report, self._tool, self._model, self._cfg, q,
                                         float(self.get_parameter('overshoot_m').value))
+        self._q_sim = q.copy()
         self._next_step = 0
         self._marks = []
         (self._save_dir / 'tack_marking_plan.json').write_text(json.dumps(plan_to_dict(self._plan), indent=1))
@@ -256,8 +281,14 @@ class TackMarkingNode(Node):
             return False, f'tack {step.tack_id} skipped: {step.reason}'
         self._abort = False
         tag = f'tack {step.tack_id} (seam {step.seam_id} #{step.tack_no})'
-        # 1. transit
-        ok, msg = self._execute(time_joint_path(step.transit, float(self.get_parameter('v_joint_rad_s').value)),
+        # 1. transit - from where the arm IS, which may not be where the plan started
+        q_now = self._where()
+        transit = step.transit
+        if q_now is None or np.abs(q_now - transit[0]).max() > 1e-3:
+            transit, err = self._replan_transit(step.q_app, f'{tag} transit')
+            if transit is None:
+                return False, err
+        ok, msg = self._execute(time_joint_path(transit, float(self.get_parameter('v_joint_rad_s').value)),
                                 f'{tag} transit', watch_touch=False)
         if not ok:
             return False, msg
@@ -286,7 +317,7 @@ class TackMarkingNode(Node):
             time.sleep(float(self.get_parameter('dwell_s').value))
         # 4. retract: the chain reversed, from the current joints
         # retract from wherever the pen stopped: the chain points not yet passed, reversed
-        q_now = self._current_q() if not self.dry_run else step.descent[-1]
+        q_now = self._where()
         k_stop = int(np.argmin([np.abs(q - q_now).max() for q in step.descent]))
         back = [q_now] + step.descent[:k_stop][::-1]
         ok, msg = self._execute(time_descent(back, self._tool, float(self.get_parameter('v_tip_m_s').value)),
@@ -299,11 +330,9 @@ class TackMarkingNode(Node):
     def _go_home(self) -> tuple[bool, str]:
         if self._plan is None or self._plan.home_path is None:
             return False, 'no home path'
-        q = self._current_q()
-        path = self._plan.home_path
-        if q is not None and not self.dry_run:
-            from admittance_control.marking import transit_path
-            path = transit_path(q, self._cfg.home_q, self._model) or path
+        path, err = self._replan_transit(self._cfg.home_q, 'home')
+        if path is None:
+            return False, err
         return self._execute(time_joint_path(path, float(self.get_parameter('v_joint_rad_s').value)),
                              'home', watch_touch=False)
 
@@ -315,7 +344,7 @@ class TackMarkingNode(Node):
     def _execute(self, timed, label: str, watch_touch: bool, want_contact: bool = False):
         """Send one trajectory goal and wait; with `watch_touch` cancel at the touch force.
         Returns (ok, msg) or, with `want_contact`, (ok, msg, contact|None)."""
-        q = self._current_q()
+        q = self._where()
         if q is None:
             return (False, 'no joint states', None) if want_contact else (False, 'no joint states')
         jump = float(np.abs(timed[0][0] - q).max())
@@ -330,7 +359,9 @@ class TackMarkingNode(Node):
                 # which the chain reaches standoff/(standoff+overshoot) of the way down
                 cfg, over = self._cfg, float(self.get_parameter('overshoot_m').value)
                 k = int(round((len(timed) - 1) * cfg.standoff_m / (cfg.standoff_m + over)))
+                self._q_sim = np.asarray(timed[k][0], float).copy()
                 return True, msg, (timed[k][0], self._touch_force)
+            self._q_sim = np.asarray(timed[-1][0], float).copy()
             return True, msg
         goal = FollowJointTrajectory.Goal()
         traj = JointTrajectory()
@@ -349,7 +380,10 @@ class TackMarkingNode(Node):
             time.sleep(0.005)
         self._goal_handle = send.result()
         if not self._goal_handle.accepted:
-            msg = f'{label}: goal rejected'
+            msg = (f'{label}: goal REJECTED by the controller before any motion. It prints the '
+                   f'reason in the ur_control terminal; the usual one after using the pendant is '
+                   f'that the External Control program is not running (press Play on the pendant), '
+                   f'else the controller is inactive or the trajectory is malformed.')
             return (False, msg, None) if want_contact else (False, msg)
         result_fut = self._goal_handle.get_result_async()
         contact = None

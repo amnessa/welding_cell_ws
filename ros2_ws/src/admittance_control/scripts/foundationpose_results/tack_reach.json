@@ -14,7 +14,7 @@
    4
   ],
   "standoff_m": 0.035,
-  "clearance_m": 0.005,
+  "clearance_m": 0.003,
   "roll_step_deg": 30.0,
   "lin_steps": 6,
   "max_joint_step_rad": 1.2,
@@ -37,22 +37,22 @@
  "seams": [
   {
    "seam_id": 0,
-   "ok": true,
-   "roll_deg": 330.0,
-   "tilt_deg": 0.0,
-   "min_clearance_m": 0.0102,
-   "score": 3.086102090824743,
-   "n_tacks": 2
-  },
-  {
-   "seam_id": 1,
    "ok": false,
    "roll_deg": null,
    "tilt_deg": null,
    "min_clearance_m": null,
    "score": null,
    "n_tacks": 2,
-   "reason": "tack pose in collision (holder_body x part_B, 4.7 mm); best over all tilts/rolls 4.7 mm (holder_body x part_B) - a longer pen reach or a slimmer holder is what raises it, not the orientation"
+   "reason": "tack pose in collision (holder_body x part_B, 0.5 mm); best over all tilts/rolls 0.5 mm (holder_body x part_B) - a longer pen reach or a slimmer holder is what raises it, not the orientation"
+  },
+  {
+   "seam_id": 1,
+   "ok": true,
+   "roll_deg": 330.0,
+   "tilt_deg": 0.0,
+   "min_clearance_m": 0.0056,
+   "score": 3.099247400415245,
+   "n_tacks": 2
   }
  ],
  "tacks": [
@@ -60,119 +60,119 @@
    "tack_id": 0,
    "seam_id": 0,
    "tack_no": 1,
-   "ok": true,
-   "reason": "ok",
-   "roll_deg": 330.0,
-   "tilt_deg": 0.0,
-   "q_app": [
-    -0.21507535482548987,
-    -2.423262544671199,
-    -1.3956466511970245,
-    -1.2202186721806092,
-    2.188393707301447,
-    -0.8906625810939052
-   ],
-   "q_tack": [
-    -0.18656573572941376,
-    -2.4444071165796735,
-    -1.4485787185012913,
-    -1.1277409028342291,
-    2.1976730728818032,
-    -0.8579040903765118
-   ],
-   "clearance_app_m": 0.02394970538123161,
-   "clearance_tack_m": 0.010185512750975963,
-   "worst_pair_app": "holder_body x part_A",
-   "worst_pair_tack": "holder_body x part_A",
-   "pen_gap_m": 0.0,
-   "lin_min_clearance_m": 0.014519093987689392,
-   "joint_step_from_prev_rad": 0.0,
-   "point_m": [
-    -0.6319820690190884,
-    0.08204625323962764,
-    -0.08611046853852172
-   ],
-   "axis_m": [
-    0.1327697275657924,
-    -0.6220243693721308,
-    -0.7716591756399378
-   ]
-  },
-  {
-   "tack_id": 1,
-   "seam_id": 0,
-   "tack_no": 2,
-   "ok": true,
-   "reason": "ok",
-   "roll_deg": 330.0,
-   "tilt_deg": 0.0,
-   "q_app": [
-    -0.3505570373944137,
-    -2.170959621312019,
-    -1.8751258518745315,
-    -1.0800050828976104,
-    2.140043576558339,
-    -1.044014231835427
-   ],
-   "q_tack": [
-    -0.3169365483729663,
-    -2.2048782945355936,
-    -1.9307946683879622,
-    -0.9702100019154565,
-    2.1530219324058595,
-    -1.0070210632170322
-   ],
-   "clearance_app_m": 0.02396423069837142,
-   "clearance_tack_m": 0.010182075974659907,
-   "worst_pair_app": "holder_body x part_B",
-   "worst_pair_tack": "holder_body x part_B",
-   "pen_gap_m": 0.0,
-   "lin_min_clearance_m": 0.014522548574689764,
-   "joint_step_from_prev_rad": 0.47947920067750704,
-   "point_m": [
-    -0.44995221416884956,
-    0.120271640326693,
-    -0.08560385635426916
-   ],
-   "axis_m": [
-    0.1327697275657924,
-    -0.6220243693721308,
-    -0.7716591756399378
-   ]
-  },
-  {
-   "tack_id": 2,
-   "seam_id": 1,
-   "tack_no": 1,
    "ok": false,
-   "reason": "tack pose in collision (holder_body x part_B, 4.7 mm)",
+   "reason": "tack pose in collision (holder_body x part_B, 0.5 mm)",
    "roll_deg": 0.0,
    "tilt_deg": 0.0,
    "q_app": null,
    "q_tack": null,
    "clearance_app_m": null,
-   "clearance_tack_m": 0.004673474358956167,
+   "clearance_tack_m": 0.00045759169540234707,
    "worst_pair_app": "",
    "worst_pair_tack": "holder_body x part_B",
    "pen_gap_m": null,
    "lin_min_clearance_m": null,
    "joint_step_from_prev_rad": 0.0,
    "point_m": [
-    -0.6303305162890015,
-    0.07417463907589812,
-    -0.08643649012739578
+    -0.6141599123216941,
+    0.02797594149468719,
+    -0.09185870409017989
    ],
    "axis_m": [
-    -0.15689094809023604,
-    0.7555464961966405,
-    -0.6360304414824237
+    -0.23243228751590708,
+    0.7435908164399543,
+    -0.6269353470863523
+   ]
+  },
+  {
+   "tack_id": 2,
+   "seam_id": 1,
+   "tack_no": 1,
+   "ok": true,
+   "reason": "ok",
+   "roll_deg": 330.0,
+   "tilt_deg": 0.0,
+   "q_app": [
+    -0.14210471701157912,
+    -2.3852543785805427,
+    -1.5119619489266525,
+    -1.108038405572587,
+    2.191598801302731,
+    -0.812352867300689
+   ],
+   "q_tack": [
+    -0.11223150264521298,
+    -2.4136292948165416,
+    -1.5572713611340248,
+    -1.0143140288603638,
+    2.200239105469174,
+    -0.7773739382272777
+   ],
+   "clearance_app_m": 0.02403211456178407,
+   "clearance_tack_m": 0.005608423058453951,
+   "worst_pair_app": "holder_body x part_B",
+   "worst_pair_tack": "holder_body x part_B",
+   "pen_gap_m": 0.0,
+   "lin_min_clearance_m": 0.009950559309154894,
+   "joint_step_from_prev_rad": 0.0,
+   "point_m": [
+    -0.6163371452960109,
+    0.03571769780078112,
+    -0.0914536512373006
+   ],
+   "axis_m": [
+    0.15050263129044955,
+    -0.6093271933425757,
+    -0.7785045468254572
+   ]
+  },
+  {
+   "tack_id": 3,
+   "seam_id": 1,
+   "tack_no": 2,
+   "ok": true,
+   "reason": "ok",
+   "roll_deg": 330.0,
+   "tilt_deg": 0.0,
+   "q_app": [
+    -0.28460150224281294,
+    -2.160881163984902,
+    -1.9679252999727026,
+    -0.969249408536714,
+    2.144832925899425,
+    -0.9757060492202652
+   ],
+   "q_tack": [
+    -0.24895387497078308,
+    -2.204134488944862,
+    -2.0176262088296166,
+    -0.8543605883412133,
+    2.1576144463741738,
+    -0.9358830464771625
+   ],
+   "clearance_app_m": 0.023996574840037407,
+   "clearance_tack_m": 0.0056130901253637,
+   "worst_pair_app": "holder_body x part_B",
+   "worst_pair_tack": "holder_body x part_B",
+   "pen_gap_m": 0.0,
+   "lin_min_clearance_m": 0.00995509743604437,
+   "joint_step_from_prev_rad": 0.4559633510460501,
+   "point_m": [
+    -0.43768612580917826,
+    0.08690267498876902,
+    -0.09697828175270205
+   ],
+   "axis_m": [
+    0.15050263129044955,
+    -0.6093271933425757,
+    -0.7785045468254572
    ]
   }
  ],
  "all_ok": false,
  "source": {
-  "tacks": "src/admittance_control/scripts/foundationpose_results/welding_tacks.json",
-  "assembly": "src/admittance_control/scripts/foundationpose_results/assembly.json",
+  "tacks": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/scripts/foundationpose_results/welding_tacks.json",
+  "assembly": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/scripts/foundationpose_results/assembly.json",
   "frame": "base_link"
  }
 }
