@@ -355,6 +355,23 @@ def solve_extrinsics(
     transform = np.eye(4, dtype=float)
     transform[:3, :3] = rotation
     transform[:3, 3] = translation.reshape(3)
+
+    # Judge the solve on its own samples: mapped through the result, the board must sit
+    # at ONE place in the base frame. The 2026-07 file carried a 120 mm spread from a
+    # silently failed solve; from here on the number is printed, and the numpy re-solve
+    # (resolve_handeye.py) is shown next to it.
+    if calibration_setup == "eye-in-hand":
+        try:
+            sys.path.insert(0, str(SCRIPT_PATH.parent))
+            from resolve_handeye import describe, park_martin
+            Rg = np.stack(robot_rotations); tg = np.stack(robot_translations).reshape(-1, 3)
+            Rb = np.stack(board_rotations); tb = np.stack(board_translations).reshape(-1, 3)
+            print(describe(transform, "OpenCV TSAI", Rg, tg, Rb, tb))
+            print(describe(park_martin(Rg, tg, Rb, tb), "Park-Martin (numpy)", Rg, tg, Rb, tb))
+            print("If TSAI is BAD and Park-Martin GOOD, write the latter: "
+                  "python helper/calibration/resolve_handeye.py --write notebooks/T_tcp_to_cam.npy")
+        except Exception as exc:  # noqa: BLE001 - the judge must never block the capture
+            print(f"(residual check unavailable: {exc})")
     return transform
 
 

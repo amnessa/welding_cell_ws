@@ -236,6 +236,36 @@ so the twin run is the dry run with the tip path and the reachability markers in
 the first goals go to the real robot, one tack at a time (`~/next`), with the pendant's
 speed slider low.
 
+## Milestone 5 — the first real touch (2026-09-24) and what it found
+
+Four tacks on the `test_objv2` T-joint, `dry_run:=false`, one `~/next` each: tack 0.1 no
+contact within the overshoot, 0.2 contact at 1.61 N **+18.6 mm** early, 1.1 contact at
+1.72 N **+28.9 mm** early, 1.2 no contact. The motion itself did what it should (transit,
+descent, cancel at the touch force, retract, home). The numbers say the registered
+assembly is off by centimetres, with a pattern - early on one side at one end, air on
+the other side at the other end - that is a yaw plus a height error, i.e. an extrinsic
+ROTATION error, not a pose noise.
+
+Root cause found offline in `notebooks/handeye_samples.npz`: the 15 samples are fine
+(rotation diversity 110°) and a Park-Martin re-solve fits them to 2–4 mm std; the
+stored `T_tcp_to_cam.npy` does NOT fit its own samples (board-in-base spread 32/26 mm
+std, 120 mm range, 8° rotation): OpenCV's TSAI solve had failed silently in July. The
+re-solved camera is at (59, 78, 32) mm in tool0 with the optical axis along the flange
+normal (square bracket), against (24, 91, 34) and a 7° tilt / 26° roll in the bad file.
+Tools: `helper/calibration/resolve_handeye.py` (numpy re-solve, residual judge,
+leave-one-out, `--tcp-offset` to compose the pendant's TCP, `--write`);
+`extract_extrinsics.py` now prints the residual after every solve.
+
+Open point: the capture reads the pendant's ACTIVE TCP; ROS attaches the result to
+`tool0`. A non-zero pendant TCP is invisible in the residual but shifts the camera by
+that offset (the user's "lens at ~60 mm" vs the solved 32 mm could be a ~28 mm TCP z).
+Read it on the pendant (Installation → TCP) and compose it with `--tcp-offset`.
+
+Next: publish the re-solved extrinsic (`pointcloud.launch.py extrinsic_path:=.../T_tcp_to_cam_resolved.npy`),
+check the green dot sits on the lens face, re-register both parts, `welding_points`,
+`tack_reachability.py`, `~/plan` dry, then `~/next`: the depths should fall from
+19–29 mm to the pen-tip level. Whatever remains, consistently, is the TCP offset.
+
 ## Milestones
 
 1. **Pen TCP + tool envelope.** DONE 2026-09-22 (see above); the touch-off refinement

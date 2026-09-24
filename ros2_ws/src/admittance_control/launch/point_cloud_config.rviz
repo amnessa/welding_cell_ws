@@ -8,7 +8,6 @@ Panels:
         - /Status1
         - /PointCloud21
         - /MarkerArray3
-        - /MarkerArray3/Status1
       Splitter Ratio: 0.4149908721446991
     Tree Height: 529
   - Class: rviz_common/Selection
@@ -417,22 +416,33 @@ Visualization Manager:
       Enabled: true
       Name: MarkerArray
       Namespaces:
-        arm_0: true
-        arm_1: true
-        arm_2: true
-        arm_3: true
-        label: true
-        pen_axis: true
-        tool_0: true
-        tool_1: true
-        tool_2: true
-        tool_3: true
+        {}
       Topic:
         Depth: 5
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /tack_reach/markers
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: MarkerArray
+      Namespaces:
+        camera_arm: true
+        camera_body: true
+        camera_optical_axis: true
+        camera_optical_origin: true
+        flange_adapter: true
+        holder_body: true
+        pen: true
+        pen_axis: true
+        pen_tip: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /tool_model/markers
       Value: true
   Enabled: true
   Global Options:
@@ -480,25 +490,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 1.7640553712844849
+      Distance: 1.902226448059082
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: -0.5014023780822754
-        Y: 0.1113600805401802
-        Z: 0.09700001031160355
+        X: -0.5599774718284607
+        Y: 0.05659453943371773
+        Z: -0.04780873656272888
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.34539929032325745
+      Pitch: 0.42539939284324646
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
-      Yaw: 3.0804293155670166
+      Yaw: 3.2354326248168945
     Saved: ~
 Window Geometry:
   Displays:
@@ -518,5 +528,5 @@ Window Geometry:
   Views:
     collapsed: true
   Width: 1625
-  X: 898
-  Y: 34
+  X: 925
+  Y: 32
