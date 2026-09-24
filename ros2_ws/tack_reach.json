@@ -226,8 +226,8 @@
  ],
  "all_ok": true,
  "source": {
-  "tacks": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/scripts/foundationpose_results/welding_tacks.json",
-  "assembly": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/scripts/foundationpose_results/assembly.json",
+  "tacks": "src/admittance_control/scripts/foundationpose_results/welding_tacks.json",
+  "assembly": "src/admittance_control/scripts/foundationpose_results/assembly.json",
   "frame": "base_link"
  }
 }

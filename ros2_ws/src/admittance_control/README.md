@@ -716,6 +716,12 @@ whose branch is locked; one work-angle tilt and roll per seam; per tack the appr
 tack / descent clearances), then `tack_reach_marker_node.py -p report:=<save_dir>/tack_reach.json`
 draws the pen axis at every tack in RViz, green or red.
 
+Milestone 4 is the marking node itself, `tack_marking_node.py` (services `~/plan`,
+`~/next`, `~/all`, `~/home`, `~/abort`; `dry_run:=true` by default): transit on the
+active scaled trajectory controller, descent at 20 mm/s cancelled at 1.5 N on the wrench,
+dwell, retract; `tack_marks.json` records the tip at contact and the depth along the pen
+axis, the placement check the pipeline is validated by.
+
 Milestone 2, the collision model, is in too: `admittance_control/collision.py` (arm
 capsules on the joint frames, the tool envelope, the registered parts as boxes, the table
 as a plane; `CollisionModel.is_valid` plugs into `rrt_connect(..., is_valid=...)`).

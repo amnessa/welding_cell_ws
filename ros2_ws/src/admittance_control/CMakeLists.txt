@@ -87,6 +87,7 @@ install(
     admittance_control/tool_model.py
     admittance_control/collision.py
     admittance_control/tack_reach.py
+    admittance_control/marking.py
   DESTINATION ${PYTHON_INSTALL_DIR}/${PROJECT_NAME}
 )
 
@@ -112,6 +113,7 @@ install(PROGRAMS
   scripts/tool_model_marker_node.py
   scripts/tack_reachability.py
   scripts/tack_reach_marker_node.py
+  scripts/tack_marking_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

@@ -198,6 +198,44 @@ adjacent in the middle of the returned path) - fixed; and its edge check gained 
 `edge_resolution` parameter (default 0.05 rad unchanged; the pen planner uses 0.01,
 ~5 mm of tip travel per sample, so an 8 mm plate cannot slip between two samples).
 
+## Milestone 4 — the marking node (built 2026-09-24, dry run first)
+
+`admittance_control/marking.py` (ROS-free: visit order, collision-aware transit with
+shortcutting, the descent as an IK chain along the pen axis, timing, contact depth;
+tests `test/test_marking.py`, 6) and `scripts/tack_marking_node.py`:
+
+```
+ros2 run admittance_control tack_marking_node.py --ros-args -p dry_run:=true \
+    -p extrinsic_path:=<ws>/src/admittance_control/notebooks/T_tcp_to_cam.npy
+ros2 service call /tack_marking/plan  std_srvs/srv/Trigger   # from the current joints; RViz: /tack_marking/tip_path
+ros2 service call /tack_marking/next  std_srvs/srv/Trigger   # one tack: transit, descend, dwell, retract
+ros2 service call /tack_marking/all   std_srvs/srv/Trigger   # the rest, then home
+ros2 service call /tack_marking/home  std_srvs/srv/Trigger
+ros2 service call /tack_marking/abort std_srvs/srv/Trigger
+```
+
+Bench facts it is built on (2026-09-24): `scaled_joint_trajectory_controller` active,
+action `/scaled_joint_trajectory_controller/follow_joint_trajectory`; wrench on
+`/force_torque_sensor_broadcaster/wrench` at 500 Hz; no Servo. The descent is a
+FollowJointTrajectory goal at 20 mm/s tip speed (2 mm IK steps) that the node cancels
+at |F − bias| > 1.5 N, the bias re-measured at each approach point over 0.5 s; the
+joints at the cancel are the contact record (`tack_marks.json`: tip at contact, depth
+along the pen axis, force, or `no_contact` after the 3 mm overshoot). Gates before any
+goal: current joints clear and on the locked branch; first trajectory point within 20°
+of the current joints; |F| > 8 N at any time cancels. `dry_run:=true` (default) sends
+nothing and pretends contact at the registered point, so the whole sequence including
+the files can be exercised without the robot.
+
+UR's own `force_mode_controller` and `tool_contact_controller` are loaded (inactive):
+the first is the native force control the C2 stroke can use instead of incremental
+trajectories; the second is UR's stop-on-contact, whose threshold is fixed and probably
+above 1.5 N - kept as options, not used.
+
+The digital twin (Isaac) exposes joint commands as a topic, not the trajectory action,
+so the twin run is the dry run with the tip path and the reachability markers in RViz;
+the first goals go to the real robot, one tack at a time (`~/next`), with the pendant's
+speed slider low.
+
 ## Milestones
 
 1. **Pen TCP + tool envelope.** DONE 2026-09-22 (see above); the touch-off refinement
@@ -205,8 +243,8 @@ adjacent in the middle of the returned path) - fixed; and its edge check gained 
 2. **Collision model + tests.** DONE 2026-09-22 (see above).
 3. **Reachability report, no motion.** DONE 2026-09-24 (see above); the bench answer
    is "one side yes, the acute side only at 3 mm" — decide pen reach vs clearance.
-4. **Dry run in the digital twin** (`digital_twin_pointcloud.launch.py` + Isaac): the
-   full four phases with the twin's contact-less descent stopping at the point.
+4. **Marking node + dry run.** DONE 2026-09-24 (see above); the on-robot dry run
+   (`~/plan` with the arm at the scan home, tip path in RViz) is the last check before 5.
 5. **Real robot, one tack:** transit, force-gated descent, dot, retract, and the first
    `tack_marks.json` entry with its contact depth. Then all six.
 6. **Stroke marking (C2)** on the same assembly; compare the marks with the seam by photo.
