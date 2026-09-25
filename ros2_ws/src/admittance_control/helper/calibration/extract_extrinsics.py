@@ -447,12 +447,15 @@ def solve_extrinsics(
 def compose_tcp_offset(transform: np.ndarray, tcp_offset) -> np.ndarray:
     """T_tool0_cam = T_tool0_tcp @ T_tcp_cam: the pendant's TCP taken back out."""
     if tcp_offset is None:
-        print(
-            "WARNING: no --tcp-offset given. The saved extrinsic is in the pendant's TCP frame; "
-            "if that TCP is not zero, ROS will place the camera wrongly by exactly that offset "
-            "(2026-09-24: 6 cm in the table plane). Pass the pendant's TCP or set it to zero."
+        raise SystemExit(
+            "REFUSING to save: no --tcp-offset given. The robot poses were read at the pendant's "
+            "ACTIVE TCP, so the solved extrinsic is in that frame, and ROS attaches it to tool0: "
+            "without the composition the camera lands wrong by exactly the TCP (2026-09-25: a file "
+            "with the camera 129 mm behind the pen tip). Read the TCP on the pendant and pass it, "
+            "e.g. --tcp-offset 0.00135 -0.00017 0.18173 0 0 0, or --tcp-offset 0 0 0 0 0 0 if it "
+            "really is zero. The samples were kept: re-solve without recapturing with "
+            "helper/calibration/resolve_handeye.py --tcp-offset ... --write notebooks/T_tcp_to_cam.npy"
         )
-        return transform
     off = np.asarray(tcp_offset, dtype=float)
     rot, _ = cv2.Rodrigues(off[3:].reshape(3, 1))
     D = np.eye(4)

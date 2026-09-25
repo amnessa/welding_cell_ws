@@ -65,7 +65,10 @@ Services (all std_srvs/srv/Trigger; the reply's `message` says what happened)
     ros2 service call /icp_pose_refiner/start_tracking    std_srvs/srv/Trigger
         Pause / resume the Phase-2 loop (start needs a pose: run_icp first).
     ros2 service call /icp_pose_refiner/save_object       std_srvs/srv/Trigger
-        Freeze the tracked CAD at its refined pose into the SEPC (static_frame),
+        Freeze the tracked CAD into the SEPC (static_frame) at the ROBUST MEAN of
+        the last save_pose_window tracked poses (median translation, chordal-mean
+        rotation, jumps rejected; the spread is written as pose_stats into
+        assembly.json and printed) - keep the arm still for a few seconds first -
         write static_env.ply/.npy + assembly.json to <save_dir>, stop tracking,
         clear the latched model/scene clouds and the crop box. Reply: object
         number and SEPC size. One call per placed part.
@@ -373,6 +376,12 @@ class IcpPoseRefinerNode(Node):
         # Real-time tracking loop (Phase 2).
         self.declare_parameter('crop_margin_m', 0.03)
         self.declare_parameter('tracking_rate_hz', 10.0)
+        # save_object averages the last N tracked poses (robust: median translation,
+        # chordal-mean rotation, jumps rejected) instead of taking the last one: on a
+        # stationary part the tracker wandered 5 mm std / 24 mm range / 6 deg
+        # (pose_jitter_probe, 2026-09-25). Keep the arm still while the window fills.
+        self.declare_parameter('save_pose_window', 30)
+        self.declare_parameter('save_pose_min', 5)
         self.declare_parameter('auto_track', True)
         self.declare_parameter('lost_fitness', 0.1)
         self.declare_parameter('min_scene_points', 50)
@@ -448,6 +457,8 @@ class IcpPoseRefinerNode(Node):
                 'the NumPy voxel/normals path (slower). pip install open3d.')
         self._crop_margin = float(self.get_parameter('crop_margin_m').value)
         self._track_hz = float(self.get_parameter('tracking_rate_hz').value)
+        from collections import deque
+        self._pose_window = deque(maxlen=max(1, int(self.get_parameter('save_pose_window').value)))
         self._auto_track = bool(self.get_parameter('auto_track').value)
         self._lost_fitness = float(self.get_parameter('lost_fitness').value)
         self._min_scene = int(self.get_parameter('min_scene_points').value)
@@ -1199,6 +1210,8 @@ class IcpPoseRefinerNode(Node):
             anderson_depth=self._anderson, robust=self._robust)
 
         self._current_pose = T                  # seed the tracker (Phase 2)
+        self._pose_window.clear()
+        self._pose_window.append(T.copy())
         self._publish(frame_id, scene, T)
         self._log_metrics(idx, det, init, T, info, len(scene))
         return True, (f'det #{idx} refined: fitness={info["fitness"]:.3f} '
@@ -1379,6 +1392,7 @@ class IcpPoseRefinerNode(Node):
             return
 
         self._current_pose = T
+        self._pose_window.append(T.copy())
         self._publish(frame_id, scene, T)
         self.get_logger().info(
             f'track: fitness={info["fitness"]:.3f} rmse={info["inlier_rmse"]:.4f}m '
@@ -1540,8 +1554,25 @@ class IcpPoseRefinerNode(Node):
             return False, (f'TF {self._static_frame}<-{frame_id} unavailable; '
                            'cannot place the object in the static frame')
 
-        # CAD model at its refined pose: model -> camera -> static_frame.
-        T = self._current_pose
+        # CAD model at its refined pose: model -> camera -> static_frame. The pose is
+        # the robust mean of the tracking window, not the last tick (see the
+        # save_pose_window parameter); its spread is recorded next to it.
+        from admittance_control.pose_stats import robust_pose_mean
+        min_n = int(self.get_parameter('save_pose_min').value)
+        pose_stats = None
+        if len(self._pose_window) >= min_n:
+            T, pose_stats = robust_pose_mean(list(self._pose_window))
+            self.get_logger().info(
+                f"save_object: pose = robust mean of {pose_stats['n_used']}/{pose_stats['n']} "
+                f"tracked poses; spread std {np.round(pose_stats['std_mm'], 1)} mm, "
+                f"{pose_stats['std_deg']:.2f} deg (range {np.round(pose_stats['range_mm'], 1)} mm, "
+                f"max {pose_stats['max_deg']:.1f} deg)")
+        else:
+            T = self._current_pose
+            self.get_logger().warn(
+                f'save_object: only {len(self._pose_window)} tracked pose(s) in the window '
+                f'(< save_pose_min={min_n}); saving the last pose unaveraged - let tracking '
+                f'run a few seconds before saving')
         model_cam = self._model @ T[:3, :3].T + T[:3, 3]
         model_static = model_cam @ T_sc[:3, :3].T + T_sc[:3, 3]
         pose_static = T_sc @ T                  # final model->static 6D pose
@@ -1551,13 +1582,15 @@ class IcpPoseRefinerNode(Node):
         self._sepc_tree = _cKDTree(self._sepc) if _cKDTree is not None else None
         self._saved.append({'model': self._model_name,
                             'n_points': int(len(model_static)),
-                            'pose_static': pose_static.tolist()})
+                            'pose_static': pose_static.tolist(),
+                            'pose_stats': pose_stats})
 
         self._publish_sepc()
         note = self._persist_sepc()
 
         self._tracking = False                  # ready for the next object
         self._current_pose = None
+        self._pose_window.clear()
         # The part now lives in the SEPC (static frame). The green model cloud and
         # the scene crop were latched in the CAMERA frame at their last stamp: with
         # the eye-in-hand camera moving on, RViz keeps re-placing that old cloud with
@@ -1573,7 +1606,10 @@ class IcpPoseRefinerNode(Node):
             f'+{len(model_static)} pts -> {len(self._sepc)} total. {note} '
             'Tracking cleared; trigger the next object and ~/run_icp -- its CAD is '
             'selected from the classifier automatically.')
-        return True, (f'object #{n} ({self._model_name}) saved into SEPC '
+        spread = ('' if pose_stats is None else
+                  f" pose = mean of {pose_stats['n_used']}/{pose_stats['n']} ticks, std "
+                  f"{np.round(pose_stats['std_mm'], 1)} mm / {pose_stats['std_deg']:.2f} deg;")
+        return True, (f'object #{n} ({self._model_name}) saved into SEPC;{spread} '
                       f'({len(self._sepc)} pts total); tracking cleared')
 
     def _publish_sepc(self):

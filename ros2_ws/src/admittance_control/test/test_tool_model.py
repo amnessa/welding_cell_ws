@@ -23,7 +23,7 @@ from admittance_control.kinematics import ur5e_fk  # noqa: E402
 
 def test_package_config_loads_with_tip_and_calibrated_camera():
     tool = load_tool_model()
-    assert tool.tip_tool0 == pytest.approx([0.0, 0.0, 0.18378])
+    assert tool.tip_tool0 == pytest.approx([0.00135, -0.00017, 0.18173])
     assert tool.touch_force_n == pytest.approx(1.5)
     names = [p["name"] for p in tool.primitives]
     assert {"pen", "holder_body", "flange_adapter", "camera_arm"} <= set(names)

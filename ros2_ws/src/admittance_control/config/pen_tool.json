@@ -6,8 +6,9 @@
     "OPPOSITE the end-effector connector. Every primitive is a CONSERVATIVE envelope of the",
     "holder (penholder_assembly.step): correct it against the RViz markers",
     "(tool_model_marker_node.py) and against a touch-off for the tip.",
-    "pen_tip_m: the pendant's 4-point TCP calibration, 2026-09-24, CAP OFF: (0, 0, 183.78) mm",
-    "  in the flange frame (with the cap: 192.5 - not used). The planner's FK is the nominal",
+    "pen_tip_m: the pendant's 4-point TCP calibration, 2026-09-25 (better point in the",
+    "  workspace), CAP OFF: (1.35, -0.17, 181.73) mm in the flange frame. Previous: 2026-09-24",
+    "  (0, 0, 183.78); with the cap 192.5 - not used. The planner's FK is the nominal",
     "  UR5e chain; the robot's is factory-calibrated: ~3 mm apart at the tip (tcp_offset_probe",
     "  read 2.9, -0.9, 182.5 against the pendant's 0, 0, 183.78) - the known pen-side error.",
     "pen capsule: its end caps are round, so p1 sits one radius short of the tip and the cap",
@@ -21,7 +22,7 @@
   ],
   "version": "pen_tool-0.1",
   "parent_frame": "tool0",
-  "pen_tip_m": [0.0, 0.0, 0.18378],
+  "pen_tip_m": [0.00135, -0.00017, 0.18173],
   "touch_force_n": 1.5,
   "standoff_m": 0.035,
   "primitives": [
@@ -42,7 +43,7 @@
       "name": "pen",
       "type": "capsule",
       "p0": [0.0, 0.0, 0.12],
-      "p1": [0.0, 0.0, 0.17578],
+      "p1": [0.00135, -0.00017, 0.17373],
       "radius": 0.008
     },
     {

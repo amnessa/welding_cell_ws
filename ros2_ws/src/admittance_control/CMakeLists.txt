@@ -88,6 +88,7 @@ install(
     admittance_control/collision.py
     admittance_control/tack_reach.py
     admittance_control/marking.py
+    admittance_control/pose_stats.py
   DESTINATION ${PYTHON_INSTALL_DIR}/${PROJECT_NAME}
 )
 

@@ -21,11 +21,19 @@ now the object of work, and it is measurable, not a guess.
    lateral error that TURNS with the wrist is the pen TCP (redo the pendant's 4-point
    TCP with more spread, or the touch-off script); one that STAYS is the camera or the
    registration.
-2. **Registration noise floor.** `pose_jitter_probe.py` for 30 s with everything
-   stationary: position std / orientation swing of the ICP pose. If it is millimetres or
-   tenths of a degree (a 0.5° swing is 2 mm at 250 mm), make `save_object` average N
-   tracked poses (small change in the ICP node) and look at the D435i depth noise at the
-   working distance.
+2. **Registration noise floor — MEASURED 2026-09-25:** with part and arm stationary the
+   ICP pose had position std (5.2, 2.5, 3.0) mm, range up to 24 mm, orientation std 1.4°
+   with swings to 6.4° (28 mm at 250 mm). That alone covers the 8 mm. DONE the same day:
+   `save_object` now takes the robust mean of the last `save_pose_window` (30) tracked
+   poses (median translation, chordal rotation, jumps rejected) and writes the spread
+   as `pose_stats` into `assembly.json` (`admittance_control/pose_stats.py`). Keep the
+   arm still a few seconds before saving. STILL OPEN: why the tracker wanders that much
+   on a stationary scene - candidates: the in-plane slide of a plate is a flat valley
+   for point-to-plane ICP (each tick settles elsewhere), D435i depth noise at the
+   working distance, the Welsch nu re-estimation, the crop/background subtraction
+   changing the point set tick to tick. Log fitness/rmse alongside the pose, try a
+   larger `max_corr_dist` decay or a fixed nu, and compare the jitter of the base plate
+   vs the standing plate (the flat plate should be the worse one if it is the slide).
 3. **Camera rotation.** The recalibrated extrinsic's board-in-base rotation spread was
    3.6°; a 1° rotation error is ~9 mm at 0.5 m - the right size for the residual.
    Recapture with 25–30 poses, the board larger or nearer (filling a third of the
@@ -50,6 +58,61 @@ now the object of work, and it is measurable, not a guess.
   from a flange touch if the parts ever sit low.
 - Dry-run / twin: the Isaac twin exposes joint commands as a topic, not the trajectory
   action - a small adapter would let the marking node run in the twin for real.
+
+## INVESTIGATION — FoundationPose real-time tracking, fused with the ICP
+
+**The idea.** The FoundationPose server has a tracking mode (`track_one`: after a
+`register`, it refines the pose frame to frame from the previous pose, ~20–30 Hz on the
+server's GPU) that we never use - we call it once per part for the seed, then our own
+ICP tracks. A second, independent pose stream could (a) re-seed the ICP when it drifts
+or loses the crop, and (b) be fused with it. The fusion the user has in mind is an
+EKF on the pose with the ICP and FoundationPose as two measurements.
+
+**What it can and cannot fix - decide this first.** A filter removes NOISE (the jiggle),
+never BIAS. The 8 mm lateral error is a bias until shown otherwise (roll test, jitter
+probe: items 1–2 of NEXT). If the jitter probe reports sub-millimetre position noise,
+fusion buys nothing for the marks and this item drops to LATER. If it reports
+millimetres, averaging N ICP poses at `save_object` is the cheap first fix, and fusion
+is the next step only if FoundationPose's own noise is measured to be smaller or
+independent (different failure modes: FP uses RGB and the render-and-compare, so on the
+textureless MDF plates its in-plane slide may be as ambiguous as the ICP's - measure it).
+For STATIONARY parts (our case at marking time) the "EKF" is a recursive weighted
+average of a constant with two sensors; the gain IS the ratio of the measured
+covariances, so without the two noise measurements there is nothing to tune. The EKF
+earns its name only for moving parts (a part being pushed into place), which is a
+different use case - nice, later.
+
+**The network problem, solved without ROS across Tailscale.** The server lives in
+another network; the bridge already talks to it with HTTP POSTs over the Tailscale IP.
+Tracking needs a stream, not a round trip per frame with a fresh registration:
+
+  1. Server (`fp_server.py`): three endpoints. `POST /track/start {object, pose_init}`
+     builds a tracker session from the last registered pose (or the ICP's pose, sent
+     in); `POST /track/step` with one RGB (JPEG) + depth (PNG16, mm) frame returns the
+     refined pose and a score; `POST /track/stop`. One session per object; the server
+     keeps the previous pose. Keep-alive HTTP is enough: a 640×480 JPEG (~50 KB) + depth
+     PNG (~150–250 KB) at 5–10 Hz is ~1–2 MB/s, and Tailscale is WireGuard, so on the
+     same LAN the round trip is a few ms, over WAN tens of ms. 5 Hz is plenty for a part
+     that does not move; the ICP stays the fast loop.
+  2. Bridge (`foundationpose_bridge_node.py`): a `~/start_tracking` service that starts
+     the session and a timer that posts frames and publishes the returned pose as
+     `/perception/fp/pose` (PoseStamped, camera frame, with the score) - the mirror of
+     `/perception/icp/refined_pose`.
+  3. Measure before fusing: `pose_jitter_probe.py -p topic:=/perception/fp/pose` next to
+     the ICP's; log both for 30 s stationary and during a slow hand push; compare noise,
+     latency and the BIAS between them (mean offset; that is the number that matters).
+  4. Then, if justified: a `pose_fusion_node.py` - state = pose (6, twist about the
+     current estimate), process = constant pose (stationary) or constant velocity
+     (moving), measurements = ICP pose with its measured covariance and FP pose with
+     its; gate each measurement by Mahalanobis distance so a FP jump (a wrong
+     re-registration) is rejected rather than averaged in; publish the fused pose and
+     let `save_object` take it. The ICP node takes the fused pose as its next seed
+     (robustness against losing the crop) - one line where it reads `_current_pose`.
+  Alternative to the stream: run FoundationPose's tracker on this laptop's RTX 4060
+  (track_one is light: the heavy part is the registration); then no network at all.
+  Worth a try if the docker builds here.
+
+**Order.** Not before NEXT 1–3. Then step 3 (the two probes) decides steps 1–2 vs LATER.
 
 ## OPEN — perception side (`seam_two_modes_plan.md`)
 

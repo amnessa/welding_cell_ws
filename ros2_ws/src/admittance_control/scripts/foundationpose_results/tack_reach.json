@@ -27,7 +27,8 @@
    20.0
   ],
   "table_z_m": null,
-  "source": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/config/marking.json"
+  "source": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/config/marking.json",
+  "roll_list_deg": null
  },
  "branch_signature": [
   -1,
@@ -43,16 +44,17 @@
    "min_clearance_m": null,
    "score": null,
    "n_tacks": 2,
-   "reason": "tack pose in collision (holder_body x part_B, 0.5 mm); best over all tilts/rolls 0.5 mm (holder_body x part_B) - a longer pen reach or a slimmer holder is what raises it, not the orientation"
+   "reason": "tack pose in collision (holder_body x part_B, 2.0 mm); best over all tilts/rolls 2.7 mm (holder_body x part_B) - a longer pen reach or a slimmer holder is what raises it, not the orientation"
   },
   {
    "seam_id": 1,
-   "ok": true,
-   "roll_deg": 330.0,
-   "tilt_deg": 0.0,
-   "min_clearance_m": 0.0056,
-   "score": 3.099247400415245,
-   "n_tacks": 2
+   "ok": false,
+   "roll_deg": null,
+   "tilt_deg": null,
+   "min_clearance_m": null,
+   "score": null,
+   "n_tacks": 2,
+   "reason": "tack pose in collision (holder_body x part_A, 0.0 mm); best over all tilts/rolls 0.6 mm (holder_body x part_B) - a longer pen reach or a slimmer holder is what raises it, not the orientation"
   }
  ],
  "tacks": [
@@ -61,111 +63,55 @@
    "seam_id": 0,
    "tack_no": 1,
    "ok": false,
-   "reason": "tack pose in collision (holder_body x part_B, 0.5 mm)",
+   "reason": "tack pose in collision (holder_body x part_B, 2.0 mm)",
    "roll_deg": 0.0,
    "tilt_deg": 0.0,
    "q_app": null,
    "q_tack": null,
    "clearance_app_m": null,
-   "clearance_tack_m": 0.00045759169540234707,
+   "clearance_tack_m": 0.001994463489450808,
    "worst_pair_app": "",
    "worst_pair_tack": "holder_body x part_B",
    "pen_gap_m": null,
    "lin_min_clearance_m": null,
    "joint_step_from_prev_rad": 0.0,
    "point_m": [
-    -0.6141599123216941,
-    0.02797594149468719,
-    -0.09185870409017989
+    -0.5731504564085418,
+    0.034885767271496365,
+    -0.09812329902311953
    ],
    "axis_m": [
-    -0.23243228751590708,
-    0.7435908164399543,
-    -0.6269353470863523
+    -0.0832403775731418,
+    -0.6437686347911905,
+    -0.7606792914235063
    ]
   },
   {
    "tack_id": 2,
    "seam_id": 1,
    "tack_no": 1,
-   "ok": true,
-   "reason": "ok",
-   "roll_deg": 330.0,
+   "ok": false,
+   "reason": "tack pose in collision (holder_body x part_A, 0.0 mm)",
+   "roll_deg": 0.0,
    "tilt_deg": 0.0,
-   "q_app": [
-    -0.14210471701157912,
-    -2.3852543785805427,
-    -1.5119619489266525,
-    -1.108038405572587,
-    2.191598801302731,
-    -0.812352867300689
-   ],
-   "q_tack": [
-    -0.11223150264521298,
-    -2.4136292948165416,
-    -1.5572713611340248,
-    -1.0143140288603638,
-    2.200239105469174,
-    -0.7773739382272777
-   ],
-   "clearance_app_m": 0.02403211456178407,
-   "clearance_tack_m": 0.005608423058453951,
-   "worst_pair_app": "holder_body x part_B",
-   "worst_pair_tack": "holder_body x part_B",
-   "pen_gap_m": 0.0,
-   "lin_min_clearance_m": 0.009950559309154894,
+   "q_app": null,
+   "q_tack": null,
+   "clearance_app_m": null,
+   "clearance_tack_m": 0.0,
+   "worst_pair_app": "",
+   "worst_pair_tack": "holder_body x part_A",
+   "pen_gap_m": null,
+   "lin_min_clearance_m": null,
    "joint_step_from_prev_rad": 0.0,
    "point_m": [
-    -0.6163371452960109,
-    0.03571769780078112,
-    -0.0914536512373006
+    -0.567279154830957,
+    0.025895721307951883,
+    -0.09838718265362717
    ],
    "axis_m": [
-    0.15050263129044955,
-    -0.6093271933425757,
-    -0.7785045468254572
-   ]
-  },
-  {
-   "tack_id": 3,
-   "seam_id": 1,
-   "tack_no": 2,
-   "ok": true,
-   "reason": "ok",
-   "roll_deg": 330.0,
-   "tilt_deg": 0.0,
-   "q_app": [
-    -0.28460150224281294,
-    -2.160881163984902,
-    -1.9679252999727026,
-    -0.969249408536714,
-    2.144832925899425,
-    -0.9757060492202652
-   ],
-   "q_tack": [
-    -0.24895387497078308,
-    -2.204134488944862,
-    -2.0176262088296166,
-    -0.8543605883412133,
-    2.1576144463741738,
-    -0.9358830464771625
-   ],
-   "clearance_app_m": 0.023996574840037407,
-   "clearance_tack_m": 0.0056130901253637,
-   "worst_pair_app": "holder_body x part_B",
-   "worst_pair_tack": "holder_body x part_B",
-   "pen_gap_m": 0.0,
-   "lin_min_clearance_m": 0.00995509743604437,
-   "joint_step_from_prev_rad": 0.4559633510460501,
-   "point_m": [
-    -0.43768612580917826,
-    0.08690267498876902,
-    -0.09697828175270205
-   ],
-   "axis_m": [
-    0.15050263129044955,
-    -0.6093271933425757,
-    -0.7785045468254572
+    0.12691628073257757,
+    0.7502639181742222,
+    -0.6488422849744564
    ]
   }
  ],

@@ -1,0 +1,26 @@
+{
+ "written": "2026-09-25 11:38:55",
+ "samples": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/notebooks/handeye_samples.npz",
+ "n_samples": 18,
+ "solver": "park_martin",
+ "tcp_offset_composed": [
+  0.00135,
+  -0.00017,
+  0.18173,
+  0.0,
+  0.0,
+  0.0
+ ],
+ "frame": "tool0",
+ "board_in_base_std_mm": [
+  3.7977544902704814,
+  3.164996254626375,
+  4.861902084777655
+ ],
+ "rotation_spread_deg": 4.780767949537797,
+ "camera_origin_mm": [
+  16.406095410034084,
+  84.94318526555331,
+  52.91483467656766
+ ]
+}

@@ -31,6 +31,8 @@ from __future__ import annotations
 
 import argparse
 import itertools
+import json
+import time
 from pathlib import Path
 
 import numpy as np
@@ -142,7 +144,16 @@ def main() -> int:
     if args.write:
         out = Path(args.write); out.parent.mkdir(parents=True, exist_ok=True)
         np.save(out, X)
-        print(f"wrote {out}")
+        std, rng_, rot, _ = residual(park_martin(Rg, tg, Rb, tb), Rg, tg, Rb, tb)
+        side = out.with_suffix(".json")
+        side.write_text(json.dumps({
+            "written": time.strftime("%Y-%m-%d %H:%M:%S"), "samples": str(Path(args.samples).resolve()),
+            "n_samples": int(n), "solver": "park_martin",
+            "tcp_offset_composed": None if args.tcp_offset is None else list(map(float, args.tcp_offset)),
+            "frame": "tool0" if args.tcp_offset is not None else "pendant TCP at capture (NOT tool0)",
+            "board_in_base_std_mm": [float(v) for v in std], "rotation_spread_deg": float(rot),
+            "camera_origin_mm": [float(v) for v in X[:3, 3] * 1000]}, indent=1))
+        print(f"wrote {out} (+ {side.name}: what was composed, from which samples, how good)")
     return 0
 
 
