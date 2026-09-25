@@ -34,6 +34,16 @@ now the object of work, and it is measurable, not a guess.
    changing the point set tick to tick. Log fitness/rmse alongside the pose, try a
    larger `max_corr_dist` decay or a fixed nu, and compare the jitter of the base plate
    vs the standing plate (the flat plate should be the worse one if it is the slide).
+   The averaging respects the workflow "register → move the part by hand → save":
+   only the ticks since the part came to rest are averaged (`stationary_tail`).
+   If the wander is the solver and not the sensor, the ICP variants worth trying, in
+   order of effort: (a) a boundary/outline term - point-to-point on the depth-edge
+   points of the crop, which is what pins a plate's in-plane slide and rotation that
+   point-to-plane cannot see; (b) symmetric ICP (Rusinkiewicz 2019: the symmetric
+   objective converges wider and steadier on planar geometry, a small change to the
+   residual); (c) generalized ICP (plane-to-plane, covariance-weighted). The current
+   solver is Fast & Robust ICP (Welsch + Anderson) on point-to-plane; keep it as the
+   inner loop and add (a) first.
 3. **Camera rotation.** The recalibrated extrinsic's board-in-base rotation spread was
    3.6°; a 1° rotation error is ~9 mm at 0.5 m - the right size for the residual.
    Recapture with 25–30 poses, the board larger or nearer (filling a third of the

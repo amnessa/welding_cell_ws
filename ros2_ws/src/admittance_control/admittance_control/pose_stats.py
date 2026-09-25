@@ -6,9 +6,14 @@ was a single draw from that distribution. `robust_pose_mean` gives the estimate 
 window supports and, as importantly, its spread - which goes into `assembly.json` next
 to the pose it qualifies.
 
-    T_mean, stats = robust_pose_mean(list_of_4x4)
+    tail = stationary_tail(window)               # only the current resting place
+    T_mean, stats = robust_pose_mean(tail)
     stats = {"n": 30, "n_used": 27, "std_mm": [..3], "std_deg": 0.4, "range_mm": [..3],
              "max_deg": 1.1}
+
+Tracking may follow a part being MOVED by hand before it is saved (register, push it
+into place, save): `stationary_tail` keeps only the newest run of ticks that agree with
+the newest pose, so the mean never blends the place the part came from.
 
 Method: per-axis median translation and a chordal-mean rotation (SVD of the summed
 rotation matrices) over the INLIERS; inliers are the poses within `k` MADs of the
@@ -37,6 +42,37 @@ def chordal_mean(Rs: Sequence[np.ndarray]) -> np.ndarray:
 def rotation_angle_deg(Ra: np.ndarray, Rb: np.ndarray) -> float:
     c = np.clip((np.trace(Ra.T @ Rb) - 1.0) / 2.0, -1.0, 1.0)
     return float(np.degrees(np.arccos(c)))
+
+
+def stationary_tail(poses: Sequence[np.ndarray], move_mm: float = 8.0, move_deg: float = 3.0,
+                    min_agree: int = 3) -> list[np.ndarray]:
+    """The most recent run of poses that describe ONE resting place.
+
+    Tracking is allowed to follow a part being moved by hand before it is saved, so a
+    window of the last N ticks may hold two resting places and the motion between them.
+    Walking back from the newest pose, a tick belongs to the tail while it stays within
+    `move_mm` / `move_deg` of the running median of the tail; the first tick that does
+    not ends it. Single jump ticks are tolerated (the median is what they are compared
+    against) - a run of `min_agree` disagreeing ticks is a move.
+    """
+    Ts = [np.asarray(T, float).reshape(4, 4) for T in poses]
+    if not Ts:
+        return []
+    tail = [Ts[-1]]
+    disagree = 0
+    for T in reversed(Ts[:-1]):
+        t_med = np.median(np.array([x[:3, 3] for x in tail]), axis=0)
+        R_ref = chordal_mean([x[:3, :3] for x in tail])
+        if (np.linalg.norm(T[:3, 3] - t_med) * 1000.0 <= move_mm
+                and rotation_angle_deg(R_ref, T[:3, :3]) <= move_deg):
+            tail.append(T)
+            disagree = 0
+        else:
+            disagree += 1
+            if disagree >= min_agree:
+                break
+    tail.reverse()
+    return tail
 
 
 def robust_pose_mean(poses: Sequence[np.ndarray], k_mad: float = 3.5,

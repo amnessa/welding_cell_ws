@@ -66,9 +66,11 @@ Services (all std_srvs/srv/Trigger; the reply's `message` says what happened)
         Pause / resume the Phase-2 loop (start needs a pose: run_icp first).
     ros2 service call /icp_pose_refiner/save_object       std_srvs/srv/Trigger
         Freeze the tracked CAD into the SEPC (static_frame) at the ROBUST MEAN of
-        the last save_pose_window tracked poses (median translation, chordal-mean
-        rotation, jumps rejected; the spread is written as pose_stats into
-        assembly.json and printed) - keep the arm still for a few seconds first -
+        the tracked poses since the part came to rest (median translation,
+        chordal-mean rotation, jumps rejected; earlier resting places in the window
+        are excluded, so moving the part by hand before saving is fine; the spread
+        is written as pose_stats into assembly.json and printed) - hold still a few
+        seconds before saving -
         write static_env.ply/.npy + assembly.json to <save_dir>, stop tracking,
         clear the latched model/scene clouds and the crop box. Reply: object
         number and SEPC size. One call per placed part.
@@ -376,10 +378,11 @@ class IcpPoseRefinerNode(Node):
         # Real-time tracking loop (Phase 2).
         self.declare_parameter('crop_margin_m', 0.03)
         self.declare_parameter('tracking_rate_hz', 10.0)
-        # save_object averages the last N tracked poses (robust: median translation,
-        # chordal-mean rotation, jumps rejected) instead of taking the last one: on a
-        # stationary part the tracker wandered 5 mm std / 24 mm range / 6 deg
-        # (pose_jitter_probe, 2026-09-25). Keep the arm still while the window fills.
+        # save_object averages the ticks since the part came to REST (robust: median
+        # translation, chordal-mean rotation, jumps rejected) instead of taking the last
+        # one: on a stationary part the tracker wandered 5 mm std / 24 mm range / 6 deg
+        # (pose_jitter_probe, 2026-09-25). Moving the part by hand between run_icp and
+        # save_object stays allowed: only the newest resting place is averaged.
         self.declare_parameter('save_pose_window', 30)
         self.declare_parameter('save_pose_min', 5)
         self.declare_parameter('auto_track', True)
@@ -1557,22 +1560,26 @@ class IcpPoseRefinerNode(Node):
         # CAD model at its refined pose: model -> camera -> static_frame. The pose is
         # the robust mean of the tracking window, not the last tick (see the
         # save_pose_window parameter); its spread is recorded next to it.
-        from admittance_control.pose_stats import robust_pose_mean
+        from admittance_control.pose_stats import robust_pose_mean, stationary_tail
         min_n = int(self.get_parameter('save_pose_min').value)
         pose_stats = None
-        if len(self._pose_window) >= min_n:
-            T, pose_stats = robust_pose_mean(list(self._pose_window))
+        # the part may have been moved by hand since it was registered: average only
+        # the ticks since it came to rest
+        tail = stationary_tail(list(self._pose_window))
+        if len(tail) >= min_n:
+            T, pose_stats = robust_pose_mean(tail)
+            pose_stats['window'] = int(len(self._pose_window))
             self.get_logger().info(
                 f"save_object: pose = robust mean of {pose_stats['n_used']}/{pose_stats['n']} "
-                f"tracked poses; spread std {np.round(pose_stats['std_mm'], 1)} mm, "
-                f"{pose_stats['std_deg']:.2f} deg (range {np.round(pose_stats['range_mm'], 1)} mm, "
-                f"max {pose_stats['max_deg']:.1f} deg)")
+                f"ticks at rest (window {len(self._pose_window)}); spread std "
+                f"{np.round(pose_stats['std_mm'], 1)} mm, {pose_stats['std_deg']:.2f} deg "
+                f"(range {np.round(pose_stats['range_mm'], 1)} mm, max {pose_stats['max_deg']:.1f} deg)")
         else:
             T = self._current_pose
             self.get_logger().warn(
-                f'save_object: only {len(self._pose_window)} tracked pose(s) in the window '
-                f'(< save_pose_min={min_n}); saving the last pose unaveraged - let tracking '
-                f'run a few seconds before saving')
+                f'save_object: only {len(tail)} tick(s) at rest (window {len(self._pose_window)}, '
+                f'save_pose_min={min_n}) - the part was moving or tracking just started; saving '
+                f'the last pose unaveraged. Hold still a few seconds, then save.')
         model_cam = self._model @ T[:3, :3].T + T[:3, 3]
         model_static = model_cam @ T_sc[:3, :3].T + T_sc[:3, 3]
         pose_static = T_sc @ T                  # final model->static 6D pose

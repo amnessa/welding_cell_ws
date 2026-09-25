@@ -11,7 +11,7 @@ import pytest
 PKG = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PKG))
 
-from admittance_control.pose_stats import chordal_mean, robust_pose_mean  # noqa: E402
+from admittance_control.pose_stats import chordal_mean, robust_pose_mean, stationary_tail  # noqa: E402
 
 
 def _rot(axis, deg):
@@ -49,3 +49,27 @@ def test_single_pose_and_chordal_mean_are_sane():
     assert np.allclose(R, np.eye(3), atol=1e-9)
     with pytest.raises(ValueError):
         robust_pose_mean([])
+
+
+def test_stationary_tail_excludes_the_place_the_part_came_from():
+    rng = np.random.default_rng(2)
+    def at(t, deg, n):
+        out = []
+        for _ in range(n):
+            T = np.eye(4); T[:3, :3] = _rot([0, 0, 1], deg + rng.normal(scale=0.3))
+            T[:3, 3] = np.asarray(t) + rng.normal(scale=0.0015, size=3); out.append(T)
+        return out
+    before = at([0.5, 0.1, 0.03], 0.0, 15)                      # first resting place
+    moving = [np.eye(4) for _ in range(4)]
+    for k, T in enumerate(moving):                               # sliding 6 cm in 4 ticks
+        T[:3, 3] = [0.5 + 0.015 * (k + 1), 0.1, 0.03]
+    after = at([0.56, 0.1, 0.03], 0.0, 12)                       # second resting place
+    tail = stationary_tail(before + moving + after)
+    assert 10 <= len(tail) <= 13                                 # the 12 at rest (+ maybe the last slide tick)
+    T_mean, st = robust_pose_mean(tail)
+    assert np.linalg.norm(T_mean[:3, 3] - [0.56, 0.1, 0.03]) < 1.5e-3
+    # a single jump tick in the middle of a rest does not end the tail
+    jump = at([0.56, 0.1, 0.03], 0.0, 1); jump[0][:3, 3] += [0.02, 0, 0]
+    tail2 = stationary_tail(after[:6] + jump + after[6:])
+    assert len(tail2) >= 12
+    assert stationary_tail([]) == []
