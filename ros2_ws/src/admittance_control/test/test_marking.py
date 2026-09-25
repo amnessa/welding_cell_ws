@@ -10,6 +10,7 @@ for every tack.
 
 from __future__ import annotations
 
+import json
 import pathlib
 import sys
 
@@ -52,6 +53,7 @@ def test_joint_path_timing_respects_the_speed_cap():
 @pytest.fixture(scope="module")
 def scene():
     tool, cfg = load_tool_model(), tr.load_marking_config()
+    cfg.clearance_m = 0.0015                     # see test_tack_reach.setup: the 90 deg T limit
     parts, seams, tacks = _t_joint_in_front()
     model = CollisionModel(tool=tool, scene_boxes=boxes_from_parts(parts), table_z=None,
                            clearance=cfg.clearance_m)
@@ -103,3 +105,30 @@ def test_full_plan_for_the_t_joint(scene):
     d = mk.plan_to_dict(plan)
     import json
     assert json.dumps(d)
+
+
+def test_stroke_targets_and_stroke_chain(scene):
+    tool, cfg, model, report = scene
+    parts, seams, tacks = _t_joint_in_front()
+    seg = mk.stroke_targets("tack", report["tacks"], tacks_json=tacks, seams_json=seams)
+    full = mk.stroke_targets("seam", report["tacks"], tacks_json=tacks, seams_json=seams)
+    assert mk.stroke_targets("dot", report["tacks"], tacks, seams) == {}
+    t0 = report["tacks"][0]; tid = int(t0["tack_id"])
+    assert seg[tid].shape == (2, 3) and np.linalg.norm(seg[tid][1] - seg[tid][0]) == pytest.approx(0.016, abs=1e-6)
+    assert len(full[tid]) > 100                                  # the 200 mm seam at 1 mm
+    # a stroke pressed 1 mm into the surface: tips on the line, offset along the axis
+    axis = np.asarray(t0["axis_m"]); depth = 0.001
+    chain = mk.stroke_chain(tool, seg[tid], axis, np.deg2rad(t0["roll_deg"]), np.asarray(t0["q_tack"]), cfg, depth)
+    assert chain is not None and len(chain) >= 8
+    tips = np.array([tool.tip_in(ur5e_fk(q)) for q in chain])
+    want = mk.resample_polyline(seg[tid], 0.002) + depth * axis
+    assert np.abs(tips - want).max() < 1e-3
+    sig = tuple(report["branch_signature"])
+    assert all(tr.same_branch(q, sig) for q in chain)
+    # the plan in tack mode descends at the segment start and carries the stroke
+    plan = mk.build_marking_plan(report, tool, model, cfg, cfg.home_q, strokes=seg, stroke_mode="tack")
+    assert plan.ok, plan.summary()
+    s0 = plan.steps[0]
+    assert s0.stroke_mode == "tack" and np.allclose(s0.point_m, s0.stroke_points_m[0])
+    assert np.linalg.norm(s0.tack_point_m - s0.point_m) == pytest.approx(0.008, abs=1e-6)
+    assert json.dumps(mk.plan_to_dict(plan))

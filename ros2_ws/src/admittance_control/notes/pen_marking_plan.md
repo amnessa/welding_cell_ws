@@ -335,6 +335,30 @@ floor), hand-eye recapture with wrist rolls (rotation spread 3.6° → ~9 mm at 
 the right size), calibrated FK, then a pen probe that measures the root laterally.
 `tack_reachability.py --roll/--tilt` force one orientation for the roll test.
 
+## Milestone 6 — the stroke (C2), built 2026-09-25
+
+`stroke_mode` on the marking node: `dot` (as before), `tack` (each tack draws its own
+segment p0→p1 from `welding_tacks.json`), `seam` (the whole weldable polyline from
+`welding_seams.json`, once per seam). The stroke is **contact-referenced**: the descent
+finds the surface at the stroke's start, so the stroke runs at (measured contact
+depth + `press_m`) along the pen, not at the registered depth; it is drawn in
+`stroke_chunk_m` chunks (10 mm) as successive trajectory goals, and between chunks the
+depth moves by `depth_gain_m_per_n` × (hold force − mean force along the pen), clipped
+to `max_depth_step_m` - a first-order admittance at chunk rate, enough to follow a
+registration tilt of a few mm over a seam without Servo or a controller switch. Two
+chunks under `min_contact_force_n` mean the pen lifted off and stop the stroke. The
+force sign along the pen is read at the contact. Per chunk the depth and the mean
+force are recorded in `tack_marks.json` under `stroke`; the retract lifts straight back
+along the pen axis from wherever the pen is. Geometry in `marking.py`
+(`resample_polyline`, `line_chain`, `stroke_chain`, `stroke_targets`), tested on the
+T-joint; the force loop is the node's.
+
+**Holder limit tightened:** with the pendant tip at 181.7 mm the holder body clears the
+plates of a square T by 1.6 mm at best (61.7·sin 45° − 42) - the tests run at 1.5 mm,
+the bench config still says 3 mm. A longer pen (each +10 mm of reach = +7 mm) or a
+slimmer holder is now the way to square fillets; the bench T-joint's obtuse side (98°)
+still has ~9 mm.
+
 ## Milestones
 
 1. **Pen TCP + tool envelope.** DONE 2026-09-22 (see above); the touch-off refinement
@@ -346,7 +370,8 @@ the right size), calibrated FK, then a pen probe that measures the root laterall
    (`~/plan` with the arm at the scan home, tip path in RViz) is the last check before 5.
 5. **Real robot, one tack.** DONE 2026-09-24: contact depth −0.4 / −0.6 mm; lateral ~8 mm
    under attribution (todo.md).
-6. **Stroke marking (C2)** on the same assembly; compare the marks with the seam by photo.
+6. **Stroke marking (C2).** BUILT 2026-09-25 (above); first run on the bench pending:
+   `-p stroke_mode:=tack`, then `seam`; compare the drawn line with the real seam by photo.
 
 ## Open questions (they change the work)
 

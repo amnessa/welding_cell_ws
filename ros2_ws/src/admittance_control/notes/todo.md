@@ -58,10 +58,12 @@ now the object of work, and it is measurable, not a guess.
 
 ## OPEN — motion side (`pen_marking_plan.md`)
 
-- **C2 stroke: draw the weldable seams**, not only dots. The seam polylines are in
-  `welding_seams.json`; the admittance node's "Z of a plane" becomes "the pen axis";
-  or use UR's native `force_mode_controller` (loaded, inactive) to hold 1.5 N along the
-  pen while following the seam. Draw the full seam first, tacks as segments later.
+- **C2 stroke: DONE 2026-09-25** (`stroke_mode` dot | tack | seam on the marking node;
+  contact-referenced, chunked, force-corrected depth). Bench run pending. If the
+  chunk-rate depth loop is too coarse for long seams, UR's `force_mode_controller` is
+  the upgrade.
+- **Holder clearance:** the calibrated tip (181.7 mm) leaves 1.6 mm at the bisector of a
+  square T. A longer pen or a slimmer holder before the next square fillet.
 - Save the 4-point TCP result and the extrinsic together with a date in the tool config
   (provenance of every number the marks depend on).
 - Fixture boxes in the collision model the day clamps replace the magnets; table plane

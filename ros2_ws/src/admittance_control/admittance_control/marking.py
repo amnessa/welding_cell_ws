@@ -16,8 +16,11 @@ Per tack the four phases are:
     descend   the pen tip along its axis from the approach point to the tack point plus
               `overshoot_m`, as an IK chain seeded from the previous step, timed by the
               tip speed - the node cancels it at |F| > touch force
-    dwell     the mark
-    retract   the descent chain reversed, from wherever the pen stopped
+    dwell     the mark (dot), or
+    stroke    the tack segment / the seam polyline, contact-referenced: the measured
+              contact depth plus a press, drawn in short chunks with the depth
+              corrected between chunks from the force along the pen (`stroke_chain`)
+    retract   along the pen axis from wherever the pen stopped
 
 Contact depth: `(point - tip_contact) . axis` with `axis` the pen direction into the
 joint. Positive = the pen met the surface BEFORE the registered point (the real surface
@@ -121,6 +124,45 @@ def time_descent(chain: Sequence[np.ndarray], tool, v_tip: float = 0.02
     return out
 
 
+def resample_polyline(points: np.ndarray, step_m: float = 0.002) -> np.ndarray:
+    """Points along a polyline `step_m` apart (endpoints kept)."""
+    P = np.asarray(points, float).reshape(-1, 3)
+    if len(P) < 2:
+        return P.copy()
+    seg = np.linalg.norm(np.diff(P, axis=0), axis=1)
+    cum = np.concatenate([[0.0], np.cumsum(seg)])
+    n = max(2, int(np.ceil(cum[-1] / step_m)) + 1)
+    s = np.linspace(0.0, cum[-1], n)
+    return np.column_stack([np.interp(s, cum, P[:, k]) for k in range(3)])
+
+
+def line_chain(tool, tips: np.ndarray, axis: np.ndarray, roll_rad: float, q_seed: np.ndarray,
+               cfg: MarkingConfig, max_step_rad: float = 0.3) -> list[np.ndarray] | None:
+    """IK chain putting the tip on each of `tips` in turn with the pen along `axis`,
+    seeded from the previous solution (branch-locked); None if it breaks."""
+    axis = np.asarray(axis, float) / np.linalg.norm(axis)
+    chain = [np.asarray(q_seed, float)]
+    for tip in np.asarray(tips, float).reshape(-1, 3):
+        q = solve_on_branch(tool.T_tool0_for_tip(tip, axis, roll_rad), [chain[-1]], cfg, n_random=0)
+        if q is None:
+            return None
+        q = _unwrap_to(q, chain[-1])
+        if np.abs(q - chain[-1]).max() > max_step_rad:
+            return None
+        chain.append(q)
+    return chain[1:]
+
+
+def stroke_chain(tool, points_m: np.ndarray, axis: np.ndarray, roll_rad: float,
+                 q_seed: np.ndarray, cfg: MarkingConfig, depth_m: float,
+                 step_m: float = 0.002) -> list[np.ndarray] | None:
+    """The stroke: the tip along the polyline, pressed `depth_m` along the pen axis
+    (positive = into the surface, relative to the registered polyline)."""
+    axis = np.asarray(axis, float) / np.linalg.norm(axis)
+    tips = resample_polyline(points_m, step_m) + depth_m * axis
+    return line_chain(tool, tips, axis, roll_rad, q_seed, cfg)
+
+
 def contact_depth_m(point: np.ndarray, tip_contact: np.ndarray, axis: np.ndarray) -> float:
     axis = np.asarray(axis, float) / np.linalg.norm(axis)
     return float((np.asarray(point, float) - np.asarray(tip_contact, float)) @ axis)
@@ -143,6 +185,11 @@ class TackStep:
     transit_ok: bool = False
     descent_ok: bool = False
     reason: str = ""
+    #: the stroke to draw after contact (metres, base_link), empty for a dot; the descent
+    #: then targets its first point, and `tack_point_m` keeps the tack centre for the record
+    stroke_points_m: np.ndarray | None = None
+    stroke_mode: str = "dot"
+    tack_point_m: np.ndarray | None = None
 
 
 @dataclass
@@ -171,21 +218,61 @@ def visit_order(report_tacks: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
                   key=lambda t: (int(t["seam_id"]), int(t["tack_no"])))
 
 
+def stroke_targets(mode: str, report_tacks: Sequence[dict[str, Any]],
+                   tacks_json: Sequence[dict[str, Any]] | None = None,
+                   seams_json: Sequence[dict[str, Any]] | None = None) -> dict[int, np.ndarray]:
+    """What each tack draws, by tack id, in metres: nothing (`dot`), its own tack segment
+    p0->p1 from welding_tacks.json (`tack`), or its seam's whole weldable polyline from
+    welding_seams.json (`seam`; every tack of that seam draws it, so the visit order
+    gives one stroke per tack - the node skips repeats of a seam already drawn)."""
+    out: dict[int, np.ndarray] = {}
+    if mode == "dot":
+        return out
+    by_id = {int(t["id"]): t for t in (tacks_json or [])}
+    seams = {int(s["id"]): s for s in (seams_json or [])}
+    for t in report_tacks:
+        tid = int(t["tack_id"])
+        if mode == "tack" and tid in by_id:
+            out[tid] = np.array([by_id[tid]["p0_mm"], by_id[tid]["p1_mm"]], float) / 1000.0
+        elif mode == "seam" and int(t["seam_id"]) in seams:
+            out[tid] = np.asarray(seams[int(t["seam_id"])]["polyline_mm"], float) / 1000.0
+    return out
+
+
 def build_marking_plan(report: dict[str, Any], tool, model: CollisionModel,
                        cfg: MarkingConfig, q_now: np.ndarray, overshoot_m: float = 0.003,
-                       edge_resolution: float = 0.01) -> MarkingPlan:
+                       edge_resolution: float = 0.01, strokes: dict[int, np.ndarray] | None = None,
+                       stroke_mode: str = "dot") -> MarkingPlan:
     """Transit + descent for every reachable tack of a `tack_reach.json` report, in visit
-    order, starting from the robot's current joints and ending with a path home."""
+    order, starting from the robot's current joints and ending with a path home. With
+    `strokes` (from `stroke_targets`) the descent aims at the stroke's first point and the
+    step carries the polyline to draw after contact."""
     q_now = np.asarray(q_now, float)
     steps: list[TackStep] = []
     q_prev = q_now
     all_ok = True
+    strokes = strokes or {}
     for t in visit_order(report["tacks"]):
         step = TackStep(tack_id=int(t["tack_id"]), seam_id=int(t["seam_id"]),
                         tack_no=int(t["tack_no"]), point_m=np.asarray(t["point_m"], float),
                         axis_m=np.asarray(t["axis_m"], float), roll_deg=float(t["roll_deg"]),
                         tilt_deg=float(t.get("tilt_deg", 0.0)),
                         q_app=np.asarray(t["q_app"], float), q_tack=np.asarray(t["q_tack"], float))
+        step.tack_point_m = step.point_m.copy()
+        if step.tack_id in strokes and len(strokes[step.tack_id]) >= 2:
+            step.stroke_points_m = np.asarray(strokes[step.tack_id], float)
+            step.stroke_mode = stroke_mode
+            # descend at the stroke's start; its approach pose must exist on the branch
+            step.point_m = step.stroke_points_m[0].copy()
+            T_app = tool.T_tool0_for_tip(step.point_m - cfg.standoff_m * step.axis_m, step.axis_m,
+                                         np.deg2rad(step.roll_deg))
+            q_app = solve_on_branch(T_app, [step.q_app, cfg.home_q], cfg)
+            if q_app is None:
+                step.reason = "no approach pose over the stroke start"
+                all_ok = False
+                steps.append(step)
+                continue
+            step.q_app = _unwrap_to(q_app, step.q_app)
         path = transit_path(q_prev, step.q_app, model, edge_resolution)
         if path is None:
             step.reason = "no collision-free transit"
@@ -202,16 +289,23 @@ def build_marking_plan(report: dict[str, Any], tool, model: CollisionModel,
             # The chain must stay clear (except for the pen meeting the part) up to the
             # tack point. Beyond it lies the overshoot, which the pen only reaches when
             # the real surface is farther than registered - and then the plates are
-            # farther too - so there only "not inside anything" is required.
+            # farther too - so there the bound is the clearance the tack pose had minus
+            # the distance travelled past it (moving `s` along the pen changes any
+            # distance by at most `s`), never a fixed number: what the model shows as an
+            # overlap there is the registration's, not the motion's.
+            d_ref, past_ref = np.inf, 0.0        # clearance at the last point before the tack
             for q in chain:
                 tip = tool.tip_in(ur5e_fk(q))
-                past = float((tip - step.point_m) @ step.axis_m) > 1e-4
-                need = 0.0 if past else cfg.clearance_m
+                past = float((tip - step.point_m) @ step.axis_m)
                 d = min((p[0] for p in model.pair_distances(q)
                          if not (p[1] == "pen" and p[2].startswith("part_"))), default=np.inf)
-                if d < need or (past and d <= 0.0):
+                if past <= 1e-4:
+                    need, d_ref, past_ref = cfg.clearance_m, d, past
+                else:
+                    need = max(0.0, d_ref - (past - past_ref))
+                if d < need:
                     step.reason = (step.reason + "; " if step.reason else "") + \
-                        f"descent clearance {d * 1000:.1f} mm{' (overshoot)' if past else ''}"
+                        f"descent clearance {d * 1000:.1f} mm{' (overshoot)' if past > 1e-4 else ''}"
                     all_ok = False
                     break
             else:

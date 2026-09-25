@@ -723,8 +723,11 @@ draws the pen axis at every tack in RViz, green or red.
 Milestone 4 is the marking node itself, `tack_marking_node.py` (services `~/plan`,
 `~/next`, `~/all`, `~/home`, `~/abort`; `dry_run:=true` by default): transit on the
 active scaled trajectory controller, descent at 20 mm/s cancelled at 1.5 N on the wrench,
-dwell, retract; `tack_marks.json` records the tip at contact and the depth along the pen
-axis, the placement check the pipeline is validated by.
+then a dot (dwell) or a stroke (`stroke_mode:=tack` draws each tack's segment,
+`stroke_mode:=seam` the whole weldable seam: contact-referenced, in 10 mm chunks with the
+depth corrected between chunks from the force along the pen), retract; `tack_marks.json`
+records the tip at contact, the depth along the pen axis, and per-chunk stroke forces -
+the placement check the pipeline is validated by.
 
 Milestone 2, the collision model, is in too: `admittance_control/collision.py` (arm
 capsules on the joint frames, the tool envelope, the registered parts as boxes, the table

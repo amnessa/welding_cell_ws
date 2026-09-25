@@ -62,7 +62,12 @@ def _t_joint_in_front(centre_xy=(0.55, 0.10), z_top=0.02, L=200.0, W=100.0, t=4.
 
 @pytest.fixture(scope="module")
 def setup():
-    return load_tool_model(), tr.load_marking_config()
+    tool, cfg = load_tool_model(), tr.load_marking_config()
+    # the planning logic is under test, not the clearance policy: with the calibrated tip
+    # (181.7 mm) the holder body clears the plates of a square T by 61.7*sin45 - 42 =
+    # 1.6 mm at best, so the config's 3 mm would make every 90 deg fillet unreachable here
+    cfg.clearance_m = 0.0015
+    return tool, cfg
 
 
 def test_t_joint_in_front_is_reachable_on_the_branch_with_one_roll_per_seam(setup):

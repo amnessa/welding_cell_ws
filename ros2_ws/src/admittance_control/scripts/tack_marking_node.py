@@ -10,12 +10,14 @@ is CANCELLED the moment the wrench exceeds `touch_force_n` (1.5 N, from
 config/pen_tool.json) and the joints at that moment are the contact record. No Servo,
 no controller switching.
 
-    ros2 run admittance_control tack_marking_node.py --ros-args -p dry_run:=true
+    ros2 run admittance_control tack_marking_node.py --ros-args -p dry_run:=false -p stroke_mode:=tack
     ros2 service call /tack_marking/plan  std_srvs/srv/Trigger   # from the current joints
     ros2 service call /tack_marking/next  std_srvs/srv/Trigger   # one tack (transit, descend, dwell, retract)
     ros2 service call /tack_marking/all   std_srvs/srv/Trigger   # every remaining tack, then home
     ros2 service call /tack_marking/home  std_srvs/srv/Trigger
     ros2 service call /tack_marking/abort std_srvs/srv/Trigger   # cancel the running goal
+    # -p stroke_mode:=tack   draw each tack's own segment (p0 -> p1, welding_tacks.json)
+    # -p stroke_mode:=seam   draw the whole weldable seam (welding_seams.json), once per seam
 
 `dry_run:=true` (default) computes and publishes everything (the planned tip path on
 /tack_marking/tip_path, the log) and sends NO goal. Set it false only after the plan
@@ -26,6 +28,12 @@ collision model and on the locked branch; every trajectory's first point must be
 `max_joint_jump_rad` of the current joints; |F| above `abort_force_n` at ANY time
 cancels whatever runs; the wrench bias is re-measured at each approach point over
 `bias_window_s` before the descent.
+
+The stroke (stroke_mode tack | seam) is contact-referenced: the descent finds the
+surface at the stroke's start, the stroke runs at that depth plus `press_m` along the
+pen, in `stroke_chunk_m` chunks; between chunks the depth moves by
+`depth_gain_m_per_n` x (hold force - measured force along the pen), clipped, and two
+chunks under `min_contact_force_n` stop it. Per-chunk forces and depths are recorded.
 
 Writes `<save_dir>/tack_marks.json`: per tack the commanded point, the tip at contact
 (FK of the joints when the goal was cancelled), the contact depth along the pen axis
@@ -64,7 +72,8 @@ sys.path.insert(0, str(PKG.parents[2] / "weld_generator"))
 from admittance_control import seam_from_registration as sfr  # noqa: E402
 from admittance_control.collision import CollisionModel, boxes_from_parts  # noqa: E402
 from admittance_control.kinematics import ur5e_fk  # noqa: E402
-from admittance_control.marking import (build_marking_plan, contact_depth_m, plan_to_dict,  # noqa: E402
+from admittance_control.marking import (build_marking_plan, contact_depth_m, line_chain,  # noqa: E402
+                                        plan_to_dict, stroke_chain, stroke_targets,
                                         time_descent, time_joint_path)
 from admittance_control.tack_reach import (UR_ORDER, joint_state_to_ur_order,  # noqa: E402
                                            load_marking_config, same_branch)
@@ -89,6 +98,15 @@ class TackMarkingNode(Node):
         p('v_tip_m_s', 0.02)               # descent tip speed
         p('overshoot_m', 0.003)
         p('dwell_s', 0.5)
+        # the stroke (C2): what to draw after contact and how to hold the pen on it
+        p('stroke_mode', 'dot')            # dot | tack (own segment) | seam (whole seam)
+        p('v_stroke_m_s', 0.02)
+        p('press_m', 0.001)                # into the surface, past the measured contact
+        p('stroke_chunk_m', 0.01)          # depth is corrected between chunks
+        p('hold_force_n', 0.0)             # 0 -> the touch force
+        p('depth_gain_m_per_n', 0.0004)    # per chunk, clipped to +/- max_depth_step_m
+        p('max_depth_step_m', 0.0005)
+        p('min_contact_force_n', 0.4)      # below this for 2 chunks = pen lifted off -> stop
         p('abort_force_n', 8.0)
         p('bias_window_s', 0.5)
         p('max_joint_jump_rad', 0.35)
@@ -110,6 +128,8 @@ class TackMarkingNode(Node):
         self._force = np.zeros(3)
         self._force_bias = np.zeros(3)
         self._force_lock = threading.Lock()
+        self._force_trace = None           # list while a stroke chunk runs (bias removed)
+        self._axis_sign = -1.0             # sign of the pen-axis force at contact (set then)
         self._goal_handle = None
         self._abort = False
 
@@ -145,6 +165,8 @@ class TackMarkingNode(Node):
         f = msg.wrench.force
         with self._force_lock:
             self._force = np.array([f.x, f.y, f.z])
+            if self._force_trace is not None:
+                self._force_trace.append(self._force - self._force_bias)
 
     def _force_mag(self) -> float:
         with self._force_lock:
@@ -210,6 +232,12 @@ class TackMarkingNode(Node):
         self._model = CollisionModel(tool=self._tool, scene_boxes=boxes_from_parts(parts),
                                      table_z=self._cfg.table_z_m, clearance=self._cfg.clearance_m)
         self._report = report
+        self._tacks_json = self._seams_json = None
+        try:
+            self._tacks_json = json.loads((self._save_dir / 'welding_tacks.json').read_text())['tacks']
+            self._seams_json = json.loads((self._save_dir / 'welding_seams.json').read_text())['seams']
+        except (FileNotFoundError, KeyError):
+            pass
         return None
 
     # ---------------------------------------------------------------- services ------
@@ -228,8 +256,16 @@ class TackMarkingNode(Node):
             response.success = False
             response.message = 'current joints are in collision: ' + self._model.report(q)
             return response
+        mode = str(self.get_parameter('stroke_mode').value)
+        if mode != 'dot' and (self._tacks_json is None or self._seams_json is None):
+            response.success = False
+            response.message = f'stroke_mode={mode} needs welding_tacks.json + welding_seams.json in the save dir'
+            return response
+        strokes = stroke_targets(mode, self._report['tacks'], self._tacks_json, self._seams_json)
         self._plan = build_marking_plan(self._report, self._tool, self._model, self._cfg, q,
-                                        float(self.get_parameter('overshoot_m').value))
+                                        float(self.get_parameter('overshoot_m').value),
+                                        strokes=strokes, stroke_mode=mode)
+        self._drawn_seams = set()
         self._q_sim = q.copy()
         self._next_step = 0
         self._marks = []
@@ -300,7 +336,8 @@ class TackMarkingNode(Node):
             return False, msg
         record = {'tack_id': step.tack_id, 'seam_id': step.seam_id, 'tack_no': step.tack_no,
                   'point_m': step.point_m.tolist(), 'axis_m': step.axis_m.tolist(),
-                  'roll_deg': step.roll_deg, 'tilt_deg': step.tilt_deg,
+                  'tack_point_m': None if step.tack_point_m is None else step.tack_point_m.tolist(),
+                  'roll_deg': step.roll_deg, 'tilt_deg': step.tilt_deg, 'stroke_mode': step.stroke_mode,
                   'dry_run': self.dry_run, 'time': time.time()}
         if contact is not None:
             q_c, f_c = contact
@@ -312,20 +349,103 @@ class TackMarkingNode(Node):
         else:
             record.update({'contact': False, 'contact_depth_m': None})
             self._say(f'{tag}: NO CONTACT within the overshoot')
-        # 3. dwell
-        if not self.dry_run:
+        # 3. the mark: a dot (dwell) or the stroke, contact-referenced
+        if step.stroke_points_m is not None and record['contact']:
+            if step.stroke_mode == 'seam' and step.seam_id in self._drawn_seams:
+                self._say(f'{tag}: seam {step.seam_id} already drawn - skipping the stroke')
+            else:
+                record['stroke'] = self._stroke(step, contact, record['contact_depth_m'], tag)
+                if step.stroke_mode == 'seam':
+                    self._drawn_seams.add(step.seam_id)
+        elif not self.dry_run:
             time.sleep(float(self.get_parameter('dwell_s').value))
-        # 4. retract: the chain reversed, from the current joints
-        # retract from wherever the pen stopped: the chain points not yet passed, reversed
+        # 4. retract: straight back along the pen axis from wherever the pen is
         q_now = self._where()
-        k_stop = int(np.argmin([np.abs(q - q_now).max() for q in step.descent]))
-        back = [q_now] + step.descent[:k_stop][::-1]
-        ok, msg = self._execute(time_descent(back, self._tool, float(self.get_parameter('v_tip_m_s').value)),
+        tip_now = self._tool.tip_in(ur5e_fk(q_now))
+        lift = np.linspace(0.0, 1.0, 8)[1:, None] * (-self._cfg.standoff_m * step.axis_m)[None, :] + tip_now
+        back = line_chain(self._tool, lift, step.axis_m, np.deg2rad(step.roll_deg), q_now, self._cfg)
+        if back is None:                                     # fall back to the descent chain reversed
+            k_stop = int(np.argmin([np.abs(q - q_now).max() for q in step.descent]))
+            back = step.descent[:k_stop][::-1]
+        ok, msg = self._execute(time_descent([q_now] + list(back), self._tool,
+                                             float(self.get_parameter('v_tip_m_s').value)),
                                 f'{tag} retract', watch_touch=False)
         self._marks.append(record)
         self._write_marks()
         self._next_step += 1
         return ok, f'{tag}: ' + ('contact ' if record['contact'] else 'no contact ') + msg
+
+    def _stroke(self, step, contact, contact_depth: float, tag: str) -> dict:
+        """Draw `step.stroke_points_m` from the contact: the surface is where the pen met
+        it, so the stroke runs at (press - contact_depth) along the pen axis relative to
+        the registered polyline, in chunks; between chunks the depth is corrected from
+        the mean force along the pen (a first-order admittance at chunk rate), and two
+        chunks without contact stop the stroke (the pen lifted off: a tilt larger than
+        the press can follow)."""
+        q_c, f_c = contact
+        press = float(self.get_parameter('press_m').value)
+        chunk_m = float(self.get_parameter('stroke_chunk_m').value)
+        gain = float(self.get_parameter('depth_gain_m_per_n').value)
+        max_step = float(self.get_parameter('max_depth_step_m').value)
+        f_hold = float(self.get_parameter('hold_force_n').value) or self._touch_force
+        f_min = float(self.get_parameter('min_contact_force_n').value)
+        v = float(self.get_parameter('v_stroke_m_s').value)
+        pts = step.stroke_points_m
+        depth = press - float(contact_depth)
+        # which way does the pen-axis force go when pressed? read it at the contact
+        with self._force_lock:
+            fz = float((self._force - self._force_bias)[2])
+        self._axis_sign = -1.0 if fz < 0 else 1.0
+        seg = np.linalg.norm(np.diff(pts, axis=0), axis=1); cum = np.concatenate([[0.0], np.cumsum(seg)])
+        length = float(cum[-1])
+        n_chunks = max(1, int(np.ceil(length / chunk_m)))
+        out = {'mode': step.stroke_mode, 'length_mm': length * 1000.0, 'depth_start_mm': depth * 1000.0,
+               'hold_force_n': f_hold, 'chunks': [], 'completed': False, 'reason': ''}
+        q_prev = q_c
+        lost = 0
+        from admittance_control.marking import resample_polyline
+        dense = resample_polyline(pts, 0.002)
+        s_dense = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(dense, axis=0), axis=1))])
+        for k in range(n_chunks):
+            s0, s1 = k * length / n_chunks, (k + 1) * length / n_chunks
+            sel = dense[(s_dense >= s0 - 1e-9) & (s_dense <= s1 + 1e-9)]
+            if len(sel) < 2:
+                continue
+            chain = line_chain(self._tool, sel + depth * step.axis_m, step.axis_m,
+                               np.deg2rad(step.roll_deg), q_prev, self._cfg)
+            if chain is None:
+                out['reason'] = f'chunk {k}: IK chain broke'
+                break
+            with self._force_lock:
+                self._force_trace = []
+            ok, msg = self._execute(time_descent([q_prev] + chain, self._tool, v),
+                                    f'{tag} stroke chunk {k + 1}/{n_chunks}', watch_touch=False)
+            with self._force_lock:
+                trace = np.array(self._force_trace) if self._force_trace else np.zeros((0, 3))
+                self._force_trace = None
+            if not ok:
+                out['reason'] = msg
+                break
+            f_axis = float(np.mean(self._axis_sign * trace[:, 2])) if len(trace) else f_hold
+            f_mag = float(np.mean(np.linalg.norm(trace, axis=1))) if len(trace) else f_hold
+            out['chunks'].append({'depth_mm': depth * 1000.0, 'force_axis_n': f_axis, 'force_mag_n': f_mag,
+                                  'n_samples': int(len(trace))})
+            if f_axis < f_min:
+                lost += 1
+                if lost >= 2:
+                    out['reason'] = f'pen lifted off (force {f_axis:.2f} N for 2 chunks)'
+                    break
+            else:
+                lost = 0
+            depth += float(np.clip(gain * (f_hold - f_axis), -max_step, max_step))
+            q_prev = chain[-1]
+        else:
+            out['completed'] = True
+        self._say(f"{tag}: stroke {'done' if out['completed'] else 'STOPPED: ' + out['reason']}, "
+                  f"{length * 1000:.0f} mm in {len(out['chunks'])}/{n_chunks} chunks, depth "
+                  f"{out['depth_start_mm']:+.1f} -> {depth * 1000:+.1f} mm, force "
+                  f"{np.mean([c['force_axis_n'] for c in out['chunks']]) if out['chunks'] else 0:.2f} N mean")
+        return out
 
     def _go_home(self) -> tuple[bool, str]:
         if self._plan is None or self._plan.home_path is None:
