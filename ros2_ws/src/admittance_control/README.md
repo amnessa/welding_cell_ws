@@ -13,21 +13,27 @@ digital twin**. It bundles these cooperating pipelines:
    pose with point‑to‑plane ICP against the segmented point cloud, then track it live.
    The classified name drives which CAD the ICP node loads, so no part has to be
    selected by hand.
-3. **Assembly → weld‑seam extraction → new-model export** — freeze each located
-   part's CAD cloud into a static assembly model, find the joint between two
-   near‑orthogonal parts by PCA curvature and publish it as a weld toolpath, and
+3. **Assembly → weld seams and tacks (mode A) → new-model export** — freeze each
+   located part's CAD cloud into a static assembly model; **compute** the seams from
+   the registered poses with the `weld_generator` accessibility rule (every face pair
+   judged weldable or not, with its fit-up) and place tack welds on them; and
    **rebuild the assembled parts into a single watertight CAD mesh** that can be
    uploaded back to the server as a new classifiable object for the next cycle.
-4. **Hands‑free operation** — drive the whole perception cycle from hand gestures
+4. **Pen marking on the UR5e** — the validation of everything above, independent of
+   the camera: for every tack, an elbow-up, collision-checked approach, a descent
+   cancelled at 1.5 N on the wrench, a dot or a force-regulated stroke along the seam,
+   and a record of where the pen actually touched against where the model said.
+5. **Hands‑free operation** — drive the whole perception cycle from hand gestures
    seen by the same RealSense, including *pointing at the part* to place the SAM2
    click. The operator never touches a keyboard on either machine.
 
 Everything is designed so the **same nodes and topics** work in sim and on
 hardware; only the joint‑state source and the camera front‑end differ.
 
-> **New here? Read this file top to bottom.** The [Big picture](#big-picture)
-> and [Data flow](#data-flow) sections tell you what connects to what; the
-> [Node reference](#node-reference) tells you what each piece does;
+> **New here? Read this file top to bottom.** [Repository layout](#repository-layout)
+> names every folder and file; [How the pieces connect](#how-the-pieces-connect) is
+> the one-page map of what feeds what, file by file; [Data flow](#data-flow) walks each
+> pipeline; the [Node reference](#node-reference) tells you what each piece does;
 > [Algorithms](#algorithms-and-the-maths-behind-them) derives the maths and says
 > why each choice was made; [Run it](#run-it) gives copy‑paste workflows.
 
@@ -73,6 +79,20 @@ hardware; only the joint‑state source and the camera front‑end differ.
                           └──────────────────────────────────────────┘
 ```
 
+```
+                          ┌──────────────────────────────────────────────────────┐
+                          │       SEAMS → REACHABILITY → PEN MARKING (mode A)     │
+   icp_pose_refiner_node  │  ~/save_object → assembly.json (poses + spread)        │
+      (assembly state) ──▶│  ~/welding_points → weld_generator rule on the posed  │
+                          │     primitives (models/weldgen_objects.json)          │
+                          │     → welding_seams.json, welding_tacks.json          │
+                          │  tack_reachability.py (no ROS) → tack_reach.json      │
+                          │     pen_tool.json + marking.json + collision model    │
+                          │  tack_marking_node → scaled_joint_trajectory_controller│
+                          │     wrench-gated descent, dot / stroke → tack_marks.json│
+                          └──────────────────────────────────────────────────────┘
+```
+
 The **camera extrinsic** (`camera_extrinsic_tf_publisher`) is the bridge between
 the two halves: it publishes the static `tool0 → camera_color_optical_frame`
 transform (eye‑in‑hand), so perception results land in the robot's TF tree and
@@ -82,33 +102,99 @@ can be commanded to.
 
 ## Repository layout
 
+Every folder and file, and what it is for. Files under `scripts/foundationpose_results/`
+are runtime state (written by the nodes, read by the next step) and are listed in the
+map that follows this table.
+
 | Path | What lives there |
 |------|------------------|
-| `scripts/*.py` | All Python ROS nodes (installed as package executables) |
-| `admittance_control/*.py` | Importable pure‑Python library modules (no rclpy) |
-| `src/*.cpp` | C++ nodes (`totg_service_node`, `admittance_control_jacobian_node`) |
-| `launch/*.py` | Launch files (see [Launch files](#launch-files)) |
-| `launch/point_cloud_config.rviz` | Saved RViz layout, opened by default by both pointcloud launches (`rviz_config` arg) |
-| `srv/`, `action/` | Custom interfaces (`ComputeTOTG.srv`, `ExecuteDrawing.action`) |
-| `config/` | UR5e description, controllers, kinematics, joint limits, SRDF |
-| `urdf/`, `meshes/` | UR5e robot description |
-| `models/*.ply` | CAD models for FoundationPose / ICP / PPF (e.g. `test_objv3.ply`). The ICP node resolves the classifier's answer to `models/<obj_name>.ply`, so names here must match the server's CAD library. |
-| `world/welding_world.usda` | Isaac Sim scene (robot + eye‑in‑hand RealSense) |
-| `notebooks/` | Hand‑eye calibration outputs (`T_tcp_to_cam.npy`), intrinsics, experiments, and the gesture sandbox (`gesture_control_sandbox.ipynb` + `gesture_recognizer.task`) |
-| `notes/*.md` | Design notes behind each algorithm (see [Algorithms](#algorithms-and-the-maths-behind-them)) |
-| `scripts/rgb_depth_to_send/` | Transfer dir: last `rgb.png` / `depth.png` / `camera.json` sent to the pose server |
-| `scripts/foundationpose_results/` | **Live** pose-server outputs (`detection_pem.json` — now carries `obj_name`, `detection_ism.npz`, `mask.png`, `vis_pose.png`, `object_name.txt`) **and** assembly state (`static_env.ply/.npy`, `assembly.json`, `welding_points.ply/.npy`, `assembly_mesh.ply`). The ICP node's `results_dir` default. |
-| `scripts/{fp_server,ppf_classifier,build_ppf_library,ppf_selftest,server}.py` | **Reference copies** of the GPU-host code (the FoundationPose Flask server + its PPF classifier and library tools). These run on the pose-server machine, *not* in the ROS graph; they are tracked here so the client and server contracts stay in sync. Edit on the host, then mirror back. |
-| `scripts/sam6d_results/` | Frozen SAM‑6D captures from before the FoundationPose swap. Kept for replay only — nothing writes here anymore. |
-| `helper/` | Calibration, GUIs, legacy tools (run directly, not installed) |
-| `generated_planes/` | Saved work‑surface plane JSONs |
+| `README.md` | This document. `notes/todo.md` is the open-work list of the whole project; `notes/seam_two_modes_plan.md` (perception) and `notes/pen_marking_plan.md` (motion) are the plans of record. |
+| `package.xml`, `CMakeLists.txt` | `ament_cmake` package with `rosidl` interfaces. Python library modules are installed by an explicit `FILES` list; node scripts by `install(PROGRAMS ...)` and **must be `chmod +x`**. Adding a module or a script means adding it there. |
+| **`scripts/*.py`** | The ROS 2 nodes and CLIs (one process each, see [Node reference](#node-reference)). Grouped by role: camera (`realsense_camera_node`, `realsense_sim_camera_node`, `camera_extrinsic_tf_publisher`), pose server bridge (`foundationpose_bridge_node`, `sam6d_bridge_node`, `detection_marker_node`, `gesture_control_node`), registration + assembly + seams (`icp_pose_refiner_node`), motion (`tack_marking_node`, `drawing_action_server`, `drawing_dispatcher`, `cartesian_admittance_controller`, `move_to_object_node`), planning CLIs (`build_weldgen_registry`, `tack_reachability`), RViz helpers (`tool_model_marker_node`, `tack_reach_marker_node`), bench probes (`tcp_offset_probe`, `pen_tip_touchoff`, `pose_jitter_probe`). |
+| `scripts/scripts_in_foundationpose/` | **Reference copies of the GPU host's code**: `fp_server.py` (FoundationPose + SAM2 + PPF Flask server), `ppf_classifier.py`, `build_ppf_library.py`, `ppf_selftest.py`, and the superseded SAM-6D `server.py`. They run on the pose-server machine (reached over its Tailscale IP), not in the ROS graph; kept here so client and server contracts stay in sync. Edit on the host, mirror back. |
+| `scripts/foundationpose_results/` | **The live working directory** of one assembly: the pose server's last answer, the registered assembly, the seams, the tacks, the reachability report, the marking plan and the marks. `previous_assemblies/<timestamp>/` holds archived ones. See the map below. |
+| `scripts/rgb_depth_to_send/` | Transfer dir: the last `rgb.png` / `depth.png` / `camera.json` the bridge sent to the pose server. |
+| `scripts/sam6d_results/` | Frozen captures from the SAM-6D era, replay only. Nothing writes here. |
+| **`admittance_control/*.py`** | The importable, ROS-free library (pure numpy; tested under `test/`). Perception: `icp.py`, `sam6d_io.py`, `assembly_mesh.py`. Seams: `weldgen_registry.py`, `seam_from_registration.py`. Motion: `kinematics.py`, `tool_model.py`, `collision.py`, `tack_reach.py`, `marking.py`. Support: `geometry.py`, `pose_stats.py`. See [Shared library modules](#shared-library-modules-admittance_control). |
+| `src/*.cpp` | C++ nodes: `totg_service_node` (MoveIt time-optimal trajectory generation, used by the drawing stack) and `admittance_control_jacobian_node`. |
+| `srv/`, `action/` | Custom interfaces: `ComputeTOTG.srv`, `ExecuteDrawing.action` (drawing stack only). |
+| `launch/` | `pointcloud.launch.py` (real robot: camera, extrinsic TF, point cloud, bridge, ICP, RViz), `digital_twin_pointcloud.launch.py` (the same on Isaac Sim), `admittance_control.launch.py` (the drawing stack), `point_cloud_config.rviz` (the RViz layout both perception launches open). |
+| **`config/`** | Two kinds. UR5e description for the drawing stack and ros2_control: `ur5e.srdf`, `kinematics.yaml`, `default_kinematics.yaml`, `joint_limits.yaml`, `physical_parameters.yaml`, `visual_parameters.yaml`, `initial_positions.yaml`, `ros2_controllers.yaml`, `controllers.yaml`, and `ur5e_calibration.yaml` (the robot's factory kinematic deltas: the planner's FK is the nominal chain, ~3 mm apart at the tip, see `notes/todo.md`). And the two marking configs: **`pen_tool.json`** (the pen tip from the pendant's TCP calibration, the touch force, the standoff, the collision envelope of holder + camera) and **`marking.json`** (the scan-home pose whose branch signs are the elbow-up lock, clearance, work-angle and roll grids, LIN steps). |
+| `urdf/`, `meshes/ur5e/` | UR5e robot description (visual + collision meshes) for `robot_state_publisher`. |
+| **`models/`** | The CAD library: `*.ply` meshes (mm) that the pose server classifies against and the ICP node registers (`models/<obj_name>.ply` must match the server's library names), their `.usda` twins for Isaac, `assembly_mesh.ply` (the last exported assembly), and **`weldgen_objects.json`**, the part registry mode A needs: for each CAD its `weld_generator` primitive (slab / envelope slab) and the frame between CAD and primitive, built and verified by `scripts/build_weldgen_registry.py --verify`. |
+| **`notebooks/`** | Calibration artefacts, not notebooks only. **`T_tcp_to_cam.npy`** is the hand-eye extrinsic (camera in `tool0`) the extrinsic TF publisher broadcasts; `T_tcp_to_cam.json` says which samples, which TCP offset and how good; `handeye_samples.npz` the raw hand-eye samples (re-solvable offline); `T_tcp_to_cam_wrong.npy` the July file that failed silently, `T_tcp_to_cam_raw_tcpframe_*.npy` an uncomposed solve, both kept as evidence; `realsense_intrinsics.npy`, `charuco_reference.png`, `handeye_debug_latest.png`; `T_base_to_cam.npy` from the old fixed-camera days; `gesture_recognizer.task` (MediaPipe model for the gesture node); the notebooks (`Sam_to_Surface_Plane`, `camera_calibration_test`, `force_control_learning`, `gesture_control_sandbox`, `media_pipe_sandbox`, `sam_testing2`) are exploration history; `idea.md` an early plan (Turkish). |
+| **`notes/`** | The design record. `todo.md` (all open work), `seam_two_modes_plan.md` (mode A / mode B, validation), `pen_marking_plan.md` (milestones 1–6 of the pen marking, with bench results), `Welding_Robots_Approach_and_Trajectory_Literature_Report.md` (the literature the motion design draws on), `realtime_icp.md`, `model_based_background.md`, `ground_removal.md` (the tracker's three filters), `welding_edge_sampling.md` (the radius-PCA fallback; outdated for the seam itself), `sam6d_client_notes.md` (Isaac → server data flow), `implementation_notes.md` (bench recipes), `quality_field_k_point_selection.md` (the thesis' quality field / tack selection, not built yet). |
+| **`helper/`** | Run directly, not installed. `calibration/extract_extrinsics.py` (hand-eye capture: ChArUco + RTDE, requires `--tcp-offset`, prints a residual judge), `calibration/resolve_handeye.py` (numpy re-solve of saved samples, leave-one-out, TCP composition, `--write`), `calibration/sam6d_client.py` (old), `gui/drawing_gui.py`, `legacy_sand_drawer/` (the pre-welding drawing tools). |
+| `test/` | pytest, no ROS: `test_seam_from_registration.py` (mode A on synthetic and bench assemblies), `test_tool_model.py`, `test_collision.py`, `test_tack_reach.py`, `test_marking.py`, `test_pose_stats.py`, `test_charuco_detection.py`. Run `.venv/bin/python -m pytest test/` from the package. |
+| `world/` | Isaac Sim assets: `welding_world.usda` (robot + eye-in-hand camera + table), `penholder_assembly.step/.usda` (the pen and camera holder), `Realsense435i_custom.usda`, `table_v1.usda`. |
+| `generated_planes/` | Work-surface planes for the drawing stack (`sand_drawer_plane.json`: points captured in freedrive). |
+| `artifacts/`, `plots/` | Outputs of the legacy segmentation tool and plot scratch; nothing reads them. |
 
-**Build type:** `ament_cmake` with `rosidl` interfaces. The Python library
-modules under `admittance_control/` are installed by an explicit `FILES` list in
-`CMakeLists.txt` (they share the package dir with the generated action/srv
-bindings) — **if you add a module there, add it to that list too**. Node scripts
-are installed via `install(PROGRAMS ...)` and **must be `chmod +x`** or `ros2 run`
-won't find them.
+---
+
+## How the pieces connect
+
+One assembly runs through the package in this order. Every arrow is a file in
+`scripts/foundationpose_results/` or a ROS topic/service; the calibration inputs on the
+right are what every number downstream depends on.
+
+```
+ RealSense D435i on the wrist ──► realsense_camera_node ──► /camera/{color,depth}/…, camera_info
+       │                                                         │
+       │ camera_extrinsic_tf_publisher ◄── notebooks/T_tcp_to_cam.npy   (hand-eye: camera in tool0)
+       │ robot_state_publisher         ◄── /joint_states (UR driver)      base_link → tool0 → camera
+       ▼
+ foundationpose_bridge_node ── HTTP over Tailscale ──► fp_server.py (GPU host):
+   ~/capture (freeze a frame)    rgb/depth/camera.json → SAM2 mask ← click (gesture_control_node or operator)
+   ~/trigger                     → PPF classifier names the CAD (models/<name>.ply) → FoundationPose 6D pose
+       │  writes detection_pem.json (obj_name, R, t), detection_ism.npz (mask), object_name.txt
+       ▼
+ icp_pose_refiner_node
+   ~/run_icp        loads models/<obj_name>.ply, refines the pose with Fast & Robust ICP on the masked cloud,
+                    then tracks it (crop box + ground cut + model-based background subtraction, Phase 2)
+   ~/save_object    robust mean of the tracked poses since the part came to rest → the part is baked into
+                    the SEPC (static_env.ply/.npy) and assembly.json gets {model, pose_static, pose_stats}
+   ~/welding_points MODE A: models/weldgen_objects.json places each part as a weld_generator primitive at
+                    its pose_static → D4 accessibility rule under a pose tolerance → welding_seams.json
+                    (every face pair: weldable / reason, class, polyline, approach axis, fit-up)
+                    → tackrule-0.1 → welding_tacks.json (point, segment, approach, tack_no, order)
+                    → topics /perception/icp/{static_env, welding_points, welding_tacks, welding_tack_labels}
+       ▼
+ scripts/tack_reachability.py (no ROS)   welding_tacks.json + assembly.json + weldgen_objects.json
+   + config/pen_tool.json (tip, envelope) + config/marking.json (scan home = branch lock)
+   → for every tack: elbow-up IK on the locked branch, one work-angle tilt + roll per seam,
+     collision clearance of arm + tool vs parts (admittance_control/collision.py) → tack_reach.json
+   tack_reach_marker_node shows it in RViz (pen axis per tack, green/red, arm + tool envelope)
+       ▼
+ tack_marking_node (real robot)  tack_reach.json (+ welding_tacks/seams.json for strokes)
+   ~/plan   transit paths from the current joints (RRT + shortcut, collision-checked), descent IK chains
+   ~/next   transit → force-gated descent (FollowJointTrajectory goal cancelled at 1.5 N on the wrench)
+            → dot, or the stroke (tack segment / whole seam, contact-referenced, force-corrected depth)
+            → retract along the pen        writes tack_marks.json: tip at contact, depth along the pen,
+   ~/all, ~/home, ~/abort                  per-chunk stroke forces  ← the validation of the whole chain
+```
+
+What depends on what, in one sentence each:
+
+- **The extrinsic** (`notebooks/T_tcp_to_cam.npy`) turns camera poses into `base_link`; every registered pose, seam, tack and mark inherits its error. It is solved from `handeye_samples.npz` with the pendant TCP composed in; `T_tcp_to_cam.json` records that.
+- **The pendant TCP** must be composed into the extrinsic (the capture reads the robot at the active TCP) and is also the pen tip in `config/pen_tool.json`. `tcp_offset_probe.py` reads it from the driver.
+- **The CAD library** (`models/`) must hold the same meshes the server classifies against, and every mesh mode A should compute seams for needs an entry in `weldgen_objects.json`; a part without one makes `~/welding_points` fall back to the radius-PCA detector (the node log says which part).
+- **`weld_generator`** (the sibling repo, path in the `weldgen_path` parameter) supplies the seam rule (`accessibility`), the primitives (`geom`) and the tack rule (`tacks`); it is imported at call time, nothing here forks it.
+- **`assembly.json`** is the hinge between perception and motion: it is what `~/welding_points`, `tack_reachability.py` and `tack_marking_node.py` all read. `~/reset_environment` archives it with everything derived from it.
+- **The controllers**: motion goes to `/scaled_joint_trajectory_controller/follow_joint_trajectory` (active on the UR driver), forces come from `/force_torque_sensor_broadcaster/wrench` at 500 Hz; no Servo, no switching. The drawing stack (drawing_action_server + TOTG) is a separate, older motion path for the orthogonal drawing tool.
+
+Files of one assembly in `scripts/foundationpose_results/`, in the order they appear:
+
+| File | Written by | Read by |
+|---|---|---|
+| `rgb.png`, `depth.png`, `camera.json` (in `rgb_depth_to_send/`) | bridge `~/capture`/`~/trigger` | the pose server |
+| `detection_pem.json`, `detection_ism.npz`, `mask.png`, `vis_pose.png`, `object_name.txt` | bridge (from the server's reply) | ICP `~/run_icp` |
+| `static_env.ply/.npy`, `assembly.json` | ICP `~/save_object` | ICP (reloaded after a restart), `~/welding_points`, `~/export_mesh`, `tack_reachability.py`, `tack_marking_node` |
+| `assembly_mesh.ply` (also copied to `models/`) | ICP `~/export_mesh` | bridge `~/add_model` → the server |
+| `welding_seams.json`, `welding_tacks.json`, `welding_points.npy/.ply` | ICP `~/welding_points` | `tack_reachability.py` (tacks), `tack_marking_node` (strokes), RViz |
+| `tack_reach.json` | `tack_reachability.py` | `tack_reach_marker_node`, `tack_marking_node ~/plan` |
+| `tack_marking_plan.json`, `tack_marks.json` | `tack_marking_node` | you: the contact depths and stroke forces are the validation numbers |
+| `previous_assemblies/<timestamp>/` | ICP `~/reset_environment` | nothing; the archive |
 
 ---
 
@@ -379,8 +465,21 @@ or retrain the classifier head with MediaPipe Model Maker for your viewing angle
 | `sam6d_bridge_node.py` | *Superseded by the FoundationPose bridge.* Same trigger→POST→publish cycle against `server.py`, parsing a list of detections (`R`, `t` mm→m). Still installed so an old SAM‑6D setup can be run for comparison. | in: color+depth; srv: `~/trigger`; out: `/perception/detections` (latched) |
 | `server.py` | *Superseded by `fp_server.py`.* The SAM‑6D Flask server: instance seg (FastSAM/SAM) + pose estimation against `CAD_PATH`, re‑running `demo.sh` per request. | HTTP `:5000/predict_pose` |
 | `detection_marker_node.py` | Converts `Detection3DArray` → RViz `MarkerArray` (RViz has no native `vision_msgs` display). Draws a pose triad + sphere + label per detection, and an **oriented CAD wireframe box** on the highest‑scoring detection. | in: `/perception/detections`; out: `/perception/detection_markers` |
-| `icp_pose_refiner_node.py` | **Real‑time object tracker + assembly/weld model** (`notes/realtime_icp.md`). *Phase 1* `~/run_icp`: reads `obj_name` from the detection, loads `models/<obj_name>.ply` (falling back to `model_path`), uses the mask (`detection_ism.npz`) to segment the object, places the CAD at the FoundationPose pose, runs ICP, and seeds `current_pose`. *Phase 2* (timer at `tracking_rate_hz`, no pose server): builds a **dynamic CropBox** (model AABB + `crop_margin_m`) around `current_pose` to isolate the object, applies **ground removal** + **model‑based background subtraction**, runs **Fast‑ICP** (Anderson‑accelerated, Welsch‑robust point‑to‑plane) from `current_pose`, updates it, and publishes the CropBox as a Marker. Pauses if fitness < `lost_fitness`. *Assembly* `~/save_object`: bakes the CAD at its refined pose into the **SEPC** in `static_frame`, persists it (with each part's `pose_static`), clears tracking for the next part. *Weld* `~/welding_points`: extracts the joint between the SEPC's parts and publishes it red. *Export* `~/export_mesh`: boolean-unions the saved parts' CADs at their poses into a watertight `assembly_mesh.ply` for upload as a new model. *Reset* `~/reset_environment`: drops the SEPC, the saved-object list and the tracking state, blanks the latched clouds, and archives the on-disk assembly into `previous_assemblies/<timestamp>/` so the next cycle starts clean without a restart. `scene_from` (init only) = `pointcloud` or `depth_png`. With `use_open3d` (default), the per‑frame voxel downsample + normals run on the *cropped* cloud via Open3D (crop‑first is the key speedup); without Open3D it falls back to NumPy. The tick is further cut by `roi_crop` (slice the organized cloud to the crop box's *image* rectangle before any per‑point maths) and `noise_floor_refresh` (re‑measure the Welsch ν floor every N ticks, not every frame) — ~74 ms → ~23 ms on a 640×480 cloud, with bit‑identical output. Runs on a `MultiThreadedExecutor` so the tick cannot block the incoming cloud. | in: `/camera/depth/color/points`, TF; srv: `~/run_icp`, `~/stop_tracking`, `~/start_tracking`, `~/save_object`, `~/welding_points`, `~/export_mesh`, `~/reset_environment`; out: `/perception/icp/{scene_cloud,model_cloud,refined_pose,crop_box,static_env,welding_points}`, TF `sam6d_object` |
+| `icp_pose_refiner_node.py` | **Real‑time object tracker + assembly/weld model** (`notes/realtime_icp.md`). *Phase 1* `~/run_icp`: reads `obj_name` from the detection, loads `models/<obj_name>.ply` (falling back to `model_path`), uses the mask (`detection_ism.npz`) to segment the object, places the CAD at the FoundationPose pose, runs ICP, and seeds `current_pose`. *Phase 2* (timer at `tracking_rate_hz`, no pose server): builds a **dynamic CropBox** (model AABB + `crop_margin_m`) around `current_pose` to isolate the object, applies **ground removal** + **model‑based background subtraction**, runs **Fast‑ICP** (Anderson‑accelerated, Welsch‑robust point‑to‑plane) from `current_pose`, updates it, and publishes the CropBox as a Marker. Pauses if fitness < `lost_fitness`. *Assembly* `~/save_object`: bakes the CAD into the **SEPC** in `static_frame` at the robust mean of the tracked poses since the part came to rest (`pose_stats.py`; the spread is written to `assembly.json` as `pose_stats`), persists it (with each part's `pose_static`), clears tracking and the latched camera-frame displays for the next part. *Weld* `~/welding_points`: **mode A** — places each saved part's `weld_generator` primitive (registry `models/weldgen_objects.json`) at its `pose_static`, judges every face pair with the D4 accessibility rule under a pose tolerance (`weld_pose_tol_mm`), reports the fit-up per seam, places tacks by `tackrule-0.1`, publishes seams + tacks + labels and writes `welding_seams.json` / `welding_tacks.json`; falls back to the radius-PCA detector when a part has no registry entry (§8). *Export* `~/export_mesh`: boolean-unions the saved parts' CADs at their poses into a watertight `assembly_mesh.ply` for upload as a new model. *Reset* `~/reset_environment`: drops the SEPC, the saved-object list and the tracking state, blanks the latched clouds, and archives the on-disk assembly into `previous_assemblies/<timestamp>/` so the next cycle starts clean without a restart. `scene_from` (init only) = `pointcloud` or `depth_png`. With `use_open3d` (default), the per‑frame voxel downsample + normals run on the *cropped* cloud via Open3D (crop‑first is the key speedup); without Open3D it falls back to NumPy. The tick is further cut by `roi_crop` (slice the organized cloud to the crop box's *image* rectangle before any per‑point maths) and `noise_floor_refresh` (re‑measure the Welsch ν floor every N ticks, not every frame) — ~74 ms → ~23 ms on a 640×480 cloud, with bit‑identical output. Runs on a `MultiThreadedExecutor` so the tick cannot block the incoming cloud. | in: `/camera/depth/color/points`, TF; srv: `~/run_icp`, `~/stop_tracking`, `~/start_tracking`, `~/save_object`, `~/welding_points`, `~/export_mesh`, `~/reset_environment`; out: `/perception/icp/{scene_cloud,model_cloud,refined_pose,crop_box,static_env,welding_points}`, TF `sam6d_object` |
 | `depth_image_proc::PointCloudXyzrgbNode` | Standard package node (launched, not in this repo). Fuses color + registered depth + `camera_info` into an organized `PointCloud2`. | out: `/camera/depth/color/points` |
+
+### Seams, tacks and pen marking (mode A → motion)
+
+| Node / CLI | Role | Key I/O |
+|---|---|---|
+| `build_weldgen_registry.py` (CLI) | Builds `models/weldgen_objects.json`: for every `.ply` in `models/`, the `weld_generator` primitive it is (an exact box → `slab`; a plate with small notches/tabs → envelope `slab` with the ignored fraction recorded; anything else → unsupported with the reason) and the CAD→primitive frame, verified against the mesh with `--verify`. Hand-written `tube` / `swept_slab` / `hand_edited` entries are kept. | in: `models/*.ply`; out: `models/weldgen_objects.json` |
+| `tack_reachability.py` (CLI) | Milestone 3: can the pen reach every tack, elbow-up, without touching anything but the tack? Reads the save dir's tacks + assembly, rebuilds the parts as collision boxes, and for every seam tries every work-angle tilt × roll on the locked branch; keeps the combination with the largest minimum clearance over approach pose, tack pose and straight descent. `--clearance`, `--roll`, `--tilt`, `--table-z` override the config (the roll override is the tool-vs-world attribution experiment). | in: `welding_tacks.json`, `assembly.json`, `weldgen_objects.json`, `pen_tool.json`, `marking.json`; out: `tack_reach.json`, a table on stdout |
+| `tack_reach_marker_node.py` | RViz view of `tack_reach.json`: the pen axis at every tack (green reachable / red not), label `seam.tack_no t<tilt> r<roll>`, the arm capsules (grey) and the tool envelope (blue) at the approach pose. | in: `tack_reach.json`; out: `/tack_reach/markers` |
+| `tool_model_marker_node.py` | RViz view of `config/pen_tool.json` riding on `tool0`: holder, pen, camera arm and camera body envelopes, the pen tip, and in green the calibrated camera optical origin + axis (it must sit on the lens). Milestone 1's check. | in: `pen_tool.json`, `T_tcp_to_cam.npy`; out: `/tool_model/markers` |
+| `tack_marking_node.py` | **The marking robot** (milestones 4–6). `~/plan`: from the current joints, a collision-checked transit (straight edge or RRT + shortcut) to every reachable tack's approach pose, the descent as an IK chain along the pen axis, the way home; publishes the tip path. `~/next` / `~/all`: transit on the scaled trajectory controller; wrench bias measured at the approach point; descent at 20 mm/s **cancelled at the touch force** (the joints at the cancel = the contact); then a dot (dwell) or, with `stroke_mode:=tack|seam`, the stroke: contact-referenced depth (measured contact + press) in 10 mm chunks with the depth corrected between chunks from the force along the pen; retract along the pen. `dry_run:=true` (default) sends nothing and keeps virtual joints. Gates: current joints clear and on the locked branch, first point within 20° of the current joints, 8 N aborts anything. | in: `tack_reach.json`, `welding_tacks.json`, `welding_seams.json`, `assembly.json`, `/joint_states`, `/force_torque_sensor_broadcaster/wrench`; action client `/scaled_joint_trajectory_controller/follow_joint_trajectory`; srv: `~/plan`, `~/next`, `~/all`, `~/home`, `~/abort`; out: `~/tip_path`, `~/status`, `tack_marking_plan.json`, `tack_marks.json` |
+| `tcp_offset_probe.py` | Reads the pendant's active TCP relative to `tool0` from the driver (`tcp_pose_broadcaster` vs FK) and prints the `--tcp-offset` line for the hand-eye tools. Also shows the nominal-vs-calibrated FK gap (~3 mm at the tip). | in: `/tcp_pose_broadcaster/pose`, `/joint_states` |
+| `pen_tip_touchoff.py` | 4-point TCP for the pen without the pendant: the tip on one fixed point from 4+ wrist orientations, `~/record` each, `~/solve` fits the tip in `tool0` and the point in `base_link` with an RMS. A cross-check now that the pendant TCP is calibrated. | in: `/joint_states`; srv: `~/record`, `~/solve`, `~/clear`; out: `notebooks/pen_tip_touchoff.json` |
+| `pose_jitter_probe.py` | The registration's noise floor: listens to the ICP pose on a stationary part for N seconds and prints position std/range and orientation swing (2026-09-25: 5 mm std, 24 mm range, 6° — the reason `~/save_object` averages). Point it at `/perception/fp/pose` too, once that exists. | in: `/perception/icp/refined_pose` |
 
 ---
 
@@ -395,6 +494,14 @@ Pure Python, no rclpy — unit‑testable without ROS.
 | `sam6d_io.py` | Image/HTTP/JSON plumbing for the SAM‑6D bridge: `resolve_transfer_dir`, image normalization, PNG encode, multipart POST, `parse_pem_response`, `save_artifacts`. |
 | `icp.py` | NumPy ICP stack: `load_ply_mesh`, `sample_mesh_surface`, `backproject_depth`, `estimate_normals_organized` (organized‑cloud normals, no KD‑tree), `voxel_downsample`, `crop_box_mask` (oriented CropBox for tracking), `infer_pinhole_from_organized` + `box_image_roi` (project the crop box into the image so only its pixel rectangle is unpacked — see [Algorithms §7](#7-tracking-three-filters-replace-the-mask)), `NNIndex` (nearest‑neighbour structure built **once** over a fixed target; picks Open3D `core.nns` → `scipy.spatial.cKDTree` → brute force), `nearest_neighbor` (one‑shot wrapper over it), `icp_point_to_plane` (point‑to‑plane; `anderson_depth>0` enables **Fast‑ICP** — se(3)‑parameterized Anderson acceleration with a monotone‑energy safeguard; accepts a prebuilt `index` and a cached `noise_floor`). Runs pure‑NumPy on the robot side; SciPy/Open3D are optional accelerators. |
 | `assembly_mesh.py` | Rebuilds a watertight CAD mesh of an assembled scene for `~/export_mesh`: `load_assembly` (read `assembly.json`), `build_assembly_mesh` (re-instantiate each CAD at its `pose_static`, scale to metres, **boolean-union**, re-centre, emit in mm), `build_and_write`. Needs `trimesh` + `manifold3d` (`pip install trimesh manifold3d`) — used only by that one service, so the rest of the stack has no new deps. |
+| `pose_stats.py` | `stationary_tail` (the newest run of tracked poses that describe one resting place — moving a part by hand before saving stays allowed) and `robust_pose_mean` (median translation, chordal-mean rotation, jumps rejected, spread reported). Used by `~/save_object`. |
+| `weldgen_registry.py` | The part registry: `derive_box` (exact box or envelope slab + `T_cad_prim`, or unsupported with a reason), `verify_entry` (max distance of the CAD's vertices to the primitive's surface), `build_registry`, `load_registry`. |
+| `seam_from_registration.py` | **Mode A.** `posed_parts` (registry entries at `pose_static`, mm), `runtime_access` (pose tolerance instead of the generator's contact tolerance), `judge_registered` / `enumerate_registered` (the D4 rule for registered parts: `clip_registered` for tilted members, the face-extent rule instead of the thickness cap, `fitup_mm`, `member_within_pose_tol`), `compute_seams` (seams as dicts, consistently oriented), `compute_tacks` (tackrule-0.1 with `tack_no` and `order`), `seams_points_m` / `tacks_points_m` (RViz clouds), `summarize`. Imports `weldgen` at call time from `weldgen_path`. |
+| `tool_model.py` | `load_tool_model` (`config/pen_tool.json` + the calibration file → `ToolModel`: tip, touch force, standoff, primitives), `primitives_in` (placed by a `tool0` pose), `T_tool0_for_tip` (the `tool0` pose that puts the tip on a point with the pen along an axis at a given roll — the free-roll redundancy), `solve_tip_offset` (4-point TCP least squares). |
+| `collision.py` | `ur5e_capsules` (the arm as six capsules on `kinematics.ur5e_link_frames`, tubes displaced by the URDF's shoulder/elbow offsets), `boxes_from_parts` (mode A parts → boxes in metres), closed-form distances (segment–segment, golden-section segment–box, separating-axis box–box, lowest point vs plane), `CollisionModel` (`min_distance`, `in_collision`, `is_valid` for the RRT, `report`). No full self-collision; stated. |
+| `tack_reach.py` | `MarkingConfig` / `load_marking_config` (`config/marking.json`), `joint_state_to_ur_order`, the branch lock (`branch_signature`, `same_branch`, `solve_on_branch`), `pen_axis_for` (work-angle tilt about the seam tangent), `tool_only_clearance` (pose-only precheck), `plan_tacks` (tilt × roll per seam, largest minimum clearance, then least travel) and `format_report`. |
+| `marking.py` | The motion computed for the marking node: `transit_path` (straight edge or RRT + `shortcut_path` under the collision model, `edge_resolution` 0.01 rad), `descent_chain`, `line_chain`, `stroke_chain`, `resample_polyline`, `stroke_targets` (dot / tack segment / seam polyline), `time_joint_path`, `time_descent`, `contact_depth_m`, `build_marking_plan` (with the overshoot judged against the tack pose's own clearance), `plan_to_dict`. |
+| `kinematics.py` (additions) | `ur5e_link_frames` (every joint frame, for the capsules), `rrt_connect(..., is_valid=, edge_resolution=)` (validity callback for the collision model; a path-order bug after odd tree swaps fixed 2026-09-24), `_edge_valid(..., is_valid=)`. |
 
 ---
 
