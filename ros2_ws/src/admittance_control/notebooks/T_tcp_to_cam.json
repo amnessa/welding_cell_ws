@@ -1,26 +1,37 @@
 {
- "written": "2026-09-25 11:38:55",
- "samples": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/notebooks/handeye_samples.npz",
- "n_samples": 18,
- "solver": "park_martin",
- "tcp_offset_composed": [
-  0.00135,
-  -0.00017,
-  0.18173,
-  0.0,
-  0.0,
-  0.0
- ],
+ "written": "2026-09-28 15:35:35",
+ "base_extrinsic": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/notebooks/T_tcp_to_cam.npy",
+ "check": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/notebooks/extrinsic_check.json",
+ "plane": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/notebooks/table_plane.json",
+ "correction": {
+  "w_camera_deg": [
+   0.34493684565449756,
+   -0.11105435315393854,
+   0.0
+  ],
+  "w_deg": 0.36237342182411003,
+  "world_tilt_deg": 0.37536478725234473,
+  "residual_deg": 0.13098797292407938,
+  "conditioning": 0.9997723641401626,
+  "Rc": [
+   [
+    0.9999981215723791,
+    -5.834430438141637e-06,
+    -0.0019382511892531728
+   ],
+   [
+    -5.834430438141637e-06,
+    0.999981878152685,
+    -0.006020243532284778
+   ],
+   [
+    0.0019382511892531728,
+    0.006020243532284778,
+    0.9999799997250641
+   ]
+  ],
+  "n_views": 4
+ },
  "frame": "tool0",
- "board_in_base_std_mm": [
-  3.7977544902704814,
-  3.164996254626375,
-  4.861902084777655
- ],
- "rotation_spread_deg": 4.780767949537797,
- "camera_origin_mm": [
-  16.406095410034084,
-  84.94318526555331,
-  52.91483467656766
- ]
+ "note": "tilt refined from table views; translation and rotation about the optical axis unchanged"
 }

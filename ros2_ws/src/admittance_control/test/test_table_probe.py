@@ -76,3 +76,65 @@ def test_tcp_error_is_recovered_from_contact_heights_on_a_known_plane():
     assert not vert["well_conditioned"]
     R0 = rot_exp(np.array([0, 0, 0.3])); R1 = rot_exp(np.array([0.2, 0, 1.2]))
     assert np.allclose(slerp_R(R0, R1, 0.0), R0) and np.allclose(slerp_R(R0, R1, 1.0), R1)
+
+
+def test_surface_vs_plane_measures_a_large_error_and_ignores_the_floor():
+    from admittance_control.table_probe import surface_vs_plane, rot_exp
+    rng = np.random.default_rng(5)
+    n = np.array([0.0175, -0.021, 1.0]); n /= np.linalg.norm(n)
+    p0 = np.array([-0.516, 0.096, -0.0977])
+    # the camera's view of the table 0.4 m away from the touched patch, seen through an
+    # extrinsic that is 20 mm too high and rotated 0.6 deg about x: offset and tilt
+    xy = np.column_stack([rng.uniform(-0.10, 0.10, 6000) - 0.1, rng.uniform(-0.1, 0.1, 6000) + 0.45])
+    z = p0[2] - (n[0] * (xy[:, 0] - p0[0]) + n[1] * (xy[:, 1] - p0[1])) / n[2]
+    table = np.column_stack([xy, z])
+    R = rot_exp(np.array([np.deg2rad(0.6), 0, 0]))
+    c = table.mean(axis=0)
+    seen = (table - c) @ R.T + c + np.array([0, 0, 0.020]) + rng.normal(scale=0.0008, size=table.shape)
+    floor = np.column_stack([rng.uniform(-0.6, -0.2, 3000), rng.uniform(0.3, 0.6, 3000), np.full(3000, -0.75)])
+    out = surface_vs_plane(np.vstack([seen, floor]), n, p0)
+    assert "error" not in out, out
+    assert out["height_offset_mm"] == pytest.approx(20.0, abs=0.5)
+    assert out["tilt_deg"] == pytest.approx(0.6, abs=0.1)
+    assert out["extrapolation_m"] > 0.3
+    assert "error" in surface_vs_plane(floor, n, p0)                        # no table in view
+
+
+def test_separate_tilt_splits_world_and_camera_parts():
+    from admittance_control.table_probe import separate_tilt
+    a = np.array([0.2, 0.1])                                   # table tilts 0.22 deg (world)
+    b = np.array([0.6, -0.3])                                  # camera rotation error 0.67 deg
+    yaws = np.array([0.0, 90.0, 180.0, 270.0, 45.0])
+    tv = []
+    for p in np.deg2rad(yaws):
+        R = np.array([[np.cos(p), -np.sin(p)], [np.sin(p), np.cos(p)]])
+        tv.append(a + R @ b)
+    tv = np.array(tv)
+    out = separate_tilt(np.linalg.norm(tv, axis=1), np.degrees(np.arctan2(tv[:, 1], tv[:, 0])), yaws)
+    assert out["separable"]
+    assert out["world_tilt_deg"] == pytest.approx(np.hypot(*a), abs=1e-6)
+    assert out["camera_tilt_deg"] == pytest.approx(np.hypot(*b), abs=1e-6)
+    same = separate_tilt([0.7, 0.7, 0.7], [110, 110, 110], [0, 5, 10])   # today's views: one yaw
+    assert not same["separable"]
+
+
+def test_refine_camera_rotation_recovers_a_known_tilt_error():
+    from admittance_control.table_probe import refine_camera_rotation, rot_exp, tilt_to_normal
+    n0 = np.array([0.0175, -0.021, 1.0]); n0 /= np.linalg.norm(n0)
+    w_true = np.deg2rad([0.25, -0.30, 0.0])                   # the extrinsic's tilt error
+    Rc = rot_exp(w_true)
+    a = tilt_to_normal(n0, 0.35, 70.0)                        # the table there tilts too
+    Rs, Ns = [], []
+    for yaw in (-135.0, -51.0, 39.0, 127.0):                  # today's four wrist yaws
+        y = np.deg2rad(yaw)
+        # camera looking down (optical z = -base z), x along the yaw
+        R = np.column_stack([[np.cos(y), np.sin(y), 0.0], [np.sin(y), -np.cos(y), 0.0], [0.0, 0.0, -1.0]])
+        R = rot_exp(np.deg2rad([0.4, -0.2, 0.0])) @ R          # a slightly oblique view
+        Rs.append(R); Ns.append(R @ Rc.T @ R.T @ a)           # what the used extrinsic shows
+    out = refine_camera_rotation(np.array(Rs), np.array(Ns), n0)
+    assert np.allclose(out["w_camera_deg"][:2], np.degrees(w_true[:2]), atol=0.02)
+    assert out["world_tilt_deg"] == pytest.approx(0.35, abs=0.02)
+    assert out["residual_deg"] < 0.01 and out["conditioning"] > 0.3
+    # tilt_to_normal inverts the reported (tilt, azimuth)
+    n = tilt_to_normal(n0, 0.7, 110.0)
+    assert np.degrees(np.arccos(n @ n0)) == pytest.approx(0.7, abs=1e-9)

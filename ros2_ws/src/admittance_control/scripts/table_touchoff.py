@@ -68,6 +68,7 @@ from pathlib import Path
 import numpy as np
 import rclpy
 from builtin_interfaces.msg import Duration
+from action_msgs.msg import GoalStatus
 from control_msgs.action import FollowJointTrajectory
 from geometry_msgs.msg import PoseStamped, WrenchStamped
 from rclpy.action import ActionClient
@@ -263,6 +264,15 @@ class TableTouchoff(Node):
                 tip_fk = self._tool.tip_in(ur5e_fk(q))
                 return True, f'{label}: contact at {f:.2f} N', {'tcp': tcp, 'fk': tip_fk, 'force': f, 'q': q}
             time.sleep(0.002)
+        # the controller's verdict: a goal it aborted (joint limit, path tolerance) left the
+        # arm partway - treating that as "done" made the next move start 32 deg away
+        r = res.result()
+        status = getattr(r, 'status', None)
+        code = getattr(getattr(r, 'result', None), 'error_code', None)
+        if status != GoalStatus.STATUS_SUCCEEDED or code != FollowJointTrajectory.Result.SUCCESSFUL:
+            err = getattr(getattr(r, 'result', None), 'error_string', '') or ''
+            return False, (f'{label}: controller did not complete the move (status {status}, '
+                           f'error {code}{": " + err if err else ""}) - the arm stopped partway'), None
         tail = f' (peak {peak:.1f} N while leaving)' if away and peak > self._touch else ''
         return True, f'{label}: {"no contact" if watch else "done"}{tail}', None
 
@@ -309,6 +319,28 @@ class TableTouchoff(Node):
             T = np.eye(4); T[:3, :3] = R; T[:3, 3] = tip - R @ self._tool.tip_tool0
             Ts.append(T)
         return Ts
+
+    @staticmethod
+    def _via(rolls, R_from, R_to, tilt):
+        """The orientations to pass through from R_from to R_to. Vertical rolls go one
+        90-degree step at a time (0, 90, 180, 270 - the wrist turns 270 deg). Before the
+        first TILTED orientation the wrist UNWINDS back through the rolls it made
+        (270 -> 180 -> 90 -> 0) instead of taking the short way forward to 360, which
+        ran it into its limit on 2026-09-28; the tilted ones then start from roll 0."""
+        if tilt > 0.0 and len(rolls) > 1:
+            back = list(reversed(rolls[:-1]))           # e.g. R180, R90, R0
+            rolls[:] = [rolls[0]]                       # unwound: only the start remains
+            return [R_from] + back + [R_to]
+        return [R_from, R_to]
+
+    def _reorient(self, at, rotations, q_seed, cfg):
+        """Rotate the pen about the tip held at `at` through the listed orientations in
+        order (each leg geodesic, so each leg must be < 180 deg). Returns the IK chain
+        (starting with `q_seed`) or None."""
+        Ts = []
+        for Ra, Rb in zip(rotations[:-1], rotations[1:]):
+            Ts += self._poses_between(at, Ra, at, Rb)
+        return self._chain_T(Ts, q_seed, cfg) if Ts else [np.asarray(q_seed, float)]
 
     def _release(self, x_hint, cfg, rise_m: float, v: float, label: str):
         """Straight UP by `rise_m` from wherever the tip is now (FK-relative, so the
@@ -485,10 +517,16 @@ class TableTouchoff(Node):
             return response
         if self.dry_run:
             bad = []
+            q_d, R_d, rolls = c[-1], R_cur, [R_cur]
             for tilt, az, axis, xh in orients:
                 R_k = self._pose_axis(spot, axis, xh)[:3, :3]
                 hover = spot - hover_d * axis
-                c1 = self._chain_T(self._poses_between(safe, R_cur, safe, R_k), c[-1], cfg)
+                via = self._via(rolls, R_d, R_k, tilt)
+                c1 = self._reorient(safe, via, q_d, cfg)
+                if c1 is not None and tilt == 0.0:
+                    rolls.append(R_k)
+                if c1 is not None:
+                    q_d, R_d = c1[-1], R_k
                 c2 = None if c1 is None else self._chain_T(self._poses_between(safe, R_k, hover, R_k), c1[-1], cfg)
                 c3 = None if c2 is None else self._chain_T(self._poses_between(hover, R_k, spot + 0.01 * axis, R_k), c2[-1], cfg)
                 (bad.append(f'{tilt:.0f}/{az:.0f}') if c3 is None else log.append(f'{tilt:.0f} deg / az {az:.0f}: ok'))
@@ -502,11 +540,14 @@ class TableTouchoff(Node):
             response.success, response.message = False, ' | '.join(log)
             return response
         q_cur, R_cur = c[-1], R_cur
+        rolls = [R_cur]                      # the vertical rolls visited, to unwind them
         for tilt, az, axis, xh in orients:
             tag = f'tilt {tilt:.0f} / az {az:.0f}'
             R_k = self._pose_axis(spot, axis, xh)[:3, :3]
             hover = spot - hover_d * axis
-            c1 = self._chain_T(self._poses_between(safe, R_cur, safe, R_k), q_cur, cfg)
+            c1 = self._reorient(safe, self._via(rolls, R_cur, R_k, tilt), q_cur, cfg)
+            if tilt == 0.0:
+                rolls.append(R_k)
             c2 = None if c1 is None else self._chain_T(self._poses_between(safe, R_k, hover, R_k), c1[-1], cfg)
             if c2 is None:
                 log.append(f'{tag}: no IK, skipped'); continue
@@ -574,7 +615,10 @@ class TableTouchoff(Node):
                             f"along the pen {sol['along_pen_mm']:+.2f} mm ({'ok' if sol['along_pen_conditioned'] else 'weakly observed at this tilt'}); "
                             f"fit residual {sol['residual_rmse_mm']:.2f} mm over {sol['n_touches']} touches. "
                             f"On paper, the 4 vertical dots form a circle of radius ~{sol['lateral_mm']:.1f} mm. "
-                            f"If lateral > 1 mm, correct the pendant TCP (and pen_tool.json) by -e. Wrote {out}")
+                            f"If lateral > 1 mm, correct the pendant TCP (and pen_tool.json) by minus its LATERAL part only. "
+                            f"Do NOT apply the along-pen value: it is (tilted - vertical height) / (1 - cos tilt), i.e. "
+                            f"{(1 - np.cos(np.deg2rad(max(self.get_parameter('check_tilts_deg').value)))) * abs(sol['along_pen_mm']):.2f} mm "
+                            f"of data amplified, and a rounded or flexing pen tip produces exactly this pattern. Wrote {out}")
         self.get_logger().info(response.message)
         return response
 

@@ -88,8 +88,14 @@ def residual(X, Rg, tg, Rb, tb, idx=None):
     idx = list(range(len(Rg))) if idx is None else list(idx)
     boards = [T(Rg[i], tg[i]) @ X @ T(Rb[i], tb[i]) for i in idx]
     P = np.array([B[:3, 3] for B in boards])
-    R0 = boards[0][:3, :3]
-    ang = max(np.degrees(np.arccos(np.clip((np.trace(R0.T @ B[:3, :3]) - 1) / 2, -1, 1))) for B in boards)
+    # Orientation spread about the chordal MEAN (RMS angle). The first version took the
+    # worst angle against sample 0: anchored to one sample (dropping it moved the figure
+    # from 6.8 to 4.5 deg) and dominated by the board's own PnP orientation noise, which
+    # on a 12 cm board at 30 cm is a degree or more per view.
+    M = sum(B[:3, :3] for B in boards)
+    U, _, Vt = np.linalg.svd(M); Rm = U @ Vt
+    angs = np.array([np.degrees(np.arccos(np.clip((np.trace(Rm.T @ B[:3, :3]) - 1) / 2, -1, 1))) for B in boards])
+    ang = float(np.sqrt(np.mean(angs ** 2)))
     return P.std(0) * 1000, (P.max(0) - P.min(0)) * 1000, ang, P
 
 
@@ -98,7 +104,7 @@ def describe(X, label, Rg, tg, Rb, tb) -> str:
     return (f"{label}: camera origin in tcp {np.round(X[:3, 3] * 1000, 1)} mm, optical axis "
             f"{np.round(X[:3, 2], 3)}, optical x {np.round(X[:3, 0], 3)}\n"
             f"    board-in-base spread: std {np.round(s, 1)} mm, range {np.round(r, 1)} mm, "
-            f"rotation {a:.1f} deg  -> {verdict(s, a)}")
+            f"rotation RMS {a:.1f} deg about the mean  -> {verdict(s, a)}")
 
 
 def verdict(std_mm, rot_deg) -> str:
@@ -107,7 +113,7 @@ def verdict(std_mm, rot_deg) -> str:
     n = float(np.linalg.norm(std_mm))
     if n < 6 and rot_deg < 2:
         return "GOOD"
-    if n < 10 and rot_deg < 5:
+    if n < 10 and rot_deg < 3:
         return "FAIR (usable; more samples with the board nearer would tighten it)"
     return "BAD"
 
@@ -141,6 +147,13 @@ def main() -> int:
         D = T(rodrigues(off[3:]), off[:3])                            # tool0 -> tcp
         X = D @ X
         print(f"composed with the pendant TCP {off}: camera origin in tool0 {np.round(X[:3, 3] * 1000, 1)} mm")
+    if args.write and args.tcp_offset is None:
+        raise SystemExit(
+            "REFUSING to write: no --tcp-offset. The samples were recorded at the pendant's "
+            "active TCP, so without it the file is the camera in the TCP frame, not in tool0, "
+            "and ROS will place the camera wrong by the whole TCP (2026-09-28: 126 mm behind "
+            "the pen tip). Pass the TCP the capture ran with, e.g. --tcp-offset 0.00107 "
+            "-0.00135 0.18091 0 0 0, or --tcp-offset 0 0 0 0 0 0 if it really was zero.")
     if args.write:
         out = Path(args.write); out.parent.mkdir(parents=True, exist_ok=True)
         np.save(out, X)

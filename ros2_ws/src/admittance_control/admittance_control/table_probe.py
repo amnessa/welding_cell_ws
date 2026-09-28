@@ -173,3 +173,135 @@ def solve_tcp_error(tips_reported: np.ndarray, R_tcp: np.ndarray, plane_normal: 
             "lateral_conditioning": sv_lat, "well_conditioned": bool(sv_lat > 0.1),
             "along_pen_conditioning": sv_z, "along_pen_conditioned": bool(sv_z > 0.1),
             "n_touches": int(len(P))}
+
+
+# --------------------------------------------------------------------------- extrinsic check
+def surface_vs_plane(pts: np.ndarray, normal: np.ndarray, p0: np.ndarray,
+                     search_m: float = 0.25, band_m: float = 0.008, radius_m: float = 0.0,
+                     min_points: int = 500) -> dict[str, Any]:
+    """The dominant flat surface among `pts` (base_link, m) compared with a known plane.
+
+    The table is found as the densest 2 mm height bin within +-`search_m` of the known
+    plane - whatever its height, so a large error is MEASURED, not filtered out - then
+    the points within `band_m` of that bin get a robust plane fit (3 trimming rounds).
+    Returns the height offset of the fitted surface against the known plane extended to
+    the surface's own centre (mm, + = the camera sees the table higher), the tilt between
+    the normals (deg) and its azimuth, the distance from `p0` (how far the known plane
+    was extrapolated), or {"error": ...}.
+    """
+    P = np.asarray(pts, float).reshape(-1, 3)
+    n = np.asarray(normal, float); n = n / np.linalg.norm(n)
+    p0 = np.asarray(p0, float)
+    h = (P - p0) @ n
+    region = np.abs(h) < search_m
+    if radius_m > 0.0:
+        region &= np.linalg.norm((P - p0)[:, :2], axis=1) < radius_m
+    if region.sum() < min_points:
+        return {"error": f"no surface within +-{search_m * 1000:.0f} mm of the known plane "
+                         f"(median height of all points {np.median(h) * 1000:+.1f} mm)"}
+    edges = np.arange(-search_m, search_m + 0.002, 0.002)
+    hist, _ = np.histogram(h[region], bins=edges)
+    k = int(np.argmax(hist))
+    peak = 0.5 * (edges[k] + edges[k + 1])
+    sel = P[region & (np.abs(h - peak) < band_m)]
+    if len(sel) < min_points:
+        return {"error": f"only {len(sel)} points on the dominant surface (peak {peak * 1000:+.1f} mm)"}
+    for _ in range(3):
+        f = fit_plane(sel)
+        res = np.asarray(f["residuals_mm"])
+        mad = np.median(np.abs(res - np.median(res))) * 1.4826 + 0.05
+        sel = sel[np.abs(res - np.median(res)) < 3.0 * mad]
+    f = fit_plane(sel)
+    c = sel.mean(axis=0)
+    z_cam = f["a"] * c[0] + f["b"] * c[1] + f["c"]
+    z_known = p0[2] - (n[0] * (c[0] - p0[0]) + n[1] * (c[1] - p0[1])) / n[2]
+    nc = np.asarray(f["normal"], float)
+    d = nc - (nc @ n) * n
+    return {"height_offset_mm": float((z_cam - z_known) * 1000.0),
+            "tilt_deg": float(np.degrees(np.arccos(np.clip(nc @ n, -1.0, 1.0)))),
+            "tilt_azimuth_deg": float(np.degrees(np.arctan2(d[1], d[0]))) if np.linalg.norm(d) > 1e-12 else 0.0,
+            "plane_rmse_mm": f["rmse_mm"], "n_points": int(len(sel)),
+            "surface_centre_m": c.tolist(), "extrapolation_m": float(np.linalg.norm((c - p0)[:2]))}
+
+
+def separate_tilt(tilt_deg, tilt_azimuth_deg, camera_yaw_deg) -> dict[str, Any]:
+    """Split measured table tilts into a WORLD-fixed part and a CAMERA-fixed part.
+
+    Each view measured a small tilt vector t_i (magnitude along its azimuth, in the table
+    plane). A tilt caused by the camera - extrinsic rotation, a tilted depth sensor -
+    turns with the camera's yaw psi_i; one caused by the world - the table's own shape
+    there, an error of the pen plane - does not:
+        t_i = a + Rot(psi_i) b          (small-angle, 2-D)
+    `a` is the world part, `b` the camera part expressed in the camera's yaw frame.
+    Needs camera yaws spread by >= 90 deg, or a and b are not separable (reported).
+    """
+    t = np.asarray(tilt_deg, float); az = np.deg2rad(np.asarray(tilt_azimuth_deg, float))
+    psi = np.deg2rad(np.asarray(camera_yaw_deg, float))
+    T = np.column_stack([t * np.cos(az), t * np.sin(az)]).reshape(-1)
+    rows = []
+    for p in psi:
+        c, s = np.cos(p), np.sin(p)
+        rows.append([1.0, 0.0, c, -s])
+        rows.append([0.0, 1.0, s, c])
+    A = np.array(rows)
+    spread = float(np.degrees(np.ptp(np.unwrap(psi)))) if len(psi) > 1 else 0.0
+    sv = np.linalg.svd(A, compute_uv=False)
+    separable = bool(spread >= 90.0 and sv.min() > 0.3)
+    x, *_ = np.linalg.lstsq(A, T, rcond=None)
+    res = A @ x - T
+    return {"world_tilt_deg": float(np.hypot(x[0], x[1])),
+            "world_tilt_azimuth_deg": float(np.degrees(np.arctan2(x[1], x[0]))),
+            "camera_tilt_deg": float(np.hypot(x[2], x[3])),
+            "camera_tilt_direction_in_camera_deg": float(np.degrees(np.arctan2(x[3], x[2]))),
+            "residual_deg": float(np.sqrt(np.mean(res ** 2))), "yaw_spread_deg": spread,
+            "separable": separable}
+
+
+def tilt_to_normal(n0: np.ndarray, tilt_deg: float, azimuth_deg: float) -> np.ndarray:
+    """The unit normal tilted by `tilt_deg` from `n0` toward the table direction
+    `azimuth_deg` (the inverse of how `surface_vs_plane` reports a tilt)."""
+    n0 = np.asarray(n0, float) / np.linalg.norm(n0)
+    a = np.deg2rad(azimuth_deg)
+    u = np.array([np.cos(a), np.sin(a), 0.0])
+    u = u - (u @ n0) * n0
+    u /= np.linalg.norm(u)
+    t = np.deg2rad(tilt_deg)
+    return np.cos(t) * n0 + np.sin(t) * u
+
+
+def refine_camera_rotation(R_base_cam: np.ndarray, n_observed: np.ndarray, n0: np.ndarray
+                           ) -> dict[str, Any]:
+    """The small camera rotation that makes every view's table level with the known one.
+
+    Model: the extrinsic in use is off by a rotation Rc = exp([w]) in the CAMERA frame
+    (true camera = used @ Rc). A plane whose true normal is n_true then appears, through
+    the used extrinsic, as n_obs = R_i Rc^T R_i^T n_true, i.e. to first order
+        n_obs_i - n0 = a + n0 x (R_i w),
+    with `a` (in-plane, 2 dof) the table's own tilt there against the known plane - the
+    world-fixed part - and w the camera-fixed part. w's component along the optical axis
+    is unobservable from a plane when every view looks down, so it is fixed to 0: this
+    refines the camera's two TILT angles, not its yaw about the optical axis.
+
+    Returns w (deg, camera frame), a (deg), the residual (deg) and Rc; apply as
+    T_tool0_cam_refined = T_tool0_cam @ [[Rc, 0], [0, 1]].
+    """
+    Rs = np.asarray(R_base_cam, float).reshape(-1, 3, 3)
+    N = np.asarray(n_observed, float).reshape(-1, 3)
+    n0 = np.asarray(n0, float) / np.linalg.norm(n0)
+    e1 = np.cross(n0, [0.0, 1.0, 0.0]); e1 /= np.linalg.norm(e1)
+    e2 = np.cross(n0, e1)
+    rows, rhs = [], []
+    for R, n in zip(Rs, N):
+        d = n / np.linalg.norm(n) - n0
+        A = np.column_stack([e1, e2, np.cross(n0, R[:, 0]), np.cross(n0, R[:, 1])])
+        rows.append(A); rhs.append(d)
+    A = np.vstack(rows); b = np.concatenate(rhs)
+    x, *_ = np.linalg.lstsq(A, b, rcond=None)
+    res = A @ x - b
+    w = np.array([x[2], x[3], 0.0])
+    sv = np.linalg.svd(A[:, 2:], compute_uv=False)
+    return {"w_camera_deg": np.degrees(w).tolist(), "w_deg": float(np.degrees(np.linalg.norm(w))),
+            "world_tilt_deg": float(np.degrees(np.hypot(x[0], x[1]))),
+            "residual_deg": float(np.degrees(np.sqrt(np.mean(res ** 2)) * np.sqrt(3.0))),
+            "conditioning": float(sv.min() / np.sqrt(len(Rs))), "Rc": rot_exp(w).tolist(),
+            "n_views": int(len(Rs))}

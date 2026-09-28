@@ -26,6 +26,16 @@ now the object of work, and it is measurable, not a guess.
    (`table_probe.solve_tcp_error`, conditioning reported; simulated reachable from a
    pen-down start over the table, all 8 orientations). Lateral < 1 mm clears the tool:
    the 3–5 mm is then camera/registration.
+   **DONE 2026-09-28: lateral TCP error 0.21 mm (conditioning 0.24, fit residual 0.04 mm,
+   8 touches) - the TOOL IS CLEARED; the 3–5 mm is world-side.** The fit also printed
+   −4.0 mm "along the pen": it rests on one number, the tilted touches reporting the tip
+   +0.54 mm above the plane (vertical ones −0.01), amplified by 1/(1 − cos 30°) = 7.5.
+   The same lift at all four azimuths is what a rounded tip (radius ≈ 4 mm with the TCP
+   at the apex) or a pen flexing under the 0.75 N side load produces; it is NOT applied
+   to the TCP (a 4 mm shorter TCP would put every vertical touch 4 mm off). Effect on
+   marking: the contact depth of a 45° descent reads ~1 mm early; lateral position
+   unaffected. Unwinding the wrist between the roll round and the tilted round, and a
+   controller-result check in the touch-off node, were needed to get here.
 2. **Registration noise floor — MEASURED 2026-09-25:** with part and arm stationary the
    ICP pose had position std (5.2, 2.5, 3.0) mm, range up to 24 mm, orientation std 1.4°
    with swings to 6.4° (28 mm at 250 mm). That alone covers the 8 mm. DONE the same day:
@@ -49,7 +59,33 @@ now the object of work, and it is measurable, not a guess.
    residual); (c) generalized ICP (plane-to-plane, covariance-weighted). The current
    solver is Fast & Robust ICP (Welsch + Anderson) on point-to-plane; keep it as the
    inner loop and add (a) first.
-3. **Camera rotation.** The recalibrated extrinsic's board-in-base rotation spread was
+3. **Camera extrinsic, checked against the robot (2026-09-28).** Today's 33-sample
+   capture grades GOOD once the rotation metric is fixed (spread about the MEAN: 1.8°;
+   the old max-vs-sample-0 read 6.8°): camera at (34.8, 89.0, 54.5) mm in tool0 with the
+   pendant TCP (1.07, −1.35, 180.91) composed. But the 25 Sep calibration put it at
+   (15, 85, 55): 20 mm apart while each fits its own samples to 3 mm - a systematic the
+   ChArUco residual cannot see (bracket moved, or an unknown TCP during the 25 Sep
+   capture). `scripts/extrinsic_check.py` settles it against the pen-measured table:
+   the camera's table points through TF must land on `table_plane.json` (tilt < 0.3°,
+   offset < 2 mm in every view). Also: `resolve_handeye.py --write` now refuses to run
+   without `--tcp-offset` (it had just overwritten the composed file with the TCP-frame
+   one; restored).
+   **Result 2026-09-28, 4 views at wrist yaws −135/−51/39/127:** height +1.7…+2.8 mm;
+   tilt split CAMERA-fixed **0.36°**, WORLD-fixed 0.38° (the table 40–60 cm from the
+   touched patch), residual 0.09°. The camera part is ~2 mm at 300 mm - part of the
+   3–5 mm - and equals the ChArUco solve's own rotation uncertainty (~0.3°), which is why
+   recalibrating kept wandering. `helper/calibration/refine_extrinsic_from_table.py
+   --write` → `notebooks/T_tcp_to_cam_refined.npy` (tilt corrected by 0.36°, mostly about
+   camera x; translation and rotation about the optical axis unchanged; the file in use
+   is not touched). Verify: launch with it, extrinsic_check at four yaws → camera part
+   ≲ 0.1°; then re-register and mark.
+   **VERIFIED:** with the refined file the camera-fixed tilt is **0.04°** (was 0.36°); the
+   0.41° left is world-fixed (the table far from the patch). The user promoted it:
+   `notebooks/T_tcp_to_cam.npy` = refined, `T_tcp_to_cam_unrefined.npy` = the ChArUco-only
+   solve. Open: a constant +2.3 mm height offset in all views - depth bias of the D435i at
+   300 mm or the table 2 mm higher there than the extrapolated pen plane; one round of
+   views over the touched hexagon separates them.
+3b. **Camera rotation (earlier note).** The recalibrated extrinsic's board-in-base rotation spread was
    3.6°; a 1° rotation error is ~9 mm at 0.5 m - the right size for the residual.
    Recapture with 25–30 poses, the board larger or nearer (filling a third of the
    frame), and deliberate ROLLS of the wrist about the camera axis between poses (that is
@@ -183,9 +219,21 @@ Tracking needs a stream, not a round trip per frame with a fresh registration:
 - **Mode A+**: keep per-part sensor points at `save_object`, label by nearest CAD face,
   lit-quadric refinement; fit-up diagnostic from the measured seam. (Item 5 above is the
   pen's version of the same measurement.)
-- Registry entries for non-box parts when they enter the library: `tube` for the
-  pipes, `swept_slab` for the `270circle` band, hand-edited slabs for tabbed plates
-  when the envelope is too coarse.
+- **Mode A covers only the 5 PLATE strata today** (T/line, corner, butt square, lap,
+  edge): the registry knows slabs only and `judge_registered` skips curved faces. The
+  6 curved strata need, in order of effort: (1) registry entries `tube` (r_outer, wall,
+  length, axis) for the Phase 9 pipes and RHS, `swept_slab` for strips / the `270circle`
+  band, verified against the CAD with the D34 chord budget; (2) pipe-on-plate
+  (circle/ellipse: `curves.ellipse_from_plane_cylinder`) and pipe-on-pipe (saddle:
+  `curves.saddle_from_cylinders`) from the REGISTERED poses - the same calls as
+  `verify_curved.rediscover_seam` - plus the per-point cone test of
+  `verify_curved.curved_seam_set` / `cone_clear_fractions`; (3) RHS and swept strip on
+  a plate: NEW code (the generator constructs these from the curve, there is no
+  rediscovery arm to reuse) - intersect the part's side faces with the plate at the
+  registered pose; (4) the tack rule's closed-seam branch already exists; (5) motion:
+  a full loop around a pipe needs large wrist rolls and part of the far side may be
+  out of reach - the reachability report shows it per tack. Needed before Phase 9's
+  curved strata can be marked; the pipe cases (2) are the cheap half.
 - Quality field on the seams and the DP tack selection (thesis stages 1–3), once the
   tack points are trusted on the bench.
 
