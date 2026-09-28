@@ -77,3 +77,99 @@ def repeatability(groups: list[np.ndarray]) -> dict[str, Any]:
     stds = [float(np.std(np.asarray(g, float)[:, 2]) * 1000.0) for g in groups if len(g) > 1]
     return {"per_spot_z_std_mm": stds,
             "pooled_z_std_mm": float(np.sqrt(np.mean(np.square(stds)))) if stds else None}
+
+
+# --------------------------------------------------------------------------- TCP check
+def rot_log(R: np.ndarray) -> np.ndarray:
+    c = np.clip((np.trace(R) - 1.0) / 2.0, -1.0, 1.0)
+    th = np.arccos(c)
+    if th < 1e-9:
+        return np.zeros(3)
+    if np.pi - th < 1e-6:                               # 180 deg: axis from the diagonal
+        k = int(np.argmax(np.diag(R)))
+        v = R[:, k] + np.eye(3)[k]
+        return th * v / np.linalg.norm(v)
+    return th / (2 * np.sin(th)) * np.array([R[2, 1] - R[1, 2], R[0, 2] - R[2, 0], R[1, 0] - R[0, 1]])
+
+
+def rot_exp(w: np.ndarray) -> np.ndarray:
+    th = float(np.linalg.norm(w))
+    if th < 1e-12:
+        return np.eye(3)
+    k = np.asarray(w, float) / th
+    K = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
+    return np.eye(3) + np.sin(th) * K + (1 - np.cos(th)) * K @ K
+
+
+def slerp_R(R0: np.ndarray, R1: np.ndarray, s: float) -> np.ndarray:
+    """Rotation a fraction `s` of the way from R0 to R1 (geodesic)."""
+    return R0 @ rot_exp(s * rot_log(R0.T @ R1))
+
+
+def check_orientations(tilts_deg=(0.0, 30.0), azimuths_deg=(0.0, 90.0, 180.0, 270.0),
+                       x0=np.array([1.0, 0.0, 0.0])) -> list[tuple[float, float, np.ndarray, np.ndarray]]:
+    """(tilt, azimuth, pen axis INTO the surface, tool x hint) for the TCP check.
+
+    Tilt 0 at every azimuth is the pure ROLL about a vertical pen (the classic roll
+    test: on paper, the dots of a correct TCP coincide). Tilt > 0 swings the pen off
+    vertical toward each azimuth with the tool's yaw held FIXED: that is what makes the
+    plane's normal look different in the pen's own frame at each azimuth, and so what
+    makes the lateral TCP components observable from contact heights. (Rolling the
+    tool together with the tilt direction keeps the normal constant in the pen's frame
+    - one lateral direction, an ill-conditioned fit; the first draft did that.)
+    """
+    out = []
+    x0 = np.asarray(x0, float)
+    for t in tilts_deg:
+        for a in azimuths_deg:
+            tr, ar = np.deg2rad(t), np.deg2rad(a)
+            axis = np.array([np.sin(tr) * np.cos(ar), np.sin(tr) * np.sin(ar), -np.cos(tr)])
+            if t == 0.0:
+                Rz = np.array([[np.cos(ar), -np.sin(ar), 0], [np.sin(ar), np.cos(ar), 0], [0, 0, 1.0]])
+                out.append((float(t), float(a), axis, Rz @ x0))
+            else:
+                out.append((float(t), float(a), axis, x0.copy()))
+    return out
+
+
+def solve_tcp_error(tips_reported: np.ndarray, R_tcp: np.ndarray, plane_normal: np.ndarray,
+                    plane_point: np.ndarray) -> dict[str, Any]:
+    """The pen-tip (TCP) error `e`, in the TCP frame, from touches on a KNOWN plane.
+
+    Each touch reports a tip `p_i` computed with the configured TCP, at orientation
+    `R_i`. The real tip is `p_i + R_i e`, and it lies on the plane:
+        n . (p_i + R_i e - p0) = 0   ->   (R_i^T n) . e + delta = -h_i,
+    with h_i the reported tip's height above the plane and `delta` a free offset of
+    the plane (the plane was itself measured with the same TCP, so it carries the
+    vertical component of `e` - `delta` absorbs it). Vertical touches alone see only
+    e_z (collinear with delta); tilted ones make e_x, e_y observable, with a
+    sensitivity of sin(tilt).
+    """
+    P = np.asarray(tips_reported, float).reshape(-1, 3)
+    Rs = np.asarray(R_tcp, float).reshape(-1, 3, 3)
+    n = np.asarray(plane_normal, float); n = n / np.linalg.norm(n)
+    p0 = np.asarray(plane_point, float)
+    h = (P - p0) @ n
+    A = np.column_stack([np.array([R.T @ n for R in Rs]), np.ones(len(P))])
+    x, *_ = np.linalg.lstsq(A, -h, rcond=None)
+    res = A @ x + h
+    # Conditioning, per question. LATERAL (e_x, e_y - what the roll test asks): the
+    # smallest singular value of their columns after the along-pen and plane-offset
+    # columns are regressed out. Vertical touches on a nearly level table give
+    # ~sin(table tilt), 0.02 here: formally full rank, useless in practice; 30 deg
+    # tilts give ~0.3. ALONG THE PEN (e_z): its column after the rest is regressed out;
+    # it separates from the plane offset only by (1 - cos tilt), so it stays weak
+    # (~0.05 at 30 deg) - use 45 deg tilts if the pen length itself is in doubt.
+    def _cond(cols, others):
+        Aa, Ao = A[:, cols], A[:, others]
+        Aa = Aa - Ao @ np.linalg.lstsq(Ao, Aa, rcond=None)[0]
+        return float(np.linalg.svd(Aa, compute_uv=False).min() / np.sqrt(len(P)))
+    sv_lat = _cond([0, 1], [2, 3])
+    sv_z = _cond([2], [0, 1, 3])
+    e = x[:3]
+    return {"e_tcp_mm": (e * 1000.0).tolist(), "lateral_mm": float(np.hypot(e[0], e[1]) * 1000.0),
+            "along_pen_mm": float(e[2] * 1000.0), "plane_offset_mm": float(x[3] * 1000.0),
+            "heights_mm": (h * 1000.0).tolist(), "residual_rmse_mm": float(np.sqrt(np.mean(res ** 2)) * 1000.0),
+            "lateral_conditioning": sv_lat, "well_conditioned": bool(sv_lat > 0.1),
+            "along_pen_conditioning": sv_z, "along_pen_conditioned": bool(sv_z > 0.1),
+            "n_touches": int(len(P))}

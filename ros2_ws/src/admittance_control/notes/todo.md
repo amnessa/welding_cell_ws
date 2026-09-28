@@ -16,11 +16,16 @@ now the object of work, and it is measurable, not a guess.
 
 ## NEXT — attribute the 8 mm (an afternoon, in this order)
 
-1. **Tool or world?** The same tack at rolls 0/90/180/270 about the pen
-   (`tack_reachability.py --roll <deg>` then `plan`/`next`; photograph each mark). A
-   lateral error that TURNS with the wrist is the pen TCP (redo the pendant's 4-point
-   TCP with more spread, or the touch-off script); one that STAYS is the camera or the
-   registration.
+1. **Tool or world?** Status 2026-09-28: after the extrinsic recapture and the plane
+   ground cut the error is **3–5 mm**. The roll test at a tack is weak (in a fillet the
+   corner turns a lateral TCP error into depth; not every roll is reachable), so it is
+   done on the measured table instead: `table_touchoff.py -p mode:=tcp_check` touches
+   one spot vertically at rolls 0/90/180/270 (paper: the dots must coincide) and tilted
+   30° toward four azimuths with the tool yaw held; the contact heights against the
+   plane give the TCP error in the pen frame by least squares
+   (`table_probe.solve_tcp_error`, conditioning reported; simulated reachable from a
+   pen-down start over the table, all 8 orientations). Lateral < 1 mm clears the tool:
+   the 3–5 mm is then camera/registration.
 2. **Registration noise floor — MEASURED 2026-09-25:** with part and arm stationary the
    ICP pose had position std (5.2, 2.5, 3.0) mm, range up to 24 mm, orientation std 1.4°
    with swings to 6.4° (28 mm at 250 mm). That alone covers the 8 mm. DONE the same day:

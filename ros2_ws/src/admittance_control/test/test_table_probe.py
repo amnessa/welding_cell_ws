@@ -50,3 +50,29 @@ def test_repeatability_pools_per_spot_scatter():
     assert rep["per_spot_z_std_mm"][0] == pytest.approx(0.1633, abs=1e-3)
     assert rep["pooled_z_std_mm"] == pytest.approx(np.sqrt((0.1633 ** 2 + 0) / 2), abs=1e-3)
     assert repeatability([g2[:1]])["pooled_z_std_mm"] is None
+
+
+def test_tcp_error_is_recovered_from_contact_heights_on_a_known_plane():
+    from admittance_control.table_probe import check_orientations, solve_tcp_error, slerp_R, rot_exp
+    rng = np.random.default_rng(4)
+    n = np.array([0.0175, -0.021, 1.0]); n /= np.linalg.norm(n)
+    p0 = np.array([-0.516, 0.096, -0.0977])
+    e_true = np.array([0.0021, -0.0013, 0.0008])            # a 2.5 mm lateral TCP error + 0.8 along
+    P, Rs = [], []
+    for tilt, az, axis, xh in check_orientations((0.0, 30.0)):
+        z = axis / np.linalg.norm(axis)
+        x = xh - (xh @ z) * z; x /= np.linalg.norm(x)
+        R = np.column_stack([x, np.cross(z, x), z])
+        true_tip = p0 + np.array([0.004, -0.003, 0.0])
+        true_tip[2] = p0[2] - (n[0] * (true_tip[0] - p0[0]) + n[1] * (true_tip[1] - p0[1])) / n[2]
+        reported = true_tip - R @ e_true + rng.normal(scale=1e-4, size=3) * np.array([1, 1, 1])
+        P.append(reported); Rs.append(R)
+    out = solve_tcp_error(np.array(P), np.array(Rs), n, p0)
+    assert out["well_conditioned"]
+    assert np.allclose(out["e_tcp_mm"][:2], [2.1, -1.3], atol=0.5)     # the lateral part: the question
+    assert abs(out["lateral_mm"] - np.hypot(2.1, 1.3)) < 0.5
+    # vertical touches alone cannot see the lateral error
+    vert = solve_tcp_error(np.array(P[:4]), np.array(Rs[:4]), n, p0)
+    assert not vert["well_conditioned"]
+    R0 = rot_exp(np.array([0, 0, 0.3])); R1 = rot_exp(np.array([0.2, 0, 1.2]))
+    assert np.allclose(slerp_R(R0, R1, 0.0), R0) and np.allclose(slerp_R(R0, R1, 1.0), R1)

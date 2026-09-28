@@ -39,6 +39,17 @@ touches, and with `repeats` > 1 the per-spot repeatability), printed and written
 to `<notebooks>/table_plane.json`, with the lines to paste: the ICP node's `ground_z_m`
 and `marking.json`'s `table_z_m`.
 
+TCP check (`mode:=tcp_check`), the roll test quantified - needs the plane from a
+plane run: from a pen-down start above an empty spot of the table, the pen touches THAT
+spot vertically at rolls 0/90/180/270 (on a sheet of paper, a correct TCP leaves one
+dot) and tilted 30 deg toward four azimuths with the tool yaw held. With a correct TCP
+every reported contact lies on the plane; a TCP error e (pen frame) shows as heights
+that change with orientation, and least squares returns e, its lateral part (the
+question: tool or world?) and a conditioning figure. Rotations happen 5 cm above the
+spot, timed by a joint speed cap; writes notebooks/tcp_check.json.
+
+    ros2 run admittance_control table_touchoff.py --ros-args -p mode:=tcp_check -p dry_run:=false
+
 Safety: `dry_run:=true` (default) plans and prints, sends nothing. A descent stops at
 `max_travel_m` without contact (reported, retracted); |F| > `abort_force_n` cancels
 anything; every trajectory's first point must be within `max_joint_jump_rad` of the
@@ -73,7 +84,9 @@ sys.path.insert(0, str(PKG))
 
 from admittance_control.kinematics import ur5e_fk  # noqa: E402
 from admittance_control.marking import time_descent  # noqa: E402
-from admittance_control.table_probe import fit_plane, repeatability, touch_pattern  # noqa: E402
+from admittance_control.table_probe import (check_orientations, fit_plane, repeatability,  # noqa: E402
+                                            slerp_R, solve_tcp_error, touch_pattern)
+from admittance_control.geometry import quat_to_rotmat  # noqa: E402
 from admittance_control.tack_reach import (UR_ORDER, MarkingConfig, _unwrap_to,  # noqa: E402
                                            joint_state_to_ur_order, solve_on_branch)
 from admittance_control.tool_model import load_tool_model  # noqa: E402
@@ -104,12 +117,22 @@ class TableTouchoff(Node):
         p('wrench_topic', '/force_torque_sensor_broadcaster/wrench')
         p('tcp_pose_topic', '/tcp_pose_broadcaster/pose')
         p('out', str(PKG / 'notebooks' / 'table_plane.json'))
+        # mode tcp_check: the roll test, quantified on the measured table plane
+        p('mode', 'plane')                  # plane | tcp_check
+        p('plane_file', str(PKG / 'notebooks' / 'table_plane.json'))
+        p('check_tilts_deg', [0.0, 30.0])
+        p('check_azimuths_deg', [0.0, 90.0, 180.0, 270.0])
+        p('check_hover_m', 0.02)            # approach distance along the pen
+        p('check_safe_m', 0.05)             # height above the spot for re-orienting
+        p('max_joint_speed_rad_s', 0.3)     # rotation-only moves are timed by this
+        p('check_out', str(PKG / 'notebooks' / 'tcp_check.json'))
 
         self._tool = load_tool_model(str(self.get_parameter('tool_config').value) or None)
         self._touch = float(self._tool.touch_force_n)
         self._lock = threading.Lock()
         self._q = None
         self._tcp = None                    # tip position in base_link from the driver
+        self._tcp_R = None                  # tool orientation in base_link from the driver
         self._force = np.zeros(3)
         self._bias = np.zeros(3)
         self._goal = None
@@ -143,10 +166,14 @@ class TableTouchoff(Node):
             self._force = np.array([f.x, f.y, f.z])
 
     def _on_tcp(self, msg):
-        p = msg.pose.position
+        p, o = msg.pose.position, msg.pose.orientation
         v = np.array([p.x, p.y, p.z])
+        R = quat_to_rotmat([o.x, o.y, o.z, o.w])
         with self._lock:
-            self._tcp = Rz180 @ v if msg.header.frame_id != 'base_link' else v
+            if msg.header.frame_id != 'base_link':
+                self._tcp, self._tcp_R = Rz180 @ v, Rz180 @ R
+            else:
+                self._tcp, self._tcp_R = v, R
 
     def _get(self):
         with self._lock:
@@ -201,7 +228,7 @@ class TableTouchoff(Node):
         still be pressed at ~10 N, and blocking the move that releases it is what held
         the arm on the table on 2026-09-28. Only `release_abort_force_n` guards it."""
         q_now, _, _ = self._get()
-        timed = time_descent(chain, self._tool, v)
+        timed = self._time(chain, v)
         jump = float(np.abs(timed[0][0] - q_now).max())
         if jump > float(self.get_parameter('max_joint_jump_rad').value):
             return False, f'{label}: first point {np.degrees(jump):.0f} deg from the current joints (pen not vertical?) - refused', None
@@ -239,6 +266,50 @@ class TableTouchoff(Node):
         tail = f' (peak {peak:.1f} N while leaving)' if away and peak > self._touch else ''
         return True, f'{label}: {"no contact" if watch else "done"}{tail}', None
 
+    def _time(self, chain, v):
+        """(q, t): each step takes the longest of tip travel / v, the largest joint move /
+        max_joint_speed_rad_s, and 20 ms - so a rotation about the tip (tiny tip travel,
+        large joint motion) is still slow."""
+        w = float(self.get_parameter('max_joint_speed_rad_s').value)
+        out, t = [(np.asarray(chain[0], float), 0.0)], 0.0
+        tip_prev = self._tool.tip_in(ur5e_fk(chain[0]))
+        for a, b in zip(chain[:-1], chain[1:]):
+            tip = self._tool.tip_in(ur5e_fk(b))
+            t += max(float(np.linalg.norm(tip - tip_prev)) / v, float(np.abs(b - a).max()) / w, 0.02)
+            out.append((np.asarray(b, float), t)); tip_prev = tip
+        return out
+
+    def _pose_axis(self, tip, axis, x_hint):
+        z = np.asarray(axis, float) / np.linalg.norm(axis)
+        x = np.asarray(x_hint, float) - (np.asarray(x_hint, float) @ z) * z
+        x /= np.linalg.norm(x)
+        R = np.column_stack([x, np.cross(z, x), z])
+        T = np.eye(4); T[:3, :3] = R; T[:3, 3] = tip - R @ self._tool.tip_tool0
+        return T
+
+    def _chain_T(self, Ts, q_seed, cfg):
+        chain = [np.asarray(q_seed, float)]
+        for T in Ts:
+            q = solve_on_branch(T, [chain[-1]], cfg, n_random=0)
+            if q is None:
+                return None
+            q = _unwrap_to(q, chain[-1])
+            if np.abs(q - chain[-1]).max() > 0.3:
+                return None
+            chain.append(q)
+        return chain
+
+    def _poses_between(self, tip_a, R_a, tip_b, R_b, step_m=0.002, step_deg=3.0):
+        ang = np.degrees(np.arccos(np.clip((np.trace(R_a.T @ R_b) - 1) / 2, -1, 1)))
+        n = max(2, int(np.ceil(max(np.linalg.norm(tip_b - tip_a) / step_m, ang / step_deg))) + 1)
+        Ts = []
+        for s in np.linspace(0.0, 1.0, n)[1:]:
+            R = slerp_R(R_a, R_b, s)
+            tip = (1 - s) * tip_a + s * tip_b
+            T = np.eye(4); T[:3, :3] = R; T[:3, 3] = tip - R @ self._tool.tip_tool0
+            Ts.append(T)
+        return Ts
+
     def _release(self, x_hint, cfg, rise_m: float, v: float, label: str):
         """Straight UP by `rise_m` from wherever the tip is now (FK-relative, so the
         nominal-vs-calibrated FK gap cannot turn it into a push), as an `away` move."""
@@ -260,6 +331,8 @@ class TableTouchoff(Node):
 
     def _srv_run(self, request, response):
         self._abort = False
+        if str(self.get_parameter('mode').value) == 'tcp_check':
+            return self._run_tcp_check(response)
         q0, _, _ = self._get()
         if q0 is None:
             response.success, response.message = False, 'no /joint_states'
@@ -371,6 +444,137 @@ class TableTouchoff(Node):
             + f". Wrote {out}. To use it: marking.json \"table_z_m\": {z:.4f}; the ICP ground cut belongs "
             f"just above the HOLDER tops (table + holder height - 2 mm), e.g. "
             f"ros2 param set /icp_pose_refiner ground_z_m {z + 0.005:.4f} to remove only the table.")
+        self.get_logger().info(response.message)
+        return response
+
+    def _run_tcp_check(self, response):
+        """Touch ONE spot of the measured plane at several pen orientations: vertical at
+        four rolls (the roll test - put a sheet of paper down, the dots must coincide),
+        then tilted toward four azimuths with the tool yaw fixed. The heights of the
+        reported contacts against the plane give the TCP error (solve_tcp_error)."""
+        q0, _, _ = self._get()
+        if q0 is None:
+            response.success, response.message = False, 'no /joint_states'
+            return response
+        try:
+            pl = json.loads(Path(str(self.get_parameter('plane_file').value)).read_text())['plane']
+        except Exception as exc:  # noqa: BLE001
+            response.success, response.message = False, f'no table plane ({exc}): run mode:=plane first'
+            return response
+        nrm = np.asarray(pl['normal'], float); nrm /= np.linalg.norm(nrm)
+        p0 = np.asarray(pl['centroid_m'], float); p0[2] = pl['z_at_centroid_m']
+        T0 = ur5e_fk(q0); tip0 = self._tool.tip_in(T0)
+        if T0[:3, 2] @ np.array([0, 0, -1.0]) < np.cos(np.deg2rad(25)):
+            response.success, response.message = False, 'the pen is not pointing roughly down: jog it first'
+            return response
+        cfg = MarkingConfig(home_q=q0.copy())
+        spot = tip0.copy()
+        spot[2] = p0[2] - (nrm[0] * (spot[0] - p0[0]) + nrm[1] * (spot[1] - p0[1])) / nrm[2]
+        safe = spot + np.array([0.0, 0.0, float(self.get_parameter('check_safe_m').value)])
+        hover_d = float(self.get_parameter('check_hover_m').value)
+        backoff = float(self.get_parameter('backoff_m').value)
+        v_fast, v_slow, v_move = (float(self.get_parameter(k).value) for k in ('v_fast_m_s', 'v_slow_m_s', 'v_move_m_s'))
+        orients = check_orientations(tuple(self.get_parameter('check_tilts_deg').value),
+                                     tuple(self.get_parameter('check_azimuths_deg').value), x0=T0[:3, 0])
+        log, tips, Rs, labels = [], [], [], []
+        # go straight up/over to the safe point, pen as it is
+        q_cur, tip_cur, R_cur = q0, tip0, T0[:3, :3]
+        c = self._chain_T(self._poses_between(tip_cur, R_cur, safe, R_cur), q_cur, cfg)
+        if c is None:
+            response.success, response.message = False, 'no IK to the point above the spot'
+            return response
+        if self.dry_run:
+            bad = []
+            for tilt, az, axis, xh in orients:
+                R_k = self._pose_axis(spot, axis, xh)[:3, :3]
+                hover = spot - hover_d * axis
+                c1 = self._chain_T(self._poses_between(safe, R_cur, safe, R_k), c[-1], cfg)
+                c2 = None if c1 is None else self._chain_T(self._poses_between(safe, R_k, hover, R_k), c1[-1], cfg)
+                c3 = None if c2 is None else self._chain_T(self._poses_between(hover, R_k, spot + 0.01 * axis, R_k), c2[-1], cfg)
+                (bad.append(f'{tilt:.0f}/{az:.0f}') if c3 is None else log.append(f'{tilt:.0f} deg / az {az:.0f}: ok'))
+            response.success = not bad
+            response.message = (f'dry run tcp_check at ({spot[0]:.3f}, {spot[1]:.3f}), table z {spot[2] * 1000:.1f} mm: '
+                                + ('ALL ORIENTATIONS REACHABLE' if not bad else f'unreachable: {bad}') + ' | ' + ' | '.join(log))
+            return response
+        ok, msg, _ = self._execute(c, v_move, 'to the spot', away=True)
+        log.append(msg)
+        if not ok:
+            response.success, response.message = False, ' | '.join(log)
+            return response
+        q_cur, R_cur = c[-1], R_cur
+        for tilt, az, axis, xh in orients:
+            tag = f'tilt {tilt:.0f} / az {az:.0f}'
+            R_k = self._pose_axis(spot, axis, xh)[:3, :3]
+            hover = spot - hover_d * axis
+            c1 = self._chain_T(self._poses_between(safe, R_cur, safe, R_k), q_cur, cfg)
+            c2 = None if c1 is None else self._chain_T(self._poses_between(safe, R_k, hover, R_k), c1[-1], cfg)
+            if c2 is None:
+                log.append(f'{tag}: no IK, skipped'); continue
+            ok, msg, _ = self._execute(c1[:-1] + c2, v_move, f'{tag} orient + approach', away=True)
+            if not ok:
+                log.append(msg); break
+            self._measure_bias()
+            down = self._chain_T(self._poses_between(hover, R_k, spot + 0.01 * axis, R_k, step_m=0.0005), c2[-1], cfg)
+            ok, msg, fast = self._execute(down, v_fast, f'{tag} fast', watch=True)
+            if fast is None:
+                log.append(msg if not ok else f'{tag}: no contact within {hover_d * 1000 + 10:.0f} mm')
+                break
+            q_now = self._get()[0]; tip_now = self._tool.tip_in(ur5e_fk(q_now))
+            up = self._chain_T(self._poses_between(tip_now, R_k, tip_now - backoff * axis, R_k, step_m=0.0005), q_now, cfg)
+            ok, msg, _ = self._execute(up, max(v_fast, 0.004), f'{tag} back off', away=True)
+            if not ok:
+                log.append(msg); break
+            self._measure_bias()
+            a = self._tool.tip_in(ur5e_fk(up[-1]))
+            slow = self._chain_T(self._poses_between(a, R_k, a + 3 * backoff * axis, R_k, step_m=0.0005), up[-1], cfg)
+            ok, msg, hit = self._execute(slow, v_slow, f'{tag} slow', watch=True)
+            if hit is None:
+                log.append(msg); break
+            with self._lock:
+                R_drv = None if self._tcp_R is None else self._tcp_R.copy()
+            tip = hit['tcp'] if hit['tcp'] is not None else hit['fk']
+            R_use = R_drv if R_drv is not None else ur5e_fk(hit['q'])[:3, :3]
+            tips.append(tip); Rs.append(R_use); labels.append(tag)
+            h = float((tip - p0) @ nrm) * 1000.0
+            log.append(f'{tag}: contact {hit["force"]:.2f} N, reported tip {h:+.2f} mm off the plane')
+            q_now = self._get()[0]; tip_now = self._tool.tip_in(ur5e_fk(q_now))
+            back = self._chain_T(self._poses_between(tip_now, R_k, hover, R_k), q_now, cfg)
+            ok, msg, _ = self._execute(back, v_move, f'{tag} retract', away=True)
+            if not ok:
+                log.append(msg); break
+            c_up = self._chain_T(self._poses_between(hover, R_k, safe, R_k), back[-1], cfg)
+            if c_up is None:
+                log.append(f'{tag}: no IK back to the safe point'); break
+            self._execute(c_up, v_move, f'{tag} up', away=True)
+            q_cur, R_cur = c_up[-1], R_k
+            if self._abort:
+                log.append('aborted'); break
+        # back to the start orientation above the spot, then to the start
+        c_end = self._chain_T(self._poses_between(safe, R_cur, safe, T0[:3, :3]), self._get()[0], cfg)
+        if c_end is not None:
+            self._execute(c_end, v_move, 'back to the start orientation', away=True)
+            c_home = self._chain_T(self._poses_between(safe, T0[:3, :3], tip0, T0[:3, :3]), c_end[-1], cfg)
+            if c_home is not None:
+                self._execute(c_home, v_move, 'back to the start', away=True)
+        if len(tips) < 5:
+            response.success, response.message = False, f'only {len(tips)} touches: ' + ' | '.join(log)
+            return response
+        sol = solve_tcp_error(np.array(tips), np.array(Rs), nrm, p0)
+        out = Path(str(self.get_parameter('check_out').value))
+        out.write_text(json.dumps({'written': time.strftime('%Y-%m-%d %H:%M:%S'), 'spot_m': spot.tolist(),
+                                   'touches': [{'label': l, 'tip_m': p.tolist(), 'R': R.tolist()}
+                                               for l, p, R in zip(labels, tips, Rs)],
+                                   'solution': sol, 'log': log}, indent=1))
+        e = sol['e_tcp_mm']
+        verdict = ('LATERAL TCP OK' if sol['lateral_mm'] < 1.0 else 'LATERAL TCP ERROR') \
+            if sol['well_conditioned'] else 'lateral NOT observable (add tilted touches)'
+        response.success = True
+        response.message = (f"{verdict}: TCP error in the pen frame ({e[0]:+.2f}, {e[1]:+.2f}, {e[2]:+.2f}) mm, "
+                            f"lateral {sol['lateral_mm']:.2f} mm (conditioning {sol['lateral_conditioning']:.2f}); "
+                            f"along the pen {sol['along_pen_mm']:+.2f} mm ({'ok' if sol['along_pen_conditioned'] else 'weakly observed at this tilt'}); "
+                            f"fit residual {sol['residual_rmse_mm']:.2f} mm over {sol['n_touches']} touches. "
+                            f"On paper, the 4 vertical dots form a circle of radius ~{sol['lateral_mm']:.1f} mm. "
+                            f"If lateral > 1 mm, correct the pendant TCP (and pen_tool.json) by -e. Wrote {out}")
         self.get_logger().info(response.message)
         return response
 
