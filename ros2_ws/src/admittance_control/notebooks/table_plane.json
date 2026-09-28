@@ -1,0 +1,122 @@
+{
+ "written": "2026-09-28 12:28:21",
+ "frame": "base_link",
+ "source": "tcp_pose_broadcaster (pendant TCP = pen tip)",
+ "points_m": [
+  [
+   -0.5161348800655368,
+   0.19604931838638398,
+   -0.09532921039517331
+  ],
+  [
+   -0.6028166230330366,
+   0.14601932951021407,
+   -0.09530819700909791
+  ],
+  [
+   -0.603106604247722,
+   0.04568036790458308,
+   -0.09719553066715121
+  ],
+  [
+   -0.5167354450203289,
+   -0.0047775578706067395,
+   -0.09965278238622803
+  ],
+  [
+   -0.4300205143695805,
+   0.04510099774744512,
+   -0.10033362266119274
+  ],
+  [
+   -0.4297095121950974,
+   0.1456584878201039,
+   -0.09826527787831453
+  ],
+  [
+   -0.5164652439007725,
+   0.09562625869627105,
+   -0.09809965697483228
+  ]
+ ],
+ "plane": {
+  "a": -0.017549038369740907,
+  "b": 0.02096868004948406,
+  "c": -0.10880848464881236,
+  "normal": [
+   0.017542481739164086,
+   -0.020960845780399258,
+   0.9996263823442243
+  ],
+  "tilt_deg": 1.566263576184089,
+  "z_at_centroid_m": -0.0977406111388557,
+  "z_at_origin_m": -0.10880848464881236,
+  "centroid_m": [
+   -0.5164269746902964,
+   0.09562245745634208,
+   -0.09774061113885571
+  ],
+  "residuals_mm": [
+   0.31070800824381517,
+   -0.14039700934981303,
+   0.07115602353981176,
+   0.18767119332407933,
+   -0.017292910506547243,
+   -0.052048174448010576,
+   -0.3597971308034742
+  ],
+  "rmse_mm": 0.20318762464511278,
+  "z_span_mm": 5.025425652094823,
+  "n_points": 7,
+  "rmse_meaningful": true
+ },
+ "repeatability": {
+  "per_spot_z_std_mm": [],
+  "pooled_z_std_mm": null
+ },
+ "log": [
+  "spot 0 move: done",
+  "spot 0.0 fast: contact at 2.78 N",
+  "spot 0.0 back off: done (peak 2.9 N while leaving)",
+  "spot 0.0 slow: contact at 1.57 N",
+  "spot 0.0 release: done",
+  "   spot 0.0: z = -95.33 mm (driver), FK says -96.37 mm, force 1.57 N",
+  "spot 1 move: done",
+  "spot 1.0 fast: contact at 1.78 N",
+  "spot 1.0 back off: done (peak 2.3 N while leaving)",
+  "spot 1.0 slow: contact at 1.79 N",
+  "spot 1.0 release: done (peak 1.6 N while leaving)",
+  "   spot 1.0: z = -95.31 mm (driver), FK says -96.36 mm, force 1.79 N",
+  "spot 2 move: done",
+  "spot 2.0 fast: contact at 1.51 N",
+  "spot 2.0 back off: done (peak 1.8 N while leaving)",
+  "spot 2.0 slow: contact at 1.54 N",
+  "spot 2.0 release: done (peak 1.8 N while leaving)",
+  "   spot 2.0: z = -97.20 mm (driver), FK says -98.21 mm, force 1.54 N",
+  "spot 3 move: done",
+  "spot 3.0 fast: contact at 1.60 N",
+  "spot 3.0 back off: done",
+  "spot 3.0 slow: contact at 1.77 N",
+  "spot 3.0 release: done",
+  "   spot 3.0: z = -99.65 mm (driver), FK says -100.61 mm, force 1.77 N",
+  "spot 4 move: done",
+  "spot 4.0 fast: contact at 3.59 N",
+  "spot 4.0 back off: done (peak 3.8 N while leaving)",
+  "spot 4.0 slow: contact at 1.87 N",
+  "spot 4.0 release: done (peak 2.0 N while leaving)",
+  "   spot 4.0: z = -100.33 mm (driver), FK says -101.14 mm, force 1.87 N",
+  "spot 5 move: done",
+  "spot 5.0 fast: contact at 2.39 N",
+  "spot 5.0 back off: done",
+  "spot 5.0 slow: contact at 1.52 N",
+  "spot 5.0 release: done (peak 1.8 N while leaving)",
+  "   spot 5.0: z = -98.27 mm (driver), FK says -99.08 mm, force 1.52 N",
+  "spot 6 move: done",
+  "spot 6.0 fast: contact at 2.21 N",
+  "spot 6.0 back off: done (peak 6.8 N while leaving)",
+  "spot 6.0 slow: contact at 2.02 N",
+  "spot 6.0 release: done",
+  "   spot 6.0: z = -98.10 mm (driver), FK says -99.02 mm, force 2.02 N",
+  "return to start: done"
+ ]
+}

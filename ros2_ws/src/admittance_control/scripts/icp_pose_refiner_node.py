@@ -404,6 +404,14 @@ class IcpPoseRefinerNode(Node):
         # sit at different heights, so this is a knob to tune per setup).
         self.declare_parameter('ground_removal', True)
         self.declare_parameter('ground_z_m', -0.10)     # base_link Z of the floor
+        # The table is not level in base_link (measured 2026-09-28: 1.57 deg, 8 mm of
+        # height change across the work patch - the thickness of a plate), so a flat Z
+        # cut either leaves the table in or eats the part. With a plane measured by pen
+        # touches (scripts/table_touchoff.py -> notebooks/table_plane.json) the cut
+        # follows the plane: points less than ground_plane_offset_m above it are dropped.
+        # '' -> the flat ground_z_m cut, as before (the digital twin's floor).
+        self.declare_parameter('ground_plane_file', '')
+        self.declare_parameter('ground_plane_offset_m', 0.002)
         # Welding-seam extraction from the SEPC (~/welding_points). All lengths
         # are in metres and live in static_frame, like the SEPC itself.
         self.declare_parameter('weld_points_topic', '/perception/icp/welding_points')
@@ -470,6 +478,8 @@ class IcpPoseRefinerNode(Node):
         self._bg_dist = float(self.get_parameter('bg_subtract_dist_m').value)
         self._ground_removal = bool(self.get_parameter('ground_removal').value)
         self._ground_z = float(self.get_parameter('ground_z_m').value)
+        self._ground_offset = float(self.get_parameter('ground_plane_offset_m').value)
+        self._ground_plane = self._load_ground_plane(str(self.get_parameter('ground_plane_file').value))
         save_dir = str(self.get_parameter('save_dir').value)
 
         # Tracking state (Phase 2). Guarded by _state_lock: with the
@@ -697,6 +707,10 @@ class IcpPoseRefinerNode(Node):
                 self._ground_removal = bool(p.value)
             elif p.name == 'ground_z_m':
                 self._ground_z = float(p.value)
+            elif p.name == 'ground_plane_offset_m':
+                self._ground_offset = float(p.value)
+            elif p.name == 'ground_plane_file':
+                self._ground_plane = self._load_ground_plane(str(p.value))
             elif p.name == 'bg_subtract':
                 self._bg_subtract = bool(p.value)
             elif p.name == 'bg_subtract_dist_m':
@@ -1512,12 +1526,36 @@ class IcpPoseRefinerNode(Node):
             return T
         return None
 
+    def _load_ground_plane(self, path: str):
+        """(unit normal pointing up, a point on the plane) from table_plane.json, or None."""
+        if not path:
+            return None
+        try:
+            d = json.loads(Path(path).expanduser().read_text())
+            pl = d['plane']
+            nrm = np.asarray(pl['normal'], dtype=np.float64)
+            nrm = nrm / np.linalg.norm(nrm)
+            p0 = np.asarray(pl['centroid_m'], dtype=np.float64).copy()
+            p0[2] = float(pl['z_at_centroid_m'])
+            self.get_logger().info(
+                f"ground cut: PLANE from {path} (z {p0[2] * 1000:.1f} mm at "
+                f"({p0[0]:.3f}, {p0[1]:.3f}), tilt {pl.get('tilt_deg', 0.0):.2f} deg, "
+                f"RMSE {pl.get('rmse_mm', 0.0):.2f} mm); keeping points > "
+                f"{self._ground_offset * 1000:.1f} mm above it")
+            return nrm, p0
+        except Exception as exc:  # noqa: BLE001 - fall back to the flat cut, loudly
+            self.get_logger().warn(f'ground_plane_file {path!r} unusable ({exc}); '
+                                   f'using the flat ground_z_m cut')
+            return None
+
     def _static_keep_mask(self, pts_cam, frame_id, stamp):
         """Boolean 'keep' mask built in the static frame: ground cut + SEPC sub.
 
         Both filters need the points in ``static_frame``, so the (small) cropped
         live cloud is transformed there once via TF, then:
-          * ground removal -- drop anything at/below ``ground_z_m`` (floor/table);
+          * ground removal -- drop anything less than ``ground_plane_offset_m`` above
+            the measured table plane (``ground_plane_file``), or at/below the flat
+            ``ground_z_m`` when no plane is given;
           * background subtraction -- drop points within ``bg_dist`` of the SEPC
             (an already-assembled object), so ICP never sees the previous part.
         Returns None when neither filter is active or TF is unavailable (caller
@@ -1536,7 +1574,11 @@ class IcpPoseRefinerNode(Node):
         pts_static = pts_cam @ T[:3, :3].T + T[:3, 3]
         keep = np.ones(len(pts_cam), dtype=bool)
         if want_ground:
-            keep &= pts_static[:, 2] > self._ground_z        # delete the floor
+            if self._ground_plane is not None:                # the measured table plane
+                nrm, p0 = self._ground_plane
+                keep &= (pts_static - p0) @ nrm > self._ground_offset
+            else:
+                keep &= pts_static[:, 2] > self._ground_z    # delete the floor (flat)
         if want_sepc:
             if self._sepc_tree is not None:
                 dist, _ = self._sepc_tree.query(pts_static, workers=-1)

@@ -56,6 +56,50 @@ now the object of work, and it is measurable, not a guess.
    force rises - the measured root vs the registered one, in 3D, per tack. This is also
    the "mode A+ measured refinement" of the plan, done with the pen instead of the camera.
 
+## DONE — the table measured, the ground cut follows it (2026-09-28)
+
+`table_touchoff.py`, hexagon 10 cm + centre, 7 two-speed touches (recorded at
+1.52–2.02 N): table plane z = −97.74 mm at (−0.516, 0.096) m, **tilt 1.57°** in base_link,
+**RMSE 0.20 mm**; the driver's calibrated tip sits ~1.0 mm above the planner's FK (the
+nominal-FK gap, measured). Over the touched patch the table runs −93.7 … −101.8 mm, so
+the old flat cut at −100 mm left the table IN over most of the workspace (up to 6 mm
+above the cut), and the registered base plate lies 1–12 mm above the table: the base
+plate's tracker saw a large flat table right under it every tick. The ICP node now cuts
+along the measured plane (`ground_plane_file`, `ground_plane_offset_m` 2 mm); the
+real-robot launch picks `notebooks/table_plane.json` up automatically. NEXT: re-run
+`pose_jitter_probe.py` on the base plate - this is the first test of whether the table
+was the jitter. The collision model's table is still flat (`marking.json` table_z_m
+null); a tilted-plane table there is a small follow-up if seams near the table matter.
+
+## (was NEXT) the table / ground cut (found 2026-09-28)
+
+The ICP's ground removal is a hard z cut at `ground_z_m` = −0.10 m in base_link: it sits
+~3 mm under the base plate's underside, so it cuts registered plate corners on the low
+side and keeps the holder tops and sides inside the 30 mm crop margin - non-part points
+next to the model every tracking tick (a candidate for the 5 mm / 6° jitter). Also the
+assembly subtraction's 5 mm equals the pose jitter. Steps: (1) measure the table with
+`scripts/table_touchoff.py` (hexagon + centre, two-speed pen touches, calibrated TCP
+from the driver) → `notebooks/table_plane.json`; (2) holder height from the same run or
+a ruler → `ground_z_m` just above the holder tops; (3) re-run `pose_jitter_probe.py`; (4)
+if still noisy: a MODEL-relative floor (drop crop points more than a few mm beyond the
+model's own bottom face, in the object frame) and a smaller crop margin below the part.
+
+## Contact force on rigid surfaces (found 2026-09-28)
+
+Touching the bare table at 10 mm/s: contact detected at 2.66 N, ~10 N once the arm had
+stopped, and the 8 N abort then cancelled the back-off itself, leaving the pen pressed.
+Detection at 1.5 N works; the PEAK is approach speed × reaction time (tens of ms) ×
+stiffness, and a non-sprung pen on a rigid table is very stiff. Fixed the same day in
+`table_touchoff.py` and `tack_marking_node.py`: moves away from the surface are guarded
+only by `release_abort_force_n` (40 N), the release starts with no settling pause and
+is FK-relative (straight up from where the tip is), approaches are 4 mm/s then 1 mm/s,
+the dot's dwell is skipped when the contact is stiff. To actually HOLD 1.5 N on metal:
+(a) UR's `force_mode_controller` (loaded, inactive) - compliant along the pen, regulates
+the force in the robot's 500 Hz loop; the right tool for the stroke on steel;
+(b) a compliant pen holder (a spring of a few N/mm makes 1.5 N a position, not a force);
+(c) the marking descent at 20 mm/s was fine on magnet-held MDF/metal (1.5–1.9 N) but
+will overshoot the same way on rigidly clamped Phase 9 parts: two-speed descent there too.
+
 ## OPEN — motion side (`pen_marking_plan.md`)
 
 - **C2 stroke: DONE 2026-09-25** (`stroke_mode` dot | tack | seam on the marking node;

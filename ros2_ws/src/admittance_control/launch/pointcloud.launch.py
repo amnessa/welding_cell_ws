@@ -81,6 +81,18 @@ CAMERA_INFO_TOPIC = "/camera/color/camera_info"
 POINTS_TOPIC = "/camera/depth/color/points"
 
 
+def _default_table_plane_path(pkg_share: str) -> str:
+    """notebooks/table_plane.json from the source tree (written by table_touchoff.py),
+    or '' so the ICP node falls back to the flat ground_z_m cut."""
+    marker = "/install/admittance_control/share/admittance_control"
+    workspace_root = pkg_share.split(marker)[0] if marker in pkg_share else ""
+    for root in ([os.path.join(workspace_root, "src", "admittance_control")] if workspace_root else []) + [pkg_share]:
+        candidate = os.path.join(root, "notebooks", "table_plane.json")
+        if os.path.exists(candidate):
+            return candidate
+    return ""
+
+
 def _default_extrinsic_path(pkg_share: str) -> str:
     """Resolve T_tcp_to_cam.npy from the source tree (it lives under notebooks/).
 
@@ -284,6 +296,9 @@ def launch_setup(context, *args, **kwargs):
                 "auto_track": LaunchConfiguration("icp_auto_track").perform(context) == "true",
                 "ground_removal": LaunchConfiguration("icp_ground_removal").perform(context) == "true",
                 "ground_z_m": float(LaunchConfiguration("icp_ground_z_m").perform(context)),
+                "ground_plane_file": (LaunchConfiguration("icp_ground_plane_file").perform(context)
+                                      or _default_table_plane_path(pkg_share)),
+                "ground_plane_offset_m": float(LaunchConfiguration("icp_ground_plane_offset_m").perform(context)),
                 "use_sim_time": False,
             }],
         ))
@@ -411,6 +426,15 @@ def generate_launch_description():
             "icp_ground_removal", default_value="true",
             description="Delete the floor/table before ICP by hard Z-truncation "
                         "in base_link (needs the base_link<-camera TF)."),
+        DeclareLaunchArgument(
+            "icp_ground_plane_file", default_value="",
+            description=("Measured table plane (table_touchoff.py). '' -> "
+                         "notebooks/table_plane.json if it exists, else the flat icp_ground_z_m cut."),
+        ),
+        DeclareLaunchArgument(
+            "icp_ground_plane_offset_m", default_value="0.002",
+            description="Points less than this above the table plane are dropped.",
+        ),
         DeclareLaunchArgument(
             "icp_ground_z_m", default_value="-0.10",
             description="Ground plane height in base_link: points with z <= this "

@@ -108,6 +108,7 @@ class TackMarkingNode(Node):
         p('max_depth_step_m', 0.0005)
         p('min_contact_force_n', 0.4)      # below this for 2 chunks = pen lifted off -> stop
         p('abort_force_n', 8.0)
+        p('release_abort_force_n', 40.0)   # retract (moving away) is never blocked by abort_force_n
         p('bias_window_s', 0.5)
         p('max_joint_jump_rad', 0.35)
 
@@ -358,7 +359,9 @@ class TackMarkingNode(Node):
                 if step.stroke_mode == 'seam':
                     self._drawn_seams.add(step.seam_id)
         elif not self.dry_run:
-            time.sleep(float(self.get_parameter('dwell_s').value))
+            # dwell only if the contact is gentle; a stiff contact is released at once
+            if self._force_mag() < 2.0 * self._touch_force:
+                time.sleep(float(self.get_parameter('dwell_s').value))
         # 4. retract: straight back along the pen axis from wherever the pen is
         q_now = self._where()
         tip_now = self._tool.tip_in(ur5e_fk(q_now))
@@ -369,7 +372,7 @@ class TackMarkingNode(Node):
             back = step.descent[:k_stop][::-1]
         ok, msg = self._execute(time_descent([q_now] + list(back), self._tool,
                                              float(self.get_parameter('v_tip_m_s').value)),
-                                f'{tag} retract', watch_touch=False)
+                                f'{tag} retract', watch_touch=False, away=True)
         self._marks.append(record)
         self._write_marks()
         self._next_step += 1
@@ -461,7 +464,8 @@ class TackMarkingNode(Node):
             'touch_force_n': self._touch_force, 'overshoot_m': float(self.get_parameter('overshoot_m').value),
             'sequence': 'seam by seam, tack_no ascending', 'marks': self._marks}, indent=1))
 
-    def _execute(self, timed, label: str, watch_touch: bool, want_contact: bool = False):
+    def _execute(self, timed, label: str, watch_touch: bool, want_contact: bool = False,
+                 away: bool = False):
         """Send one trajectory goal and wait; with `watch_touch` cancel at the touch force.
         Returns (ok, msg) or, with `want_contact`, (ok, msg, contact|None)."""
         q = self._where()
@@ -507,7 +511,9 @@ class TackMarkingNode(Node):
             return (False, msg, None) if want_contact else (False, msg)
         result_fut = self._goal_handle.get_result_async()
         contact = None
-        abort_force = float(self.get_parameter('abort_force_n').value)
+        # a move AWAY from the surface (retract) must not be cancelled by the force of the
+        # contact it is releasing: on a rigid part a stopped pen presses at ~10 N
+        abort_force = float(self.get_parameter('release_abort_force_n' if away else 'abort_force_n').value)
         while not result_fut.done():
             f = self._force_mag()
             if self._abort or f > abort_force or (watch_touch and f > self._touch_force):
@@ -525,8 +531,8 @@ class TackMarkingNode(Node):
             ok = code == FollowJointTrajectory.Result.SUCCESSFUL
             msg = f'{label}: {"done" if ok else f"controller error {code}"}'
             return (ok, msg, None) if want_contact else (ok, msg)
-        # wait for the cancel to settle so the joints are truly at rest
-        time.sleep(0.1)
+        # no settling pause: the caller releases the pen (a stopped pen on a rigid part
+        # keeps pressing; the joints at the cancel are already the contact record)
         return True, f'{label}: contact at {contact[1]:.2f} N', contact
 
     def _cancel_goal(self) -> None:

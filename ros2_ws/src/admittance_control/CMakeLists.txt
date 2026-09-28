@@ -89,6 +89,7 @@ install(
     admittance_control/tack_reach.py
     admittance_control/marking.py
     admittance_control/pose_stats.py
+    admittance_control/table_probe.py
   DESTINATION ${PYTHON_INSTALL_DIR}/${PROJECT_NAME}
 )
 
@@ -118,6 +119,7 @@ install(PROGRAMS
   scripts/pen_tip_touchoff.py
   scripts/tcp_offset_probe.py
   scripts/pose_jitter_probe.py
+  scripts/table_touchoff.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
