@@ -64,9 +64,9 @@ def _t_joint_in_front(centre_xy=(0.55, 0.10), z_top=0.02, L=200.0, W=100.0, t=4.
 def setup():
     tool, cfg = load_tool_model(), tr.load_marking_config()
     # the planning logic is under test, not the clearance policy: with the calibrated tip
-    # (181.7 mm) the holder body clears the plates of a square T by 61.7*sin45 - 42 =
-    # 1.6 mm at best, so the config's 3 mm would make every 90 deg fillet unreachable here
-    cfg.clearance_m = 0.0015
+    # (180.9 mm, 2026-09-28) the holder body clears the plates of a square T by
+    # 60.9*sin45 - 42 = 1.1 mm at best, so the config's 3 mm makes every 90 deg fillet unreachable
+    cfg.clearance_m = 0.0008
     return tool, cfg
 
 

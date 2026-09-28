@@ -110,15 +110,30 @@ def descent_chain(tool, point: np.ndarray, axis: np.ndarray, roll_rad: float,
     return chain
 
 
-def time_descent(chain: Sequence[np.ndarray], tool, v_tip: float = 0.02
+def time_descent(chain: Sequence[np.ndarray], tool, v_tip: float = 0.02,
+                 v_slow: float | None = None, slow_zone_m: float = 0.0,
+                 point: np.ndarray | None = None, axis: np.ndarray | None = None
                  ) -> list[tuple[np.ndarray, float]]:
-    """(q, t) along a descent chain at a constant TIP speed."""
+    """(q, t) along a descent chain at a constant TIP speed - or two speeds: `v_tip`
+    until the tip is within `slow_zone_m` of `point` along `axis`, then `v_slow`.
+
+    Why two: the pen is not sprung, and on a rigid part the force past the 1.5 N
+    threshold grows as speed x stopping time x stiffness (the table read ~10 N at
+    10 mm/s). The slow final approach keeps the contact force near the threshold and
+    the recorded contact point accurate, at a few seconds per tack.
+    """
+    two = v_slow is not None and slow_zone_m > 0.0 and point is not None and axis is not None
+    if two:
+        point = np.asarray(point, float); axis = np.asarray(axis, float) / np.linalg.norm(axis)
     out = [(np.asarray(chain[0], float), 0.0)]
     t = 0.0
     tip_prev = tool.tip_in(ur5e_fk(chain[0]))
     for q in chain[1:]:
         tip = tool.tip_in(ur5e_fk(q))
-        t += max(float(np.linalg.norm(tip - tip_prev)) / v_tip, 0.02)
+        v = v_tip
+        if two and float((tip - point) @ axis) > -slow_zone_m:
+            v = v_slow
+        t += max(float(np.linalg.norm(tip - tip_prev)) / v, 0.02)
         out.append((np.asarray(q, float), t))
         tip_prev = tip
     return out

@@ -121,6 +121,7 @@ install(PROGRAMS
   scripts/pose_jitter_probe.py
   scripts/table_touchoff.py
   scripts/extrinsic_check.py
+  scripts/compare_registrations.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

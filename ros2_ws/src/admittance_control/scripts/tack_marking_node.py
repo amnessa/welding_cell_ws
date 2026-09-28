@@ -96,16 +96,19 @@ class TackMarkingNode(Node):
         p('joint_states_topic', '/joint_states')
         p('v_joint_rad_s', 0.3)            # transit speed cap
         p('v_tip_m_s', 0.02)               # descent tip speed
+        p('v_slow_m_s', 0.002)             # ... in the last slow_zone_m before the tack
+        p('slow_zone_m', 0.006)            # (rigid parts: keeps the contact near 1.5 N)
         p('overshoot_m', 0.003)
         p('dwell_s', 0.5)
         # the stroke (C2): what to draw after contact and how to hold the pen on it
         p('stroke_mode', 'dot')            # dot | tack (own segment) | seam (whole seam)
         p('v_stroke_m_s', 0.02)
-        p('press_m', 0.001)                # into the surface, past the measured contact
+        p('press_m', 0.0)                  # past the measured contact (rigid part + unsprung pen:
+                                           # 1 mm read 8 N on steel, 2026-09-28)
         p('stroke_chunk_m', 0.01)          # depth is corrected between chunks
         p('hold_force_n', 0.0)             # 0 -> the touch force
-        p('depth_gain_m_per_n', 0.0004)    # per chunk, clipped to +/- max_depth_step_m
-        p('max_depth_step_m', 0.0005)
+        p('depth_gain_m_per_n', 0.00002)   # per chunk, clipped to +/- max_depth_step_m; must be
+        p('max_depth_step_m', 0.0002)      # << 1/stiffness (tens of N/mm on steel) to be stable
         p('min_contact_force_n', 0.4)      # below this for 2 chunks = pen lifted off -> stop
         p('abort_force_n', 8.0)
         p('release_abort_force_n', 40.0)   # retract (moving away) is never blocked by abort_force_n
@@ -331,7 +334,10 @@ class TackMarkingNode(Node):
             return False, msg
         # 2. descent, force-gated
         self._measure_bias()
-        timed = time_descent(step.descent, self._tool, float(self.get_parameter('v_tip_m_s').value))
+        timed = time_descent(step.descent, self._tool, float(self.get_parameter('v_tip_m_s').value),
+                             v_slow=float(self.get_parameter('v_slow_m_s').value),
+                             slow_zone_m=float(self.get_parameter('slow_zone_m').value),
+                             point=step.point_m, axis=step.axis_m)
         ok, msg, contact = self._execute(timed, f'{tag} descent', watch_touch=True, want_contact=True)
         if not ok and contact is None:
             return False, msg

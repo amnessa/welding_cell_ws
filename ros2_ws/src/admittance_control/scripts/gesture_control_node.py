@@ -23,21 +23,26 @@ is three steps, not one:
                   colour image; that frozen image is what this window shows and
                   what the server will receive
     Pointing_Up   move the fingertip; hold it still for `dwell_sec` and the
-                  pixel latches as a *pending* point (hollow yellow)
+                  pixel latches as a *pending* point (hollow yellow). Point at
+                  ANOTHER spot and hold still: the previous pending point is KEPT as
+                  positive (green) - one point per part of an assembly, so SAM2
+                  gets all of them (otherwise it segments only the part pointed at)
     Thumb_Down    commit the pending point as NEGATIVE (red) -- "not this one".
                   Repeat for each neighbouring part SAM2 would otherwise grab
+    Open_Palm     undo: drop the pending point, else the last kept point
     Thumb_Up      commit the pending point as POSITIVE (green) and segment:
-                  publish the points, call the bridge trigger, and the server
+                  publish ALL the points, call the bridge trigger, and the server
                   runs SAM2 -> PPF -> FoundationPose with no operator at its end
 
 and outside segmentation:
 
-    Closed_Fist   run ICP           Open_Palm   stop tracking
+    Closed_Fist   run ICP           Open_Palm   stop tracking (undo while picking)
     Victory       save object       Thumb_Down  clear the frozen frame + points
     ILoveYou      capture (again -- re-capturing replaces a bad freeze)
 
-Thumb_Down is the one gesture that means different things in the two modes,
-because a negative click is only meaningful while points are being picked. The
+Thumb_Down and Open_Palm are the gestures that mean different things in the two
+modes, because a negative click and an undo are only meaningful while points are
+being picked. The
 mode is shown in the window so it is never ambiguous.
 
 Occlusion
@@ -168,25 +173,41 @@ class DwellCursor:
 
     A gesture cannot also carry a "click now" signal, so stillness is the signal.
     Movement beyond `move_tol_px` restarts the timer; `dwell_sec` of quiet
-    latches the pixel as pending.
+    latches the pixel as pending - once per dwell.
+
+    Latching a NEW point more than `keep_tol_px` away from the pending one hands the
+    old pending point back to the caller, which keeps it as a positive point: two
+    parts of an assembly need a point each, or SAM2 segments only the one pointed at
+    (2026-09-28). Re-latching near the same spot just refines the pending point.
     """
     dwell_sec: float = 0.8
     move_tol_px: int = 18
+    keep_tol_px: int = 36
     _anchor: Optional[Tuple[int, int]] = None
     _since: float = 0.0
+    _fired: bool = False
     pending: Optional[Tuple[int, int]] = None
 
-    def update(self, tip: Optional[Tuple[int, int]], active: bool) -> None:
+    def update(self, tip: Optional[Tuple[int, int]], active: bool) -> Optional[Tuple[int, int]]:
+        """Advance the dwell; returns the previous pending pixel when a new point
+        latched somewhere else (to be kept as positive), else None."""
         if not active or tip is None:
             self._anchor = None
-            return
+            return None
         if (self._anchor is None
                 or abs(tip[0] - self._anchor[0]) > self.move_tol_px
                 or abs(tip[1] - self._anchor[1]) > self.move_tol_px):
             self._anchor = tip
             self._since = time.monotonic()
-        elif time.monotonic() - self._since >= self.dwell_sec:
+            self._fired = False
+            return None
+        if not self._fired and time.monotonic() - self._since >= self.dwell_sec:
+            self._fired = True
+            old = self.pending
             self.pending = tip
+            if old is not None and max(abs(old[0] - tip[0]), abs(old[1] - tip[1])) > self.keep_tol_px:
+                return old
+        return None
 
     def progress(self, active: bool) -> float:
         if not active or self._anchor is None:
@@ -195,6 +216,7 @@ class DwellCursor:
 
     def clear(self) -> None:
         self._anchor = None
+        self._fired = False
         self.pending = None
 
 
@@ -217,6 +239,11 @@ class PickedPoints:
     def clear(self) -> None:
         self.points.clear()
         self.labels.clear()
+
+    def pop(self) -> Optional[Tuple[Tuple[int, int], int]]:
+        if not self.points:
+            return None
+        return tuple(self.points.pop()), self.labels.pop()
 
     def to_json(self) -> str:
         return json.dumps({'stamp_ns': self.stamp_ns,
@@ -414,7 +441,10 @@ class GestureControlNode(Node):
         elif action == 'RUN_ICP':
             self._call('RUN_ICP')
         elif action == 'STOP_ICP':
-            self._call('STOP_ICP')
+            if self._segmenting:
+                self._undo()                             # Open_Palm while picking = undo
+            else:
+                self._call('STOP_ICP')
         elif action == 'SAVE_OBJECT':
             self._call('SAVE_OBJECT')
         elif action == 'INDICATE':
@@ -438,17 +468,37 @@ class GestureControlNode(Node):
                   f'({self._picked.labels.count(0)} negative)')
         self._cursor.pending = None
 
+    def _keep(self, uv: Tuple[int, int]) -> None:
+        """A pending point displaced by a new latch elsewhere: keep it as positive."""
+        self._picked.add(uv, 1)
+        n_pos = self._picked.labels.count(1)
+        self._say(f'kept positive point {n_pos} at {uv} -- point at the next part, '
+                  f'or thumbs-up to segment all', 4.0)
+
+    def _undo(self) -> None:
+        """Open_Palm while picking: drop the pending point, else the last kept one."""
+        if self._cursor.pending is not None:
+            self._say(f'removed the pending point {self._cursor.pending}')
+            self._cursor.pending = None
+            return
+        last = self._picked.pop()
+        if last is None:
+            self._say('no points to remove')
+            return
+        (uv, label) = last
+        self._say(f'removed the last {"positive" if label else "negative"} point {uv}')
+
     def _on_segment(self) -> None:
-        """Commit the pending point as positive, publish, and trigger the bridge."""
+        """Commit the pending point as positive, publish ALL points, trigger the bridge."""
         if not self._segmenting:
             self._say('nothing frozen -- sign ILoveYou to capture a frame first')
             return
-        if self._cursor.pending is None:
+        if self._cursor.pending is not None:
+            self._picked.add(self._cursor.pending, 1)
+            self._cursor.pending = None
+        if 1 not in self._picked.labels:
             self._say('point at the part and hold still before thumbs-up')
             return
-
-        self._picked.add(self._cursor.pending, 1)
-        self._cursor.pending = None
         self._click_pub.publish(String(data=self._picked.to_json()))
         n_neg = self._picked.labels.count(0)
         self._say(f'segmenting: {len(self._picked.labels) - n_neg} positive, '
@@ -485,7 +535,7 @@ class GestureControlNode(Node):
                                          self._cursor.pending[1] - 10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 2)
 
-        mode = 'SEGMENTING (Thumb_Down = not-this)' if self._segmenting \
+        mode = 'SEGMENTING (Thumb_Down = not-this, Palm = undo)' if self._segmenting \
             else 'IDLE (ILoveYou = capture)'
         cv2.rectangle(vis, (0, 0), (width, 34), (0, 0, 0), -1)
         cv2.putText(vis, mode, (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
@@ -532,7 +582,9 @@ class GestureControlNode(Node):
                     tip = None
 
                 indicating = (gesture == 'Pointing_Up') and self._segmenting
-                self._cursor.update(tip, indicating)
+                kept = self._cursor.update(tip, indicating)
+                if kept is not None:
+                    self._keep(kept)
 
                 action = self._latch.update(gesture)
                 if action:

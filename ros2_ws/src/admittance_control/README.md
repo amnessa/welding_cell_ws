@@ -805,8 +805,7 @@ reason when `weld_fallback_pca` is false.
 Mode B (no CAD, sensor points, quadric intersection) is the next step of the plan.
 
 
-**Status 2026-09-24: mode A validated on the robot** — the pen reached the registered
-tack to −0.4 / −0.6 mm along its axis; a ~8 mm lateral residual is under attribution.
+**Status 2026-09-28: mode A validated on the robot**; the marking error went from ~8 mm to 3.7–4.3 mm. [§14](#14-placement-accuracy-from-8-mm-to-4-mm-and-how-each-millimetre-was-found) tells how, with the error budget.
 The full open list of both projects is [`notes/todo.md`](notes/todo.md).
 
 **Pen-marking the tacks** ([`notes/pen_marking_plan.md`](notes/pen_marking_plan.md)):
@@ -1019,6 +1018,50 @@ reads it at true size like any other library `.ply`. The build validates
 as its own ground truth — available directly because the CADs and poses were kept.
 
 ---
+
+### 14. Placement accuracy: from 8 mm to 4 mm, and how each millimetre was found
+
+The pen marks are the camera-independent check of the whole chain: camera → hand-eye
+extrinsic → registration → seam → planner kinematics → pen tip. Between 2026-09-24 and
+2026-09-28 the lateral placement error of a marked tack went from **~8 mm to 3.7–4.3 mm**.
+Every step below followed the same rule: **measure a link against something that does not
+depend on it, before changing it.** Two references carried most of the work, both made
+with the robot itself rather than the camera: the **pen tip** (the pendant's 4-point TCP,
+then `tcp_check`) and the **table plane measured by pen touches** (7 touches, RMSE
+0.20 mm, `notebooks/table_plane.json`).
+
+| Date | Symptom on the bench | How it was measured | Cause | Fix | After |
+|---|---|---|---|---|---|
+| 24 Sep | contacts 19–29 mm early, others in air | the stored extrinsic judged against its **own** hand-eye samples: board-in-base range 120 mm | the July OpenCV Tsai solve had failed silently; nothing printed a residual | numpy Park–Martin re-solve (2–4 mm on the same samples); `extract_extrinsics.py` now prints the residual judge after every solve | depth right, 6 cm off in the table plane |
+| 24 Sep | Z right, XY off by ~6 cm | re-solved camera 62 mm from the camera body seen in RViz, same radius, 37° apart around the flange | the capture reads the robot at the pendant's **active TCP**; the solve is the camera in *that* frame, but ROS hangs it on `tool0`. The residual cannot see this: a rigid change of the gripper frame is invisible to it | pendant TCP calibrated to the pen tip; recapture with `--tcp-offset`, composed into `tool0`; both calibration tools now **refuse** to write without it | contact depth −0.4 / −0.6 mm, lateral ~8 mm |
+| 25 Sep | marks 5–8 mm off | `pose_jitter_probe.py`, part and arm still: ICP pose std (5.2, 2.5, 3.0) mm, range 24 mm, swings to 6.4° | the tracker wanders on a static scene; `save_object` took the last tick, one draw from that spread | robust mean at save (`pose_stats.py`: median translation, chordal rotation, jumps rejected; only the ticks since the part came to rest, so moving a part by hand before saving still works); spread stored in `assembly.json` | registrations with a recorded spread (~3.6–3.9 mm per tick) |
+| 28 Sep | still 5–8 mm | table touched with the pen: **tilt 1.57°** in `base_link`, 8 mm of height change across the work patch | the flat ICP ground cut at −100 mm left the table **in** (up to 6 mm above the cut) right under the base plate - a large plane next to the model every tracking tick | the ground cut follows the measured plane (`ground_plane_file`, 2 mm offset) | **3–5 mm** |
+| 28 Sep | is it the pen? | `table_touchoff.py mode:=tcp_check`: 4 vertical rolls + 4 tilted touches on the known plane, least squares for the TCP error | – | none needed: **lateral TCP error 0.21 mm**. (The printed −4 mm along the pen is the tilted touches' +0.54 mm × 1/(1−cos 30°): a rounded or flexing tip, not a length error; not applied) | tool cleared |
+| 28 Sep | recalibrations graded BAD/FAIR and disagreed | grade fixed (rotation spread about the mean, not the worst pair vs sample 0: 6.8° → 1.8°, GOOD); `extrinsic_check.py`: the camera's view of the table vs the pen plane at wrist yaws 180°+ apart, tilt split into a camera-fixed and a table-fixed part | camera-fixed tilt **0.36°** (~2 mm at 300 mm) - exactly the ChArUco solve's own rotation uncertainty (~1.8°/√33), which is why recalibrating kept wandering | `refine_extrinsic_from_table.py`: rotate the extrinsic by the camera-fixed tilt | camera tilt **0.04°**; marks **4.3 / 3.7 mm**, contact depth +4.2 / +2.8 mm |
+
+Two process lessons the table makes visible. (1) **A calibration residual only says a
+solution fits its own samples.** It missed a failed solve (it was never printed), a TCP
+composed in the wrong frame (invisible by construction), and a 0.36° rotation bias (inside
+its own noise). Each was found by comparing against an independent reference. (2)
+**Contact on rigid parts is a force problem, not a position problem.** The pen is not
+sprung: at 10 mm/s the stopping distance alone turned a 1.5 N detection into ~10 N on the
+table, and a 1 mm stroke press read 8 N on steel. Hence the two-speed approach (last 6 mm
+at 2 mm/s), releases that the abort force can never block, press 0 and a stroke depth
+gain far below 1/stiffness.
+
+**Error budget now (lateral, at the mark):**
+
+| Link | Status | Size |
+|---|---|---|
+| pen tip (TCP) | measured on the plane | 0.2 mm |
+| camera tilt (2 of 3 rotations) | measured on the plane, refined | 0.04° ≈ 0.2 mm |
+| registration noise | measured, averaged at save | ~1 mm after averaging (3.6–3.9 mm per tick) |
+| **kinematic model mismatch** | **not fixed** | ~3 mm at the tip, pose-dependent: the hand-eye capture read poses through the robot's **calibrated** kinematics (RTDE), while the TF tree (`default_kinematics.yaml` in the URDF) and the planner use the **nominal** UR5e chain. The extrinsic is solved in one model and applied in the other, and the pen is placed by the other |
+| extrinsic horizontal translation, rotation about the optical axis | **not measured** (a plane cannot see them) | two ChArUco solves disagree by 18 mm here; the 180°-yaw registration test measures it (`compare_registrations.py`) |
+| depth bias | seen, not separated | the camera sees the table +2.3 mm high at 300 mm (depth bias or the table far from the touched patch) |
+
+The two unmeasured rows are where the remaining ~4 mm most likely lives; both have a
+defined test (see `notes/todo.md`, parked).
 
 ## Interfaces
 
@@ -1278,10 +1321,12 @@ A window opens on the RealSense stream. Then, entirely by hand:
 ```
 ILoveYou                     freeze a frame  (keep the hand clear of the part)
 Pointing_Up + hold still     cursor → pending point (hollow yellow)
-  Thumb_Down                 → mark it "not this one" (red), repeat as needed
-  Pointing_Up + hold still   → move to the real target
-Thumb_Up                     → positive point (green) + segment: SAM2 → PPF → FoundationPose
-Closed_Fist                  run ICP        Open_Palm   stop tracking
+  Pointing_Up elsewhere      → the previous pending point is KEPT as positive (green);
+    + hold still               one point per part of an assembly, so SAM2 gets them all
+  Thumb_Down                 → mark the pending point "not this one" (red), repeat as needed
+  Open_Palm                  → undo: drop the pending point, else the last kept one
+Thumb_Up                     → pending point positive + segment ALL points: SAM2 → PPF → FoundationPose
+Closed_Fist                  run ICP        Open_Palm   stop tracking (undo while picking)
 Victory                      save object into the SEPC
 ```
 

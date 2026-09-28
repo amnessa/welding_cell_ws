@@ -53,7 +53,7 @@ def test_joint_path_timing_respects_the_speed_cap():
 @pytest.fixture(scope="module")
 def scene():
     tool, cfg = load_tool_model(), tr.load_marking_config()
-    cfg.clearance_m = 0.0015                     # see test_tack_reach.setup: the 90 deg T limit
+    cfg.clearance_m = 0.0008                     # see test_tack_reach.setup: the 90 deg T limit
     parts, seams, tacks = _t_joint_in_front()
     model = CollisionModel(tool=tool, scene_boxes=boxes_from_parts(parts), table_z=None,
                            clearance=cfg.clearance_m)
@@ -132,3 +132,16 @@ def test_stroke_targets_and_stroke_chain(scene):
     assert s0.stroke_mode == "tack" and np.allclose(s0.point_m, s0.stroke_points_m[0])
     assert np.linalg.norm(s0.tack_point_m - s0.point_m) == pytest.approx(0.008, abs=1e-6)
     assert json.dumps(mk.plan_to_dict(plan))
+
+
+def test_two_speed_descent_slows_down_in_the_last_millimetres(scene):
+    tool, cfg, model, report = scene
+    t = report["tacks"][0]
+    point, axis = np.asarray(t["point_m"]), np.asarray(t["axis_m"])
+    chain = mk.descent_chain(tool, point, axis, np.deg2rad(t["roll_deg"]), np.asarray(t["q_app"]), cfg,
+                             overshoot_m=0.003, step_m=0.002)
+    one = mk.time_descent(chain, tool, v_tip=0.02)
+    two = mk.time_descent(chain, tool, v_tip=0.02, v_slow=0.002, slow_zone_m=0.006, point=point, axis=axis)
+    # the last 9 mm (6 before the point + 3 overshoot) at 2 mm/s instead of 20 mm/s
+    extra = two[-1][1] - one[-1][1]
+    assert extra == pytest.approx(0.009 / 0.002 - 0.009 / 0.02, abs=0.6)
