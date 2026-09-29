@@ -60,6 +60,7 @@ class MarkingConfig:
     branch_joints: tuple[int, ...] = (1, 2, 4)
     standoff_m: float = 0.035
     clearance_m: float = 0.01
+    transit_clearance_m: float = 0.02      # free moves between tacks / home (see marking.json)
     roll_step_deg: float = 15.0
     lin_steps: int = 6
     max_joint_step_rad: float = 1.2
@@ -84,6 +85,7 @@ def load_marking_config(path: str | Path | None = None) -> MarkingConfig:
                          branch_joints=tuple(cfg.get("branch_joints", (1, 2, 4))),
                          standoff_m=float(cfg.get("standoff_m", 0.035)),
                          clearance_m=float(cfg.get("clearance_m", 0.01)),
+                         transit_clearance_m=float(cfg.get("transit_clearance_m", 0.02)),
                          roll_step_deg=float(cfg.get("roll_step_deg", 15.0)),
                          lin_steps=int(cfg.get("lin_steps", 6)),
                          max_joint_step_rad=float(cfg.get("max_joint_step_rad", 1.2)),

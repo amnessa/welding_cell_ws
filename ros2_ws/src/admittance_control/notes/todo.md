@@ -48,7 +48,11 @@ of 5–6.6° in several saves was the same thing). Fix: ICP normal gate
 `sample_mesh_surface(return_normals=True)`); on the saved cloud it returns the ear to
 0.3–0.8° lean and the root to ±0.2 mm. `scripts/check_registration.py` compares the
 saved poses with the live cloud face by face (straddle → drift ≈ plate thickness).
-NEXT: restart perception, re-register, `check_registration.py` OK, reachability, mark.
+Bench run after the fix: all 4 tacks reachable (new holder envelope), contact still
+9.6–9.7 mm early - an unmodelled 7 mm metal plate under the ear (7 / 0.69 along the pen;
+the 0.9–4.6 mm "fit-up gap" was the same plate). Removed; re-test pending. Transits now
+keep `transit_clearance_m` 20 mm (the 3 mm transit to the far side passed 3.7 mm from
+the ear and hit it at 9 N; the re-plan keeps ≥ 20.3 mm).
 Not done: a refusal at save_object when the check fails.
 
 ## PARKED — the remaining ~4 mm (README §14, error budget)

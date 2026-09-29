@@ -207,13 +207,14 @@ class TackMarkingNode(Node):
         since (a TCP calibration, freedrive), re-plan from where it is now instead of
         refusing. Returns (path or None, message). `unwrap=False` for home: arrive at the
         home joints exactly, unwinding the wrist, not at a 2*pi-equivalent of them."""
-        from admittance_control.marking import transit_path
+        from admittance_control.marking import transit_model, transit_path
         q_now = self._where()
         if q_now is None:
             return None, f'{label}: no joint states'
         if self._model.in_collision(q_now):
             return None, f'{label}: current joints are in collision - ' + self._model.report(q_now)
-        path = transit_path(q_now, target, self._model, unwrap=unwrap)
+        path = transit_path(q_now, target, transit_model(self._model, self._cfg, q_now, target),
+                            unwrap=unwrap)
         if path is None:
             return None, f'{label}: no collision-free transit from the current joints'
         return path, ''

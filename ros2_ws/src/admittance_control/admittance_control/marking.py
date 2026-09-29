@@ -30,6 +30,8 @@ the placement check the plan is validated by.
 
 from __future__ import annotations
 
+import dataclasses
+
 import random
 from dataclasses import dataclass, field
 from typing import Any, Callable, Sequence
@@ -57,6 +59,19 @@ def shortcut_path(path: Sequence[np.ndarray], is_valid: Callable[[np.ndarray], b
         if _edge_valid(path[i], path[j], resolution=resolution, is_valid=is_valid):
             path = path[:i + 1] + path[j:]
     return path
+
+
+def transit_model(model: CollisionModel, cfg: MarkingConfig, *qs: np.ndarray) -> CollisionModel:
+    """The collision model for a FREE move: `cfg.transit_clearance_m` instead of the tack
+    clearance, so the path keeps real room from the parts (2026-09-29: with the 3 mm tack
+    clearance a transit to the far side of a standing plate skimmed it and, the parts
+    sitting ~10 mm off their model, hit it at 9 N). Where an end pose itself sits closer
+    (an approach pose beside a plate) the bound drops to 90 % of that pose's clearance,
+    never below the tack clearance, so the move stays plannable."""
+    need = float(cfg.transit_clearance_m)
+    for q in qs:
+        need = min(need, 0.9 * model.min_distance(np.asarray(q, float))[0])
+    return dataclasses.replace(model, clearance=max(model.clearance, need))
 
 
 def transit_path(q_from: np.ndarray, q_to: np.ndarray, model: CollisionModel,
@@ -296,7 +311,8 @@ def build_marking_plan(report: dict[str, Any], tool, model: CollisionModel,
                 steps.append(step)
                 continue
             step.q_app = _unwrap_to(q_app, step.q_app)
-        path = transit_path(q_prev, step.q_app, model, edge_resolution)
+        path = transit_path(q_prev, step.q_app, transit_model(model, cfg, q_prev, step.q_app),
+                            edge_resolution)
         if path is None:
             step.reason = "no collision-free transit"
             all_ok = False
@@ -336,7 +352,8 @@ def build_marking_plan(report: dict[str, Any], tool, model: CollisionModel,
         steps.append(step)
         if step.transit_ok:
             q_prev = step.q_app
-    home = transit_path(q_prev, cfg.home_q, model, edge_resolution, unwrap=False) if steps else [q_now]
+    home = (transit_path(q_prev, cfg.home_q, transit_model(model, cfg, q_prev, cfg.home_q),
+                         edge_resolution, unwrap=False) if steps else [q_now])
     if home is None:
         all_ok = False
     return MarkingPlan(steps=steps, q_start=q_now, home_path=home, ok=all_ok and bool(steps))
