@@ -122,6 +122,7 @@ install(PROGRAMS
   scripts/table_touchoff.py
   scripts/extrinsic_check.py
   scripts/compare_registrations.py
+  scripts/check_registration.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

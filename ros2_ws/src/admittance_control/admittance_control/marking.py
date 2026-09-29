@@ -60,10 +60,18 @@ def shortcut_path(path: Sequence[np.ndarray], is_valid: Callable[[np.ndarray], b
 
 
 def transit_path(q_from: np.ndarray, q_to: np.ndarray, model: CollisionModel,
-                 edge_resolution: float = 0.01, max_iter: int = 8000, seed: int = 0
-                 ) -> list[np.ndarray] | None:
-    """Collision-free joint path: the straight edge when it is clear, else RRT + shortcut."""
-    q_from = np.asarray(q_from, float); q_to = _unwrap_to(np.asarray(q_to, float), q_from)
+                 edge_resolution: float = 0.01, max_iter: int = 8000, seed: int = 0,
+                 unwrap: bool = True) -> list[np.ndarray] | None:
+    """Collision-free joint path: the straight edge when it is clear, else RRT + shortcut.
+
+    ``unwrap``: go to the 2*pi-equivalent of ``q_to`` nearest ``q_from`` (between tacks:
+    the shortest wrist turn). False = to ``q_to`` exactly - the way home, so a wrist that
+    wound up over the tacks turns back instead of arriving one turn off (2026-09-29:
+    wrist_3 came home at 5.42 rad instead of -0.86, a turn closer to its +-2*pi limit).
+    """
+    q_from = np.asarray(q_from, float); q_to = np.asarray(q_to, float)
+    if unwrap:
+        q_to = _unwrap_to(q_to, q_from)
     if _edge_valid(q_from, q_to, resolution=edge_resolution, is_valid=model.is_valid):
         return [q_from, q_to]
     for attempt in range(3):
@@ -328,7 +336,7 @@ def build_marking_plan(report: dict[str, Any], tool, model: CollisionModel,
         steps.append(step)
         if step.transit_ok:
             q_prev = step.q_app
-    home = transit_path(q_prev, cfg.home_q, model, edge_resolution) if steps else [q_now]
+    home = transit_path(q_prev, cfg.home_q, model, edge_resolution, unwrap=False) if steps else [q_now]
     if home is None:
         all_ok = False
     return MarkingPlan(steps=steps, q_start=q_now, home_path=home, ok=all_ok and bool(steps))

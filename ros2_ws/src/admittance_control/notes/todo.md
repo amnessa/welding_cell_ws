@@ -38,6 +38,19 @@ re-seed or be fused with it?
    and Mahalanobis gating so a wrong re-registration is rejected. `save_object` takes the
    fused pose; the ICP takes it as its seed.
 
+## NOW — thin-plate face straddle in ICP (2026-09-29)
+
+After the kinematic fix the marks got WORSE (14–16 mm). Cause: the ear (8 mm plate)
+registered straddling its own two faces - the model's hidden back face paired with the
+visible face (6.5° lean, root 9.5–10.3 mm off vs the live cloud; the earlier "ear lean"
+of 5–6.6° in several saves was the same thing). Fix: ICP normal gate
+(`icp.NORMAL_GATE_DEG`, node param `normal_gate_deg` 60°, model normals from
+`sample_mesh_surface(return_normals=True)`); on the saved cloud it returns the ear to
+0.3–0.8° lean and the root to ±0.2 mm. `scripts/check_registration.py` compares the
+saved poses with the live cloud face by face (straddle → drift ≈ plate thickness).
+NEXT: restart perception, re-register, `check_registration.py` OK, reachability, mark.
+Not done: a refusal at save_object when the check fails.
+
 ## PARKED — the remaining ~4 mm (README §14, error budget)
 
 - **Kinematic model mismatch - FIXED in code 2026-09-29, bench verification pending.**
@@ -66,9 +79,11 @@ re-seed or be fused with it?
 
 ## OPEN — motion (`pen_marking_plan.md`)
 
-- **Holder clearance:** with the 180.9 mm tip the holder envelope clears a square T by
-  ~1 mm; bench seam 1 is unreachable at 3 mm. Measure the holder's real radius (the
-  envelope is conservative at 42 mm), or fit a longer pen.
+- **Holder clearance - DONE 2026-09-29:** the envelope is now from the CAD
+  (`world/penholder_assembly.usda`): tube r 17.4 → capsule r 20.5 to 130 mm, flange
+  r 48; a square T clears by 15.5 mm (was 1.1 with one r 42 capsule). Earlier "seam
+  reachable" results came from the straddled ear opening one side to ~96°. The home
+  path now returns to the exact `home_q` (it arrived a wrist turn off after rolled tacks).
 - **Holding 1.5 N on metal:** UR's `force_mode_controller` (loaded, inactive) for strokes
   on steel, or a sprung holder. The two-speed descent and gentle stroke are the stopgap.
 - Stroke (`stroke_mode:=tack|seam`): first full-seam run on the bench.

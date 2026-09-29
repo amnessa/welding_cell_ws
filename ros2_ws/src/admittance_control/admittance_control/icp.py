@@ -62,6 +62,16 @@ NU_BEGIN_K = 3.0
 NU_END_K = 1.0 / (3.0 * np.sqrt(3.0))
 NU_ALPHA = 0.5
 
+# Normal-compatibility gate (2026-09-29). The model is sampled from EVERY face of the
+# CAD, but the camera sees only the faces turned towards it; without a gate a hidden
+# face finds its nearest scene point on the visible face too. On an 8 mm plate that
+# makes a false minimum where the model straddles its own two faces - visible face on
+# the data at one end, hidden face at the other (the bench ear: 6.5 deg lean and the
+# weld root 10 mm off, while the real plate stood square). A correspondence counts
+# only when the rotated model normal and the scene normal (which faces the camera)
+# agree within this angle; the back face is ~180 deg off and drops out.
+NORMAL_GATE_DEG = 60.0
+
 
 # ─────────────────────────── PLY mesh loading ────────────────────────────
 def load_ply_mesh(path: Path) -> Tuple[np.ndarray, List[Tuple[int, ...]]]:
@@ -118,25 +128,32 @@ def load_ply_mesh(path: Path) -> Tuple[np.ndarray, List[Tuple[int, ...]]]:
 
 
 def sample_mesh_surface(verts: np.ndarray, faces: List[Tuple[int, ...]],
-                        n_points: int, rng: np.random.Generator) -> np.ndarray:
+                        n_points: int, rng: np.random.Generator,
+                        return_normals: bool = False):
     """Area-weighted uniform sampling of ``n_points`` on the mesh surface.
 
     Polygons are fan-triangulated. Returns (n_points, 3) in the mesh's units.
     Falls back to returning the vertices themselves if there are no faces.
+
+    ``return_normals``: also return the (n_points, 3) outward unit face normal of
+    each sample (from the winding; flipped as a whole if the mesh's signed volume is
+    negative, i.e. it is wound inside-out), for the ICP normal gate. With no faces
+    the normals are None.
     """
     tris: List[Tuple[int, int, int]] = []
     for face in faces:
         for i in range(1, len(face) - 1):
             tris.append((face[0], face[i], face[i + 1]))
     if not tris:
-        return verts.copy()
+        return (verts.copy(), None) if return_normals else verts.copy()
 
     tri = np.array(tris, dtype=np.int64)
     v0, v1, v2 = verts[tri[:, 0]], verts[tri[:, 1]], verts[tri[:, 2]]
-    areas = 0.5 * np.linalg.norm(np.cross(v1 - v0, v2 - v0), axis=1)
+    cr = np.cross(v1 - v0, v2 - v0)
+    areas = 0.5 * np.linalg.norm(cr, axis=1)
     total = areas.sum()
     if total <= 0:
-        return verts.copy()
+        return (verts.copy(), None) if return_normals else verts.copy()
     probs = areas / total
     choice = rng.choice(len(tri), size=n_points, p=probs)
     u = rng.random(n_points)
@@ -144,7 +161,14 @@ def sample_mesh_surface(verts: np.ndarray, faces: List[Tuple[int, ...]],
     over = u + w > 1.0
     u[over], w[over] = 1.0 - u[over], 1.0 - w[over]
     a, b, c = v0[choice], v1[choice], v2[choice]
-    return a + (b - a) * u[:, None] + (c - a) * w[:, None]
+    pts = a + (b - a) * u[:, None] + (c - a) * w[:, None]
+    if not return_normals:
+        return pts
+    if np.einsum('ij,ij->', v0, np.cross(v1, v2)) < 0:   # signed volume < 0: inside-out
+        cr = -cr
+    with np.errstate(invalid='ignore', divide='ignore'):
+        nrm = cr / np.linalg.norm(cr, axis=1, keepdims=True)
+    return pts, nrm[choice]
 
 
 # ─────────────────────── depth back-projection / normals ──────────────────
@@ -507,7 +531,16 @@ def _se3_log(T: np.ndarray) -> np.ndarray:
     return np.concatenate((w, Vinv @ t))
 
 
-def _p2plane_gn_step(source, target, target_normals, T, max_corr_dist, index):
+def _normal_ok(source_normals, R, nq, cos_min):
+    """Correspondences whose rotated model normal agrees with the scene normal
+    (see NORMAL_GATE_DEG). All True when the gate is off (no model normals)."""
+    if source_normals is None or cos_min is None:
+        return np.ones(len(nq), dtype=bool)
+    return np.einsum('ij,ij->i', source_normals @ R.T, nq) >= cos_min
+
+
+def _p2plane_gn_step(source, target, target_normals, T, max_corr_dist, index,
+                     source_normals=None, cos_min=None):
     """One Gauss-Newton point-to-plane iteration from pose ``T``.
 
     ``index`` is a prebuilt :class:`NNIndex` over ``target`` -- the caller owns it
@@ -521,7 +554,7 @@ def _p2plane_gn_step(source, target, target_normals, T, max_corr_dist, index):
     R, t = T[:3, :3], T[:3, 3]
     src_t = source @ R.T + t
     idx, dist = index.query(src_t)
-    inl = dist < max_corr_dist
+    inl = (dist < max_corr_dist) & _normal_ok(source_normals, R, target_normals[idx], cos_min)
     n_inl = int(inl.sum())
     if n_inl < 6:
         return None
@@ -598,7 +631,8 @@ def welsch_nu_end(target: np.ndarray, target_normals: np.ndarray,
     return float(np.median(per_point))
 
 
-def _welsch_step(source, target, target_normals, T, nu, index):
+def _welsch_step(source, target, target_normals, T, nu, index,
+                 source_normals=None, cos_min=None):
     """One reweighted (Welsch) point-to-plane Gauss-Newton iteration from ``T``.
 
     Unlike the plain step there is **no hard correspondence cutoff**: every
@@ -617,10 +651,13 @@ def _welsch_step(source, target, target_normals, T, nu, index):
     nq = target_normals[idx]
     r = np.einsum('ij,ij->i', src_t - q, nq)         # signed point-to-plane
     r_abs = np.abs(r)
-    w = _welsch_weight(r_abs, nu)
+    ok = _normal_ok(source_normals, R, nq, cos_min)
+    w = _welsch_weight(r_abs, nu) * ok
     if np.count_nonzero(w > 1e-6) < 6:
         return None
-    energy = _welsch_energy(r_abs, nu)
+    # a gated pair counts as a full outlier (energy 1), so the energy stays
+    # comparable between iterates for the Anderson safeguard
+    energy = _welsch_energy(np.where(ok, r_abs, np.inf), nu)
     sw = np.sqrt(w)
     # Weighted GN: row_i = sqrt(w_i) [p_i x n_i, n_i], rhs_i = -sqrt(w_i) r_i
     A = np.hstack((np.cross(src_t, nq), nq)) * sw[:, None]
@@ -633,7 +670,7 @@ def _welsch_step(source, target, target_normals, T, nu, index):
 
 
 def _welsch_stage(source, target, target_normals, T_start, nu,
-                  max_iter, anderson_depth, index):
+                  max_iter, anderson_depth, index, source_normals=None, cos_min=None):
     """Run reweighted point-to-plane at a *fixed* nu, Anderson-accelerated.
 
     Same fixed-point-in-se(3)-increment scheme as the Fast path, but the step is
@@ -646,7 +683,8 @@ def _welsch_stage(source, target, target_normals, T_start, nu,
 
     def _fp(xi):
         T = _se3_exp(xi) @ T_start
-        step = _welsch_step(source, target, target_normals, T, nu, index)
+        step = _welsch_step(source, target, target_normals, T, nu, index,
+                            source_normals, cos_min)
         if step is None:
             return None
         T_next, energy, _r = step
@@ -656,7 +694,8 @@ def _welsch_stage(source, target, target_normals, T_start, nu,
     if anderson_depth <= 0:
         T = T_start
         for it in range(max_iter):
-            step = _welsch_step(source, target, target_normals, T, nu, index)
+            step = _welsch_step(source, target, target_normals, T, nu, index,
+                            source_normals, cos_min)
             if step is None:
                 return T, it
             T = step[0]
@@ -700,13 +739,14 @@ def _welsch_stage(source, target, target_normals, T_start, nu,
     return best_T, max_iter
 
 
-def _final_metrics(source, target, target_normals, T, max_corr_dist, index):
+def _final_metrics(source, target, target_normals, T, max_corr_dist, index,
+                   source_normals=None, cos_min=None):
     """Fitness / inlier-RMSE / correspondences of ``T`` (point-to-plane)."""
     R, t = T[:3, :3], T[:3, 3]
     src_t = source @ R.T + t
     idx, dist = index.query(src_t)
     r = np.einsum('ij,ij->i', src_t - target[idx], target_normals[idx])
-    inl = dist < max_corr_dist
+    inl = (dist < max_corr_dist) & _normal_ok(source_normals, R, target_normals[idx], cos_min)
     n_inl = int(inl.sum())
     rmse = float(np.sqrt(np.mean(r[inl] ** 2))) if n_inl else float('nan')
     return n_inl, rmse
@@ -724,7 +764,9 @@ def icp_point_to_plane(source: np.ndarray, target: np.ndarray,
                        nu_end_k: float = NU_END_K,
                        nu_alpha: float = NU_ALPHA,
                        noise_floor: Optional[float] = None,
-                       index: Optional['NNIndex'] = None
+                       index: Optional['NNIndex'] = None,
+                       source_normals: Optional[np.ndarray] = None,
+                       normal_gate_deg: Optional[float] = NORMAL_GATE_DEG
                        ) -> Tuple[np.ndarray, Dict]:
     """Refine a source->target rigid transform minimizing point-to-plane error.
 
@@ -766,6 +808,14 @@ def icp_point_to_plane(source: np.ndarray, target: np.ndarray,
                       instead of paying ~2.5 ms per call to re-derive it.
     index           : prebuilt :class:`NNIndex` over ``target``. Built here when
                       omitted; pass one only if you already have it.
+    source_normals  : (M,3) outward unit normals of ``source`` (model frame), from
+                      ``sample_mesh_surface(..., return_normals=True)``. With them
+                      a correspondence counts only when the rotated model normal
+                      and the scene normal agree within ``normal_gate_deg`` - the
+                      back faces of a thin plate can no longer latch onto its
+                      visible face (NORMAL_GATE_DEG). ``target_normals`` must then
+                      face the camera, as both scene-normal paths make them.
+                      None, or ``normal_gate_deg=None``, = no gate (as before).
 
     Returns (T, info) with T the refined 4x4 and info holding fitness,
     inlier_rmse, iterations, correspondences and convergence flag.
@@ -783,6 +833,9 @@ def icp_point_to_plane(source: np.ndarray, target: np.ndarray,
 
     if len(source) == 0 or len(target) == 0:
         return T0, info
+    cos_min = (None if source_normals is None or normal_gate_deg is None
+               else float(np.cos(np.radians(normal_gate_deg))))
+    gate = dict(source_normals=source_normals, cos_min=cos_min)
 
     # One acceleration structure for the whole solve. Every iteration queries the
     # same target, so rebuilding it per step (as this used to) was pure overhead.
@@ -798,6 +851,7 @@ def icp_point_to_plane(source: np.ndarray, target: np.ndarray,
         idx, _d = index.query(src_t)
         r0 = np.abs(np.einsum('ij,ij->i', src_t - target[idx],
                               target_normals[idx]))
+        r0 = r0[_normal_ok(source_normals, R, target_normals[idx], cos_min)]
         med = float(np.median(r0)) if len(r0) else 0.0
         floor = (float(noise_floor) if noise_floor is not None
                  else welsch_nu_end(target, target_normals, index=index))
@@ -813,7 +867,7 @@ def icp_point_to_plane(source: np.ndarray, target: np.ndarray,
         while total < max_iter:
             budget = min(inner, max_iter - total)
             T, iters = _welsch_stage(source, target, target_normals, T, nu,
-                                     budget, anderson_depth, index)
+                                     budget, anderson_depth, index, **gate)
             total += iters
             if abs(nu - nu_end) < 1e-9:
                 info['converged'] = True
@@ -822,7 +876,7 @@ def icp_point_to_plane(source: np.ndarray, target: np.ndarray,
             inner = min(inner + 1, 10)
 
         n_inl, rmse = _final_metrics(source, target, target_normals, T,
-                                     max_corr_dist, index)
+                                     max_corr_dist, index, **gate)
         _update(n_inl, rmse, total)
         return T, info
 
@@ -832,7 +886,7 @@ def icp_point_to_plane(source: np.ndarray, target: np.ndarray,
         prev_rmse = float('inf')
         for it in range(max_iter):
             step = _p2plane_gn_step(source, target, target_normals, T,
-                                    max_corr_dist, index)
+                                    max_corr_dist, index, **gate)
             if step is None:
                 break
             T, _energy, n_inl, rmse, incr = step
@@ -852,7 +906,7 @@ def icp_point_to_plane(source: np.ndarray, target: np.ndarray,
         """One ICP step, in se(3)-increment coordinates around T0."""
         T = _se3_exp(xi) @ T0
         step = _p2plane_gn_step(source, target, target_normals, T,
-                                max_corr_dist, index)
+                                max_corr_dist, index, **gate)
         if step is None:
             return None
         T_next, energy, n_inl, rmse, _incr = step

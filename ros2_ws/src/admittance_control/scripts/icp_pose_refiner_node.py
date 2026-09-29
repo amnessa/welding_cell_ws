@@ -364,6 +364,11 @@ class IcpPoseRefinerNode(Node):
         self.declare_parameter('max_iter', 30)
         self.declare_parameter('anderson_depth', 5)     # 0 = plain point-to-plane
         self.declare_parameter('robust', True)          # Welsch kernel + dynamic-nu (Robust-ICP)
+        # Normal gate: a model point pairs with a scene point only if their normals
+        # agree within this angle, so the hidden face of a thin plate cannot latch
+        # onto its visible face (2026-09-29: the ear registered straddling its two
+        # faces, 6.5 deg lean, weld root 10 mm off). <= 0 = off (the old behaviour).
+        self.declare_parameter('normal_gate_deg', 60.0)
         self.declare_parameter('use_open3d', True)       # fast crop-cloud voxel+normals
         # Front-end: project the crop box into the image and only unpack its
         # pixel rectangle. Exact (the surviving point set is unchanged), but it
@@ -520,6 +525,7 @@ class IcpPoseRefinerNode(Node):
         self._rng = np.random.default_rng(0)
         self._model_name = ''
         self._model = None
+        self._model_n = None
         if str(self.get_parameter('model_path').value):
             self._load_model()
 
@@ -638,7 +644,9 @@ class IcpPoseRefinerNode(Node):
         scale = 0.001 if units == 'mm' else 1.0
         verts, faces = load_ply_mesh(Path(resolved).expanduser())
         self._n_model = n_model
-        self._model = sample_mesh_surface(verts, faces, n_model, self._rng) * scale
+        self._model, self._model_n = sample_mesh_surface(verts, faces, n_model, self._rng,
+                                                         return_normals=True)
+        self._model = self._model * scale
         # Model-frame AABB -> dynamic CropBox extent (+ margin) for tracking.
         self._model_lo = self._model.min(0)
         self._model_hi = self._model.max(0)
@@ -1224,7 +1232,8 @@ class IcpPoseRefinerNode(Node):
         T, info = icp_point_to_plane(
             self._model, scene, scene_n, init=init,
             max_corr_dist=self._max_corr, max_iter=self._max_iter,
-            anderson_depth=self._anderson, robust=self._robust)
+            anderson_depth=self._anderson, robust=self._robust,
+            source_normals=self._model_n, normal_gate_deg=self._normal_gate())
 
         self._current_pose = T                  # seed the tracker (Phase 2)
         self._pose_window.clear()
@@ -1399,7 +1408,8 @@ class IcpPoseRefinerNode(Node):
             max_corr_dist=self._max_corr, max_iter=self._max_iter,
             anderson_depth=self._anderson, robust=self._robust,
             noise_floor=self._noise_floor_for(scene, scene_n, index),
-            index=index)
+            index=index, source_normals=self._model_n,
+            normal_gate_deg=self._normal_gate())
 
         if info['fitness'] < self._lost_fitness:
             self._tracking = False
@@ -1415,6 +1425,11 @@ class IcpPoseRefinerNode(Node):
             f'track: fitness={info["fitness"]:.3f} rmse={info["inlier_rmse"]:.4f}m '
             f'iters={info["iterations"]} scene={len(scene)}',
             throttle_duration_sec=1.0)
+
+    def _normal_gate(self):
+        """The ICP normal gate in degrees, or None when it is switched off."""
+        deg = float(self.get_parameter('normal_gate_deg').value)
+        return deg if deg > 0 else None
 
     # ── Welsch noise floor (a camera property, so cached across ticks) ────
     def _noise_floor_for(self, scene, scene_n, index):

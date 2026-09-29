@@ -202,17 +202,18 @@ class TackMarkingNode(Node):
             return self._q_sim.copy()
         return self._current_q()
 
-    def _replan_transit(self, target: np.ndarray, label: str):
+    def _replan_transit(self, target: np.ndarray, label: str, unwrap: bool = True):
         """The plan froze the transit at the joints of `~/plan`; if the arm has been jogged
         since (a TCP calibration, freedrive), re-plan from where it is now instead of
-        refusing. Returns (path or None, message)."""
+        refusing. Returns (path or None, message). `unwrap=False` for home: arrive at the
+        home joints exactly, unwinding the wrist, not at a 2*pi-equivalent of them."""
         from admittance_control.marking import transit_path
         q_now = self._where()
         if q_now is None:
             return None, f'{label}: no joint states'
         if self._model.in_collision(q_now):
             return None, f'{label}: current joints are in collision - ' + self._model.report(q_now)
-        path = transit_path(q_now, target, self._model)
+        path = transit_path(q_now, target, self._model, unwrap=unwrap)
         if path is None:
             return None, f'{label}: no collision-free transit from the current joints'
         return path, ''
@@ -469,7 +470,7 @@ class TackMarkingNode(Node):
     def _go_home(self) -> tuple[bool, str]:
         if self._plan is None or self._plan.home_path is None:
             return False, 'no home path'
-        path, err = self._replan_transit(self._cfg.home_q, 'home')
+        path, err = self._replan_transit(self._cfg.home_q, 'home', unwrap=False)
         if path is None:
             return False, err
         return self._execute(time_joint_path(path, float(self.get_parameter('v_joint_rad_s').value)),
