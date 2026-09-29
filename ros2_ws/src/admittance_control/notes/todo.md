@@ -81,7 +81,9 @@ thesis should say which scenario it claims:
   (same tip touches and marks). Reuses table_touchoff's two-speed touch, marking's
   planner, touch_probe's per-face offsets. ~10–15 s per tack. Expected < 1 mm.
 - **No touch (academic scenario: parts that must not be touched, or a vision-only
-  claim):** the error has to come down on the sensing side. Options, roughly by payoff:
+  claim):** the error has to come down on the sensing side. **Chosen next: the multi-view
+  close-range refinement `~/refine_pose`, planned step by step in
+  `notes/multiview_refine_plan.md`.** Options, roughly by payoff:
   - a close-up refinement scan per seam: D435i depth error grows ~z², so 0.5 → 0.3 m
     is ~2.8x less;
   - multi-view registration, fusing 2–3 scan poses: this averages the depth bias and
