@@ -1,37 +1,38 @@
 {
- "written": "2026-09-28 15:35:35",
- "base_extrinsic": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/notebooks/T_tcp_to_cam.npy",
+ "written": "2026-09-29 14:13:27",
+ "base_extrinsic": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/notebooks/T_tcp_to_cam_unrefined.npy",
  "check": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/notebooks/extrinsic_check.json",
  "plane": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/notebooks/table_plane.json",
  "correction": {
   "w_camera_deg": [
-   0.34493684565449756,
-   -0.11105435315393854,
+   0.31975705032344853,
+   -0.1927021754445448,
    0.0
   ],
-  "w_deg": 0.36237342182411003,
-  "world_tilt_deg": 0.37536478725234473,
-  "residual_deg": 0.13098797292407938,
-  "conditioning": 0.9997723641401626,
+  "w_deg": 0.3733345679850883,
+  "world_tilt_deg": 0.2696248350436321,
+  "residual_deg": 0.21662181086919674,
+  "conditioning": 0.9998001182100945,
   "Rc": [
    [
-    0.9999981215723791,
-    -5.834430438141637e-06,
-    -0.0019382511892531728
+    0.999994344168818,
+    -9.384906484222756e-06,
+    -0.0033632636380303213
    ],
    [
-    -5.834430438141637e-06,
-    0.999981878152685,
-    -0.006020243532284778
+    -9.384906484222754e-06,
+    0.99998442731636,
+    -0.005580773843760623
    ],
    [
-    0.0019382511892531728,
-    0.006020243532284778,
-    0.9999799997250641
+    0.0033632636380303213,
+    0.005580773843760623,
+    0.999978771485178
    ]
   ],
   "n_views": 4
  },
  "frame": "tool0",
- "note": "tilt refined from table views; translation and rotation about the optical axis unchanged"
+ "note": "tilt refined from table views; translation and rotation about the optical axis unchanged",
+ "kinematics": "calibrated (config/ur5e_calibration.yaml in TF) - 2026-09-29; supersedes the 2026-09-28 refinement, which was measured through the NOMINAL TF and absorbed part of the kinematic mismatch"
 }

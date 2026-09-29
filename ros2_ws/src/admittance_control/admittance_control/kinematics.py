@@ -79,7 +79,7 @@ def _rpy(r: float, p: float, y: float) -> np.ndarray:
 # UR5e Forward Kinematics (matches URDF chain: base_link → tool0)
 # ---------------------------------------------------------------------------
 
-def ur5e_fk(q: np.ndarray) -> np.ndarray:
+def _ur5e_fk_nominal(q: np.ndarray) -> np.ndarray:
     """
     Compute the 4×4 homogeneous transform from base_link to tool0.
 
@@ -139,7 +139,7 @@ def ur5e_fk(q: np.ndarray) -> np.ndarray:
     return T
 
 
-def ur5e_link_frames(q: np.ndarray) -> dict:
+def _ur5e_link_frames_nominal(q: np.ndarray) -> dict:
     """Every joint frame of the same chain as `ur5e_fk`, in base_link.
 
     Keys: 'shoulder' (after shoulder_pan), 'lift' (after shoulder_lift), 'elbow',
@@ -158,6 +158,100 @@ def ur5e_link_frames(q: np.ndarray) -> dict:
     T = T @ _trans(0, 0.0996, 0) @ _rpy(PI/2, PI, PI) @ _rotz(q[5]);  frames['wrist_3'] = T
     T = T @ _rpy(0, -PI/2, -PI/2) @ _rpy(PI/2, 0, PI/2); frames['tool0'] = T
     return frames
+
+
+# ---------------------------------------------------------------------------
+# FK from a UR kinematics file (the nominal default_kinematics.yaml, or the robot's
+# factory calibration ur5e_calibration.yaml) - the same chain the URDF builds
+# ---------------------------------------------------------------------------
+_KIN_JOINTS = ("shoulder", "upper_arm", "forearm", "wrist_1", "wrist_2", "wrist_3")
+_FRAME_NAMES = ("shoulder", "lift", "elbow", "wrist_1", "wrist_2", "wrist_3")
+
+
+def load_kinematics(path) -> dict:
+    """{joint: (x, y, z, roll, pitch, yaw)} from a ur_description kinematics YAML.
+
+    Parsed by hand (no PyYAML dependency): the file is a flat two-level mapping."""
+    kin, cur = {}, None
+    for raw in open(path, "r", encoding="utf-8"):
+        line = raw.split("#", 1)[0].rstrip()
+        if not line.strip():
+            continue
+        key, _, val = line.strip().partition(":")
+        if key in _KIN_JOINTS and not val.strip():
+            cur = key
+            kin[cur] = {}
+        elif cur is not None and key in ("x", "y", "z", "roll", "pitch", "yaw") and val.strip():
+            kin[cur][key] = float(val)
+    missing = [j for j in _KIN_JOINTS if j not in kin or len(kin[j]) != 6]
+    if missing:
+        raise ValueError(f"{path}: incomplete joints {missing}")
+    return {j: tuple(kin[j][k] for k in ("x", "y", "z", "roll", "pitch", "yaw")) for j in _KIN_JOINTS}
+
+
+def ur5e_link_frames_params(q: np.ndarray, kin: dict) -> dict:
+    """`ur5e_link_frames` for arbitrary kinematics parameters: every joint origin is
+    translate(x, y, z) @ rpy(roll, pitch, yaw) followed by the joint rotation Rz(q_i),
+    as ur_description's macro builds it. With default_kinematics.yaml it equals
+    `ur5e_link_frames` to machine precision (tested)."""
+    q = np.asarray(q, dtype=float)
+    frames = {}
+    T = _rotz(math.pi)                                   # base_link -> base_link_inertia
+    for i, (j, name) in enumerate(zip(_KIN_JOINTS, _FRAME_NAMES)):
+        x, y, z, r, p_, yw = kin[j]
+        T = T @ _trans(x, y, z) @ _rpy(r, p_, yw) @ _rotz(q[i])
+        frames[name] = T
+    PI = math.pi
+    frames["tool0"] = T @ _rpy(0, -PI / 2, -PI / 2) @ _rpy(PI / 2, 0, PI / 2)
+    return frames
+
+
+def ur5e_fk_params(q: np.ndarray, kin: dict) -> np.ndarray:
+    """base_link -> tool0 with the given kinematics parameters."""
+    return ur5e_link_frames_params(q, kin)["tool0"]
+
+
+# ---------------------------------------------------------------------------
+# The ACTIVE kinematics: what `ur5e_fk`, `ur5e_link_frames`, the Jacobian and the IK
+# use. None = the nominal UR5e chain (the historical behaviour). The robot's controller
+# and its RTDE/TCP poses use the FACTORY-CALIBRATED chain (config/ur5e_calibration.yaml):
+# 2.4-4.2 mm and ~0.5 deg apart from the nominal one at the tip (measured 2026-09-29),
+# which put the marks ~4 mm off. Entry points that command or interpret the real robot
+# call `use_kinematics(<calibration file>)` once at start.
+# ---------------------------------------------------------------------------
+_ACTIVE_KIN: Optional[dict] = None
+_ACTIVE_KIN_SOURCE: str = "nominal"
+
+
+def use_kinematics(path=None) -> str:
+    """Make every FK / IK call in this module use the kinematics in `path` (a
+    ur_description kinematics YAML), or the nominal chain when `path` is None/''.
+    Returns a one-line description for the logs."""
+    global _ACTIVE_KIN, _ACTIVE_KIN_SOURCE
+    if not path:
+        _ACTIVE_KIN, _ACTIVE_KIN_SOURCE = None, "nominal"
+    else:
+        _ACTIVE_KIN, _ACTIVE_KIN_SOURCE = load_kinematics(path), str(path)
+    return active_kinematics()
+
+
+def active_kinematics() -> str:
+    """'nominal' or the path of the kinematics file in use (recorded in reports)."""
+    return _ACTIVE_KIN_SOURCE
+
+
+def ur5e_fk(q: np.ndarray) -> np.ndarray:
+    """base_link -> tool0 with the ACTIVE kinematics (see `use_kinematics`)."""
+    if _ACTIVE_KIN is None:
+        return _ur5e_fk_nominal(q)
+    return ur5e_fk_params(q, _ACTIVE_KIN)
+
+
+def ur5e_link_frames(q: np.ndarray) -> dict:
+    """Every joint frame in base_link with the ACTIVE kinematics."""
+    if _ACTIVE_KIN is None:
+        return _ur5e_link_frames_nominal(q)
+    return ur5e_link_frames_params(q, _ACTIVE_KIN)
 
 
 def ur5e_jacobian(q: np.ndarray, eps: float = 1e-6) -> np.ndarray:

@@ -29,6 +29,7 @@ sys.path.insert(0, str(PKG.parents[2] / "weld_generator"))
 
 from admittance_control import seam_from_registration as sfr  # noqa: E402
 from admittance_control.collision import CollisionModel, boxes_from_parts  # noqa: E402
+from admittance_control.kinematics import active_kinematics, use_kinematics  # noqa: E402
 from admittance_control.tack_reach import (format_report, load_marking_config,  # noqa: E402
                                            plan_tacks)
 from admittance_control.tool_model import load_tool_model  # noqa: E402
@@ -50,8 +51,11 @@ def main() -> int:
                          "experiment: run the same tack at 0/90/180/270 and see whether the "
                          "lateral error turns with the wrist (tool) or stays put (world)")
     ap.add_argument("--tilt", type=float, default=None, help="force this work angle (deg) off the bisector")
+    ap.add_argument("--kinematics", default=str(PKG / "config" / "ur5e_calibration.yaml"),
+                    help="UR kinematics file the robot really uses ('' = nominal chain)")
     ap.add_argument("--out", default=None, help="report JSON (default: <save-dir>/tack_reach.json)")
     args = ap.parse_args()
+    print("kinematics:", use_kinematics(args.kinematics or None))
 
     save_dir = Path(args.save_dir)
     tacks = json.loads((save_dir / "welding_tacks.json").read_text())["tacks"]
@@ -77,6 +81,7 @@ def main() -> int:
     report = plan_tacks(tacks, tool, model, cfg)
     print(format_report(report))
     out = Path(args.out) if args.out else save_dir / "tack_reach.json"
+    report["kinematics"] = active_kinematics()
     report["source"] = {"tacks": str(save_dir / "welding_tacks.json"),
                         "assembly": str(save_dir / "assembly.json"), "frame": assembly.get("static_frame", "base_link")}
     out.write_text(json.dumps(report, indent=1))

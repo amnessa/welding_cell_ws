@@ -39,7 +39,7 @@ from std_srvs.srv import Trigger
 PKG = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PKG))
 
-from admittance_control.kinematics import ur5e_fk  # noqa: E402
+from admittance_control.kinematics import ur5e_fk, use_kinematics  # noqa: E402
 from admittance_control.tack_reach import UR_ORDER, joint_state_to_ur_order  # noqa: E402
 from admittance_control.tool_model import solve_tip_offset  # noqa: E402
 
@@ -47,6 +47,11 @@ from admittance_control.tool_model import solve_tip_offset  # noqa: E402
 class PenTipTouchoff(Node):
     def __init__(self) -> None:
         super().__init__('pen_tip_touchoff')
+        # the robot's controller and its TCP poses use the FACTORY-CALIBRATED chain;
+        # FK / IK here must too ('' = nominal, the pre-2026-09-29 behaviour)
+        self.declare_parameter('kinematics_file', str(PKG / 'config' / 'ur5e_calibration.yaml'))
+        self.get_logger().info('kinematics: ' + use_kinematics(
+            str(self.get_parameter('kinematics_file').value) or None))
         self.declare_parameter('joint_states_topic', '/joint_states')
         self.declare_parameter('out', str(PKG / 'notebooks' / 'pen_tip_touchoff.json'))
         self._q = None

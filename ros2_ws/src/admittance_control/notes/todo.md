@@ -40,12 +40,20 @@ re-seed or be fused with it?
 
 ## PARKED — the remaining ~4 mm (README §14, error budget)
 
-- **Kinematic model mismatch (~3 mm, the likeliest term).** The hand-eye capture read the
-  robot through its calibrated kinematics (RTDE); TF (`default_kinematics.yaml`) and the
-  planner use the nominal chain. Fix: load `config/ur5e_calibration.yaml` into the URDF
-  (`kinematics_parameters_file`) and into `kinematics.py`'s FK/IK, then recapture the
-  hand-eye. Quick check first: `tcp_offset_probe.py` at several poses shows the
-  pose-dependent gap.
+- **Kinematic model mismatch - FIXED in code 2026-09-29, bench verification pending.**
+  Confirmed: the probe's calibrated row equals the pendant TCP at 5 poses (0.001°), the
+  nominal row wanders 2.4–4.2 mm / 0.52–0.55°; a model of the 28 Sep setup predicted
+  5.4/5.9 mm lateral and +2.6/+2.1 mm depth (measured 4.3/3.7 and +4.2/+2.8). Fix: URDF
+  loads `config/ur5e_calibration.yaml`; the driver must be launched with
+  `kinematics_params_file:=` the same file (workspace README); `kinematics.use_kinematics`
+  and a `kinematics_file` parameter in every robot-facing tool (reports record the model,
+  the marking node refuses a mismatched `tack_reach.json`); `assembly.json` stores
+  `T_static_camera`. Step 4 done: through calibrated TF the ChArUco-only extrinsic
+  shows a 0.37° camera tilt (its own rotation uncertainty); refined →
+  `notebooks/T_tcp_to_cam_refined.npy`, which differs from the 28 Sep refinement by only
+  0.085° - so that one had corrected the ChArUco tilt, NOT the kinematic mismatch, which
+  stayed fully in the 28 Sep marks (as the model predicted). NEXT: promote the new refined
+  file, re-register, `tack_reachability.py` (new kinematics), mark.
 - **Extrinsic horizontal translation / rotation about the optical axis** (unmeasured; two
   solves 18 mm apart): register one untouched part twice with the wrist 180° apart about
   the vertical → `scripts/compare_registrations.py --last 2`; half the horizontal

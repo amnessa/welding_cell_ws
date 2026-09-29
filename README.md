@@ -106,8 +106,16 @@ then launch the driver:
 ros2 launch ur_robot_driver ur_control.launch.py \
     ur_type:=ur5e \
     robot_ip:=192.168.8.4 \
-    launch_rviz:=false
+    launch_rviz:=false \
+    kinematics_params_file:=/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/config/ur5e_calibration.yaml
 ```
+
+`kinematics_params_file` makes the driver's robot_state_publisher use this robot's
+factory calibration instead of the nominal UR5e model. Without it, TF differs from the
+controller's own kinematics by 2.4-4.2 mm and ~0.5 deg at the tool (measured 2026-09-29),
+which alone put the pen marks ~4-6 mm off. Our `pointcloud.launch.py` loads the same file
+(`urdf/ur5e.urdf.xacro`); if both publish TF, both must use it. The driver also stops
+warning that the robot's calibration hash does not match.
 
 Then configure the External Control URCap on the teach pendant to connect to
 the machine running the driver, not to the robot itself:

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path as _Path
 from pathlib import Path
 
 import numpy as np
@@ -29,13 +30,16 @@ from visualization_msgs.msg import Marker, MarkerArray
 
 from admittance_control.collision import ur5e_capsules
 from admittance_control.geometry import rotmat_to_quat
-from admittance_control.kinematics import ur5e_link_frames
+from admittance_control.kinematics import ur5e_link_frames, use_kinematics
 from admittance_control.tool_model import load_tool_model
 
 
 class TackReachMarkerNode(Node):
     def __init__(self) -> None:
         super().__init__('tack_reach_marker')
+        PKG = _Path(__file__).resolve().parents[1]
+        self.declare_parameter('kinematics_file', str(PKG / 'config' / 'ur5e_calibration.yaml'))
+        use_kinematics(str(self.get_parameter('kinematics_file').value) or None)
         self.declare_parameter('report', '')
         self.declare_parameter('frame', 'base_link')
         self.declare_parameter('topic', '/tack_reach/markers')

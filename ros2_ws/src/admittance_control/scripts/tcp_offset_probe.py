@@ -4,6 +4,11 @@
     ros2 run admittance_control tcp_offset_probe.py
     # prints D = T_tool0_tcp once per second; Ctrl-C when the numbers are steady
 
+It prints the offset twice, with the planner's NOMINAL FK and with the robot's
+CALIBRATED FK (`config/ur5e_calibration.yaml`): the driver computes its TCP pose with the
+calibrated chain, so the calibrated row equals the pendant TCP at every pose while the
+nominal row wanders with the pose - the kinematic mismatch, directly.
+
 The UR driver's `tcp_pose_broadcaster` publishes the robot's TCP pose (the pendant's
 active TCP, in the UR `base` frame) and `robot_state_publisher` gives base_link -> tool0
 from /joint_states (here recomputed with the package FK, the same chain the planner
@@ -39,7 +44,7 @@ PKG = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PKG))
 
 from admittance_control.geometry import quat_to_rotmat  # noqa: E402
-from admittance_control.kinematics import ur5e_fk  # noqa: E402
+from admittance_control.kinematics import load_kinematics, ur5e_fk, ur5e_fk_params  # noqa: E402
 from admittance_control.tack_reach import UR_ORDER, joint_state_to_ur_order  # noqa: E402
 
 
@@ -56,6 +61,10 @@ class TcpOffsetProbe(Node):
         self.declare_parameter('tcp_pose_topic', '/tcp_pose_broadcaster/pose')
         self.declare_parameter('joint_states_topic', '/joint_states')
         self.declare_parameter('base_frame_rotation_deg', 180.0)
+        # the robot's factory calibration: printed next to the nominal FK. The driver's
+        # TCP pose uses the CALIBRATED chain, so with it the offset is the pendant TCP at
+        # every pose; with the nominal chain it wanders with the pose (the mismatch).
+        self.declare_parameter('calibration_file', str(PKG / 'config' / 'ur5e_calibration.yaml'))
         self._q = None
         self._tcp = None
         self._lock = threading.Lock()
@@ -65,6 +74,7 @@ class TcpOffsetProbe(Node):
                                  self._on_tcp, qos_profile_sensor_data)
         self.create_timer(1.0, self._report)
         self._samples = []
+        self._cal = load_kinematics(str(self.get_parameter('calibration_file').value))
 
     def _on_joints(self, msg: JointState) -> None:
         if all(n in msg.name for n in UR_ORDER):
@@ -92,15 +102,16 @@ class TcpOffsetProbe(Node):
         if frame == 'base_link':
             T_bl_base = np.eye(4)
         D = np.linalg.inv(ur5e_fk(q)) @ T_bl_base @ T_tcp
+        Dc = np.linalg.inv(ur5e_fk_params(q, self._cal)) @ T_bl_base @ T_tcp
         t = D[:3, 3]; rv = _axis_angle(D[:3, :3])
+        tc = Dc[:3, 3]; rvc = _axis_angle(Dc[:3, :3])
         self._samples.append(np.concatenate([t, rv]))
-        s = np.array(self._samples[-10:])
         self.get_logger().info(
-            f"pendant TCP in tool0 (frame '{frame}'): xyz {np.round(t * 1000, 1)} mm, "
-            f"axis-angle {np.round(rv, 4)} rad ({np.degrees(np.linalg.norm(rv)):.1f} deg); "
-            f"steady over last {len(s)}: +/- {np.round(s[:, :3].std(0) * 1000, 2)} mm\n"
-            f"  -> resolve_handeye.py --tcp-offset {t[0]:.5f} {t[1]:.5f} {t[2]:.5f} "
-            f"{rv[0]:.5f} {rv[1]:.5f} {rv[2]:.5f} --write notebooks/T_tcp_to_cam.npy")
+            f"pendant TCP seen from tool0 (frame '{frame}'), joints {np.round(q, 3).tolist()}:\n"
+            f"  NOMINAL FK    xyz {np.round(t * 1000, 2)} mm, rot {np.degrees(np.linalg.norm(rv)):.3f} deg\n"
+            f"  CALIBRATED FK xyz {np.round(tc * 1000, 2)} mm, rot {np.degrees(np.linalg.norm(rvc)):.3f} deg\n"
+            f"  -> the calibrated row should equal the pendant TCP at EVERY pose; the nominal row "
+            f"moves with the pose by the kinematic mismatch (gap {np.linalg.norm(t - tc) * 1000:.2f} mm here)")
 
 
 def main() -> None:

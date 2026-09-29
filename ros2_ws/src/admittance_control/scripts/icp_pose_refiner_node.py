@@ -1632,7 +1632,11 @@ class IcpPoseRefinerNode(Node):
         self._saved.append({'model': self._model_name,
                             'n_points': int(len(model_static)),
                             'pose_static': pose_static.tolist(),
-                            'pose_stats': pose_stats})
+                            'pose_stats': pose_stats,
+                            # the camera where the part was seen (static <- camera at the save):
+                            # lets any later analysis recompute the registration under a
+                            # different extrinsic or kinematics model
+                            'T_static_camera': T_sc.tolist()})
 
         self._publish_sepc()
         note = self._persist_sepc()

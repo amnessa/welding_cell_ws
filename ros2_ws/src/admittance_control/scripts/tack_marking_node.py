@@ -71,7 +71,7 @@ sys.path.insert(0, str(PKG.parents[2] / "weld_generator"))
 
 from admittance_control import seam_from_registration as sfr  # noqa: E402
 from admittance_control.collision import CollisionModel, boxes_from_parts  # noqa: E402
-from admittance_control.kinematics import ur5e_fk  # noqa: E402
+from admittance_control.kinematics import active_kinematics, ur5e_fk, use_kinematics  # noqa: E402
 from admittance_control.marking import (build_marking_plan, contact_depth_m, line_chain,  # noqa: E402
                                         plan_to_dict, stroke_chain, stroke_targets,
                                         time_descent, time_joint_path)
@@ -84,6 +84,11 @@ from admittance_control.weldgen_registry import load_registry  # noqa: E402
 class TackMarkingNode(Node):
     def __init__(self) -> None:
         super().__init__('tack_marking')
+        # the robot's controller and its TCP poses use the FACTORY-CALIBRATED chain;
+        # FK / IK here must too ('' = nominal, the pre-2026-09-29 behaviour)
+        self.declare_parameter('kinematics_file', str(PKG / 'config' / 'ur5e_calibration.yaml'))
+        self.get_logger().info('kinematics: ' + use_kinematics(
+            str(self.get_parameter('kinematics_file').value) or None))
         p = self.declare_parameter
         p('save_dir', str(PKG / 'scripts' / 'foundationpose_results'))
         p('registry', str(PKG / 'models' / 'weldgen_objects.json'))
@@ -235,6 +240,11 @@ class TackMarkingNode(Node):
             self._cfg.table_z_m = float(rep_cfg['table_z_m'])
         self._model = CollisionModel(tool=self._tool, scene_boxes=boxes_from_parts(parts),
                                      table_z=self._cfg.table_z_m, clearance=self._cfg.clearance_m)
+        # the report's joint solutions are only valid for the kinematics they were solved with
+        rep_kin = report.get('kinematics', 'nominal')
+        if rep_kin != active_kinematics():
+            return (f"tack_reach.json was solved with kinematics '{rep_kin}' but this node uses "
+                    f"'{active_kinematics()}' - re-run tack_reachability.py")
         self._report = report
         self._tacks_json = self._seams_json = None
         try:
