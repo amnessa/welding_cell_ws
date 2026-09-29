@@ -123,6 +123,7 @@ install(PROGRAMS
   scripts/extrinsic_check.py
   scripts/compare_registrations.py
   scripts/check_registration.py
+  scripts/touch_probe.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

@@ -12,7 +12,11 @@ tacks → elbow-up collision-free motion → force-gated touch → dot or stroke
 error went from ~8 mm to **3.7–4.3 mm** (README §14: what was found, how, and the error
 budget). Parked there on purpose; the next topic is FoundationPose tracking.
 
-## NEXT — FoundationPose real-time tracking
+## NEXT — FoundationPose pose estimation, then a Kalman filter with ICP
+
+Planned by the user (2026-09-29) after the touch decision above. First test how good
+FoundationPose's pose is on its own, then fuse it with the ICP; the tracking details
+follow.
 
 The server has a tracking mode we never use (`track_one`: after `register`, refine frame
 to frame, ~20–30 Hz on its GPU); we seed once and our ICP tracks. Question: is its pose
@@ -54,6 +58,40 @@ the 0.9–4.6 mm "fit-up gap" was the same plate). Removed; re-test pending. Tra
 keep `transit_clearance_m` 20 mm (the 3 mm transit to the far side passed 3.7 mm from
 the ear and hit it at 9 N; the re-plan keeps ≥ 20.3 mm).
 Not done: a refusal at save_object when the check fails.
+
+Clean re-test (plate removed): marks 5.1 / 7.9 / 8.0 mm off, contacts 6.2–11.0 mm early
+on BOTH sides of the ear (so not a sideways shift). Pen touches (`scripts/touch_probe.py`)
+split it: pen length +1.2..+2.9 mm on the bare table (vs the 28 Sep plane); base top
++2.3 / +4.3 mm (≈ 0 / +2 net of the pen: registered ~0.7° off in tilt, far end low);
+ear faces +0.9 / −1.2 mm. At a 45° approach every mm the base sits higher is ~1.4 mm of
+early contact and ~1 mm of mark offset; pen 2 + base 0–2 + blunt nib ~1 predicts
+4–8 mm early and 3–6 mm off, measured 6–11 and 5–8 → ~2–3 mm unexplained (holder flex,
+nib shape; a corner touch at a tack centre would tell). Every term is now 1–3 mm, the
+D435i's own level at 0.5 m.
+
+## DECISION — to touch or not to touch (2026-09-29)
+
+The remaining ~5 mm is the sum of 1–3 mm sensor-level terms. Two ways on, and the
+thesis should say which scenario it claims:
+
+- **Touch (industrial practice, "touch sensing"):** before each tack, two force-gated
+  touches ~15 mm from the root (base top with the pen vertical, standing face with the
+  pen horizontal) shift the root line by the measured offsets. Removes camera,
+  extrinsic and registration error at the tack; the pen's own error mostly cancels
+  (same tip touches and marks). Reuses table_touchoff's two-speed touch, marking's
+  planner, touch_probe's per-face offsets. ~10–15 s per tack. Expected < 1 mm.
+- **No touch (academic scenario: parts that must not be touched, or a vision-only
+  claim):** the error has to come down on the sensing side. Options, roughly by payoff:
+  - a close-up refinement scan per seam: D435i depth error grows ~z², so 0.5 → 0.3 m
+    is ~2.8x less;
+  - multi-view registration, fusing 2–3 scan poses: this averages the depth bias and
+    the in-plane ambiguity;
+  - FoundationPose pose + ICP fused (NEXT below);
+  - a depth-bias map of the D435i, measured against the pen-touched table;
+  - redo the 4-point TCP (about 2 mm): only pen_tool.json and the table plane change,
+    NOT the extrinsic, which is stored in tool0.
+- A middle road for the thesis: vision-only as the method, touch as the reference
+  that measures its error (touch_probe already does this by hand).
 
 ## PARKED — the remaining ~4 mm (README §14, error budget)
 
