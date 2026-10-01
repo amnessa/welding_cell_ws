@@ -142,7 +142,8 @@ does not pin down. Four layers guard against it.
   - the ear's top edge also faces up, but it is 99 mm away, beyond any matching distance.
 
   For tees and corners, the gate does most of the separating.
-- **Parts meeting face to face (lap joints) are the hard case.** The two top faces are parallel and
+- **Parts meeting face to face (lap joints) are the hard case** (in theory: the step 3
+  tests found no swap, so the cap below is OFF by default, see step 3). The two top faces are parallel and
   a plate thickness apart, so the gate cannot tell them apart. Safe rule:
   `max_corr_dist` is no more than half the smallest gap between parallel faces of
   different parts. That is 4 mm for 8 mm plates, with a 10 mm cap. It is computed from the
@@ -327,6 +328,60 @@ For each part, also register each view on its own, starting from the joint resul
      within 0.3 mm of each other.
    - **Rejection:** a refinement that would change the ear-to-base relative pose by 3 mm,
      with that direction not measured, is rejected and the saved pose kept.
+
+   **DONE 2026-10-01:** `admittance_control/multiview_refine.py`,
+   `test/test_multiview_touching_parts.py` (8 tests; full suite 72 passed).
+
+   *Deviations from the design above:*
+   - **Own solver.** A focused Gauss-Newton solver (`refine_part`) instead of adding
+     weights and `prior=` to `icp.py`, which is unchanged. Two reasons:
+     - the prior has to act about the part's own centre: a 1° turn about the `base_link`
+       origin moves the part about 9 mm;
+     - the overlap rule is a second kind of residual.
+     It reuses `NNIndex`, the normal gate and the Welsch weights.
+   - **Robust weighting starts wider:** at max(3 × median, 90th percentile) of the
+     residuals. With the median alone, the few faces that do see a slide (a plate's end
+     faces) were weighted away before the first step.
+   - **The half-gap matching cap (layer 1) is OFF by default** (`parallel_gap_rule`); the
+     gap is still measured and reported.
+   - **Fallback (D7):** a rejected part is held at its saved pose, and the others are
+     refined once more against it. An accepted part whose fit-up with a held part would
+     change beyond the limit is kept as saved too, so the assembly is refined together or
+     not at all.
+   - **One assembly-level extrinsic estimate**, not one per part. Each part's per-view
+     poses are projected onto the directions that part measures (from the translation
+     block of its information matrix), and its own offset cancels by subtracting the mean
+     over the views.
+
+   *What the synthetic tests showed (claims above corrected):*
+   - **No camera error:**
+     - every measured direction lands on the truth: base tilt 0.40° → 0.02°, base height
+       2.25 → 0.18 mm, the ear's position across its face (the weld root) → 0.01 mm;
+     - the base's in-plane slide and the ear's slide along its length are not measured
+       and stay at the saved pose, reported as weak.
+   - **From 0.4 m at 45–60°, the base's 8 mm edges are never seen:** more than 60°
+     incidence. Their slide becomes measured, and is corrected, only with additional 20°
+     views. Low views alone see no top face (fitness 0.04) and are rightly rejected.
+   - **Extrinsic error d = (3, −2, 1) mm:**
+     - the estimate recovers (2.94, −2.17, 1.20);
+     - single views scatter by more than 1 mm;
+     - the joint fit would change the fit-up by 7 mm partly in barely measured
+       directions, so both parts are kept as saved;
+     - after taking the estimate out of the views (self-calibration), both are accepted
+       and land within 0.5 mm.
+     So the joint pose does NOT average out an extrinsic error by itself, because the
+     part shared by all views stays. The self-calibration (step 7) is what removes it.
+   - **Dead band and ownership change nothing for the T.** Parts meeting at a right angle
+     are already separated by the normal gate. The claim above that "the test shows the
+     difference" was wrong.
+   - **Lap joint:** no swap, even without ownership at 10 mm. The lower plate's exposed top
+     lies beside the upper plate, never under its visible top. The half-gap cap would have
+     blocked a 6 mm correction that the default makes.
+   - **Overlap rule:** the ear started 2 mm into the base ends no deeper than the 0.5 mm
+     tolerance, and a real 1 mm gap is kept.
+   - Two rounds suffice, and the order doesn't matter (within 0.3 mm).
+   - **Not covered yet:** depth bias per view (only the extrinsic translation was
+     injected).
 4. **Offline driver.** `scripts/multiview_refine_offline.py <results>/multiview/` replays the
    saved views and prints everything the service would.
    *Check:* runs on the synthetic set, then on the first real capture.
@@ -355,6 +410,55 @@ For each part, also register each view on its own, starting from the joint resul
    3 runs. On the bench:
    - a run after the update shows `d` near 0 and a smaller spread between views;
    - `touch_probe` and the marks improve, or at least don't get worse.
+
+   **DONE 2026-10-01, done before step 4** (the user's choice: it is the part that
+   addresses the measured camera-to-robot error).
+   - **New files:**
+     - `admittance_control/selfcal.py`: history, information-weighted combination,
+       agreement rules, `corrected_extrinsic`, `write_selfcal`;
+     - `scripts/selfcal_extrinsic.py`: shows the history and the verdict; `--write`;
+     - `test/test_selfcal.py`: 6 tests.
+   - **The sign:** an error Δ in tool0 appears as `R_cam d` with `d = R_tcᵀ Δ`, so the
+     correction is `t − R_tc d`. A chain test confirms it.
+
+   *What changed on the way (the design above was wrong in two places):*
+   - **`d` is estimated from points, not from per-view poses.** The first estimator
+     registered each part to each view alone and regressed the positions on `R_cam`. Even
+     starting from the TRUE poses it returned (7, 13, −15) mm for an injected (3, −2, 1).
+     `multiview_refine.estimate_extrinsic` now solves for every part's correction (about
+     its own centre, no prior) and `d` together, from all owned points, each residual
+     `n · (T p − q + R_cam d)`.
+   - **"Determined" is absolute.** `d`'s information is the Schur complement with the
+     parts eliminated. A direction counts when its std is at most 0.5 mm
+     (`extrinsic_max_sigma_mm`). Directions above that are named and set to 0.
+     - A shift that moves every view's cloud straight up or down is the weakest direction:
+       for views at one elevation it is indistinguishable from all parts sitting higher.
+     - The planned T views (45/60°) still measure it to 0.16 mm. Over 4 noise seeds and 2
+       offsets, the actual errors were 0.2–0.33 mm.
+     - A first "5% of the largest eigenvalue" rule had thrown this direction away.
+   - **The conditioning of the stack of `R_tool_i` is not used.** Each run stores `d` and
+     its 3×3 information (1/mm²). Runs are combined as d = (ΣI)⁺ Σ I d, so a direction
+     one run can't see is filled in by another. Agreement is judged per run, within its
+     own determined directions. Runs with another extrinsic (sha1 of the file) or with
+     nothing determined are skipped.
+   - **The planner's elevation spread is optional, and off.** A 30° view would halve the
+     weakest std (0.16 → 0.08 mm), but on the bench at 0.4 m none is reachable (IK or a
+     stretched elbow), and the 30° candidates doubled the planning time. 75° does not help
+     either: from there the ear's vertical faces are seen at more than 60° incidence.
+
+   *Synthetic results:*
+   - 3 runs of the T with an extrinsic error of (2, −3, 1.5) mm in tool0 give a corrected
+     extrinsic within 0.5 mm of the true one. The rotation is untouched, and the note file
+     lists the runs used.
+   - Uncorrected views refine to an inconsistent assembly, so both parts are kept as
+     saved. After taking `d` out, both are accepted and within 0.5 mm.
+
+   *Note for step 4 (real replays):* the 2 mm fit-up rule (`max_relative_mm`) rejected a
+   legitimate correction in a test whose saved poses were off by about 3 mm
+   independently. Tune it on real data, where saved poses share one scan's error.
+
+   *Bench check still to do:* 3 or more real runs, `--write`, promote, then a run that
+   shows `d` near 0, and `touch_probe` plus the marks.
 8. **FoundationPose per view (later, after 1–7 are tested).** Send each view's image and
    depth to the server with the known CAD, take its pose as a second, independent
    measurement per view, and compare it with the per-view ICP poses (D6). This is the

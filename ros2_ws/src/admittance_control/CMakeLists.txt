@@ -124,6 +124,7 @@ install(PROGRAMS
   scripts/compare_registrations.py
   scripts/check_registration.py
   scripts/touch_probe.py
+  scripts/selfcal_extrinsic.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

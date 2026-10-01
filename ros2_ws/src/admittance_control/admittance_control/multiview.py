@@ -23,7 +23,9 @@ out in a joint refinement (step 3). This module decides WHERE to look from:
    far-side view at 0.78 m from the base came out at elbow -0.16 rad), and the tool
    (camera body included) clear of the parts by the transit clearance (20 mm). Of the
    rolls of a chosen direction, the one with the least joint travel from home is taken;
-5. a greedy pick of `n_views`: a target point's 1st, 2nd, 3rd sighting are worth
+5. a greedy pick of `n_views` (then, if the picks span less than
+   `min_elevation_spread_deg`, the weakest is swapped for the best feasible view that
+   widens it - the extrinsic self-calibration needs it): a target point's 1st, 2nd, 3rd sighting are worth
    `repeat_weights` (1, 0.5, 0.25), so the second view of a face from another side still
    pays, and picks closer than `min_separation_deg` in viewing direction are excluded;
 6. the order (nearest neighbour in joint space from the current joints) and the
@@ -50,6 +52,11 @@ from .tack_reach import MarkingConfig, _unwrap_to, solve_on_branch
 class ViewConfig:
     distance_m: float = 0.40              # camera to target (D435i minimum range 0.28 m)
     elevations_deg: tuple[float, ...] = (45.0, 60.0)   # above the table plane
+    # optional: the picked views must span this much elevation (the extrinsic
+    # self-calibration determines a vertical common shift through the elevation mix). OFF:
+    # the planned 45/60 deg views already measure it to 0.16 mm, a 30 deg view is out of
+    # reach on the bench at 0.4 m, and its candidates doubled the planning time.
+    min_elevation_spread_deg: float = 0.0
     azimuth_step_deg: float = 30.0
     roll_step_deg: float = 90.0           # about the optical axis
     n_views: int = 4
@@ -212,7 +219,9 @@ class ViewPlan:
     coverage: dict[str, float] = field(default_factory=dict)
 
     def summary(self) -> str:
+        els = [v.elevation_deg for v in self.views]
         lines = [f"{'VIEWS OK' if self.ok else 'VIEWS FAILED: ' + self.reason}: {len(self.views)} views "
+                 f"(elevations {sorted(set(els))}) "
                  f"of {self.n_feasible} feasible / {self.n_candidates} candidates, target "
                  f"{np.round(self.target_m * 1000).astype(int).tolist()} mm"]
         for k, v in enumerate(self.views):
@@ -333,6 +342,24 @@ def plan_views(surfaces, boxes, tool, model: CollisionModel, mcfg: MarkingConfig
         cands[chosen[1]].gain = chosen[0]
         picked.append(cands[chosen[1]])
         counts += cands[chosen[1]].seen
+    # elevation spread for the self-calibration: swap the weakest pick for the best
+    # feasible view that widens it, if the greedy pick ended too narrow
+    def spread(vs):
+        el = [v.elevation_deg for v in vs]
+        return max(el) - min(el) if el else 0.0
+    if len(picked) >= 2 and spread(picked) < vcfg.min_elevation_spread_deg - 1e-9:
+        weakest = min(range(len(picked)), key=lambda k: picked[k].gain)
+        rest = picked[:weakest] + picked[weakest + 1:]
+        vals = w * value(np.sum([v.seen for v in rest], axis=0))
+        alts = sorted(((float((vals * v.seen).sum()), k) for k, v in enumerate(cands)
+                       if feasibility.get(k, True) and spread(rest + [v]) >= vcfg.min_elevation_spread_deg - 1e-9
+                       and not any(v.direction @ p.direction > cos_sep for p in rest)), key=lambda g: -g[0])
+        alt = next(((g, k) for g, k in alts if g > 0.0 and feasible(k)), None)
+        if alt is not None:
+            cands[alt[1]].gain = alt[0]
+            picked = rest + [cands[alt[1]]]
+        else:
+            _reject(plan.rejected, "no feasible view widens the elevation spread")
     plan.n_feasible = sum(feasibility.values())
 
     # 3. visiting order: nearest neighbour in joint space, each q the 2*pi-equivalent
