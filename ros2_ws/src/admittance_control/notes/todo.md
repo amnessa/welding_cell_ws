@@ -69,6 +69,22 @@ early contact and ~1 mm of mark offset; pen 2 + base 0–2 + blunt nib ~1 predic
 nib shape; a corner touch at a tack centre would tell). Every term is now 1–3 mm, the
 D435i's own level at 0.5 m.
 
+**2026-10-01 runs (same day):**
+- **Run 1:** registered 12:47, marked ~14:40, without a check. Marks off by 12.5 / 12.9 mm
+  on one side and 2 / 2.9 mm on the other. At 14:40 `check_registration` failed: base
+  +3.7 mm, ear +4.6 mm. Whether the parts moved or the camera drifted over those 2 hours
+  is unknown. **Rule: check right after registering, and mark right after the check.**
+- **Run 2:** re-registered, check OK (0.6 / 0.4 mm). Marks off by 6.9 / 6.9 mm on one side
+  and 4 / 3 mm on the other; contact 8.5–9.1 mm early on ALL four tacks.
+- **Reading of run 2:** the registration agrees with the camera, so what remains lies
+  between the camera and the robot. The real corner sits about 5 mm higher and about
+  1.7 mm sideways compared with the camera's picture. This fits the 29 Sep touches
+  (base top +2.3 / +4.3 mm while the check said OK).
+- **Possible fix, NOT pursued (the user doubts it would help):** redo the TCP, then a
+  one-time touch-based correction of the extrinsic's translation (mostly height), from
+  `touch_probe` offsets on a fresh registration. The multi-view self-calibration (step 7)
+  sees the sideways part, but not a pure height offset along the view.
+
 ## DECISION — to touch or not to touch (2026-09-29)
 
 The remaining ~5 mm is the sum of 1–3 mm sensor-level terms. Two ways on, and the

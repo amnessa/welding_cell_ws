@@ -284,6 +284,24 @@ For each part, also register each view on its own, starting from the joint resul
    ordering.
    *Check:* unit tests on the bench T geometry: 4 feasible views; both ear faces covered at
    under 60° incidence; the camera never within 0.28 m.
+   **DONE 2026-10-01:** `admittance_control/multiview.py`.
+   - **API:** `ViewConfig`, `look_at`, `surfaces_from_models` / `box_from_model`,
+     `seam_targets` (with owner per point), `visible`, `nearest_in_limits`,
+     `plan_views` → `ViewPlan`.
+   - **Order of work:** visibility first, which is cheap. Then a lazy greedy pick, so IK
+     and collision run only on the candidates the pick wants, about 12 of 96.
+   - **Choosing among rolls** of a direction: the least joint travel from home.
+   - **Rejections** beyond the plan:
+     - the elbow nearly straight: a far-side view at 0.78 m reach came out at elbow
+       −0.16 rad;
+     - joints beyond ±2π after unwrapping: a plain unwrap put wrist_3 at −7.97 rad, so
+       `nearest_in_limits` is used instead.
+   - **Coverage** is reported against what any candidate can see. 67% of the seam band is
+     seeable at all, since the base's underside below the ear is in the band.
+   - **On the 2026-10-01 bench T:** 4 views at 400 mm (azimuths 60/300/0/240, elevations
+     45/60); 99% of the seeable seam region seen once, 49% by two views or more; 26 s
+     including the transits and the way home.
+   - **Tests:** `test/test_multiview_views.py`, 6 tests.
 3. **Joint ICP and diagnostics** in `multiview.py`, plus per-point weights and the
    `prior=` term in `icp.py`, the ownership/dead band, the overlap rule and the turns
    (D5).
