@@ -1,0 +1,34 @@
+{
+ "_comment": "refine_pose extrinsic-translation estimates (selfcal.py); d in the camera frame, mm",
+ "runs": [
+  {
+   "time": "2026-10-01 17:39:08",
+   "d_cam_mm": [
+    -2.3393639416805803,
+    -2.004182084098812,
+    1.050329586358524
+   ],
+   "info_per_mm2": [
+    [
+     421.23727713655796,
+     169.24535517294493,
+     304.8853622800147
+    ],
+    [
+     169.24535517294495,
+     380.8820884049145,
+     397.5371546396494
+    ],
+    [
+     304.8853622800147,
+     397.53715463964943,
+     533.633228700978
+    ]
+   ],
+   "extrinsic_file": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/notebooks/T_tcp_to_cam.npy",
+   "extrinsic_sha1": "a2338ff33420cdfeb88884c8d0b5e6f6f3bdb29c",
+   "capture": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/scripts/foundationpose_results/multiview/20261001-173845",
+   "n_views": 4
+  }
+ ]
+}

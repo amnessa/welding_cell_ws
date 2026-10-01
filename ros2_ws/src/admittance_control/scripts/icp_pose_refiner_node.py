@@ -215,7 +215,7 @@ from typing import Optional
 
 import numpy as np
 import rclpy
-from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
 from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 from rclpy._rclpy_pybind11 import RCLError
 from rclpy.node import Node
@@ -576,9 +576,29 @@ class IcpPoseRefinerNode(Node):
                 ('~/save_object', self._on_save_object),
                 ('~/welding_points', self._on_welding_points),
                 ('~/export_mesh', self._on_export_mesh),
-                ('~/reset_environment', self._on_reset_environment)):
+                ('~/reset_environment', self._on_reset_environment),
+                ('~/refine_pose', self._on_refine_pose)):
             self.create_service(Trigger, name, handler,
                                 callback_group=self._srv_cbg)
+
+        # Multi-view close-range refinement (notes/multiview_refine_plan.md, step 5):
+        # its motion (joint states, wrench, the trajectory action) runs in a reentrant
+        # group of its own, and ~/abort_refine in another, so it is not stuck behind a
+        # refine_pose that holds the services' group for the whole run.
+        # An optional feature must never take registration down with it: if it cannot
+        # load (2026-10-01: a restart before the new modules were installed killed the
+        # whole node at this import), the node runs without refine_pose and says why.
+        self._mv = None
+        try:
+            from admittance_control.multiview_service import MultiviewRefiner
+            self._mv = MultiviewRefiner(self, ReentrantCallbackGroup())
+            self.create_service(Trigger, '~/abort_refine', self._on_abort_refine,
+                                callback_group=MutuallyExclusiveCallbackGroup())
+        except Exception as exc:  # noqa: BLE001
+            self._mv_error = repr(exc)
+            self.get_logger().error(
+                f'refine_pose unavailable ({exc!r}); everything else runs. After adding '
+                'modules: colcon build --symlink-install --packages-select admittance_control')
 
         # Live-tunable filter knobs (ros2 param set ... takes effect next frame).
         self.add_on_set_parameters_callback(self._on_set_params)
@@ -754,6 +774,64 @@ class IcpPoseRefinerNode(Node):
         response.success = ok
         response.message = message
         return response
+
+    def _on_refine_pose(self, request, response):
+        """Multi-view close-range refinement of the saved parts (multiview_service.py).
+        mv_dry_run:=true only plans the views and shows them in RViz (default false: it moves)."""
+        if self._mv is None:
+            response.success = False
+            response.message = f'refine_pose unavailable: {getattr(self, "_mv_error", "?")}'
+            return response
+        try:
+            response.success, response.message = self._mv.run()
+        except Exception as exc:  # noqa: BLE001 - report, never kill the node
+            self.get_logger().error(f'refine_pose failed: {exc!r}')
+            response.success, response.message = False, f'refine_pose failed: {exc!r}'
+        return response
+
+    def _on_abort_refine(self, request, response):
+        self._mv.exec.abort()
+        response.success, response.message = True, 'abort requested (the arm stops where it is)'
+        return response
+
+    def _model_dir(self) -> Path:
+        """The CAD folder: model_dir, else model_path's folder (as the loader resolves it)."""
+        model_dir = str(self.get_parameter('model_dir').value)
+        if not model_dir:
+            model_dir = str(Path(str(self.get_parameter('model_path').value)).expanduser().parent)
+        return Path(model_dir).expanduser()
+
+    _make_cloud = staticmethod(lambda header, pts, colors: make_xyzrgb_cloud(header, pts, colors))
+
+    def _apply_multiview(self, results, capture: str) -> str:
+        """Take refine_pose's accepted poses into the saved parts, rebuild the SEPC from
+        the CAD at the new poses (each object keeps its point count: the SEPC's object
+        labels are derived from them), persist assembly.json, publish."""
+        units = str(self.get_parameter('model_units').value).lower()
+        scale = 0.001 if units == 'mm' else 1.0
+        with self._state_lock:
+            n_acc = 0
+            for o, r in zip(self._saved, results):
+                o['refine'] = {'capture': capture, 'accepted': bool(r.accepted), 'reason': r.reason,
+                               'correction_mm': float(r.correction_mm), 'correction_deg': float(r.correction_deg),
+                               'not_measured': list(r.weak), 'view_spread_mm': float(r.view_spread_mm)}
+                if r.accepted:
+                    o['pose_before_refine'] = o['pose_static']
+                    o['pose_static'] = np.asarray(r.T, float).tolist()
+                    n_acc += 1
+            if n_acc:
+                pts = []
+                for o in self._saved:
+                    v, f = load_ply_mesh(self._model_dir() / o['model'])
+                    p = sample_mesh_surface(v, f, int(o['n_points']), self._rng) * scale
+                    T = np.asarray(o['pose_static'], float)
+                    pts.append(p @ T[:3, :3].T + T[:3, 3])
+                self._sepc = np.vstack(pts)
+                self._sepc_tree = _cKDTree(self._sepc) if _cKDTree is not None else None
+                self._publish_sepc()
+            note = self._persist_sepc()
+        return (f'{n_acc}/{len(results)} part(s) refined and applied to the saved assembly '
+                f'(rejected ones keep their saved pose); {note} Next: ~/welding_points.')
 
     def _on_export_mesh(self, request, response):
         """Build a watertight CAD mesh of the assembled scene, ready to upload.
@@ -1735,7 +1813,10 @@ def main(args: Optional[list] = None) -> None:
     # least one tick old. The node's three callback groups (cloud / timer /
     # services) let the newest cloud keep landing while ICP runs; shared state is
     # guarded by the node's lock. Three threads is enough -- one per group.
-    executor = MultiThreadedExecutor(num_threads=3)
+    # (6: cloud, timer, services, plus refine_pose's motion group - its trajectory
+    # action and joint/wrench callbacks must run while the refine_pose service waits -
+    # and abort_refine)
+    executor = MultiThreadedExecutor(num_threads=6)
     executor.add_node(node)
     try:
         executor.spin()

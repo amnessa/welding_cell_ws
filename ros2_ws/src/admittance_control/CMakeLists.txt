@@ -90,6 +90,12 @@ install(
     admittance_control/marking.py
     admittance_control/pose_stats.py
     admittance_control/table_probe.py
+    admittance_control/motion.py
+    admittance_control/multiview.py
+    admittance_control/multiview_refine.py
+    admittance_control/multiview_capture.py
+    admittance_control/multiview_service.py
+    admittance_control/selfcal.py
   DESTINATION ${PYTHON_INSTALL_DIR}/${PROJECT_NAME}
 )
 

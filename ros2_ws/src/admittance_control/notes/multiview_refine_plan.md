@@ -255,8 +255,8 @@ For each part, also register each view on its own, starting from the joint resul
 
 ### D8. Safety
 
-- `mv_dry_run` (default true for the first bench session) plans and publishes the view
-  markers without moving; a second call with it false executes.
+- `mv_dry_run` plans and publishes the view markers without moving. Default FALSE
+  (changed 2026-10-01 at the user's request): `refine_pose` moves unless it is set true.
 - Every move is collision-planned at `transit_clearance_m` 20 mm and watched at 8 N.
 - An abort service, `~/abort_refine`, stops the run and leaves the poses untouched.
 - The service refuses when:
@@ -431,6 +431,37 @@ For each part, also register each view on its own, starting from the joint resul
 5. **Service wiring.** `~/refine_pose` in the ICP node: capture loop, refinement, persist,
    RViz. `check_registration.py` switches to the shared module.
    *Check:* dry run on the robot (views in RViz, no motion), then a live run that returns home.
+   **DONE 2026-10-01 up to the live motion:**
+   - **New module:** `admittance_control/multiview_service.py` (`MultiviewRefiner`, the
+     `mv_*` parameters). It is attached to the ICP node, which gained `~/refine_pose`,
+     `~/abort_refine` (in its own callback group), `_apply_multiview` (accepted poses →
+     `_saved`, the SEPC rebuilt with each object's `n_points`, `assembly.json` persisted
+     with a `refine` block and `pose_before_refine`), and 6 executor threads.
+   - **Before any motion:**
+     - at least one saved part, and `/joint_states`;
+     - the extrinsic in TF (tool0 → camera) must equal `mv_extrinsic_path` (0.1 mm), the
+       file the capture records and the self-calibration is keyed on;
+     - the calibrated kinematics are loaded.
+   - **Motion:** the views are planned from the current joints. The transits go through
+     the shared TrajectoryExecutor, with the bias re-measured and 8 N abort. A failed or
+     aborted move stops where it is, with no recovery motion.
+   - **Capture:** the per-pixel median of 8 FRESH clouds (stamped after the settle), and
+     the TF at their stamp.
+   - **After:** the capture is saved, then `refine_capture` and `format_replay` (the same
+     code as the offline replay). The stacked views go on `/perception/icp/multiview_cloud`
+     and the views on `/perception/icp/multiview_views`. A run is recorded for the
+     self-calibration only if it determines a direction of `d`.
+   - **`mv_capture_here`:** one view from where the arm is, no plan, no motion, then the
+     normal path. For testing on live data, or as "refine from here".
+   - **Tested live** (a second instance of the node, `icp_mv_test`, writing into a scratch
+     copy of the results):
+     - the dry run planned 4 views from the live joints, the extrinsic check passed, and
+       the markers were published;
+     - `capture_here` captured 907k valid pixels, then saved, refined, applied and
+       correctly did NOT record a 1-view run.
+   - **Still to do on the robot:** `colcon build` (the install space links files
+     one by one, so the new modules are not there until a build), restart the perception
+     launch, then a live run with `mv_dry_run:=false`.
 6. **Bench validation, vision-only with touch as the reference.**
    - `touch_probe` on the base top ×2 and the ear faces ×2, before and after `refine_pose`
      (today: +2.3 / +4.3 and +0.9 / −1.2 mm).
