@@ -39,30 +39,29 @@ Writes `<save_dir>/tack_marks.json`: per tack the commanded point, the tip at co
 (FK of the joints when the goal was cancelled), the contact depth along the pen axis
 (+ = surface met before the registered point), the force, and `no_contact` when the
 descent ran to its overshoot without meeting anything.
+
+if you get force error during the moves try resetting force sensor
+
+ros2 service call /io_and_status_controller/zero_ftsensor std_srvs/srv/Trigger
+
 """
 
 from __future__ import annotations
 
 import json
 import sys
-import threading
 import time
 from pathlib import Path
 
 import numpy as np
 import rclpy
-from builtin_interfaces.msg import Duration
-from control_msgs.action import FollowJointTrajectory
-from geometry_msgs.msg import Point, WrenchStamped
-from rclpy.action import ActionClient
+from geometry_msgs.msg import Point
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
-from sensor_msgs.msg import JointState
+from rclpy.qos import DurabilityPolicy, QoSProfile
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
-from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from visualization_msgs.msg import Marker
 
 PKG = Path(__file__).resolve().parents[1]
@@ -75,8 +74,8 @@ from admittance_control.kinematics import active_kinematics, ur5e_fk, use_kinema
 from admittance_control.marking import (build_marking_plan, contact_depth_m, line_chain,  # noqa: E402
                                         plan_to_dict, stroke_chain, stroke_targets,
                                         time_descent, time_joint_path)
-from admittance_control.tack_reach import (UR_ORDER, joint_state_to_ur_order,  # noqa: E402
-                                           load_marking_config, same_branch)
+from admittance_control.motion import TrajectoryExecutor  # noqa: E402
+from admittance_control.tack_reach import load_marking_config, same_branch  # noqa: E402
 from admittance_control.tool_model import load_tool_model  # noqa: E402
 from admittance_control.weldgen_registry import load_registry  # noqa: E402
 
@@ -95,10 +94,9 @@ class TackMarkingNode(Node):
         p('tool_config', '')
         p('marking_config', '')
         p('extrinsic_path', '')
-        p('dry_run', True)
-        p('action', '/scaled_joint_trajectory_controller/follow_joint_trajectory')
-        p('wrench_topic', '/force_torque_sensor_broadcaster/wrench')
-        p('joint_states_topic', '/joint_states')
+        # dry_run, action, wrench_topic, joint_states_topic, abort_force_n,
+        # release_abort_force_n, bias_window_s, max_joint_jump_rad: declared by the
+        # TrajectoryExecutor below (admittance_control/motion.py), same names and defaults
         p('v_joint_rad_s', 0.3)            # transit speed cap
         p('v_tip_m_s', 0.02)               # descent tip speed
         p('v_slow_m_s', 0.002)             # ... in the last slow_zone_m before the tack
@@ -115,10 +113,6 @@ class TackMarkingNode(Node):
         p('depth_gain_m_per_n', 0.00002)   # per chunk, clipped to +/- max_depth_step_m; must be
         p('max_depth_step_m', 0.0002)      # << 1/stiffness (tens of N/mm on steel) to be stable
         p('min_contact_force_n', 0.4)      # below this for 2 chunks = pen lifted off -> stop
-        p('abort_force_n', 8.0)
-        p('release_abort_force_n', 40.0)   # retract (moving away) is never blocked by abort_force_n
-        p('bias_window_s', 0.5)
-        p('max_joint_jump_rad', 0.35)
 
         self._save_dir = Path(str(self.get_parameter('save_dir').value))
         self._tool = load_tool_model(str(self.get_parameter('tool_config').value) or None,
@@ -131,28 +125,17 @@ class TackMarkingNode(Node):
         self._next_step = 0
         self._marks: list[dict] = []
 
-        self._q = None
-        self._q_sim = None                 # where the DRY RUN pretends the arm is
-        self._q_lock = threading.Lock()
-        self._force = np.zeros(3)
-        self._force_bias = np.zeros(3)
-        self._force_lock = threading.Lock()
-        self._force_trace = None           # list while a stroke chunk runs (bias removed)
         self._axis_sign = -1.0             # sign of the pen-axis force at contact (set then)
-        self._goal_handle = None
-        self._abort = False
 
         sub_cbg = ReentrantCallbackGroup()
         self._srv_cbg = MutuallyExclusiveCallbackGroup()
-        self.create_subscription(JointState, str(self.get_parameter('joint_states_topic').value),
-                                 self._on_joints, qos_profile_sensor_data, callback_group=sub_cbg)
-        self.create_subscription(WrenchStamped, str(self.get_parameter('wrench_topic').value),
-                                 self._on_wrench, qos_profile_sensor_data, callback_group=sub_cbg)
-        self._client = ActionClient(self, FollowJointTrajectory, str(self.get_parameter('action').value),
-                                    callback_group=sub_cbg)
         latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self._path_pub = self.create_publisher(Marker, '~/tip_path', latched)
         self._status_pub = self.create_publisher(String, '~/status', latched)
+        # joints, wrench, the trajectory action and its safety gates (shared with the ICP
+        # node's multi-view refinement)
+        self._exec = TrajectoryExecutor(self, '', touch_force_n=self._touch_force,
+                                        callback_group=sub_cbg, say=self._say)
         for name, cb in (('~/plan', self._srv_plan), ('~/next', self._srv_next),
                          ('~/all', self._srv_all), ('~/home', self._srv_home),
                          ('~/abort', self._srv_abort)):
@@ -163,44 +146,20 @@ class TackMarkingNode(Node):
     # ---------------------------------------------------------------- state ---------
     @property
     def dry_run(self) -> bool:
-        return bool(self.get_parameter('dry_run').value)
-
-    def _on_joints(self, msg: JointState) -> None:
-        if all(n in msg.name for n in UR_ORDER):
-            with self._q_lock:
-                self._q = joint_state_to_ur_order(msg.name, msg.position)
-
-    def _on_wrench(self, msg: WrenchStamped) -> None:
-        f = msg.wrench.force
-        with self._force_lock:
-            self._force = np.array([f.x, f.y, f.z])
-            if self._force_trace is not None:
-                self._force_trace.append(self._force - self._force_bias)
+        return self._exec.dry_run
 
     def _force_mag(self) -> float:
-        with self._force_lock:
-            return float(np.linalg.norm(self._force - self._force_bias))
+        return self._exec.force_mag()
 
     def _measure_bias(self) -> None:
-        samples = []
-        t_end = time.time() + float(self.get_parameter('bias_window_s').value)
-        while time.time() < t_end:
-            with self._force_lock:
-                samples.append(self._force.copy())
-            time.sleep(0.005)
-        with self._force_lock:
-            self._force_bias = np.mean(samples, axis=0) if samples else np.zeros(3)
+        self._exec.measure_bias()
 
     def _current_q(self) -> np.ndarray | None:
-        with self._q_lock:
-            return None if self._q is None else self._q.copy()
+        return self._exec.current_q()
 
     def _where(self) -> np.ndarray | None:
-        """The arm's joints for planning and gating: the real ones, or in a dry run the
-        end of the last pretended motion (nothing moves, so /joint_states never follows)."""
-        if self.dry_run and self._q_sim is not None:
-            return self._q_sim.copy()
-        return self._current_q()
+        """The real joints, or in a dry run where the last pretended motion ended."""
+        return self._exec.where()
 
     def _replan_transit(self, target: np.ndarray, label: str, unwrap: bool = True):
         """The plan froze the transit at the joints of `~/plan`; if the arm has been jogged
@@ -282,7 +241,7 @@ class TackMarkingNode(Node):
                                         float(self.get_parameter('overshoot_m').value),
                                         strokes=strokes, stroke_mode=mode)
         self._drawn_seams = set()
-        self._q_sim = q.copy()
+        self._exec.set_sim(q)
         self._next_step = 0
         self._marks = []
         (self._save_dir / 'tack_marking_plan.json').write_text(json.dumps(plan_to_dict(self._plan), indent=1))
@@ -316,8 +275,7 @@ class TackMarkingNode(Node):
         return response
 
     def _srv_abort(self, request, response):
-        self._abort = True
-        self._cancel_goal()
+        self._exec.abort()
         response.success, response.message = True, 'abort requested'
         return response
 
@@ -331,7 +289,7 @@ class TackMarkingNode(Node):
         if not (step.transit_ok and step.descent_ok):
             self._next_step += 1
             return False, f'tack {step.tack_id} skipped: {step.reason}'
-        self._abort = False
+        self._exec.clear_abort()
         tag = f'tack {step.tack_id} (seam {step.seam_id} #{step.tack_no})'
         # 1. transit - from where the arm IS, which may not be where the plan started
         q_now = self._where()
@@ -341,7 +299,7 @@ class TackMarkingNode(Node):
             if transit is None:
                 return False, err
         ok, msg = self._execute(time_joint_path(transit, float(self.get_parameter('v_joint_rad_s').value)),
-                                f'{tag} transit', watch_touch=False)
+                                f'{tag} transit', watch_touch=False, rebias=True)
         if not ok:
             return False, msg
         # 2. descent, force-gated
@@ -414,8 +372,7 @@ class TackMarkingNode(Node):
         pts = step.stroke_points_m
         depth = press - float(contact_depth)
         # which way does the pen-axis force go when pressed? read it at the contact
-        with self._force_lock:
-            fz = float((self._force - self._force_bias)[2])
+        fz = float(self._exec.force_vector()[2])
         self._axis_sign = -1.0 if fz < 0 else 1.0
         seg = np.linalg.norm(np.diff(pts, axis=0), axis=1); cum = np.concatenate([[0.0], np.cumsum(seg)])
         length = float(cum[-1])
@@ -437,13 +394,10 @@ class TackMarkingNode(Node):
             if chain is None:
                 out['reason'] = f'chunk {k}: IK chain broke'
                 break
-            with self._force_lock:
-                self._force_trace = []
+            self._exec.start_trace()
             ok, msg = self._execute(time_descent([q_prev] + chain, self._tool, v),
                                     f'{tag} stroke chunk {k + 1}/{n_chunks}', watch_touch=False)
-            with self._force_lock:
-                trace = np.array(self._force_trace) if self._force_trace else np.zeros((0, 3))
-                self._force_trace = None
+            trace = self._exec.stop_trace()
             if not ok:
                 out['reason'] = msg
                 break
@@ -475,7 +429,7 @@ class TackMarkingNode(Node):
         if path is None:
             return False, err
         return self._execute(time_joint_path(path, float(self.get_parameter('v_joint_rad_s').value)),
-                             'home', watch_touch=False)
+                             'home', watch_touch=False, rebias=True)
 
     def _write_marks(self) -> None:
         (self._save_dir / 'tack_marks.json').write_text(json.dumps({
@@ -483,82 +437,16 @@ class TackMarkingNode(Node):
             'sequence': 'seam by seam, tack_no ascending', 'marks': self._marks}, indent=1))
 
     def _execute(self, timed, label: str, watch_touch: bool, want_contact: bool = False,
-                 away: bool = False):
-        """Send one trajectory goal and wait; with `watch_touch` cancel at the touch force.
-        Returns (ok, msg) or, with `want_contact`, (ok, msg, contact|None)."""
-        q = self._where()
-        if q is None:
-            return (False, 'no joint states', None) if want_contact else (False, 'no joint states')
-        jump = float(np.abs(timed[0][0] - q).max())
-        if jump > float(self.get_parameter('max_joint_jump_rad').value):
-            msg = f'{label}: first point is {np.degrees(jump):.0f} deg from the current joints - refused'
-            return (False, msg, None) if want_contact else (False, msg)
-        if self.dry_run:
-            msg = f'{label}: dry run, {len(timed)} points, {timed[-1][1]:.1f} s'
-            self._say(msg)
-            if want_contact:
-                # pretend the surface is where the model says: contact at the tack point,
-                # which the chain reaches standoff/(standoff+overshoot) of the way down
-                cfg, over = self._cfg, float(self.get_parameter('overshoot_m').value)
-                k = int(round((len(timed) - 1) * cfg.standoff_m / (cfg.standoff_m + over)))
-                self._q_sim = np.asarray(timed[k][0], float).copy()
-                return True, msg, (timed[k][0], self._touch_force)
-            self._q_sim = np.asarray(timed[-1][0], float).copy()
-            return True, msg
-        goal = FollowJointTrajectory.Goal()
-        traj = JointTrajectory()
-        traj.joint_names = list(UR_ORDER)
-        for qk, tk in timed:
-            pt = JointTrajectoryPoint()
-            pt.positions = [float(v) for v in qk]
-            sec = int(tk); pt.time_from_start = Duration(sec=sec, nanosec=int((tk - sec) * 1e9))
-            traj.points.append(pt)
-        goal.trajectory = traj
-        if not self._client.wait_for_server(timeout_sec=2.0):
-            msg = f'{label}: action server not available'
-            return (False, msg, None) if want_contact else (False, msg)
-        send = self._client.send_goal_async(goal)
-        while not send.done():
-            time.sleep(0.005)
-        self._goal_handle = send.result()
-        if not self._goal_handle.accepted:
-            msg = (f'{label}: goal REJECTED by the controller before any motion. It prints the '
-                   f'reason in the ur_control terminal; the usual one after using the pendant is '
-                   f'that the External Control program is not running (press Play on the pendant), '
-                   f'else the controller is inactive or the trajectory is malformed.')
-            return (False, msg, None) if want_contact else (False, msg)
-        result_fut = self._goal_handle.get_result_async()
-        contact = None
-        # a move AWAY from the surface (retract) must not be cancelled by the force of the
-        # contact it is releasing: on a rigid part a stopped pen presses at ~10 N
-        abort_force = float(self.get_parameter('release_abort_force_n' if away else 'abort_force_n').value)
-        while not result_fut.done():
-            f = self._force_mag()
-            if self._abort or f > abort_force or (watch_touch and f > self._touch_force):
-                q_c = self._current_q()
-                self._cancel_goal()
-                if watch_touch and f > self._touch_force and not self._abort and f <= abort_force:
-                    contact = (q_c, f)
-                    break
-                msg = f'{label}: cancelled ({"abort" if self._abort else f"force {f:.1f} N"})'
-                return (False, msg, None) if want_contact else (False, msg)
-            time.sleep(0.002)
-        if contact is None:
-            res = result_fut.result()
-            code = res.result.error_code if res is not None else -99
-            ok = code == FollowJointTrajectory.Result.SUCCESSFUL
-            msg = f'{label}: {"done" if ok else f"controller error {code}"}'
-            return (ok, msg, None) if want_contact else (ok, msg)
-        # no settling pause: the caller releases the pen (a stopped pen on a rigid part
-        # keeps pressing; the joints at the cancel are already the contact record)
-        return True, f'{label}: contact at {contact[1]:.2f} N', contact
-
-    def _cancel_goal(self) -> None:
-        if self._goal_handle is not None:
-            try:
-                self._goal_handle.cancel_goal_async()
-            except Exception:  # noqa: BLE001
-                pass
+                 away: bool = False, rebias: bool = False):
+        """One trajectory goal through the shared executor (admittance_control/motion.py);
+        with `watch_touch` cancelled at the touch force. Returns (ok, msg) or, with
+        `want_contact`, (ok, msg, contact|None). In a dry run the pretended contact is where
+        the model puts the surface: the tack point, standoff/(standoff+overshoot) of the
+        way down the descent."""
+        cfg, over = self._cfg, float(self.get_parameter('overshoot_m').value)
+        return self._exec.execute(timed, label, watch_touch=watch_touch, want_contact=want_contact,
+                                  away=away, sim_contact_fraction=cfg.standoff_m / (cfg.standoff_m + over),
+                                  rebias=rebias)
 
     # ---------------------------------------------------------------- RViz ----------
     def _publish_tip_path(self) -> None:

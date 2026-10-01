@@ -128,6 +128,10 @@ thesis should say which scenario it claims:
   r 48; a square T clears by 15.5 mm (was 1.1 with one r 42 capsule). Earlier "seam
   reachable" results came from the straddled ear opening one side to ~96°. The home
   path now returns to the exact `home_q` (it arrived a wrist turn off after rolled tacks).
+- **Tack 0 of the 29 Sep 18:10 session is refused at planning:** "descent clearance
+  0.0 mm (overshoot)", in both the old and the refactored node. This is why that run
+  marked only tacks 1–3. Find which pair goes to 0 in the overshoot zone (a holder-vs-part
+  bound inherited from a tight tack pose?).
 - **Holding 1.5 N on metal:** UR's `force_mode_controller` (loaded, inactive) for strokes
   on steel, or a sprung holder. The two-speed descent and gentle stroke are the stopgap.
 - Stroke (`stroke_mode:=tack|seam`): first full-seam run on the bench.
@@ -142,6 +146,10 @@ thesis should say which scenario it claims:
   registered poses plus the per-point cone test of `verify_curved`; new code for box tube
   and curved strip on a plate. Motion: full loops around pipes need large wrist rolls.
   Needed before Phase 9's curved strata.
+- **Curved parts in the multi-view refinement:** its overlap rule (parts must not poke into
+  each other, computed from the CAD) uses face planes. Pipe on plate and pipe on pipe need
+  the signed distance to the registry's tube and swept-slab surfaces. Do it together with
+  mode A for the curved strata (`notes/multiview_refine_plan.md`, "Still open").
 - **Mode B** (no CAD): PPF no-match, SAM2 per-part masks, region growing + lit-quadric;
   no library save without CAD.
 - **Mode A+**: per-part sensor points kept at save, labelled by CAD face, lit-quadric
