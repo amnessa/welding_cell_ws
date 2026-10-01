@@ -44,6 +44,7 @@ Welsch weights). The ICP itself is unchanged.
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
 from typing import Any, Optional, Sequence
 
@@ -82,6 +83,13 @@ class RefineConfig:
     # planned T views measure their weakest direction of d to 0.16 mm (actual errors
     # 0.2-0.33 mm over 4 noise draws) - a 5 % relative rule had thrown it away.
     extrinsic_max_sigma_mm: float = 0.5
+    # online self-calibration: when this run's d (its determined part) exceeds
+    # online_selfcal_min_mm, take R_cam d out of every view and refine again - the views
+    # then agree and the parts land where they are (synthetic: within 0.5 mm, against a
+    # 1.2 deg tilt the uncorrected joint fit had accepted). The ORIGINAL d is what the
+    # persistent self-calibration records. Off: a d that large rejects every part instead.
+    online_selfcal: bool = True
+    online_selfcal_min_mm: float = 0.5
     converge_mm: float = 0.2
     converge_deg: float = 0.05
     # acceptance (plan D7)
@@ -123,6 +131,8 @@ class AssemblyDiag:
     extrinsic_sigma_mm: Optional[np.ndarray] = None  # std per eigen-direction of the information
     extrinsic_cond: float = float("nan")             # smallest / largest eigenvalue of the information
     extrinsic_rms_mm: float = float("nan")           # point-to-plane RMS with d taken out
+    applied_d_mm: Optional[np.ndarray] = None        # online self-calibration: d taken out of the views
+    residual_d_mm: Optional[np.ndarray] = None       # ... and what the corrected views still say
 
 
 @dataclass
@@ -449,6 +459,27 @@ def refine_assembly(parts: Sequence[Part], views: Sequence[View], cfg: Optional[
         results.append(res)
     if per_view:
         estimate_extrinsic(parts, poses, views, owner, cfg, max_corr, diag, use_ownership)
+        big = diag.extrinsic_d_mm is not None and np.linalg.norm(diag.extrinsic_d_mm) > cfg.online_selfcal_min_mm
+        if big and cfg.online_selfcal:
+            # the views disagree by a camera translation: take it out and refine again
+            d = diag.extrinsic_d_mm / 1000
+            fixed = [View(v.pts - v.R_cam @ d, v.nrm, v.R_cam) for v in views]
+            again = dataclasses.replace(cfg, online_selfcal=False)
+            results2, diag2 = refine_assembly(parts, fixed, again, use_ownership, per_view, rng)
+            diag2.residual_d_mm = diag2.extrinsic_d_mm
+            for name in ("extrinsic_d_mm", "extrinsic_info", "extrinsic_weak", "extrinsic_sigma_mm",
+                         "extrinsic_cond", "extrinsic_rms_mm"):
+                setattr(diag2, name, getattr(diag, name))       # the history records the ORIGINAL d
+            diag2.applied_d_mm = diag.extrinsic_d_mm
+            return results2, diag2
+        if big:
+            for r in results:
+                r.accepted = False
+                r.reason = (f"the views disagree by an extrinsic translation error d = "
+                            f"{np.round(diag.extrinsic_d_mm, 1).tolist()} mm (camera frame); refine with "
+                            f"online_selfcal, or self-calibrate the extrinsic first")
+                r.T = r.T_saved.copy()
+            return results, diag
     judge(results, parts, cfg)
     _fallback(results, parts, pts, nrm, w, owner, use_ownership, order, cfg, max_corr, rng)
     return results, diag
@@ -518,8 +549,15 @@ def _per_view(res: PartResult, part: Part, i: int, poses, parts, pts, nrm, w, la
     res.per_view = per
     good = [T for T in per if T is not None]
     if len(good) >= 2:
+        # only in the directions the part measures: a plate's unmeasured in-plane slide
+        # wanders per view and says nothing about the camera
         C = np.array(centres)
-        res.view_spread_mm = float(np.linalg.norm(C.std(0)) * 1000)
+        P = np.eye(3)
+        if res.H is not None:
+            lam, U = np.linalg.eigh(res.H[3:, 3:])
+            Us = U[:, lam >= cfg.observable_ratio * max(lam.max(), 1e-30)]
+            P = Us @ Us.T
+        res.view_spread_mm = float(np.linalg.norm(((C - C.mean(0)) @ P).std(0)) * 1000)
         res.view_spread_deg = max(pose_delta(poses[i], T, c_local)[1] for T in good)
 
 

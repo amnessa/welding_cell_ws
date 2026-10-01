@@ -385,6 +385,49 @@ For each part, also register each view on its own, starting from the joint resul
 4. **Offline driver.** `scripts/multiview_refine_offline.py <results>/multiview/` replays the
    saved views and prints everything the service would.
    *Check:* runs on the synthetic set, then on the first real capture.
+   **DONE 2026-10-01 (synthetic; the first real capture comes with step 5):**
+   - **New files:**
+     - `admittance_control/multiview_capture.py`: the capture format (D3), D4
+       preprocessing, `refine_capture` + `format_replay` (step 5 will call these same
+       two), and a synthetic renderer;
+     - `scripts/multiview_refine_offline.py`;
+     - `test/test_multiview_capture.py`: 6 tests; full suite 84 passed.
+   - **Capture format:** `<results>/multiview/<timestamp>/` holds `capture.json` (time,
+     extrinsic file and sha1, kinematics, table-plane file, per view angles / q /
+     T_base_cam), `view_<k>.npz` (organized cloud in the CAMERA frame, so a capture can be
+     replayed with another extrinsic) and `assembly.json` (the saved parts at capture
+     time).
+   - **Script usage:** `multiview_refine_offline.py [capture] [--write] [--record]
+     [--set name=value] [--make-synthetic DIR --d x y z]`.
+     - `--write` writes `<capture>/assembly_refined.json`; the results' `assembly.json`
+       is never touched.
+     - `--record` appends `d` to the self-calibration history, only when the capture's
+       extrinsic sha1 matches the file in use.
+   - **Synthetic captures, bench T, 4 planned views:**
+     - no camera error: both parts land within 0.09 mm / 0.08° of the truth (saved
+       1.9–3.5 mm / 0.3° off), and `d` comes out at 0.01 mm;
+     - d = (3, −2, 1): estimated as (2.99, −1.99, 1.00), and both parts again within
+       0.09 mm / 0.03° (via the online correction below).
+     - Each replay takes about 6 s.
+
+   *Findings:*
+   - **The first synthetic renderer was biased.** It z-buffered surface samples, re-cast
+     along the pixel-centre ray, and so pulled every view about 1 mm toward its camera,
+     which looked exactly like an extrinsic error along the optical axis. It now ray-casts
+     exactly against the part boxes (the plate parts are boxes).
+   - **NEW: online self-calibration** (`RefineConfig.online_selfcal`, default on;
+     `online_selfcal_min_mm` 0.5).
+     - **Why:** with d = (3, −2, 1) on rendered data, the uncorrected joint fit tilted the
+       base by a wrong 1.2° and was ACCEPTED. The signs were only visible in diagnostics
+       (rms 0.9 vs 0.35 mm, single views spread 4.4 mm).
+     - **What it does:** when this run's `d` exceeds 0.5 mm, `R_cam d` is taken out of
+       every view and the refinement runs again.
+     - **What gets recorded:** the history still receives the ORIGINAL `d`, and the reply
+       shows what the corrected views still say (≈ 0).
+     - **With it off,** a `d` that large rejects every part ("the views disagree"), and
+       both are kept as saved.
+   - **The single-view spread** now counts only the directions a part measures (a
+     plate's unmeasured slide wandered per view and meant nothing).
 5. **Service wiring.** `~/refine_pose` in the ICP node: capture loop, refinement, persist,
    RViz. `check_registration.py` switches to the shared module.
    *Check:* dry run on the robot (views in RViz, no motion), then a live run that returns home.

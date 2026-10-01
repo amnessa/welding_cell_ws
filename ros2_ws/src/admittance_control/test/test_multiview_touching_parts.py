@@ -26,6 +26,7 @@ cloud by R_cam d - the error that turns with the wrist. Claims:
 
 from __future__ import annotations
 
+
 import pathlib
 import sys
 
@@ -160,16 +161,17 @@ def test_camera_error_estimated_rejected_and_self_calibrated(tee):
     parts, truth = tee
     # the planned T views (45/60 deg) determine every direction of d to well under 0.5 mm
     views = _views(parts, truth, d_cam_mm=D_CAM_MM)
-    res, diag = mr.refine_assembly(parts, views)
+    no_online = mr.RefineConfig(online_selfcal=False)
+    res, diag = mr.refine_assembly(parts, views, no_online)
     assert np.allclose(diag.extrinsic_d_mm, D_CAM_MM, atol=0.5), diag.extrinsic_d_mm
     assert diag.extrinsic_weak == [] and diag.extrinsic_sigma_mm.max() < 0.3
-    assert res[1].view_spread_mm > 1.0                      # single views scatter
-    # the views disagree: the joint fit would change the fit-up in barely measured
-    # directions -> both kept as saved, never a half-refined assembly
-    assert not res[1].accepted and "did not measure" in res[1].reason
-    assert not res[0].accepted and "kept as saved" in res[0].reason
+    # without the online correction the disagreeing views reject the refinement: both kept
+    # as saved, never a half-refined assembly
     for r, p in zip(res, parts):
-        assert np.allclose(r.T, p.T_saved)
+        assert not r.accepted and "disagree" in r.reason and np.allclose(r.T, p.T_saved)
+    # the default (online self-calibration) takes d out of the views and refines again
+    res_on, diag_on = mr.refine_assembly(parts, views)
+    assert np.allclose(diag_on.applied_d_mm, D_CAM_MM, atol=0.5) and np.linalg.norm(diag_on.residual_d_mm) < 0.3
     # self-calibration: take the estimate back out of every view and refine again. (Saved
     # poses 1 mm off here: the fixture's independent ~3 mm errors change the ear-base
     # fit-up by up to 5 mm, which the 2 mm fit-up rule rightly refuses; poses from one

@@ -125,6 +125,7 @@ install(PROGRAMS
   scripts/check_registration.py
   scripts/touch_probe.py
   scripts/selfcal_extrinsic.py
+  scripts/multiview_refine_offline.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
