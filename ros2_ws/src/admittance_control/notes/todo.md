@@ -1,193 +1,154 @@
-# Open work, both projects (2026-09-28)
+# Open work, both projects (2026-10-02)
 
-*Open items only. What was done and why lives in the README (§14 for the placement
-accuracy work) and in the plans: `seam_two_modes_plan.md` (perception),
-`pen_marking_plan.md` (motion), `weld_generator/notes/dataset_plan.md` + `phase9_plan.md`
-(dataset).*
+*Open items only. What was done, why and with which numbers lives in the README (§14
+placement accuracy, §15 multi-view refinement, §16 camera depth calibration), in
+`notes/thesis_notes.md` (the running log of experiences, newest first) and in the plans:
+`multiview_refine_plan.md`, `seam_two_modes_plan.md` (perception), `pen_marking_plan.md`
+(motion), `weld_generator/notes/dataset_plan.md` + `phase9_plan.md` (dataset).*
 
 ## Where we are
 
-Mode A is complete and validated on the robot: register → compute seams from the poses →
-tacks → elbow-up collision-free motion → force-gated touch → dot or stroke. The marking
-error went from ~8 mm to **3.7–4.3 mm** (README §14: what was found, how, and the error
-budget). Parked there on purpose; the next topic is FoundationPose tracking.
+Mode A runs end to end on the robot, and the pen marks every tack within **~2.5 mm**
+(2026-10-02; from ~8 mm on 24 Sep). The chain:
 
-## NEXT — FoundationPose pose estimation, then a Kalman filter with ICP
+1. calibrated kinematics;
+2. camera depth Tare'd against the robot, and the extrinsic tilt refined;
+3. register;
+4. `~/refine_pose` (4 close views, online camera-offset correction, fit-up gap check);
+5. seams and tacks;
+6. elbow-up collision-free motion;
+7. force-gated touch;
+8. dot or stroke.
 
-Planned by the user (2026-09-29) after the touch decision above. First test how good
-FoundationPose's pose is on its own, then fuse it with the ICP; the tracking details
-follow.
+## Decisions (2026-10-02)
 
-The server has a tracking mode we never use (`track_one`: after `register`, refine frame
-to frame, ~20–30 Hz on its GPU); we seed once and our ICP tracks. Question: is its pose
-steadier than the ICP's (which wanders ~3.6 mm per tick on a still part), and could it
-re-seed or be fused with it?
+- **No touch sensing.** The method is vision-only. Touches are used only to calibrate (pen
+  TCP, the table plane, the Tare distance) and as the independent reference that measures
+  the error (`touch_probe.py`); never inside the cycle to correct a tack.
+- **Tracking moves to FoundationPose.** ICP is CPU-bound and too slow to track a moving
+  part. It stays for what it is good at: refining a stationary part (`~/run_icp` seed,
+  `~/refine_pose`). No Kalman fusion for now.
 
-1. **Measure first, fuse later.** A filter removes noise, never bias. Fusion is worth it
-   only if FoundationPose's noise is smaller than, or independent of, the ICP's. On
-   textureless plates its in-plane ambiguity may be the same. For a still part an "EKF"
-   is a weighted average whose gain is the ratio of the two measured covariances.
-2. **Server** (`fp_server.py`): `POST /track/start {object, pose_init}` (from the last
-   registration or the ICP pose), `POST /track/step` (one JPEG + 16-bit depth PNG → pose +
-   score), `POST /track/stop`; one session per object, keep-alive HTTP over the Tailscale
-   IP at 5–10 Hz (~1–2 MB/s). Alternative: run `track_one` on this laptop's RTX 4060 (the
-   heavy part is registration), no network.
-3. **Bridge**: `~/start_tracking` + a timer posting frames, publishing
-   `/perception/fp/pose` (mirror of `/perception/icp/refined_pose`).
-4. **Compare**: `pose_jitter_probe.py` on both topics, still for 30 s and during a slow
-   push: noise, latency, and the mean offset between them (that is the number that
-   matters).
-5. **Only if justified**: `pose_fusion_node.py`, with a pose state, constant-pose or
-   constant-velocity process, both poses as measurements with their measured covariances,
-   and Mahalanobis gating so a wrong re-registration is rejected. `save_object` takes the
-   fused pose; the ICP takes it as its seed.
+## NEXT: FoundationPose object tracking, live in ROS and RViz
 
-## NOW — thin-plate face straddle in ICP (2026-09-29)
+FoundationPose has a tracking mode (`track_one`: after one `register`, refine frame to
+frame on the GPU, tens of Hz). The pose server runs in Docker on the GPU host, reached
+over Tailscale.
 
-After the kinematic fix the marks got WORSE (14–16 mm). Cause: the ear (8 mm plate)
-registered straddling its own two faces - the model's hidden back face paired with the
-visible face (6.5° lean, root 9.5–10.3 mm off vs the live cloud; the earlier "ear lean"
-of 5–6.6° in several saves was the same thing). Fix: ICP normal gate
-(`icp.NORMAL_GATE_DEG`, node param `normal_gate_deg` 60°, model normals from
-`sample_mesh_surface(return_normals=True)`); on the saved cloud it returns the ear to
-0.3–0.8° lean and the root to ±0.2 mm. `scripts/check_registration.py` compares the
-saved poses with the live cloud face by face (straddle → drift ≈ plate thickness).
-Bench run after the fix: all 4 tacks reachable (new holder envelope), contact still
-9.6–9.7 mm early - an unmodelled 7 mm metal plate under the ear (7 / 0.69 along the pen;
-the 0.9–4.6 mm "fit-up gap" was the same plate). Removed; re-test pending. Transits now
-keep `transit_clearance_m` 20 mm (the 3 mm transit to the far side passed 3.7 mm from
-the ear and hit it at 9 N; the re-plan keeps ≥ 20.3 mm).
-Not done: a refusal at save_object when the check fails.
+**The open problem is streaming:** frames from here to the tracker, and poses back into
+the ROS graph, fast enough for live RViz.
 
-Clean re-test (plate removed): marks 5.1 / 7.9 / 8.0 mm off, contacts 6.2–11.0 mm early
-on BOTH sides of the ear (so not a sideways shift). Pen touches (`scripts/touch_probe.py`)
-split it: pen length +1.2..+2.9 mm on the bare table (vs the 28 Sep plane); base top
-+2.3 / +4.3 mm (≈ 0 / +2 net of the pen: registered ~0.7° off in tilt, far end low);
-ear faces +0.9 / −1.2 mm. At a 45° approach every mm the base sits higher is ~1.4 mm of
-early contact and ~1 mm of mark offset; pen 2 + base 0–2 + blunt nib ~1 predicts
-4–8 mm early and 3–6 mm off, measured 6–11 and 5–8 → ~2–3 mm unexplained (holder flex,
-nib shape; a corner touch at a tack centre would tell). Every term is now 1–3 mm, the
-D435i's own level at 0.5 m.
+1. **Measure the tracker alone first.** Speed on the GPU host (frames/s, latency per
+   frame), on a still part and a slowly pushed one; how it fails (score drop) and how fast
+   it recovers.
+2. **Choose the transport.** Candidates:
+   - **HTTP keep-alive request/response** (the current bridge pattern): post one
+     JPEG + 16-bit depth PNG, get pose + score. About 1–2 MB/s at 5–10 Hz; latency =
+     round trip + inference. Simplest; the rate is capped by the round trip.
+   - **A streaming socket** (WebSocket or gRPC bidirectional stream): frames go up
+     continuously, poses come back asynchronously, no per-frame handshake. Higher rate.
+   - **ROS 2 inside the container:** the tracker subscribes to the camera topics and
+     publishes the pose itself. DDS discovery over Tailscale needs care: no multicast, so
+     a Zenoh bridge, a FastDDS discovery server or `ROS_STATIC_PEERS`. The cleanest graph,
+     but the most network setup, and the image stream crosses the network uncompressed
+     unless compressed transport is used.
+   - **Run `track_one` locally** on this laptop's RTX 4060: no network at all.
+     Registration (the heavy part) stays on the host; check memory and Hz.
+3. **Bridge node (ROS side).**
+   - `~/start_tracking` seeds from the last registration or the ICP pose; `~/stop`.
+   - Publishes `/perception/fp/pose` (PoseStamped, mirror of
+     `/perception/icp/refined_pose`), TF `<object>`, and the CAD as a marker or cloud, so
+     RViz shows the tracked part live.
+   - Publishes the score, and re-registers when it drops.
+4. **Compare with ICP:** `pose_jitter_probe.py` on both topics (still for 30 s, and during
+   a slow push): noise, latency, drift, and the mean offset between them.
+5. **Decide what `save_object` takes:** the FoundationPose pose, the ICP refinement of
+   it, or `refine_pose` afterwards as now.
 
-**2026-10-01 runs (same day):**
-- **Run 1:** registered 12:47, marked ~14:40, without a check. Marks off by 12.5 / 12.9 mm
-  on one side and 2 / 2.9 mm on the other. At 14:40 `check_registration` failed: base
-  +3.7 mm, ear +4.6 mm. Whether the parts moved or the camera drifted over those 2 hours
-  is unknown. **Rule: check right after registering, and mark right after the check.**
-- **Run 2:** re-registered, check OK (0.6 / 0.4 mm). Marks off by 6.9 / 6.9 mm on one side
-  and 4 / 3 mm on the other; contact 8.5–9.1 mm early on ALL four tacks.
-- **Reading of run 2:** the registration agrees with the camera, so what remains lies
-  between the camera and the robot. The real corner sits about 5 mm higher and about
-  1.7 mm sideways compared with the camera's picture. This fits the 29 Sep touches
-  (base top +2.3 / +4.3 mm while the check said OK).
-- **Possible fix, NOT pursued (the user doubts it would help):** redo the TCP, then a
-  one-time touch-based correction of the extrinsic's translation (mostly height), from
-  `touch_probe` offsets on a fresh registration. The multi-view self-calibration (step 7)
-  sees the sideways part, but not a pure height offset along the view.
+## Multi-view refinement: what is left (`multiview_refine_plan.md`)
 
-## DECISION — to touch or not to touch (2026-09-29)
+- **Vertical over-correction, about 3–5 mm** (contacts still 3–6 mm early). The direction
+  that moves every view up or down together is the one the 45°/60° views separate worst,
+  so the online correction should apply only the horizontal part of `d`. The height comes
+  from the pen-referenced table (`extrinsic_check` agrees with the pen to ~2 mm across
+  the range, with a constant +2 mm left to remove).
+- **Self-calibration:**
+  - key runs by scene (the assembly) and require 3 DISTINCT ones;
+  - do not promote from the runs so far, which carry the vertical bias and one-scene
+    repeats;
+  - promote the horizontal part first.
+- **The base's slide in its own plane** varies 1–3 mm between runs while the observability
+  says "measured" (grazing, correlated edge points). It doesn't move the roots; a better
+  noise model for steep points would make the report honest.
+- **A refusal at `save_object`** when `check_registration` fails (open since 29 Sep).
+- **Step 8, FoundationPose per view,** as a second measurement in the same framework:
+  after the tracking work above.
+- **The renamed knobs to watch on real data:** `mv_max_relative_mm` (2), the 4°
+  correction limit, `online_selfcal_min_mm`.
 
-The remaining ~5 mm is the sum of 1–3 mm sensor-level terms. Two ways on, and the
-thesis should say which scenario it claims:
+## Accuracy: small items
 
-- **Touch (industrial practice, "touch sensing"):** before each tack, two force-gated
-  touches ~15 mm from the root (base top with the pen vertical, standing face with the
-  pen horizontal) shift the root line by the measured offsets. Removes camera,
-  extrinsic and registration error at the tack; the pen's own error mostly cancels
-  (same tip touches and marks). Reuses table_touchoff's two-speed touch, marking's
-  planner, touch_probe's per-face offsets. ~10–15 s per tack. Expected < 1 mm.
-- **No touch (academic scenario: parts that must not be touched, or a vision-only
-  claim):** the error has to come down on the sensing side. **Chosen next: the multi-view
-  close-range refinement `~/refine_pose`, planned step by step in
-  `notes/multiview_refine_plan.md`.** Options, roughly by payoff:
-  - a close-up refinement scan per seam: D435i depth error grows ~z², so 0.5 → 0.3 m
-    is ~2.8x less;
-  - multi-view registration, fusing 2–3 scan poses: this averages the depth bias and
-    the in-plane ambiguity;
-  - FoundationPose pose + ICP fused (NEXT below);
-  - a depth-bias map of the D435i, measured against the pen-touched table;
-  - redo the 4-point TCP (about 2 mm): only pen_tool.json and the table plane change,
-    NOT the extrinsic, which is stored in tool0.
-- A middle road for the thesis: vision-only as the method, touch as the reference
-  that measures its error (touch_probe already does this by hand).
-
-## PARKED — the remaining ~4 mm (README §14, error budget)
-
-- **Kinematic model mismatch - FIXED in code 2026-09-29, bench verification pending.**
-  Confirmed: the probe's calibrated row equals the pendant TCP at 5 poses (0.001°), the
-  nominal row wanders 2.4–4.2 mm / 0.52–0.55°; a model of the 28 Sep setup predicted
-  5.4/5.9 mm lateral and +2.6/+2.1 mm depth (measured 4.3/3.7 and +4.2/+2.8). Fix: URDF
-  loads `config/ur5e_calibration.yaml`; the driver must be launched with
-  `kinematics_params_file:=` the same file (workspace README); `kinematics.use_kinematics`
-  and a `kinematics_file` parameter in every robot-facing tool (reports record the model,
-  the marking node refuses a mismatched `tack_reach.json`); `assembly.json` stores
-  `T_static_camera`. Step 4 done: through calibrated TF the ChArUco-only extrinsic
-  shows a 0.37° camera tilt (its own rotation uncertainty); refined →
-  `notebooks/T_tcp_to_cam_refined.npy`, which differs from the 28 Sep refinement by only
-  0.085° - so that one had corrected the ChArUco tilt, NOT the kinematic mismatch, which
-  stayed fully in the 28 Sep marks (as the model predicted). NEXT: promote the new refined
-  file, re-register, `tack_reachability.py` (new kinematics), mark.
-- **Extrinsic horizontal translation / rotation about the optical axis** (unmeasured; two
-  solves 18 mm apart): register one untouched part twice with the wrist 180° apart about
-  the vertical → `scripts/compare_registrations.py --last 2`; half the horizontal
-  difference is the error. About 10 minutes.
-- Depth bias vs table shape (+2.3 mm): one `extrinsic_check` round over the touched patch.
-- ICP wander on a still scene: base vs standing plate jitter; then an outline
-  (depth-edge) term, symmetric ICP, or GICP.
-- A pen probe that measures the seam root laterally by sliding into it (mode A+ with the
-  pen instead of the camera).
+- **Fixture or clamp the parts.** Magnet-held parts can move ~1 mm between scan, marking
+  and touches; the touches cannot separate that from the camera.
+- **The ear's foot measured 0.5–2.8 mm above the base,** consistently, with an ISO level C
+  warning. Check by hand with a feeler gauge: is it real, or a systematic camera effect
+  near the contact?
+- **Pen length:** the bare table reads +1–3 mm from the plane at some spots. Re-check the
+  4-point TCP; it changes only `pen_tool.json` and the table plane, not the extrinsic.
 
 ## OPEN — motion (`pen_marking_plan.md`)
 
-- **Holder clearance - DONE 2026-09-29:** the envelope is now from the CAD
-  (`world/penholder_assembly.usda`): tube r 17.4 → capsule r 20.5 to 130 mm, flange
-  r 48; a square T clears by 15.5 mm (was 1.1 with one r 42 capsule). Earlier "seam
-  reachable" results came from the straddled ear opening one side to ~96°. The home
-  path now returns to the exact `home_q` (it arrived a wrist turn off after rolled tacks).
 - **Tack 0 of the 29 Sep 18:10 session is refused at planning:** "descent clearance
-  0.0 mm (overshoot)", in both the old and the refactored node. This is why that run
-  marked only tacks 1–3. Find which pair goes to 0 in the overshoot zone (a holder-vs-part
-  bound inherited from a tight tack pose?).
+  0.0 mm (overshoot)". Find which pair goes to 0 in the overshoot zone.
 - **Holding 1.5 N on metal:** UR's `force_mode_controller` (loaded, inactive) for strokes
-  on steel, or a sprung holder. The two-speed descent and gentle stroke are the stopgap.
+  on steel, or a sprung holder. The two-speed descent and gentle stroke are the stopgap;
+  strokes still stop with "pen lifted off" on some tacks.
+- **Marking overshoot:** tests use `overshoot_m` 6 mm until the vertical camera offset is
+  removed.
 - Stroke (`stroke_mode:=tack|seam`): first full-seam run on the bench.
 - Collision model: tilted table plane, fixture boxes when clamps replace magnets.
 - Twin: an adapter from the trajectory action to the Isaac joint-command topic.
 
 ## OPEN — perception (`seam_two_modes_plan.md`)
 
+- **FoundationPose tracking instead of ICP tracking:** see NEXT.
 - **Mode A covers only the 5 plate strata** (T/line, corner, butt square, lap, edge). The
-  6 curved ones need: registry `tube` / `swept_slab` entries; pipe-on-plate and
-  pipe-on-pipe via `curves.ellipse_from_plane_cylinder` / `saddle_from_cylinders` from the
-  registered poses plus the per-point cone test of `verify_curved`; new code for box tube
-  and curved strip on a plate. Motion: full loops around pipes need large wrist rolls.
+  6 curved ones need:
+  - registry `tube` / `swept_slab` entries;
+  - pipe-on-plate and pipe-on-pipe via `curves.ellipse_from_plane_cylinder` /
+    `saddle_from_cylinders` from the registered poses, plus the per-point cone test of
+    `verify_curved`;
+  - new code for a box tube and a curved strip on a plate;
+  - motion: full loops around pipes need large wrist rolls.
+
   Needed before Phase 9's curved strata.
-- **Curved parts in the multi-view refinement:** its overlap rule (parts must not poke into
-  each other, computed from the CAD) uses face planes. Pipe on plate and pipe on pipe need
-  the signed distance to the registry's tube and swept-slab surfaces. Do it together with
-  mode A for the curved strata (`notes/multiview_refine_plan.md`, "Still open").
+- **Curved parts in the multi-view refinement:** the overlap rule and the gap measurement
+  use face planes. Pipes need the signed distance to the registry's tube and swept-slab
+  surfaces. Do it together with mode A for the curved strata.
 - **Mode B** (no CAD): PPF no-match, SAM2 per-part masks, region growing + lit-quadric;
   no library save without CAD.
-- **Mode A+**: per-part sensor points kept at save, labelled by CAD face, lit-quadric
+- **Mode A+:** per-part sensor points kept at save, labelled by CAD face, lit-quadric
   refinement, fit-up diagnostic.
 - Quality field and DP tack selection (thesis stages 1–3).
-- Tacks are 4t long (32 mm on 8 mm plate, `tackrule-0.1`); decide on shorter tacks for
-  the cell (ROS parameters) or a `tackrule-0.2` for both projects.
+- **Tack length:** tacks are 4t (32 mm on 8 mm plate, `tackrule-0.1`). Decide on shorter
+  tacks for the cell (ROS parameters) or a `tackrule-0.2` for both projects.
 
 ## OPEN — parts, data, paper
 
-- More CAD parts with matching MDF/metal pieces: CAD in `models/`, server PPF entry,
-  registry entry (`build_weldgen_registry.py --verify`), one bench cycle.
-- Phase 9 real subset (on hold until the metal arrives): `label_real_scan.py`, view
-  planner, fiducial-board pose bound (it also replaces the 10 mm `weld_pose_tol_mm`),
-  `d435i_measured`, a 3-configuration pilot.
-- weld_generator: commit the final ICRA figures/PDF/zip from the desktop; notebook 16;
+- **More CAD parts** with matching MDF/metal pieces: CAD in `models/`, a server PPF entry,
+  a registry entry (`build_weldgen_registry.py --verify`), one bench cycle.
+- **Phase 9 real subset** (on hold until the metal arrives): `label_real_scan.py`, the
+  view planner (`multiview.py` can serve), a fiducial-board pose bound,
+  `d435i_measured` (now with the measured depth law, README §16), a 3-configuration
+  pilot.
+- **weld_generator:** commit the final ICRA figures/PDF/zip from the desktop; notebook 16;
   a training script on `train_v1`; pin numpy; annotator repeat; lap-overlap citation;
-  advisor's written no-welding scope.
+  the advisor's written no-welding scope.
 
 ## LATER
 
-- Torch instead of pen: force-controlled seam following, the distortion-aware tack
+- **Torch instead of pen:** force-controlled seam following, the distortion-aware tack
   `order` (already computed).
-- MoveIt planning scene when fixtures become real.
-- Thesis: the validation chapter (fit-up, contact depth, README §14's error budget).
+- **MoveIt planning scene** when fixtures become real.
+- **Thesis:** the validation chapter (fit-up, contact depth, README §14's error budget,
+  `thesis_notes.md`).

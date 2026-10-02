@@ -65,9 +65,9 @@ PARAMS: dict[str, Any] = {
     "elevations_deg": [45.0, 60.0],
     "azimuth_step_deg": 30.0,
     "max_incidence_deg": 60.0,
-    "n_frames": 8,
+    "n_frames": 16,                  # 8 until 2026-10-02 (the user: more frames, they are cheap)
     "settle_s": 0.5,
-    "frame_timeout_s": 5.0,
+    "frame_timeout_s": 8.0,          # the cloud arrives at ~6 Hz: 16 frames take ~2.7 s
     "v_joint_rad_s": 0.3,
     "extrinsic_path": str(PKG / "notebooks" / "T_tcp_to_cam.npy"),
     "kinematics_file": str(PKG / "config" / "ur5e_calibration.yaml"),

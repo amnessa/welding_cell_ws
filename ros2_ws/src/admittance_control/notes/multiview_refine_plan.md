@@ -1,7 +1,8 @@
 # Multi-view close-range pose refinement (`~/refine_pose`) — plan
 
 *Written 2026-09-29, to be implemented in the next session. Context: `todo.md` →
-"DECISION — to touch or not to touch", the no-touch route.*
+"DECISION — to touch or not to touch", the no-touch route; decided 2026-10-02: no touch
+sensing, vision only.*
 
 ## Why
 
@@ -93,7 +94,7 @@ subscription, each in its own callback group. Its executor is already multi-thre
 ### D3. Capture, per view
 
 1. **Settle:** wait until the joint speed is near 0, then 0.3 s more.
-2. **Frames:** grab `n_frames` 8 organized clouds and take the per-pixel median, ignoring
+2. **Frames:** grab `n_frames` 16 (8 until 2026-10-02) organized clouds and take the per-pixel median, ignoring
    invalid pixels. This cuts the temporal noise about 3× before any geometry.
 3. **Camera pose:** from TF at the cloud's stamp, `base_link ← camera_color_optical_frame`.
 4. **Store** `{q, T_base_cam, xyz_median, stamp}` in memory and in
@@ -466,7 +467,7 @@ For each part, also register each view on its own, starting from the joint resul
    - **Motion:** the views are planned from the current joints. The transits go through
      the shared TrajectoryExecutor, with the bias re-measured and 8 N abort. A failed or
      aborted move stops where it is, with no recovery motion.
-   - **Capture:** the per-pixel median of 8 FRESH clouds (stamped after the settle), and
+   - **Capture:** the per-pixel median of 16 FRESH clouds (8 until 2026-10-02) (stamped after the settle), and
      the TF at their stamp.
    - **After:** the capture is saved, then `refine_capture` and `format_replay` (the same
      code as the offline replay). The stacked views go on `/perception/icp/multiview_cloud`
@@ -557,13 +558,14 @@ For each part, also register each view on its own, starting from the joint resul
 8. **FoundationPose per view (later, after 1–7 are tested).** Send each view's image and
    depth to the server with the known CAD, take its pose as a second, independent
    measurement per view, and compare it with the per-view ICP poses (D6). This is the
-   measurement step of the Kalman-filter idea in todo's NEXT. Fuse only if FoundationPose's
-   error is smaller than the ICP's or independent of it.
+   second measurement for this stationary refinement (the Kalman fusion with ICP tracking was
+   dropped 2026-10-02; FoundationPose takes over live tracking instead). Use it only if
+   FoundationPose's error is smaller than the ICP's or independent of it.
 
 ## Parameters (ICP node, `mv_` prefix)
 
 `mv_view_distance_m` 0.40 · `mv_n_views` 4 · `mv_elevations_deg` [45, 60] ·
-`mv_azimuth_step_deg` 30 · `mv_max_incidence_deg` 60 · `mv_n_frames` 8 · `mv_voxel_m` 0.003 ·
+`mv_azimuth_step_deg` 30 · `mv_max_incidence_deg` 60 · `mv_n_frames` 16 · `mv_voxel_m` 0.003 ·
 `mv_max_corr_m` 0.010 · `mv_max_correction_mm` 10 · `mv_max_correction_deg` 4 ·
 `mv_dry_run` true · `mv_v_joint_rad_s` (as the marking node) · `mv_save_views` true
 

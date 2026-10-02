@@ -12,6 +12,106 @@ the plans under `notes/`; this file keeps the story and the numbers.
 
 ---
 
+## 2026-10-02 (evening): Decisions: no touch sensing, FoundationPose for tracking
+
+**What happened:** with the marks at ~2.5 mm by vision alone, two open questions were
+settled.
+
+**No touch sensing in the method.** The cell is framed academically: a scenario where the
+parts cannot be touched must remain valid. Touches stay in two roles only:
+
+- calibration: pen TCP, table plane, the Tare's ground-truth distance;
+- independent measurement of the error (`touch_probe.py`).
+
+They are never a step that corrects a tack. The evidence that this is enough: every
+millimetre from 8 mm down to 2.5 mm came from vision and calibration, not from contact:
+
+- the ICP normal gate;
+- the depth Tare;
+- the extrinsic tilt;
+- the multi-view refinement.
+
+**Tracking: FoundationPose instead of ICP, no Kalman for now.**
+
+- ICP runs on the CPU. Each call is seconds of nearest-neighbour search and Gauss-Newton,
+  far too slow to follow a part that moves. It is the right tool for what it is used for
+  in the literature: aligning point clouds of a stationary object. Here that means the
+  `run_icp` seed and the `refine_pose` multi-view refinement.
+- FoundationPose's tracking mode registers once and then refines frame to frame on the
+  GPU at tens of Hz.
+- The planned Kalman fusion of FoundationPose and ICP is dropped for now. It would fuse a
+  fast tracker with a slow one that adds nothing while the part moves.
+
+**The open problem this creates is systems, not vision.** FoundationPose runs in Docker on
+a GPU host reached over Tailscale. A live pose in RViz needs frames streamed there and
+poses streamed back fast enough. The candidates, in `todo.md`, are:
+
+- HTTP keep-alive;
+- a WebSocket or gRPC stream;
+- ROS 2 inside the container (Zenoh or a discovery server across Tailscale);
+- tracking locally on the laptop's RTX 4060.
+
+**What we learned:** split the work by the regime each tool suits.
+
+- A stationary part, millimetre accuracy, seconds allowed: ICP and the multi-view
+  refinement (CPU).
+- A moving part, tens of Hz: a learned tracker on the GPU.
+
+Choosing one of them does not remove the need for the other; they answer different
+questions.
+
+---
+
+## 2026-10-02 (15:00): Headline: all tacks within ~2.5 mm
+
+**The full chain:** calibrated kinematics → Tare-corrected depth → refined extrinsic tilt
+→ registration → `refine_pose` (4 close views, online self-calibration iterated, the prior
+corrected by R_scan·d, gap measured) → `welding_points` → reachability → marking.
+
+**Results:**
+
+- Both parts ACCEPTED and applied.
+- d = (1.61, 3.57, −5.92) mm in the camera frame, 7.1 mm of correction from the camera at
+  the scan pose.
+- The fit-up warning flagged the ear's foot at 0.6–2.0 mm above the base, against the
+  1.6 mm level C limit.
+- **Marks:** every tack within about 2.5 mm, on both seams. The first stroke ended early
+  but left a dot inside that range.
+
+For comparison:
+
+| when | mark error |
+|---|---|
+| 28 Sep | 3.7–4.3 mm (with the kinematic error) |
+| 1 Oct | 3–8 mm |
+| this morning | 14–16 mm (the straddle, the unmodelled plate, the depth bias) |
+| now | ≈ 2.5 mm |
+
+**What is left:**
+
+- Contacts 2.8–6.3 mm EARLY along the pen on all four tacks, both sides, so a vertical
+  offset, not a sideways one.
+- Pen touches: base top +4.8 / +4.7 mm (the real surface is higher than the refined pose);
+  ear faces +1.2 / +4.1 mm.
+
+**Reading:** before `refine_pose` the camera placed surfaces about 2 mm high
+(`extrinsic_check`); the online correction then lowered the parts by about 7 mm
+vertically. So it over-corrected the height by about 4–5 mm. The direction that moves
+every view's cloud up or down together is the one the 45°/60° views separate worst: only
+via the 60° view, with model leftovers (the depth trend) leaking in.
+
+**Consequences:**
+
+- Do NOT promote a self-calibration from these runs; all of them carry that vertical bias.
+- Next step: anchor the height to the pen-referenced table (`extrinsic_check`, which
+  agrees to about 2 mm across the working range), and let the online correction apply
+  only the horizontal part of d.
+
+**Caveat (the user):** the parts are not fixed in place and can move a millimetre or so
+between the scan, the marking and the touches.
+
+---
+
 ## 2026-10-02: Multi-view refinement on the bench after the depth fix
 
 ### What happened

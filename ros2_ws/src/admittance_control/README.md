@@ -110,22 +110,22 @@ map that follows this table.
 |------|------------------|
 | `README.md` | This document. `notes/todo.md` is the open-work list of the whole project; `notes/seam_two_modes_plan.md` (perception) and `notes/pen_marking_plan.md` (motion) are the plans of record. |
 | `package.xml`, `CMakeLists.txt` | `ament_cmake` package with `rosidl` interfaces. Python library modules are installed by an explicit `FILES` list; node scripts by `install(PROGRAMS ...)` and **must be `chmod +x`**. Adding a module or a script means adding it there. |
-| **`scripts/*.py`** | The ROS 2 nodes and CLIs (one process each, see [Node reference](#node-reference)). Grouped by role: camera (`realsense_camera_node`, `realsense_sim_camera_node`, `camera_extrinsic_tf_publisher`), pose server bridge (`foundationpose_bridge_node`, `sam6d_bridge_node`, `detection_marker_node`, `gesture_control_node`), registration + assembly + seams (`icp_pose_refiner_node`), motion (`tack_marking_node`, `drawing_action_server`, `drawing_dispatcher`, `cartesian_admittance_controller`, `move_to_object_node`), planning CLIs (`build_weldgen_registry`, `tack_reachability`), RViz helpers (`tool_model_marker_node`, `tack_reach_marker_node`), bench probes (`tcp_offset_probe`, `pen_tip_touchoff`, `pose_jitter_probe`). |
+| **`scripts/*.py`** | The ROS 2 nodes and CLIs (one process each, see [Node reference](#node-reference)). Grouped by role: camera (`realsense_camera_node`, `realsense_sim_camera_node`, `camera_extrinsic_tf_publisher`), pose server bridge (`foundationpose_bridge_node`, `sam6d_bridge_node`, `detection_marker_node`, `gesture_control_node`), registration + assembly + seams (`icp_pose_refiner_node`), motion (`tack_marking_node`, `drawing_action_server`, `drawing_dispatcher`, `cartesian_admittance_controller`, `move_to_object_node`), planning CLIs (`build_weldgen_registry`, `tack_reachability`), RViz helpers (`tool_model_marker_node`, `tack_reach_marker_node`), bench probes (`tcp_offset_probe`, `pen_tip_touchoff`, `pose_jitter_probe`, `table_touchoff`, `touch_probe`), calibration and checks (`extrinsic_check`, `tare_distance`, `check_registration`, `compare_registrations`, `selfcal_extrinsic`), multi-view replay (`multiview_refine_offline`). |
 | `scripts/scripts_in_foundationpose/` | **Reference copies of the GPU host's code**: `fp_server.py` (FoundationPose + SAM2 + PPF Flask server), `ppf_classifier.py`, `build_ppf_library.py`, `ppf_selftest.py`, and the superseded SAM-6D `server.py`. They run on the pose-server machine (reached over its Tailscale IP), not in the ROS graph; kept here so client and server contracts stay in sync. Edit on the host, mirror back. |
 | `scripts/foundationpose_results/` | **The live working directory** of one assembly: the pose server's last answer, the registered assembly, the seams, the tacks, the reachability report, the marking plan and the marks. `previous_assemblies/<timestamp>/` holds archived ones. See the map below. |
 | `scripts/rgb_depth_to_send/` | Transfer dir: the last `rgb.png` / `depth.png` / `camera.json` the bridge sent to the pose server. |
 | `scripts/sam6d_results/` | Frozen captures from the SAM-6D era, replay only. Nothing writes here. |
-| **`admittance_control/*.py`** | The importable, ROS-free library (pure numpy; tested under `test/`). Perception: `icp.py`, `sam6d_io.py`, `assembly_mesh.py`. Seams: `weldgen_registry.py`, `seam_from_registration.py`. Motion: `kinematics.py`, `tool_model.py`, `collision.py`, `tack_reach.py`, `marking.py`. Support: `geometry.py`, `pose_stats.py`. See [Shared library modules](#shared-library-modules-admittance_control). |
+| **`admittance_control/*.py`** | The importable library (pure numpy except where noted; tested under `test/`). Perception: `icp.py`, `sam6d_io.py`, `assembly_mesh.py`. Multi-view refinement: `multiview.py` (views), `multiview_refine.py` (joint refinement, camera offset, fit-up check), `multiview_capture.py` (captures, preprocessing, replay), `selfcal.py` (extrinsic self-calibration), `multiview_service.py` (the `~/refine_pose` orchestration — uses rclpy). Seams: `weldgen_registry.py`, `seam_from_registration.py`. Motion: `kinematics.py`, `tool_model.py`, `collision.py`, `tack_reach.py`, `marking.py`, `motion.py` (trajectory execution with the force watchdog — uses rclpy). Support: `geometry.py`, `pose_stats.py`, `table_probe.py`. See [Shared library modules](#shared-library-modules-admittance_control). |
 | `src/*.cpp` | C++ nodes: `totg_service_node` (MoveIt time-optimal trajectory generation, used by the drawing stack) and `admittance_control_jacobian_node`. |
 | `srv/`, `action/` | Custom interfaces: `ComputeTOTG.srv`, `ExecuteDrawing.action` (drawing stack only). |
 | `launch/` | `pointcloud.launch.py` (real robot: camera, extrinsic TF, point cloud, bridge, ICP, RViz), `digital_twin_pointcloud.launch.py` (the same on Isaac Sim), `admittance_control.launch.py` (the drawing stack), `point_cloud_config.rviz` (the RViz layout both perception launches open). |
-| **`config/`** | Two kinds. UR5e description for the drawing stack and ros2_control: `ur5e.srdf`, `kinematics.yaml`, `default_kinematics.yaml`, `joint_limits.yaml`, `physical_parameters.yaml`, `visual_parameters.yaml`, `initial_positions.yaml`, `ros2_controllers.yaml`, `controllers.yaml`, and `ur5e_calibration.yaml` (the robot's factory kinematic deltas: the planner's FK is the nominal chain, ~3 mm apart at the tip, see `notes/todo.md`). And the two marking configs: **`pen_tool.json`** (the pen tip from the pendant's TCP calibration, the touch force, the standoff, the collision envelope of holder + camera) and **`marking.json`** (the scan-home pose whose branch signs are the elbow-up lock, clearance, work-angle and roll grids, LIN steps). |
+| **`config/`** | Two kinds. UR5e description for the drawing stack and ros2_control: `ur5e.srdf`, `kinematics.yaml`, `default_kinematics.yaml`, `joint_limits.yaml`, `physical_parameters.yaml`, `visual_parameters.yaml`, `initial_positions.yaml`, `ros2_controllers.yaml`, `controllers.yaml`, and `ur5e_calibration.yaml` (the robot's factory kinematic calibration: since 2026-09-29 the URDF, the UR driver (`kinematics_params_file:=`) and every planner and tool use it - the nominal chain was 2.4-4.2 mm / 0.55 deg off, see §14). And the two marking configs: **`pen_tool.json`** (the pen tip from the pendant's TCP calibration, the touch force, the standoff, the collision envelope of holder + camera) and **`marking.json`** (the scan-home pose whose branch signs are the elbow-up lock, clearance, work-angle and roll grids, LIN steps). |
 | `urdf/`, `meshes/ur5e/` | UR5e robot description (visual + collision meshes) for `robot_state_publisher`. |
 | **`models/`** | The CAD library: `*.ply` meshes (mm) that the pose server classifies against and the ICP node registers (`models/<obj_name>.ply` must match the server's library names), their `.usda` twins for Isaac, `assembly_mesh.ply` (the last exported assembly), and **`weldgen_objects.json`**, the part registry mode A needs: for each CAD its `weld_generator` primitive (slab / envelope slab) and the frame between CAD and primitive, built and verified by `scripts/build_weldgen_registry.py --verify`. |
-| **`notebooks/`** | Calibration artefacts, not notebooks only. **`T_tcp_to_cam.npy`** is the hand-eye extrinsic (camera in `tool0`) the extrinsic TF publisher broadcasts; `T_tcp_to_cam.json` says which samples, which TCP offset and how good; `handeye_samples.npz` the raw hand-eye samples (re-solvable offline); `T_tcp_to_cam_wrong.npy` the July file that failed silently, `T_tcp_to_cam_raw_tcpframe_*.npy` an uncomposed solve, both kept as evidence; `realsense_intrinsics.npy`, `charuco_reference.png`, `handeye_debug_latest.png`; `T_base_to_cam.npy` from the old fixed-camera days; `gesture_recognizer.task` (MediaPipe model for the gesture node); the notebooks (`Sam_to_Surface_Plane`, `camera_calibration_test`, `force_control_learning`, `gesture_control_sandbox`, `media_pipe_sandbox`, `sam_testing2`) are exploration history; `idea.md` an early plan (Turkish). |
-| **`notes/`** | The design record. `todo.md` (all open work), `seam_two_modes_plan.md` (mode A / mode B, validation), `pen_marking_plan.md` (milestones 1–6 of the pen marking, with bench results), `Welding_Robots_Approach_and_Trajectory_Literature_Report.md` (the literature the motion design draws on), `realtime_icp.md`, `model_based_background.md`, `ground_removal.md` (the tracker's three filters), `welding_edge_sampling.md` (the radius-PCA fallback; outdated for the seam itself), `sam6d_client_notes.md` (Isaac → server data flow), `implementation_notes.md` (bench recipes), `quality_field_k_point_selection.md` (the thesis' quality field / tack selection, not built yet). |
-| **`helper/`** | Run directly, not installed. `calibration/extract_extrinsics.py` (hand-eye capture: ChArUco + RTDE, requires `--tcp-offset`, prints a residual judge), `calibration/resolve_handeye.py` (numpy re-solve of saved samples, leave-one-out, TCP composition, `--write`), `calibration/sam6d_client.py` (old), `gui/drawing_gui.py`, `legacy_sand_drawer/` (the pre-welding drawing tools). |
-| `test/` | pytest, no ROS: `test_seam_from_registration.py` (mode A on synthetic and bench assemblies), `test_tool_model.py`, `test_collision.py`, `test_tack_reach.py`, `test_marking.py`, `test_pose_stats.py`, `test_charuco_detection.py`. Run `.venv/bin/python -m pytest test/` from the package. |
+| **`notebooks/`** | Calibration artefacts, not notebooks only. **`T_tcp_to_cam.npy`** is the hand-eye extrinsic (camera in `tool0`) the extrinsic TF publisher broadcasts; `T_tcp_to_cam.json` says which samples, which TCP offset and how good; `handeye_samples.npz` the raw hand-eye samples (re-solvable offline); `T_tcp_to_cam_wrong.npy` the July file that failed silently, `T_tcp_to_cam_raw_tcpframe_*.npy` an uncomposed solve, both kept as evidence; `realsense_intrinsics.npy`, `charuco_reference.png`, `handeye_debug_latest.png`; `T_base_to_cam.npy` from the old fixed-camera days; **`table_plane.json`** (the table measured by pen touches: the height reference for the ground cut, `extrinsic_check` and the Tare distance), `extrinsic_check.json` (the camera's view of the table vs that plane, per wrist yaw), `T_tcp_to_cam_refined.npy` (+ `.json`, the tilt-refined extrinsic, promoted into `T_tcp_to_cam.npy`), `T_tcp_to_cam_unrefined.npy` / `_before_tilt_*.npy` (the files it replaced), `tcp_check.json`, `selfcal_history.json` (the camera offset each `refine_pose` run estimated, for `selfcal_extrinsic.py`); `gesture_recognizer.task` (MediaPipe model for the gesture node); the notebooks (`Sam_to_Surface_Plane`, `camera_calibration_test`, `force_control_learning`, `gesture_control_sandbox`, `media_pipe_sandbox`, `sam_testing2`) are exploration history; `idea.md` an early plan (Turkish). |
+| **`notes/`** | The design record. `todo.md` (all open work), **`thesis_notes.md`** (the running log of what we ran into, measured and learned - raw material for the thesis), `multiview_refine_plan.md` (the multi-view refinement, design and step-by-step results), `seam_two_modes_plan.md` (mode A / mode B, validation), `pen_marking_plan.md` (milestones 1–6 of the pen marking, with bench results), `Welding_Robots_Approach_and_Trajectory_Literature_Report.md` (the literature the motion design draws on), `realtime_icp.md`, `model_based_background.md`, `ground_removal.md` (the tracker's three filters), `welding_edge_sampling.md` (the radius-PCA fallback; outdated for the seam itself), `sam6d_client_notes.md` (Isaac → server data flow), `implementation_notes.md` (bench recipes), `quality_field_k_point_selection.md` (the thesis' quality field / tack selection, not built yet). |
+| **`helper/`** | Run directly, not installed. `calibration/extract_extrinsics.py` (hand-eye capture: ChArUco + RTDE, requires `--tcp-offset`, prints a residual judge), `calibration/resolve_handeye.py` (numpy re-solve of saved samples, leave-one-out, TCP composition, `--write`), `calibration/refine_extrinsic_from_table.py` (rotates the extrinsic by the camera-fixed tilt `extrinsic_check` separated, writes `T_tcp_to_cam_refined.npy`), `calibration/sam6d_client.py` (old), `gui/drawing_gui.py`, `legacy_sand_drawer/` (the pre-welding drawing tools). |
+| `test/` | pytest: `test_seam_from_registration.py` (mode A on synthetic and bench assemblies), `test_tool_model.py`, `test_collision.py`, `test_tack_reach.py`, `test_marking.py`, `test_pose_stats.py`, `test_charuco_detection.py`, `test_table_probe.py`, `test_kinematics_params.py`, `test_icp_normal_gate.py`, the multi-view set (`test_multiview_views.py`, `test_multiview_touching_parts.py`, `test_multiview_capture.py`, `test_selfcal.py`: synthetic views and rendered captures of the bench T with known truth), and `test_motion.py` (needs a sourced ROS shell, skipped otherwise). Run `.venv/bin/python -m pytest test/` from the package. |
 | `world/` | Isaac Sim assets: `welding_world.usda` (robot + eye-in-hand camera + table), `penholder_assembly.step/.usda` (the pen and camera holder), `Realsense435i_custom.usda`, `table_v1.usda`. |
 | `generated_planes/` | Work-surface planes for the drawing stack (`sand_drawer_plane.json`: points captured in freedrive). |
 | `artifacts/`, `plots/` | Outputs of the legacy segmentation tool and plot scratch; nothing reads them. |
@@ -154,6 +154,10 @@ right are what every number downstream depends on.
                     then tracks it (crop box + ground cut + model-based background subtraction, Phase 2)
    ~/save_object    robust mean of the tracked poses since the part came to rest → the part is baked into
                     the SEPC (static_env.ply/.npy) and assembly.json gets {model, pose_static, pose_stats}
+   ~/refine_pose    MULTI-VIEW: the robot looks at the saved parts from 4 close views (0.4 m), captures each
+                    (median of 16 frames), refines all parts jointly against all views, estimates and takes
+                    out the camera's translation error, measures the fit-up gaps (ISO 5817 warning) and
+                    writes the refined poses back to assembly.json + the SEPC; capture in multiview/<ts>/
    ~/welding_points MODE A: models/weldgen_objects.json places each part as a weld_generator primitive at
                     its pose_static → D4 accessibility rule under a pose tolerance → welding_seams.json
                     (every face pair: weldable / reason, class, polyline, approach axis, fit-up)
@@ -176,6 +180,8 @@ right are what every number downstream depends on.
 
 What depends on what, in one sentence each:
 
+- **The kinematic model** (`config/ur5e_calibration.yaml`) is the robot's own factory calibration; TF, the UR driver and every planner use it. A mismatch here moved the camera 0.55 deg and the pen 2-4 mm (§14).
+- **The camera's depth** must agree with the robot's frame across the working range: the D435i read depth too long, growing with range squared (~7 mm at 0.6 m), until a Tare against a distance computed from the robot fixed it (§16).
 - **The extrinsic** (`notebooks/T_tcp_to_cam.npy`) turns camera poses into `base_link`; every registered pose, seam, tack and mark inherits its error. It is solved from `handeye_samples.npz` with the pendant TCP composed in; `T_tcp_to_cam.json` records that.
 - **The pendant TCP** must be composed into the extrinsic (the capture reads the robot at the active TCP) and is also the pen tip in `config/pen_tool.json`. `tcp_offset_probe.py` reads it from the driver.
 - **The CAD library** (`models/`) must hold the same meshes the server classifies against, and every mesh mode A should compute seams for needs an entry in `weldgen_objects.json`; a part without one makes `~/welding_points` fall back to the radius-PCA detector (the node log says which part).
@@ -194,6 +200,7 @@ Files of one assembly in `scripts/foundationpose_results/`, in the order they ap
 | `welding_seams.json`, `welding_tacks.json`, `welding_points.npy/.ply` | ICP `~/welding_points` | `tack_reachability.py` (tacks), `tack_marking_node` (strokes), RViz |
 | `tack_reach.json` | `tack_reachability.py` | `tack_reach_marker_node`, `tack_marking_node ~/plan` |
 | `tack_marking_plan.json`, `tack_marks.json` | `tack_marking_node` | you: the contact depths and stroke forces are the validation numbers |
+| `multiview/<timestamp>/` (`capture.json`, `view_<k>.npz`, `assembly.json`) | ICP `~/refine_pose` | `multiview_refine_offline.py` (replay); the record of what the camera saw |
 | `previous_assemblies/<timestamp>/` | ICP `~/reset_environment` | nothing; the archive |
 
 ---
@@ -320,6 +327,8 @@ parts, and it *is* the geometry the weld seam is extracted from.
         ~/run_icp (part A) → track → ~/save_object ─┐
         ~/run_icp (part B) → track → ~/save_object ─┤  (CAD auto-selected per part
                                                     │   from the classifier)
+                       ~/refine_pose (optional, recommended): 4 close views,
+                       all parts refined jointly, poses written back ─┤
                                                     ▼
                     SEPC = CAD(A) ∪ CAD(B)  in base_link
                     → /perception/icp/static_env  (orange)
@@ -371,6 +380,26 @@ within `bg_subtract_dist_m` of the SEPC are deleted, so part B's ICP cannot snap
 onto part A when the two are pushed flush ([`notes/model_based_background.md`](notes/model_based_background.md)).
 The same transform applies the **ground cut** (`z <= ground_z_m` is the bench;
 [`notes/ground_removal.md`](notes/ground_removal.md)).
+
+**Multi-view refinement (`~/refine_pose`, between `save_object` and `welding_points`).**
+A single scan from the scan home (~0.6 m) leaves every saved pose with that view's
+camera error, and a thin standing plate's rotation in its own plane barely constrained.
+`refine_pose` (`multiview_service.py`) plans 4 views around the centre of the saved parts
+at 0.4 m (`multiview.py`: seam-region coverage, IK on the elbow-up branch, collision at the
+20 mm transit clearance), drives the robot to each **once** (force-watched trajectories,
+`motion.py`), takes the per-pixel median of 16 fresh frames and the camera pose from TF,
+returns home, and saves the capture to `multiview/<timestamp>/`. Everything after that is
+computation on the saved data (`multiview_capture.refine_capture`, the same function the
+offline replay runs): the parts **take turns** being refined against all views (2 rounds,
+the others held still), the camera's translation error `d` is estimated from how the
+views disagree and taken out of the views *and* of the saved poses (online
+self-calibration, iterated), the result is judged (correction limits, overlap, fit-up
+change in unmeasured directions), the gap between resting parts is measured against the
+ISO 5817 no. 617 fillet limit (a warning, never a rejection), and accepted poses are
+written back to `assembly.json` and the SEPC. `/perception/icp/multiview_cloud` shows the
+stacked views coloured by view, `/perception/icp/multiview_views` the camera arrows.
+`mv_dry_run:=true` only plans and shows the views; `mv_capture_here:=true` captures one
+view where the arm is, no motion. The maths is [§15](#15-multi-view-close-range-refinement).
 
 ### E. Gesture control
 
@@ -465,7 +494,7 @@ or retrain the classifier head with MediaPipe Model Maker for your viewing angle
 | `sam6d_bridge_node.py` | *Superseded by the FoundationPose bridge.* Same trigger→POST→publish cycle against `server.py`, parsing a list of detections (`R`, `t` mm→m). Still installed so an old SAM‑6D setup can be run for comparison. | in: color+depth; srv: `~/trigger`; out: `/perception/detections` (latched) |
 | `server.py` | *Superseded by `fp_server.py`.* The SAM‑6D Flask server: instance seg (FastSAM/SAM) + pose estimation against `CAD_PATH`, re‑running `demo.sh` per request. | HTTP `:5000/predict_pose` |
 | `detection_marker_node.py` | Converts `Detection3DArray` → RViz `MarkerArray` (RViz has no native `vision_msgs` display). Draws a pose triad + sphere + label per detection, and an **oriented CAD wireframe box** on the highest‑scoring detection. | in: `/perception/detections`; out: `/perception/detection_markers` |
-| `icp_pose_refiner_node.py` | **Real‑time object tracker + assembly/weld model** (`notes/realtime_icp.md`). *Phase 1* `~/run_icp`: reads `obj_name` from the detection, loads `models/<obj_name>.ply` (falling back to `model_path`), uses the mask (`detection_ism.npz`) to segment the object, places the CAD at the FoundationPose pose, runs ICP, and seeds `current_pose`. *Phase 2* (timer at `tracking_rate_hz`, no pose server): builds a **dynamic CropBox** (model AABB + `crop_margin_m`) around `current_pose` to isolate the object, applies **ground removal** + **model‑based background subtraction**, runs **Fast‑ICP** (Anderson‑accelerated, Welsch‑robust point‑to‑plane) from `current_pose`, updates it, and publishes the CropBox as a Marker. Pauses if fitness < `lost_fitness`. *Assembly* `~/save_object`: bakes the CAD into the **SEPC** in `static_frame` at the robust mean of the tracked poses since the part came to rest (`pose_stats.py`; the spread is written to `assembly.json` as `pose_stats`), persists it (with each part's `pose_static`), clears tracking and the latched camera-frame displays for the next part. *Weld* `~/welding_points`: **mode A** — places each saved part's `weld_generator` primitive (registry `models/weldgen_objects.json`) at its `pose_static`, judges every face pair with the D4 accessibility rule under a pose tolerance (`weld_pose_tol_mm`), reports the fit-up per seam, places tacks by `tackrule-0.1`, publishes seams + tacks + labels and writes `welding_seams.json` / `welding_tacks.json`; falls back to the radius-PCA detector when a part has no registry entry (§8). *Export* `~/export_mesh`: boolean-unions the saved parts' CADs at their poses into a watertight `assembly_mesh.ply` for upload as a new model. *Reset* `~/reset_environment`: drops the SEPC, the saved-object list and the tracking state, blanks the latched clouds, and archives the on-disk assembly into `previous_assemblies/<timestamp>/` so the next cycle starts clean without a restart. `scene_from` (init only) = `pointcloud` or `depth_png`. With `use_open3d` (default), the per‑frame voxel downsample + normals run on the *cropped* cloud via Open3D (crop‑first is the key speedup); without Open3D it falls back to NumPy. The tick is further cut by `roi_crop` (slice the organized cloud to the crop box's *image* rectangle before any per‑point maths) and `noise_floor_refresh` (re‑measure the Welsch ν floor every N ticks, not every frame) — ~74 ms → ~23 ms on a 640×480 cloud, with bit‑identical output. Runs on a `MultiThreadedExecutor` so the tick cannot block the incoming cloud. | in: `/camera/depth/color/points`, TF; srv: `~/run_icp`, `~/stop_tracking`, `~/start_tracking`, `~/save_object`, `~/welding_points`, `~/export_mesh`, `~/reset_environment`; out: `/perception/icp/{scene_cloud,model_cloud,refined_pose,crop_box,static_env,welding_points}`, TF `sam6d_object` |
+| `icp_pose_refiner_node.py` | **Real‑time object tracker + assembly/weld model** (`notes/realtime_icp.md`). *Direction (2026‑10‑02): live tracking of moving parts moves to FoundationPose's GPU tracker (`notes/todo.md` → NEXT); ICP stays for stationary refinement (`run_icp`, `refine_pose`).* *Phase 1* `~/run_icp`: reads `obj_name` from the detection, loads `models/<obj_name>.ply` (falling back to `model_path`), uses the mask (`detection_ism.npz`) to segment the object, places the CAD at the FoundationPose pose, runs ICP, and seeds `current_pose`. *Phase 2* (timer at `tracking_rate_hz`, no pose server): builds a **dynamic CropBox** (model AABB + `crop_margin_m`) around `current_pose` to isolate the object, applies **ground removal** + **model‑based background subtraction**, runs **Fast‑ICP** (Anderson‑accelerated, Welsch‑robust point‑to‑plane) from `current_pose`, updates it, and publishes the CropBox as a Marker. Pauses if fitness < `lost_fitness`. *Assembly* `~/save_object`: bakes the CAD into the **SEPC** in `static_frame` at the robust mean of the tracked poses since the part came to rest (`pose_stats.py`; the spread is written to `assembly.json` as `pose_stats`), persists it (with each part's `pose_static`), clears tracking and the latched camera-frame displays for the next part. *Weld* `~/welding_points`: **mode A** — places each saved part's `weld_generator` primitive (registry `models/weldgen_objects.json`) at its `pose_static`, judges every face pair with the D4 accessibility rule under a pose tolerance (`weld_pose_tol_mm`), reports the fit-up per seam, places tacks by `tackrule-0.1`, publishes seams + tacks + labels and writes `welding_seams.json` / `welding_tacks.json`; falls back to the radius-PCA detector when a part has no registry entry (§8). *Export* `~/export_mesh`: boolean-unions the saved parts' CADs at their poses into a watertight `assembly_mesh.ply` for upload as a new model. *Reset* `~/reset_environment`: drops the SEPC, the saved-object list and the tracking state, blanks the latched clouds, and archives the on-disk assembly into `previous_assemblies/<timestamp>/` so the next cycle starts clean without a restart. *Multi-view* `~/refine_pose` / `~/abort_refine` (`multiview_service.py`, parameters `mv_*`: `mv_dry_run`, `mv_capture_here`, `mv_view_distance_m` 0.4, `mv_n_views` 4, `mv_n_frames` 16, `mv_online_selfcal`, `mv_quality_level` C, `mv_max_correction_mm/deg` 10/4, `mv_extrinsic_path`, `mv_record_selfcal`): see [Data flow §D](#d-assembly--weld-seam) and [§15](#15-multi-view-close-range-refinement); it refuses to move when the extrinsic in TF is not the file it records. Every ICP match passes a **normal gate** (`normal_gate_deg` 60): a model point pairs only with a scene point whose normal agrees, so the hidden face of a thin plate cannot latch onto its visible face (§4). `scene_from` (init only) = `pointcloud` or `depth_png`. With `use_open3d` (default), the per‑frame voxel downsample + normals run on the *cropped* cloud via Open3D (crop‑first is the key speedup); without Open3D it falls back to NumPy. The tick is further cut by `roi_crop` (slice the organized cloud to the crop box's *image* rectangle before any per‑point maths) and `noise_floor_refresh` (re‑measure the Welsch ν floor every N ticks, not every frame) — ~74 ms → ~23 ms on a 640×480 cloud, with bit‑identical output. Runs on a `MultiThreadedExecutor` so the tick cannot block the incoming cloud. | in: `/camera/depth/color/points`, TF, `/joint_states`, wrench; srv: `~/run_icp`, `~/stop_tracking`, `~/start_tracking`, `~/save_object`, `~/refine_pose`, `~/abort_refine`, `~/welding_points`, `~/export_mesh`, `~/reset_environment`; action client scaled JTC (refine_pose only); out: `/perception/icp/{scene_cloud,model_cloud,refined_pose,crop_box,static_env,welding_points,multiview_cloud,multiview_views}`, TF `sam6d_object` |
 | `depth_image_proc::PointCloudXyzrgbNode` | Standard package node (launched, not in this repo). Fuses color + registered depth + `camera_info` into an organized `PointCloud2`. | out: `/camera/depth/color/points` |
 
 ### Seams, tacks and pen marking (mode A → motion)
@@ -480,6 +509,13 @@ or retrain the classifier head with MediaPipe Model Maker for your viewing angle
 | `tcp_offset_probe.py` | Reads the pendant's active TCP relative to `tool0` from the driver (`tcp_pose_broadcaster` vs FK) and prints the `--tcp-offset` line for the hand-eye tools. Also shows the nominal-vs-calibrated FK gap (~3 mm at the tip). | in: `/tcp_pose_broadcaster/pose`, `/joint_states` |
 | `pen_tip_touchoff.py` | 4-point TCP for the pen without the pendant: the tip on one fixed point from 4+ wrist orientations, `~/record` each, `~/solve` fits the tip in `tool0` and the point in `base_link` with an RMS. A cross-check now that the pendant TCP is calibrated. | in: `/joint_states`; srv: `~/record`, `~/solve`, `~/clear`; out: `notebooks/pen_tip_touchoff.json` |
 | `table_touchoff.py` | Measures the table plane with the pen, no camera: from a pen-down start 3–8 cm above an empty table, touches a regular hexagon (10 cm edges) plus its centre; each touch is two-speed (fast to find the table, back off 3 mm, slow touch recorded), cancelled at the touch force; the tip is read from the driver's calibrated TCP pose. Fits the plane (height at the centroid, tilt, RMSE over 7 points, repeatability with `repeats` > 1) and writes `notebooks/table_plane.json`, which the real-robot launch hands to the ICP node's ground cut automatically (the cut follows the measured plane: the bench table is tilted 1.57° in `base_link`). Two-speed touches with an immediate, never-blocked release. `dry_run:=true` by default checks every spot's IK. `mode:=tcp_check` is the roll test quantified: one spot of the measured plane touched vertically at rolls 0/90/180/270 and tilted 30° toward four azimuths; the contact heights against the plane give the pen-tip (TCP) error by least squares → `notebooks/tcp_check.json`. | in: `/joint_states`, wrench, `/tcp_pose_broadcaster/pose`; action client scaled JTC; srv: `~/run`, `~/abort`; out: `notebooks/table_plane.json` |
+| `check_registration.py` | The registration against the LIVE cloud, face by face: per visible face the median offset and its drift across the face (a plate straddling its own two faces drifts by about its thickness). Run right after registering, with the parts untouched. Both sides go through the same TF and extrinsic, so a calibration error is invisible here - that is what `touch_probe` is for. | in: `/camera/depth/color/points`, TF, `assembly.json` |
+| `touch_probe.py` | The pen as the reference: freedrive the tip lightly onto a surface, run it; prints the tip against the pen-measured table plane (the pen-length check on the bare table) and against the nearest face of every registered part (+ = the real surface lies outside the registered one), and against the tacks. | in: TF `tool0_controller`, `table_plane.json`, `assembly.json`, `welding_tacks.json` |
+| `extrinsic_check.py` | The camera's view of the bare table against the pen-measured plane: `~/capture` per view, `~/report` separates a camera-fixed tilt from the table's own when the wrist yaws span 90 deg+ (`helper/calibration/refine_extrinsic_from_table.py` then corrects the camera part). Also the depth check: the same spot from 3 heights shows how the error grows with range (§16). | srv: `~/capture`, `~/report`, `~/clear`; out: `notebooks/extrinsic_check.json` |
+| `tare_distance.py` | The ground-truth distance for the RealSense Tare calibration, from the robot: camera pose from `/joint_states` (calibrated kinematics) + the extrinsic file, the table from `table_plane.json`; also the camera's tilt to the table and how far its axis lands from the touched patch (§16). No perception launch needed. | in: `/joint_states` |
+| `multiview_refine_offline.py` (CLI) | Replays a saved `refine_pose` capture with everything printed (`--write` → `<capture>/assembly_refined.json`, `--record` → the self-calibration history, `--set name=value` for any knob, `--make-synthetic DIR --d x y z` for a rendered capture of the bench T with known truth). No ROS. | in: `multiview/<ts>/` |
+| `selfcal_extrinsic.py` (CLI) | Combines the camera offsets the `refine_pose` runs recorded (by their information, same extrinsic file only); with 3+ agreeing runs `--write` puts `T_tcp_to_cam_selfcal.npy` next to the extrinsic, to promote by hand. | in: `notebooks/selfcal_history.json` |
+| `compare_registrations.py` (CLI) | Two archived registrations of the same untouched part (e.g. wrist 180 deg apart): their difference in `base_link`. | in: `previous_assemblies/` |
 | `pose_jitter_probe.py` | The registration's noise floor: listens to the ICP pose on a stationary part for N seconds and prints position std/range and orientation swing (2026-09-25: 5 mm std, 24 mm range, 6° — the reason `~/save_object` averages). Point it at `/perception/fp/pose` too, once that exists. | in: `/perception/icp/refined_pose` |
 
 ---
@@ -503,7 +539,13 @@ Pure Python, no rclpy — unit‑testable without ROS.
 | `collision.py` | `ur5e_capsules` (the arm as six capsules on `kinematics.ur5e_link_frames`, tubes displaced by the URDF's shoulder/elbow offsets), `boxes_from_parts` (mode A parts → boxes in metres), closed-form distances (segment–segment, golden-section segment–box, separating-axis box–box, lowest point vs plane), `CollisionModel` (`min_distance`, `in_collision`, `is_valid` for the RRT, `report`). No full self-collision; stated. |
 | `tack_reach.py` | `MarkingConfig` / `load_marking_config` (`config/marking.json`), `joint_state_to_ur_order`, the branch lock (`branch_signature`, `same_branch`, `solve_on_branch`), `pen_axis_for` (work-angle tilt about the seam tangent), `tool_only_clearance` (pose-only precheck), `plan_tacks` (tilt × roll per seam, largest minimum clearance, then least travel) and `format_report`. |
 | `marking.py` | The motion computed for the marking node: `transit_path` (straight edge or RRT + `shortcut_path` under the collision model, `edge_resolution` 0.01 rad), `descent_chain`, `line_chain`, `stroke_chain`, `resample_polyline`, `stroke_targets` (dot / tack segment / seam polyline), `time_joint_path`, `time_descent`, `contact_depth_m`, `build_marking_plan` (with the overshoot judged against the tack pose's own clearance), `plan_to_dict`. |
-| `kinematics.py` (additions) | `ur5e_link_frames` (every joint frame, for the capsules), `rrt_connect(..., is_valid=, edge_resolution=)` (validity callback for the collision model; a path-order bug after odd tree swaps fixed 2026-09-24), `_edge_valid(..., is_valid=)`. |
+| `motion.py` | `TrajectoryExecutor` (uses rclpy): joint states, the wrench with a bias re-measured before free moves, FollowJointTrajectory goals with the force watchdog (abort force, a higher release limit for moves away from a contact), the joint-jump gate, abort, dry run. Parameters declared under a prefix (`''` for the marking node, `mv_` for refine_pose). Shared by `tack_marking_node` and `~/refine_pose`. |
+| `multiview.py` | The view planner: `look_at`, `surfaces_from_models` / `box_from_model`, `seam_targets` (the seam region: a part's surface 1-30 mm from another part, with the owner per point), `visible` (depth range, field of view, incidence, occlusion by the part boxes), `nearest_in_limits`, `plan_views` (visibility first, then a lazy greedy pick with diminishing value per repeated sighting, IK on the branch, singularity and collision checks, nearest-neighbour order, transits and the way home). |
+| `multiview_refine.py` | The joint refinement of touching parts (§15): `ownership` (+ dead band), `refine_part` (Gauss-Newton about the part's centre: point-to-plane data with the normal gate and Welsch weights, the saved-pose prior, the overlap rule, optional resting contact), `refine_assembly` (rounds, per-view diagnostics, the online self-calibration iterated, the prior corrected by the scan view's share), `estimate_extrinsic` (the camera translation `d` with every part's pose, one least-squares problem; information by Schur complement), `weak_directions` (absolute: std <= 0.5 mm), `judge` / `_fallback` (D7), `fitup_gap_limit_mm` (weldgen's ISO 5817 no. 617) and `fitup_warnings`. |
+| `multiview_capture.py` | Captures on disk (`save_capture`, `load_capture`, `latest_capture`), `parts_from_assembly`, `preprocess_view` (organized normals towards the camera, `base_link`, crop to the parts, table cut, voxel), `refine_capture` + `format_replay` (what `refine_pose` and the offline replay both run), and synthetic captures (`render_view`: exact ray casting against the part boxes; `render_synthetic`). |
+| `multiview_service.py` | `MultiviewRefiner` (uses rclpy): the `~/refine_pose` orchestration attached to the ICP node - checks, plan, motion, capture, refine, apply, record. |
+| `selfcal.py` | The extrinsic translation self-calibration: `record_run`, `combine` (information-weighted over runs), `evaluate` (agreement rules), `corrected_extrinsic` (`t - R_tc d`), `write_selfcal`. |
+| `kinematics.py` (additions) | `load_kinematics` / `use_kinematics` / `active_kinematics` (the calibrated kinematics file drives `ur5e_fk`, the link frames, the Jacobian and the IK), `ur5e_link_frames` (every joint frame, for the capsules), `rrt_connect(..., is_valid=, edge_resolution=)` (validity callback for the collision model; a path-order bug after odd tree swaps fixed 2026-09-24), `_edge_valid(..., is_valid=)`. |
 
 ---
 
@@ -601,6 +643,18 @@ dropped as outliers.
 Reported metrics: `fitness = n_inliers / n_model` (what fraction of the CAD
 found support — this is the number `lost_fitness` gates on) and `inlier_rmse`
 (the RMS point‑to‑plane residual over inliers).
+
+**The normal gate (2026-09-29).** The model is sampled from *every* face of the CAD,
+but the camera sees only the faces turned towards it; without a gate a hidden face finds
+its nearest scene point on the visible face too. On an 8 mm plate that makes a false
+minimum where the model straddles its own two faces — visible face on the data at one
+end, back face at the other, a lean of `atan(8/99)` — which on the bench put the weld root
+10 mm off while the fit looked fine. With outward model normals `n_i` (from the mesh
+winding, `sample_mesh_surface(..., return_normals=True)`) and scene normals `m_j`
+oriented to the camera, a pair counts only if `(R n_i)·m_j ≥ cos 60°`; the back face is
+~180° off and drops out. On the same data the ear returned to 0.3–0.8° lean and the root
+to ±0.2 mm. Fitness now counts only compatible pairs (≈ 0.5 for a plate seen from one
+side, not 1.0 — the old 1.0 was the warning sign).
 
 ### 5. Fast‑ICP: Anderson acceleration on SE(3)
 
@@ -805,7 +859,7 @@ reason when `weld_fallback_pca` is false.
 Mode B (no CAD, sensor points, quadric intersection) is the next step of the plan.
 
 
-**Status 2026-09-28: mode A validated on the robot**; the marking error went from ~8 mm to 3.7–4.3 mm. [§14](#14-placement-accuracy-from-8-mm-to-4-mm-and-how-each-millimetre-was-found) tells how, with the error budget.
+**Status 2026-10-02: mode A validated on the robot**; the marking error went from ~8 mm to ~2.5 mm. [§14](#14-placement-accuracy-from-8-mm-to-25-mm-and-how-each-millimetre-was-found) tells how, with the error budget.
 The full open list of both projects is [`notes/todo.md`](notes/todo.md).
 
 **Pen-marking the tacks** ([`notes/pen_marking_plan.md`](notes/pen_marking_plan.md)):
@@ -1019,16 +1073,19 @@ as its own ground truth — available directly because the CADs and poses were k
 
 ---
 
-### 14. Placement accuracy: from 8 mm to 4 mm, and how each millimetre was found
+### 14. Placement accuracy: from 8 mm to 2.5 mm, and how each millimetre was found
 
-The pen marks are the camera-independent check of the whole chain: camera → hand-eye
-extrinsic → registration → seam → planner kinematics → pen tip. Between 2026-09-24 and
-2026-09-28 the lateral placement error of a marked tack went from **~8 mm to 3.7–4.3 mm**.
-Every step below followed the same rule: **measure a link against something that does not
-depend on it, before changing it.** Two references carried most of the work, both made
-with the robot itself rather than the camera: the **pen tip** (the pendant's 4-point TCP,
-then `tcp_check`) and the **table plane measured by pen touches** (7 touches, RMSE
-0.20 mm, `notebooks/table_plane.json`).
+The pen marks are the camera-independent check of the whole chain: camera depth → hand-eye
+extrinsic → kinematics → registration → seam → planner → pen tip. Between 2026-09-24 and
+2026-10-02 the placement error of a marked tack went from **~8 mm to ~2.5 mm**. Every step
+followed the same rule: **measure a link against something that does not depend on it,
+before changing it.** The references were made with the robot itself, not the camera:
+the **pen tip** (the pendant's 4-point TCP, then `tcp_check`), the **table plane measured
+by pen touches** (`notebooks/table_plane.json`), and **pen touches on the parts**
+(`touch_probe.py`). The day-by-day story, with every number, is in
+[`notes/thesis_notes.md`](notes/thesis_notes.md).
+
+**Up to 28 Sep (8 mm → 3.7–4.3 mm):**
 
 | Date | Symptom on the bench | How it was measured | Cause | Fix | After |
 |---|---|---|---|---|---|
@@ -1049,19 +1106,130 @@ table, and a 1 mm stroke press read 8 N on steel. Hence the two-speed approach (
 at 2 mm/s), releases that the abort force can never block, press 0 and a stroke depth
 gain far below 1/stiffness.
 
-**Error budget now (lateral, at the mark):**
+**29 Sep – 2 Oct (3.7–4.3 mm → ~2.5 mm):**
+
+| Date | Symptom on the bench | How it was measured | Cause | Fix | After |
+|---|---|---|---|---|---|
+| 29 Sep | marks 3.7–4.3 mm with a model predicting 5.4/5.9 mm | `tcp_offset_probe.py`: the calibrated FK reproduces the pendant TCP at every pose (0.001°), the nominal one wanders 2.4–4.2 mm / 0.55° | TF and the planner used the **nominal** UR5e chain, the robot and the hand-eye capture its **calibrated** one | `config/ur5e_calibration.yaml` in the URDF, the driver and every tool (`use_kinematics`); reports record the model | the model error gone (and exposed the next ones) |
+| 29 Sep | marks got worse, 14–16 mm | `check_registration.py`: the standing plate's visible face drifts ~7 mm from top to foot against the live cloud | ICP **straddled the 8 mm plate's two faces** (6.5° lean, root 10 mm off) | the normal gate (§4) | lean 0.3–0.8°, root ±0.2 mm |
+| 29 Sep | square tees "unreachable"; earlier "reachable" ones were a registration artefact | holder CAD: tube r 17.4 mm | one 42 mm capsule for the holder cleared a 90° corner by 1.1 mm | envelope from the CAD | 15.5 mm clearance |
+| 29 Sep | contact 9.7 mm early | 7 mm / cos 45°; the registration's own "fit-up gap 0.9–4.6 mm" | an extra 7 mm metal plate under the ear | removed | – |
+| 1 Oct | contact 8.5–9 mm early on both sides, registration OK | pen touches: base top +6 / +8 mm vs the registration; the multi-view capture: close views see the base +4 mm, the 0.6 m view 0 → error grows with range; `extrinsic_check` at 3 heights: +1.9 / +0.3 / −3.3 mm at 0.29 / 0.44 / 0.63 m | **D435i depth too long, growing with range²** (a ~0.6 px disparity offset) | RealSense Tare against a distance computed from the robot (`tare_distance.py`), after re-measuring the table; a first Tare with a hand-measured distance over-corrected to a 1.1 % scale error | over 0.3–0.65 m the camera vs the pen varies 1.1 mm (§16) |
+| 2 Oct | 0.5° tilt left | `extrinsic_check` at 4 wrist yaws: camera-fixed 0.49°, table 0.44°, residual 0.05° | the extrinsic's rotation | `refine_extrinsic_from_table.py` | camera ≈ 0.07° |
+| 2 Oct | marks 3–7 mm, one side early, one late | contact depths of both seams; `refine_pose` | the extrinsic's **translation** (never measured by the table) and the scan view's share of it in every saved pose; the standing plate's rotation in its own plane | `~/refine_pose`: 4 close views, the camera offset estimated and taken out of views and prior (§15) | **all tacks ~2.5 mm** |
+
+**Error budget now (2 Oct):**
 
 | Link | Status | Size |
 |---|---|---|
-| pen tip (TCP) | measured on the plane | 0.2 mm |
-| camera tilt (2 of 3 rotations) | measured on the plane, refined | 0.04° ≈ 0.2 mm |
-| registration noise | measured, averaged at save | ~1 mm after averaging (3.6–3.9 mm per tick) |
-| **kinematic model mismatch** | **not fixed** | ~3 mm at the tip, pose-dependent: the hand-eye capture read poses through the robot's **calibrated** kinematics (RTDE), while the TF tree (`default_kinematics.yaml` in the URDF) and the planner use the **nominal** UR5e chain. The extrinsic is solved in one model and applied in the other, and the pen is placed by the other |
-| extrinsic horizontal translation, rotation about the optical axis | **not measured** (a plane cannot see them) | two ChArUco solves disagree by 18 mm here; the 180°-yaw registration test measures it (`compare_registrations.py`) |
-| depth bias | seen, not separated | the camera sees the table +2.3 mm high at 300 mm (depth bias or the table far from the touched patch) |
+| kinematics | calibrated model everywhere | < 0.1 mm |
+| pen tip (TCP) | measured on the plane | 0.2 mm lateral; length within ~2 mm |
+| camera depth vs range | Tare against the robot | 1.1 mm across 0.3–0.65 m, a constant ≈ +2 mm left |
+| camera tilt | separated at 4 yaws, refined | ≈ 0.07° |
+| extrinsic translation | estimated per run by `refine_pose` (online) | horizontal part removed; the **vertical part is over-corrected by ~3–5 mm** (it is the direction 45°/60° views separate worst) - contacts still 3–6 mm early |
+| registration of the parts | multi-view, 2 registrations agree | ~0.4 mm on the surfaces; the base's slide in its own plane 1–3 mm (does not move the roots) |
+| parts not fixed | magnets | can move ~1 mm between scan, marking and touches |
 
-The two unmeasured rows are where the remaining ~4 mm most likely lives; both have a
-defined test (see `notes/todo.md`, parked).
+Next steps are in [`notes/todo.md`](notes/todo.md): anchor the vertical to the
+pen-referenced table instead of the views, and fixture the parts.
+
+### 15. Multi-view close-range refinement
+
+**Views** (`multiview.py`). Target = the centre of the saved parts. Candidates: look-at
+camera poses at 0.4 m, elevation 45°/60°, azimuth every 30°, 4 rolls each. Each scores the
+**seam region** (a part's surface 1–30 mm from another part) it sees: in depth range
+(> 0.28 m), in the field of view, incidence < 60°, not occluded by another part's box.
+A greedy pick values a point's 1st/2nd/3rd sighting 1/0.5/0.25 and keeps directions 30°
+apart; IK, singularity (wrist and elbow) and collision checks run only on the candidates
+the pick wants (lazy), so planning takes seconds, not a minute.
+
+**Parts take turns** (block-coordinate descent, 2 rounds for the two-part cell). Each
+scene point belongs to the part with the nearest registered surface; points within 4 mm
+of two parts are dropped (`ownership`). One part is refined against its points while the
+others stay still, then the next; ownership is recomputed between rounds.
+
+**One part's solve** (`refine_part`), about the part's own centre `c` (a 1° turn about the
+`base_link` origin would move it 9 mm): minimise
+
+    Σ_k w_k ρ(nₖ·(T pₖ − qₖ))²  +  ξᵀ Σ⁻¹ ξ · σ²  +  w_o Σ_c max(0, −sd_c − ε)²
+
+the point-to-plane residuals of the CAD points against their nearest scene points (the
+normal gate of §4; Welsch weights ρ with ν annealed from max(3·median, p90) of |r| down to
+the 1.5 mm point noise σ; each view equal total weight), the **prior** pulling the
+correction ξ ∈ se(3) towards the saved pose (Σ: 3 mm, 1°), and the **overlap rule**: CAD
+points on faces next to a neighbour may not sink more than ε = 0.5 mm into its box (`sd` is
+the signed distance to the box, one-sided). Which directions the data actually measure is
+read from the information matrix `H = Jᵀ W J` (rotation scaled by the part's radius, so
+both are in mm): a direction counts as measured when σ/√λ ≤ 0.5 mm. That has to be an
+**absolute** criterion - a "5 % of the strongest direction" rule called the standing
+plate's in-plane rotation unmeasured although thousands of points pinned it.
+
+**The camera's translation error** (`estimate_extrinsic`). An extrinsic translation error
+`d` (camera frame) shifts view v's cloud by `R_v d`, so a scene point's residual is
+`n·(T p − q + R_v d)`: linear in `d` and in every part's correction. One least-squares
+problem over all owned points gives both; `d`'s information is the Schur complement
+`S = N_dd − N_dx N_xx⁺ N_xd`, and only directions with σ ≤ 0.5 mm are kept. (A first
+version registered each part to each view alone and regressed: from the *true* poses it
+returned (7, 13, −15) mm for an injected (3, −2, 1) - the points, not the per-view poses,
+carry the information.)
+
+**Online self-calibration.** When `|d| > 0.5 mm` the run takes `R_v d` out of every view
+**and** `R_scan d` out of every saved pose (each object records the camera that registered
+it, `T_static_camera`) and refines again, iterating on what the corrected views still say
+until it is < 0.5 mm. Correcting only the views left the plate's unmeasured slide at the
+uncorrected saved pose while its measured part moved - a fake 8 mm fit-up change and both
+parts rejected. The *joint* fit alone does not remove `d`: the part common to all views
+stays in the poses (synthetic: recovered to 0.2 mm only by estimating `d`).
+
+**Acceptance (D7).** Rejected (the saved pose kept, with the reason): a correction beyond
+the camera share over 10 mm / 4°, fitness < 0.2, an overlap > 1 mm, or a change of the
+pose between touching parts > 2 mm / 1° *in directions the data do not measure*. A
+rejected part is held at its saved pose and the others are refined once more against it;
+an accepted part whose fit-up with a held one would change too much is kept too - the
+assembly is refined together or not at all.
+
+**Fit-up gap.** The gap between faces resting on a neighbour (down-facing faces opposite
+the neighbour's) is measured along the whole contact and checked against ISO 5817:2023
+Table 1 no. 617 (fillet root gap) via weldgen's `root_gap_limit` with a = 0.7·t: 1.06 /
+1.62 / 2.68 mm at levels B / C / D for 8 mm plates (`mv_quality_level`, default C). Over
+it: a **warning**, never a rejection - an operator who placed a part too far off must be
+told. A resting-contact pull (`resting_contact`) is available but off: it closed a real
+synthetic 3 mm gap, unwarned.
+
+**Self-calibration across runs** (`selfcal.py`, `selfcal_extrinsic.py`). Each run records
+`d` and its 3×3 information under the extrinsic file's sha1; runs are combined
+`d = (ΣI)⁺ Σ I d` and judged in each run's own determined directions; a corrected
+extrinsic (`t − R_tc d`) is written only when 3+ runs agree within 1 mm. Repeat captures
+of one scene are not independent evidence - do not promote from them.
+
+### 16. Camera depth calibration against the robot
+
+A stereo depth camera with a disparity offset δ reports depth with an error
+`Δz = z²·δ/(f·B)` - it **grows with range squared**, so a check at one distance says
+little. Measured with `extrinsic_check` from three heights over the same spot of the
+pen-touched table: +1.92 / +0.31 / −3.28 mm at 291 / 439 / 626 mm (the camera's table vs
+the pen's) - an `a + k z²` fit (k ≈ −17 mm/m²) predicts the middle point to 0.2 mm, a
+straight line misses it by 0.7 mm; δ ≈ 0.6 px. From the scan home (~0.6 m) that put every
+registration ~7 mm too low.
+
+The fix is the RealSense **Tare** calibration (realsense-viewer, after the on-chip
+calibration), but it is only as good as the ground-truth distance entered. Measured by
+hand it over-corrected into a 1.1 % scale error (+1.7 / +3.3 / +5.2 mm at 0.29 / 0.42 /
+0.60 m; the D435's depth origin sits 4.2 mm behind the glass). Computed from the robot it
+worked:
+
+1. re-measure the table plane with the pen (`table_touchoff.py`) - it is the reference;
+2. put the camera **square to the table** (not to the floor: the table is tilted 1.57°)
+   over the touched patch at ~0.5 m; `tare_distance.py` prints the depth along the optical
+   axis from the calibrated kinematics, the extrinsic and the plane, and the tilt / patch
+   distance to adjust until both are inside the limits;
+3. stop the perception launch, Tare with that distance in realsense-viewer, restart;
+4. check: `extrinsic_check` at 0.3 / 0.45 / 0.6 m over the patch (after: +0.29 / +1.06 /
+   +1.43 mm, i.e. 1.1 mm across the range), then at 4 wrist yaws for the tilt.
+
+Order matters: kinematics → pen TCP and table plane → camera depth → extrinsic rotation →
+extrinsic translation. A step done on top of an uncorrected earlier one learns its error
+(the self-calibration history recorded the depth bias as an extrinsic offset).
 
 ## Interfaces
 
@@ -1247,6 +1415,13 @@ ros2 service call /foundationpose_bridge/trigger        std_srvs/srv/Trigger
 ros2 service call /icp_pose_refiner/run_icp    std_srvs/srv/Trigger
 ros2 service call /icp_pose_refiner/save_object std_srvs/srv/Trigger
 
+# --- right after saving: check, then refine from close views (the robot moves) ---
+ros2 run admittance_control check_registration.py                    # parts untouched, robot at the scan pose
+ros2 service call /icp_pose_refiner/refine_pose std_srvs/srv/Trigger  # 4 views; reply: per part ACCEPTED /
+                                                                     # KEPT AS SAVED + why, camera offset d,
+                                                                     # fit-up gaps (ISO warning)
+# (ros2 service call /icp_pose_refiner/abort_refine ... stops it; -p mv_dry_run:=true only shows the views)
+
 # --- the joint between them: seams + tacks computed from the two poses (mode A) ---
 ros2 service call /icp_pose_refiner/welding_points std_srvs/srv/Trigger
 # → "mode A: 2 weldable seam(s): fillet 180mm (A:+wxB:-w) gap 0.0..4.8mm, fillet 180mm
@@ -1297,6 +1472,31 @@ ros2 param set /icp_pose_refiner weld_method radius_pca       # the old detector
 ros2 param set /icp_pose_refiner weld_radius_m 0.006          #   must exceed the gap...
 ros2 param set /icp_pose_refiner weld_curvature_thresh 0.03   #   ...and stay under part thickness
 ros2 service call /icp_pose_refiner/welding_points std_srvs/srv/Trigger
+```
+
+### Calibration routine (in this order)
+
+Each step is checked against the robot, not the camera; a step done on top of an
+uncorrected earlier one learns its error (§14, §16).
+
+```bash
+# 0. the UR driver with the robot's own kinematics (workspace README)
+#    ... ur_control.launch.py ... kinematics_params_file:=<pkg>/config/ur5e_calibration.yaml
+# 1. pen TCP: the pendant's 4-point TCP → config/pen_tool.json pen_tip_m (and the pen capsule's p1)
+# 2. the table plane by pen touches (empty table around the hexagon)
+ros2 run admittance_control table_touchoff.py --ros-args -p dry_run:=false
+ros2 service call /table_touchoff/run std_srvs/srv/Trigger              # → notebooks/table_plane.json
+# 3. camera depth: square to the table over the touched patch, ~0.5 m
+ros2 run admittance_control tare_distance.py                            # → the Tare ground truth
+#    stop the perception launch, realsense-viewer → Tare with that distance, restart the launch
+# 4. check depth vs range, then the tilt (wrist at 4 yaws over the same spot)
+ros2 run admittance_control extrinsic_check.py
+ros2 service call /extrinsic_check/capture std_srvs/srv/Trigger          # per view
+ros2 service call /extrinsic_check/report  std_srvs/srv/Trigger
+python3 helper/calibration/refine_extrinsic_from_table.py --extrinsic notebooks/T_tcp_to_cam.npy --write
+#    back up T_tcp_to_cam.npy, promote T_tcp_to_cam_refined.npy, restart the launch, check again
+# 5. the extrinsic translation: estimated by every refine_pose run; across distinct scenes
+python3 scripts/selfcal_extrinsic.py                                    # --write once 3+ runs agree
 ```
 
 ### Run the cycle by hand gestures
@@ -1410,7 +1610,28 @@ ros2 launch admittance_control pointcloud.launch.py launch_rviz:=true launch_icp
   (`chmod +x scripts/your_node.py`) or isn't in `install(PROGRAMS …)`.
 - **`ModuleNotFoundError: admittance_control.<x>`?** Add the module to the
   `install(FILES …)` list — this package does *not* use
-  `ament_python_install_package()`.
+  `ament_python_install_package()` — and `colcon build --symlink-install
+  --packages-select admittance_control`. A source-tree run works without it, the
+  installed node does not: on 2026-10-01 the ICP node died at start-up on a new import
+  (it now starts without `refine_pose` and says why).
+- **Registration "OK" but the marks are off?** `check_registration` compares the
+  registration with its own camera; a calibration error moves both together. Touch with
+  the pen (`touch_probe.py`): base top and both faces of a standing part.
+- **Contact early on BOTH sides of a standing plate?** A vertical error (camera depth,
+  something under a part), not a sideways one: a sideways shift makes one side early and
+  the other late. 1 mm of height ≈ 1.4 mm of contact along a 45° pen.
+- **Registered, then marked hours later?** Check right after registering and mark right
+  after the check: a 2 h gap left a 4 mm disagreement (parts moved or the camera drifted).
+- **`refine_pose` says KEPT AS SAVED?** Read the reason: an overlap, a correction beyond
+  the limits, or a fit-up change in unmeasured directions. The attempted correction and
+  the camera share are printed; replay the capture with `multiview_refine_offline.py
+  --set ...` to see what a knob would change.
+- **Transit aborts at ~8 N with nothing touching?** The F/T sensor's zero drifted (7 N at
+  rest after a power cycle). Free moves re-measure the bias first; if it still trips,
+  check the payload on the pendant and `zero_ftsensor`.
+- **Self-calibration "ready" from three runs of one scene?** Not independent evidence; and
+  any run made before a depth recalibration learned the depth error. Promote only from
+  distinct scenes after the last camera change.
 - **RViz shows nothing for a point cloud / detection?** Check the **Fixed Frame**
   resolves through TF to the cloud's `frame_id`, and that `camera_info` is actually
   being published (in sim it must be synthesized by the sim camera node).
