@@ -192,6 +192,27 @@ does not pin down. Four layers guard against it.
 - **Order within a round:** the part with the most owned points first, usually the base.
   It is the best constrained and becomes the reference for the parts on it.
 
+**Layer 3b (added 2026-10-02). Fit-up gap: measured, checked, warned.**
+
+- **The measurement:** the faces that rest on a neighbour (down-facing faces opposite a
+  neighbour's face, e.g. the ear's foot on the base top) get their gap measured along the
+  whole contact after refinement.
+- **The check:** against the ISO 5817:2023 no. 617 fillet root-gap limit at
+  `mv_quality_level` (default C), computed by weldgen's own `root_gap_limit` with
+  a = 0.7·t: 1.06 / 1.62 / 2.68 mm at B / C / D for 8 mm plates.
+- **Over the limit: a WARNING in the reply, never a rejection.** An operator who places a
+  part too far off must be told, and a bad fit-up is information.
+- **Optional resting contact (`mv_resting_contact`, default OFF):** a gentle pull of those
+  faces onto the neighbour.
+  - It was tried and overrode the data: a synthetic 3 mm gap closed to under 1 mm,
+    unwarned.
+  - It isn't needed: with the absolute observability rule below, the views alone determine
+    a standing plate.
+- **Observability is absolute:** a part direction counts as measured at a std of 0.5 mm or
+  better (`observable_max_sigma_mm`), from the information of the data AND the contacts.
+  The earlier relative rule (5% of the strongest) called directions unmeasured that were
+  pinned to a fraction of a millimetre.
+
 **Layer 4. View weights.** Each view gets equal total weight, so the closest or densest view
 does not dominate. That needs a per-point weight input in `icp.py`; the Welsch weights
 multiply it.
@@ -223,7 +244,7 @@ For each part, also register each view on its own, starting from the joint resul
 ### D7. Accept, persist, show
 
 - **Reject** a part's refinement, keeping the old pose and saying why, if:
-  - the correction exceeds `mv_max_correction_mm` 10 or `mv_max_correction_deg` 3;
+  - the correction exceeds `mv_max_correction_mm` 10 or `mv_max_correction_deg` 4 (3 until 2026-10-02);
   - the fitness is below 0.2;
   - the face check fails;
   - two parts overlap by more than `mv_max_penetration_mm` 1, using the refined poses and
@@ -543,7 +564,7 @@ For each part, also register each view on its own, starting from the joint resul
 
 `mv_view_distance_m` 0.40 · `mv_n_views` 4 · `mv_elevations_deg` [45, 60] ·
 `mv_azimuth_step_deg` 30 · `mv_max_incidence_deg` 60 · `mv_n_frames` 8 · `mv_voxel_m` 0.003 ·
-`mv_max_corr_m` 0.010 · `mv_max_correction_mm` 10 · `mv_max_correction_deg` 3 ·
+`mv_max_corr_m` 0.010 · `mv_max_correction_mm` 10 · `mv_max_correction_deg` 4 ·
 `mv_dry_run` true · `mv_v_joint_rad_s` (as the marking node) · `mv_save_views` true
 
 Touching parts (D5, D7): `mv_dead_band_m` 0.004 · `mv_prior_sigma_mm` 3 ·

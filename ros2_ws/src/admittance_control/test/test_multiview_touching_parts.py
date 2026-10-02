@@ -258,7 +258,7 @@ def test_overlap_rule_no_sinking_and_a_real_gap_is_kept(tee):
     res, _ = mr.refine_assembly([base, ear], views, per_view=False)
     nb = [mr.box_of(base, res[0].T)]
     contacts = mr.contact_samples(ear, res[1].T, nb, mr.RefineConfig())
-    sd = mr.signed_distance_box(contacts @ res[1].T[:3, :3].T + res[1].T[:3, 3], nb[0])[0]
+    sd = mr.signed_distance_box(contacts[:, :3] @ res[1].T[:3, :3].T + res[1].T[:3, 3], nb[0])[0]
     assert -sd.min() < 0.0005 + 1e-4                       # no deeper than the tolerance
     # a REAL 1 mm gap (the ear's truth floats 1 mm above the base) is kept, not closed
     truth_gap = [truth[0], _move(truth[1], mm=(0, 0, 1.0))]

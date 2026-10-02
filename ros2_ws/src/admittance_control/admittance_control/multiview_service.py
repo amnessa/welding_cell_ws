@@ -78,9 +78,11 @@ PARAMS: dict[str, Any] = {
     "selfcal_history": str(PKG / "notebooks" / "selfcal_history.json"),
     "online_selfcal": True,
     "max_correction_mm": 10.0,
-    "max_correction_deg": 3.0,
+    "max_correction_deg": 4.0,
     "max_relative_mm": 2.0,
     "max_relative_deg": 1.0,
+    "resting_contact": False,
+    "quality_level": "C",
     "voxel_m": 0.003,
 }
 
@@ -119,7 +121,9 @@ class MultiviewRefiner:
                                max_correction_mm=float(self.p("max_correction_mm")),
                                max_correction_deg=float(self.p("max_correction_deg")),
                                max_relative_mm=float(self.p("max_relative_mm")),
-                               max_relative_deg=float(self.p("max_relative_deg")))
+                               max_relative_deg=float(self.p("max_relative_deg")),
+                               resting_contact=bool(self.p("resting_contact")),
+                               quality_level=str(self.p("quality_level")))
         pcfg = mc.PreprocessConfig(voxel_m=float(self.p("voxel_m")))
         return vcfg, rcfg, pcfg
 

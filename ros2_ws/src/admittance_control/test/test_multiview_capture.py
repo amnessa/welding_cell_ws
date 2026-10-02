@@ -174,3 +174,51 @@ def test_saved_poses_carrying_the_scan_views_error(tmp_path):
         assert r.beyond_mm < 0.5
     assert "camera error at its scan pose" in mc.format_replay(rp)
 
+
+
+def _tee_boxes(gap_mm: float):
+    """A 250 x 256 x 8 base lying flat and a 250 x 8 x 99 ear standing on it, its foot
+    `gap_mm` above the base top - exact boxes, so the true gap is unambiguous."""
+    import test_multiview_touching_parts as tt
+    base = tt._box_part("base", (0.250, 0.256, 0.008), mr._T(np.eye(3), np.array([-0.65, -0.03, -0.06])), seed=5)
+    R = mr._rodrigues(np.radians(-42.0) * np.array([0, 0, 1.0]))
+    ear_T = mr._T(R, np.array([-0.62, 0.17, -0.052 + gap_mm / 1000]))
+    ear = tt._box_part("ear", (0.250, 0.008, 0.099), ear_T, seed=6)
+    return [base, ear]
+
+
+def _refine_rendered(parts, cfg=None):
+    import multiview_refine_offline as off
+    poses = [p.T_saved for p in parts]
+    allp = np.vstack([mr.posed(p, T)[0] for p, T in zip(parts, poses)])
+    target = (allp.min(0) + allp.max(0)) / 2
+    K = mc.pinhole(424, 240)
+    views = []
+    for k, (az, el, roll) in enumerate(off.T_VIEWS):
+        e, a = np.radians(el), np.radians(az)
+        cam = target + 0.4 * np.array([np.cos(e) * np.cos(a), np.cos(e) * np.sin(a), np.sin(e)])
+        Tc = mv.look_at(cam, target, np.radians(roll))
+        raw = mc.RawView(mc.render_view(parts, poses, Tc, K, 424, 240, rng=np.random.default_rng(k)), Tc)
+        views.append(mc.preprocess_view(raw, parts))
+    return mr.refine_assembly(parts, views, cfg)
+
+
+@pytest.mark.parametrize("gap_mm,warn", [(0.0, False), (3.0, True)])
+def test_a_real_fitup_gap_is_measured_and_warned(gap_mm, warn):
+    """An operator who places the ear 3 mm off the base must be told: the gap is MEASURED
+    from the views (resting contact off, the default) and over the ISO 5817 no. 617 level C
+    fillet limit (1.6 mm for 8 mm plates) it is a WARNING; flush, there is none."""
+    res, _ = _refine_rendered(_tee_boxes(gap_mm))
+    ear = res[1]
+    gmin, gmax = ear.gaps_mm["base"]
+    assert abs(gmin - gap_mm) < 0.7 and abs(gmax - gap_mm) < 0.7, (gmin, gmax)
+    has = any("exceeds the ISO 5817" in w for w in ear.warnings)
+    assert has == warn, ear.warnings
+    if mr.fitup_gap_limit_mm(8, 8, "C") is not None:
+        assert ear.gap_limit_mm["base"] == pytest.approx(1.62, abs=0.01)
+
+
+def test_resting_contact_would_hide_that_gap():
+    """Why resting_contact is off by default: its pull closes the same 3 mm gap."""
+    res, _ = _refine_rendered(_tee_boxes(3.0), mr.RefineConfig(resting_contact=True))
+    assert res[1].gaps_mm["base"][1] < 2.0

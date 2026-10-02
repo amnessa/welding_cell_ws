@@ -82,9 +82,43 @@ How the ear's foot sits against the base top:
   tilted along its length: registration error, not a real gap.
 - **Why it matters:** the root height changes by that much from one end of the seam to the
   other.
-- **What would fix it is physics, not more views.** The ear rests on the base. A two-sided
-  "resting contact", with the foot ON the neighbour's face, would fix both the height and
-  that rotation, but turns the fit-up gap into an assumption. Decision pending.
+- **First idea: physics.** The ear rests on the base, so a two-sided "resting contact"
+  (the foot pulled ONTO the neighbour's face) would fix both the height and that rotation.
+  The cost is that the fit-up gap becomes an assumption.
+
+### Resolution: measure the gap and warn; don't assume it
+
+**The user's requirement:** "an operator who places the parts too far apart must be
+told." Fillet root gaps have a limit: ISO 5817:2023 Table 1 no. 617, which weldgen already
+implements. For 8 mm plates with a throat of a = 0.7·t the limit is 1.06 mm at level B,
+1.62 mm at C and 2.68 mm at D. Parts never interpenetrate (the overlap rule), and a
+gap is information.
+
+**What the experiments showed:**
+
+1. **The resting pull overrides the data.** A synthetic 3 mm gap was pulled below 1 mm,
+   unwarned. On a non-flush synthetic truth the pull moved the ear 1.2 mm off it. So the
+   resting contact is an option, OFF by default.
+2. **The real cause of the rejections was again a relative criterion.** A part direction
+   counted as "measured" only with at least 5% of the strongest direction's information,
+   and a plate's faces carry thousands of points. Switched to absolute uncertainty: a
+   direction counts as measured at a std of 0.5 mm or better.
+3. **With that, the views alone determine the standing plate.** Four real runs, from two
+   different registrations, are all accepted. They agree on the surfaces to 0.12–0.41 mm
+   (base) and 0.07–0.38 mm (ear), and the run from the other registration agrees to
+   0.4 mm.
+4. **The gap is measured and warned.** All four runs see the ear's foot 0.5–0.7 mm above
+   the base at one end and 2.0–2.8 mm at the other, over the level C limit, so a WARNING.
+   It's consistent across registrations, so it's real or a systematic sensor effect, not
+   noise. To check by hand: a feeler gauge at the foot.
+5. **Exact-box synthetic test:** the ear placed 3 mm off is measured within 0.7 mm and
+   warned; placed flush, there is no warning.
+
+**A limitation to report:** the base's slide within its own plane still varies 1–3 mm run
+to run, although the absolute criterion counts it as measured. It rests on grazing edge
+points, which are noisier and more correlated than the noise model assumes. It doesn't
+move the weld roots (base top and ear faces), but the uncertainty estimate is optimistic
+there.
 
 ### What we learned
 

@@ -70,14 +70,38 @@ class RefineConfig:
     own_max_m: float = 0.015              # scene points farther than this from every part: nobody's
     prior_sigma_mm: float = 3.0
     prior_sigma_deg: float = 1.0
-    overlap_band_m: float = 0.004         # model points this close to a neighbour's box: contact samples
+    overlap_band_m: float = 0.008         # model points this close to a neighbour's box: contact samples
     contact_samples: int = 200
+    # resting contact (2026-10-02): a part standing on another rests ON it - parts never
+    # go into each other (the overlap rule) and do not float. Facing faces (outward normals
+    # opposite within resting_facing_deg, e.g. the ear's foot on the base top) get a gentle
+    # pull towards touching, weighted like resting_weight camera points per sample: where
+    # the views measure the gap the data win and a real gap stays visible; where they
+    # cannot see (a standing plate's rotation in its own plane, constrained only by 8 mm
+    # edges) the pull decides. The gap that remains is measured and checked against the
+    # ISO 5817:2023 no. 617 fillet root-gap limit at quality_level (weldgen's own
+    # root_gap_limit): over it, a WARNING, not a rejection - a bad fit-up is information.
+    # OFF by default (2026-10-02, the user's call): the gap must be MEASURED and warned
+    # about - an operator who places a part too far off must be told. On the bench the
+    # pull overrode the data (a synthetic 3 mm gap closed to < 1 mm, unwarned) and, with
+    # the absolute observability rule, the views alone already determine the standing
+    # plate (4 real runs, two registrations: consistent to 0.4 mm). Kept as an option for
+    # scenes where resting is known and the views are poor.
+    resting_contact: bool = False         # the faces that rest are the DOWN-facing ones (gravity)
+    resting_weight: float = 1.0
+    resting_facing_deg: float = 20.0
+    quality_level: str = "C"
     penetration_tol_m: float = 0.0005
     overlap_weight: float = 10.0          # x the per-point data weight (1 / mean view size)
     rounds: int = 2
     max_iter: int = 30
     welsch_k: float = 3.0                 # nu starts at max(k * median |r|, p90 |r|), shrinks to noise_m
-    observable_ratio: float = 0.05        # part directions: weak below this x the strongest
+    observable_ratio: float = 0.05        # (kept for older callers; the criterion is absolute now)
+    # a part direction counts as measured when its std (from the information of the data
+    # AND the contacts, a point = noise_m) is at most this - absolute, as for d: a relative
+    # rule called the ear's in-plane rotation "not measured" although its resting contact
+    # (~50 samples) pinned it to a fraction of a mm, because the faces carry thousands
+    observable_max_sigma_mm: float = 0.5
     # a direction of the extrinsic error d counts as determined when its standard deviation
     # (from the information, a point = noise_m) is at most this. Absolute, not relative: the
     # planned T views measure their weakest direction of d to 0.16 mm (actual errors
@@ -94,7 +118,7 @@ class RefineConfig:
     converge_deg: float = 0.05
     # acceptance (plan D7)
     max_correction_mm: float = 10.0
-    max_correction_deg: float = 3.0
+    max_correction_deg: float = 4.0       # 3 until 2026-10-02 (the user raised it: an ear correction of 3.07 deg was refused)
     min_fitness: float = 0.2
     max_penetration_mm: float = 1.0
     max_relative_mm: float = 2.0
@@ -162,6 +186,9 @@ class PartResult:
     beyond_mm: float = 0.0                # ... and the correction beyond that (what the limits judge)
     beyond_deg: float = 0.0
     T_attempt: Optional[np.ndarray] = None   # the refined pose before judge/fallback (kept for the report)
+    gaps_mm: dict = field(default_factory=dict)   # neighbour -> (min, max) gap of the faces resting on it
+    gap_limit_mm: dict = field(default_factory=dict)  # neighbour -> ISO 5817 no. 617 limit used
+    warnings: list = field(default_factory=list)
 
 
 # ---------------------------------------------------------------- small helpers -------
@@ -277,16 +304,16 @@ def corr_distance(parts, poses, cfg: RefineConfig, view_dirs: Optional[np.ndarra
 # ---------------------------------------------------------------- one part -------------
 def contact_samples(part: Part, T: np.ndarray, neighbours: Sequence[dict[str, Any]], cfg: RefineConfig,
                     rng: Optional[np.random.Generator] = None) -> np.ndarray:
-    """Model-frame points of `part` within `overlap_band_m` of a neighbour's box at pose T:
-    the faces the overlap rule watches."""
+    """(N, 6) model-frame points and outward normals of `part` within `overlap_band_m` of a
+    neighbour's box at pose T: the faces the overlap rule and the resting contact watch."""
     if not neighbours:
-        return np.zeros((0, 3))
+        return np.zeros((0, 6))
     pw, _ = posed(part, T)
     d = np.min([_points_box_distance(pw, b) for b in neighbours], axis=0)
     sel = np.flatnonzero(d < cfg.overlap_band_m)
     if len(sel) > cfg.contact_samples:
         sel = (rng or np.random.default_rng(0)).choice(sel, cfg.contact_samples, replace=False)
-    return part.pts[sel]
+    return np.hstack([part.pts[sel], part.nrm[sel]])
 
 
 def refine_part(part: Part, T_start: np.ndarray, T_prior: np.ndarray, scene: np.ndarray,
@@ -345,7 +372,9 @@ def refine_part(part: Part, T_start: np.ndarray, T_prior: np.ndarray, scene: np.
         # overlap rule: contact samples may not sink deeper than penetration_tol into a neighbour
         pen = 0.0
         if len(contacts) and nb_shift:
-            s = contacts @ R.T + t
+            s = contacts[:, :3] @ R.T + t
+            ns = contacts[:, 3:] @ R.T
+            cos_face = np.cos(np.radians(cfg.resting_facing_deg))
             for b in nb_shift:
                 sd, nb_n = signed_distance_box(s, b)
                 act = sd < -cfg.penetration_tol_m
@@ -354,6 +383,17 @@ def refine_part(part: Part, T_start: np.ndarray, T_prior: np.ndarray, scene: np.
                     ow = np.sqrt(cfg.overlap_weight)
                     rows.append(np.hstack((np.cross(s[act], nb_n[act]), nb_n[act])) * ow)
                     rhs.append(-(sd[act] + cfg.penetration_tol_m) * ow)
+                if cfg.resting_contact:
+                    # resting: facing faces not penetrating are pulled gently towards touching
+                    # only a face pointing DOWN rests on its neighbour (gravity): the part on
+                    # top rests on the one below, never the other way - pulling the base's top
+                    # up to the ear's foot tilted the base after the ear and made the two
+                    # chase each other (bench, 2026-10-02: the base differed 2-3 mm run to run)
+                    rest = (~act) & (np.einsum("ij,ij->i", ns, nb_n) < -cos_face) & (ns[:, 2] < -cos_face)
+                    if rest.any():
+                        rw = np.sqrt(cfg.resting_weight)
+                        rows.append(np.hstack((np.cross(s[rest], nb_n[rest]), nb_n[rest])) * rw)
+                        rhs.append(-sd[rest] * rw)
         # prior: xi = the left correction from the prior pose, (rotvec, translation) about c
         if use_prior:
             D = T @ np.linalg.inv(T0)
@@ -385,19 +425,36 @@ def refine_part(part: Part, T_start: np.ndarray, T_prior: np.ndarray, scene: np.
     info["rho"] = rho
     info["fitness"] = float(ok.mean())
     info["rmse"] = float(np.sqrt(np.mean(r[ok] ** 2))) if ok.any() else float("nan")
+    info["gaps"] = {}
     if len(contacts) and nb_shift:
-        s = contacts @ R.T + t
+        s = contacts[:, :3] @ R.T + t
+        ns = contacts[:, 3:] @ R.T
         info["penetration"] = max(0.0, max(float(-signed_distance_box(s, b)[0].min()) for b in nb_shift))
+        cos_face = np.cos(np.radians(cfg.resting_facing_deg))
+        for b in nb_shift:
+            sd, nb_n = signed_distance_box(s, b)
+            facing = (np.einsum("ij,ij->i", ns, nb_n) < -cos_face) & (ns[:, 2] < -cos_face)
+            if facing.sum() >= 3:                     # the gap along the faces resting on b (pointing down)
+                info["gaps"][b["name"]] = (float(sd[facing].min()), float(sd[facing].max()))
+                if cfg.resting_contact:
+                    # the resting contact MEASURES directions too (a standing plate's height
+                    # and its rotation in its own plane, which the views hardly see): its
+                    # information joins the data's, so the observability report and the
+                    # fit-up rule count those directions as determined
+                    Jc = np.hstack((np.cross(s[facing], nb_n[facing]) / rho, nb_n[facing]))
+                    info["H"] = info["H"] + cfg.resting_weight * (Jc.T @ Jc)
     return _T(np.eye(3), c) @ T, info
 
 
-def weak_directions(H: np.ndarray, ratio: float) -> tuple[list[str], np.ndarray]:
-    """Directions the data hardly measures: eigenvectors of H with eigenvalue below
-    `ratio` x the largest. Described as a slide (translation-dominated) or a turn."""
+def weak_directions(H: np.ndarray, noise_m: float, max_sigma_mm: float) -> tuple[list[str], np.ndarray]:
+    """Directions hardly measured: eigenvectors of H (rho*w, t; a point of weight 1 has
+    std noise_m) whose std noise_m / sqrt(eigenvalue) exceeds max_sigma_mm. Described as
+    a slide (translation-dominated) or a turn."""
     lam, V = np.linalg.eigh(H)
     if lam.max() <= 0:
         return ["nothing measured"], np.eye(6)
-    weak = [(l, V[:, k]) for k, l in enumerate(lam) if l < ratio * lam.max()]
+    lam_min = (noise_m * 1000 / max_sigma_mm) ** 2
+    weak = [(l, V[:, k]) for k, l in enumerate(lam) if l < lam_min]
     out = []
     for l, v in weak:
         rot, tr = v[:3], v[3:]
@@ -456,12 +513,13 @@ def refine_assembly(parts: Sequence[Part], views: Sequence[View], cfg: Optional[
     results = []
     for i, p in enumerate(parts):
         info = infos.get(i, {"fitness": 0.0, "rmse": float("nan"), "H": np.zeros((6, 6)), "penetration": 0.0})
-        weak, wv = weak_directions(info["H"], cfg.observable_ratio)
+        weak, wv = weak_directions(info["H"], cfg.noise_m, cfg.observable_max_sigma_mm)
         cmm, cdeg = pose_delta(p.T_saved, poses[i], p.pts.mean(0))
         res = PartResult(name=p.name, T_saved=p.T_saved, T=poses[i], n_owned=int((owner == i).sum()),
                          fitness=info["fitness"], rmse_mm=info["rmse"] * 1000, correction_mm=cmm,
                          correction_deg=cdeg, weak=weak, weak_vectors=wv,
-                         max_penetration_mm=info["penetration"] * 1000, H=info["H"])
+                         max_penetration_mm=info["penetration"] * 1000, H=info["H"],
+                         gaps_mm={k: (v[0] * 1000, v[1] * 1000) for k, v in info.get("gaps", {}).items()})
         if per_view:
             _per_view(res, p, i, poses, parts, pts, nrm, w, lab, owner, views, cfg, max_corr, rng, use_ownership)
         results.append(res)
@@ -514,6 +572,7 @@ def refine_assembly(parts: Sequence[Part], views: Sequence[View], cfg: Optional[
             return results, diag
     judge(results, parts, cfg)
     _fallback(results, parts, pts, nrm, w, owner, use_ownership, order, cfg, max_corr, rng)
+    fitup_warnings(results, parts, cfg)
     return results, diag
 
 
@@ -540,6 +599,7 @@ def _fallback(results, parts, pts, nrm, w, owner, use_ownership, order, cfg: Ref
                                 nbrs, contacts, cfg, max_corr)
         r.correction_mm, r.correction_deg = pose_delta(parts[i].T_saved, r.T, parts[i].pts.mean(0))
         r.max_penetration_mm = info["penetration"] * 1000
+        r.gaps_mm = {k: (v[0] * 1000, v[1] * 1000) for k, v in info.get("gaps", {}).items()}
     changed = True
     while changed:
         changed = False
@@ -587,7 +647,7 @@ def _per_view(res: PartResult, part: Part, i: int, poses, parts, pts, nrm, w, la
         P = np.eye(3)
         if res.H is not None:
             lam, U = np.linalg.eigh(res.H[3:, 3:])
-            Us = U[:, lam >= cfg.observable_ratio * max(lam.max(), 1e-30)]
+            Us = U[:, lam >= (cfg.noise_m * 1000 / cfg.observable_max_sigma_mm) ** 2]
             P = Us @ Us.T
         res.view_spread_mm = float(np.linalg.norm(((C - C.mean(0)) @ P).std(0)) * 1000)
         res.view_spread_deg = max(pose_delta(poses[i], T, c_local)[1] for T in good)
@@ -692,6 +752,45 @@ def estimate_extrinsic(parts: Sequence[Part], poses: Sequence[np.ndarray], views
     diag.extrinsic_cond = float(max(lam.min(), 0.0) / lam.max()) if lam.max() > 0 else 0.0
     ra = np.concatenate(r_ok) if r_ok else np.zeros(0)
     diag.extrinsic_rms_mm = float(np.sqrt(np.mean(ra ** 2)) * 1000) if len(ra) else float("nan")
+
+
+def _thickness_mm(part: Part) -> float:
+    return float((part.verts.max(0) - part.verts.min(0)).min() * 1000)
+
+
+def fitup_gap_limit_mm(t_a_mm: float, t_b_mm: float, level: str) -> Optional[float]:
+    """ISO 5817:2023 Table 1 no. 617, incorrect root gap for FILLET welds, at `level`,
+    computed by weldgen's own root_gap_limit (throat a = 0.7 t_min, as weldgen draws it).
+    None when weldgen cannot be imported. Butt and edge joints take their gap from ISO
+    9692-1 instead - this cell's parts meet as fillets (T, corner, lap)."""
+    try:
+        from .seam_from_registration import import_weldgen
+        import_weldgen()
+        from weldgen.config import root_gap_limit
+    except Exception:  # noqa: BLE001
+        return None
+    t = min(t_a_mm, t_b_mm)
+    return float(root_gap_limit(t, 0.7 * t, level))
+
+
+def fitup_warnings(results: Sequence[PartResult], parts: Sequence[Part], cfg: RefineConfig) -> None:
+    """A gap between faces resting on each other beyond the ISO fillet root-gap limit is
+    WARNED about (never a rejection: a real bad fit-up is information to act on)."""
+    by_name = {p.name: p for p in parts}
+    for r, p in zip(results, parts):
+        r.warnings = [w for w in r.warnings if not w.startswith("fit-up gap")]
+        for nb, (gmin, gmax) in r.gaps_mm.items():
+            other = by_name.get(nb)
+            if other is None:
+                continue
+            lim = fitup_gap_limit_mm(_thickness_mm(p), _thickness_mm(other), cfg.quality_level)
+            if lim is None:
+                continue
+            r.gap_limit_mm[nb] = lim
+            if gmax > lim:
+                r.warnings.append(f"fit-up gap to {nb} up to {gmax:.1f} mm exceeds the ISO 5817 no. 617 "
+                                  f"level {cfg.quality_level} fillet limit {lim:.1f} mm (t "
+                                  f"{min(_thickness_mm(p), _thickness_mm(other)):.0f} mm, a = 0.7 t)")
 
 
 def judge(results: Sequence[PartResult], parts: Sequence[Part], cfg: RefineConfig) -> None:

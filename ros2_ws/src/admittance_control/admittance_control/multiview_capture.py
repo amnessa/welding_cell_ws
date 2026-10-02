@@ -264,6 +264,12 @@ def format_replay(rp: Replay) -> str:
                      f"single views spread {r.view_spread_mm:.2f} mm")
         if r.weak:
             lines.append(f"     not measured (held at the saved pose): {', '.join(r.weak)}")
+        for nb, (gmin, gmax) in getattr(r, "gaps_mm", {}).items():
+            lim = r.gap_limit_mm.get(nb)
+            lines.append(f"     resting on {nb}: gap {gmin:+.1f} .. {gmax:+.1f} mm along the contact"
+                         + (f" (ISO 5817 no. 617 limit {lim:.1f} mm)" if lim is not None else ""))
+        for wn in getattr(r, "warnings", []):
+            lines.append(f"     WARNING: {wn}")
         truth = m.get("pose_true")
         if truth:
             from .multiview_refine import pose_delta
