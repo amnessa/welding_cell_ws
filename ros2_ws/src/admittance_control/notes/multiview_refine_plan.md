@@ -302,7 +302,7 @@ For each part, also register each view on its own, starting from the joint resul
    - The old and new nodes, dry-run on the 29 Sep session (plan, 5 × next, home, in an
      isolated ROS domain with fake joint states): identical replies, plan file and marks
      file.
-   - Not yet run on the real arm with goals.
+   - Run on the real arm since 2026-10-01: marking and `refine_pose` both move through it.
 2. **View planner.** `multiview.py`: look-at, IK, collision, coverage score, greedy pick,
    ordering.
    *Check:* unit tests on the bench T geometry: 4 feasible views; both ear faces covered at
@@ -481,14 +481,17 @@ For each part, also register each view on its own, starting from the joint resul
        the markers were published;
      - `capture_here` captured 907k valid pixels, then saved, refined, applied and
        correctly did NOT record a 1-view run.
-   - **Still to do on the robot:** `colcon build` (the install space links files
-     one by one, so the new modules are not there until a build), restart the perception
-     launch, then a live run with `mv_dry_run:=false`.
+   - **Built and run on the robot** (2026-10-02). The new modules had to be added to the
+     CMakeLists install list.
 6. **Bench validation, vision-only with touch as the reference.**
    - `touch_probe` on the base top ×2 and the ear faces ×2, before and after `refine_pose`
      (today: +2.3 / +4.3 and +0.9 / −1.2 mm).
    - Then mark, and record the contact depths and mark errors.
    - Compare single scan vs multi-view. Record the result in README §14.
+
+   **DONE 2026-10-02:** after the depth Tare and the extrinsic tilt refinement, every tack
+   was within ~2.5 mm (single scan: 3–8 mm). Recorded in README §14–§16 and
+   `thesis_notes.md`. What remains is in `todo.md`.
 7. **Self-calibration of the extrinsic translation.** Every run estimates `d` (D6), the
    extrinsic's translation error.
    - Keep each run's `d` with its conditioning in `notebooks/selfcal_history.json`. `d` is
@@ -553,8 +556,8 @@ For each part, also register each view on its own, starting from the joint resul
    legitimate correction in a test whose saved poses were off by about 3 mm
    independently. Tune it on real data, where saved poses share one scan's error.
 
-   *Bench check still to do:* 3 or more real runs, `--write`, promote, then a run that
-   shows `d` near 0, and `touch_probe` plus the marks.
+   *Bench check still to do:* see `todo.md` (needs distinct scenes; don't promote the
+   runs so far).
 8. **FoundationPose per view (later, after 1–7 are tested).** Send each view's image and
    depth to the server with the known CAD, take its pose as a second, independent
    measurement per view, and compare it with the per-view ICP poses (D6). This is the
@@ -591,8 +594,10 @@ different parts, `mv_max_corr_m`).
 
 ## Still open
 
-- **Overlap rule for curved parts.** This concerns parts touching each other, not the
-  robot. The overlap rule measures how far one CAD model pokes into another. For flat
-  plates that is a distance to a plane, which is done. For a pipe standing on a plate, it
-  needs the distance to a curved surface, the registry's tube and swept-slab entries. Not
-  needed until the curved parts arrive (todo: mode A for curved strata).
+Moved to `todo.md` → "Multi-view refinement: what is left" (2026-10-02), so open items
+live in one place. That covers:
+- the overlap rule for curved parts;
+- the self-calibration bench check;
+- turns vs one combined solve;
+- the vertical over-correction;
+- step 8.

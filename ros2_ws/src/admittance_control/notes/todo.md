@@ -29,62 +29,75 @@ Mode A runs end to end on the robot, and the pen marks every tack within **~2.5 
   part. It stays for what it is good at: refining a stationary part (`~/run_icp` seed,
   `~/refine_pose`). No Kalman fusion for now.
 
-## NEXT: FoundationPose object tracking, live in ROS and RViz
+## NEXT: FoundationPose live tracking in ROS and RViz → `notes/realtime_fp.md`
 
-FoundationPose has a tracking mode (`track_one`: after one `register`, refine frame to
-frame on the GPU, tens of Hz). The pose server runs in Docker on the GPU host, reached
-over Tailscale.
+The plan, with speed as the priority. Steps:
 
-**The open problem is streaming:** frames from here to the tracker, and poses back into
-the ROS graph, fast enough for live RViz.
+0. Benchmark `track_one` alone on the host GPU and on the laptop's RTX 4060; this decides
+   where tracking runs.
+1. Check the Tailscale path: direct, not via DERP.
+2. A WebSocket tracking endpoint in `fp_server.py`.
+3. `fp_tracker_node.py`:
+   - latest-wins streaming;
+   - region-of-interest crop;
+   - robot-motion compensation;
+   - TF + latched mesh marker in RViz.
+4. Lost detection and automatic re-seed.
+5. Compare with ICP (`pose_jitter_probe`).
+6. `tracking_source: fp` in the ICP node, feeding `save_object`.
 
-1. **Measure the tracker alone first.** Speed on the GPU host (frames/s, latency per
-   frame), on a still part and a slowly pushed one; how it fails (score drop) and how fast
-   it recovers.
-2. **Choose the transport.** Candidates:
-   - **HTTP keep-alive request/response** (the current bridge pattern): post one
-     JPEG + 16-bit depth PNG, get pose + score. About 1–2 MB/s at 5–10 Hz; latency =
-     round trip + inference. Simplest; the rate is capped by the round trip.
-   - **A streaming socket** (WebSocket or gRPC bidirectional stream): frames go up
-     continuously, poses come back asynchronously, no per-frame handshake. Higher rate.
-   - **ROS 2 inside the container:** the tracker subscribes to the camera topics and
-     publishes the pose itself. DDS discovery over Tailscale needs care: no multicast, so
-     a Zenoh bridge, a FastDDS discovery server or `ROS_STATIC_PEERS`. The cleanest graph,
-     but the most network setup, and the image stream crosses the network uncompressed
-     unless compressed transport is used.
-   - **Run `track_one` locally** on this laptop's RTX 4060: no network at all.
-     Registration (the heavy part) stays on the host; check memory and Hz.
-3. **Bridge node (ROS side).**
-   - `~/start_tracking` seeds from the last registration or the ICP pose; `~/stop`.
-   - Publishes `/perception/fp/pose` (PoseStamped, mirror of
-     `/perception/icp/refined_pose`), TF `<object>`, and the CAD as a marker or cloud, so
-     RViz shows the tracked part live.
-   - Publishes the score, and re-registers when it drops.
-4. **Compare with ICP:** `pose_jitter_probe.py` on both topics (still for 30 s, and during
-   a slow push): noise, latency, drift, and the mean offset between them.
-5. **Decide what `save_object` takes:** the FoundationPose pose, the ICP refinement of
-   it, or `refine_pose` afterwards as now.
+Targets: ≥ 15 Hz (goal 30) and ≤ 100 ms delay (goal 50).
+
+Open questions, in the plan:
+- Is the GPU host on the same LAN?
+- Which GPU is in the host?
+- Does the camera node really reach 30 Hz?
 
 ## Multi-view refinement: what is left (`multiview_refine_plan.md`)
 
-- **Vertical over-correction, about 3–5 mm** (contacts still 3–6 mm early). The direction
-  that moves every view up or down together is the one the 45°/60° views separate worst,
-  so the online correction should apply only the horizontal part of `d`. The height comes
-  from the pen-referenced table (`extrinsic_check` agrees with the pen to ~2 mm across
-  the range, with a constant +2 mm left to remove).
-- **Self-calibration:**
-  - key runs by scene (the assembly) and require 3 DISTINCT ones;
-  - do not promote from the runs so far, which carry the vertical bias and one-scene
-    repeats;
-  - promote the horizontal part first.
+All of the plan's open items live here now; the plan keeps the design and the history.
+
+- **Vertical over-correction, about 3–5 mm** (contacts still 3–6 mm early).
+  - Cause: the direction that moves every view up or down together is the one the 45°/60°
+    views separate worst.
+  - Fix: the online correction should apply only the horizontal part of `d`, and the height
+    comes from the pen-referenced table. `extrinsic_check` agrees with the pen to ~2 mm
+    across the range, with a constant +2 mm still to remove.
+- **Self-calibration (plan step 7):**
+  - Bench check still to do:
+    1. 3 or more real runs from **different** part arrangements;
+    2. `selfcal_extrinsic.py --write`;
+    3. promote;
+    4. a run that shows `d` near 0;
+    5. then `touch_probe` and the marks.
+  - Key the history by scene (assembly hash), so repeats of one arrangement count once.
+  - Don't promote the runs so far: they carry the vertical bias and are one-scene repeats.
+  - Promote the horizontal part first.
 - **The base's slide in its own plane** varies 1–3 mm between runs while the observability
-  says "measured" (grazing, correlated edge points). It doesn't move the roots; a better
-  noise model for steep points would make the report honest.
+  says "measured" (grazing, correlated edge points).
+  - It doesn't move the roots.
+  - A noise model that grows for steep points would make the σ report honest.
+- **Turns vs one combined solve** (plan decision 3): keep the 2 rounds of taking turns.
+  Switch to one solve of all parts together (6N unknowns with the overlap terms) only if a
+  run shows the rounds going back and forth, or a result that depends on which part goes
+  first. Watch `rounds_run` and the per-round moves in the log.
+- **Overlap rule for curved parts** (moved from the plan's "Still open").
+  - The rule measures how far one CAD model pokes into another (parts touching each other,
+    not the robot).
+  - Flat plates are done: a distance to a plane.
+  - A pipe standing on a plate needs the distance to a curved surface, i.e. the registry's
+    `tube` / `swept_slab` entries.
+  - The fit-up gap measurement needs the same.
+  - Do it together with mode A for the curved strata, when curved parts arrive.
 - **A refusal at `save_object`** when `check_registration` fails (open since 29 Sep).
-- **Step 8, FoundationPose per view,** as a second measurement in the same framework:
-  after the tracking work above.
-- **The renamed knobs to watch on real data:** `mv_max_relative_mm` (2), the 4°
-  correction limit, `online_selfcal_min_mm`.
+- **Step 8, FoundationPose per view,** as a second measurement in the same refinement:
+  after the live tracking above.
+- **Thresholds to keep tuning on real data:** `mv_max_relative_mm` (2), the 4° correction
+  limit, `online_selfcal_min_mm`.
+- **Viewing distance:** 0.40 m now; try 0.32–0.35 m (D435i minimum 0.28 m, error ∝ z²)
+  once the vertical offset is fixed.
+- **Elevation spread:** a 30° view would halve the weakest σ but was unreachable at 0.4 m on
+  the bench. Retry if the parts move or the distance drops.
 
 ## Accuracy: small items
 
@@ -122,9 +135,7 @@ the ROS graph, fast enough for live RViz.
   - motion: full loops around pipes need large wrist rolls.
 
   Needed before Phase 9's curved strata.
-- **Curved parts in the multi-view refinement:** the overlap rule and the gap measurement
-  use face planes. Pipes need the signed distance to the registry's tube and swept-slab
-  surfaces. Do it together with mode A for the curved strata.
+- **Curved parts in the multi-view refinement:** see the multi-view section above.
 - **Mode B** (no CAD): PPF no-match, SAM2 per-part masks, region growing + lit-quadric;
   no library save without CAD.
 - **Mode A+:** per-part sensor points kept at save, labelled by CAD face, lit-quadric
