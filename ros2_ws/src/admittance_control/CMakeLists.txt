@@ -132,6 +132,7 @@ install(PROGRAMS
   scripts/touch_probe.py
   scripts/selfcal_extrinsic.py
   scripts/multiview_refine_offline.py
+  scripts/tare_distance.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
