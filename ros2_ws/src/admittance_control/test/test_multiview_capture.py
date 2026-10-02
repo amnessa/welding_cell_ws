@@ -134,3 +134,43 @@ def test_offline_script(caps, tmp_path):
     bad = subprocess.run([sys.executable, str(PKG / "scripts" / "multiview_refine_offline.py"), str(caps[0]),
                           "--set", "no_such_knob=1"], capture_output=True, text=True, timeout=300)
     assert bad.returncode != 0 and "no such" in (bad.stdout + bad.stderr)
+
+
+def test_saved_poses_carrying_the_scan_views_error(tmp_path):
+    """The bench case of 2026-10-02: the saved poses were registered through the same
+    camera from the scan pose, so they carry R_scan d; the views carry R_cam d. Taking d
+    out of the views but NOT out of the prior left the base's unmeasured slide at the
+    uncorrected saved pose - a fake fit-up change, both parts rejected. With the prior
+    corrected too, both are accepted and land on the truth, the slide included."""
+    import multiview_refine_offline as off
+    d = np.array(D_CAM_MM)
+    models = PKG / "models"
+    assembly = {"objects": [{"model": "test_objv2_base.ply", "pose_static": off._ortho(off.BASE).tolist()},
+                            {"model": "test_objv2_ear.ply", "pose_static": off._ortho(off.EAR).tolist()}]}
+    parts = mc.parts_from_assembly(assembly, models)
+    truth = [p.T_saved for p in parts]
+    allp = np.vstack([mr.posed(p, T)[0] for p, T in zip(parts, truth)])
+    target = (allp.min(0) + allp.max(0)) / 2
+    scan = mv.look_at(target + np.array([0.15, 0.25, 0.52]), target)          # the scan home, ~0.6 m
+    saved = []
+    for T in truth:                                                              # registered through the error
+        Ts = T.copy()
+        Ts[:3, 3] += scan[:3, :3] @ (d / 1000)
+        saved.append(Ts)
+    cams, metas = [], []
+    for az, el, roll in off.T_VIEWS:
+        e, a = np.radians(el), np.radians(az)
+        cam = target + 0.4 * np.array([np.cos(e) * np.cos(a), np.cos(e) * np.sin(a), np.sin(e)])
+        cams.append(mv.look_at(cam, target, np.radians(roll)))
+        metas.append({"azimuth_deg": az, "elevation_deg": el, "roll_deg": roll})
+    path = mc.render_synthetic(tmp_path / "cap", parts, truth, saved, cams, d, view_meta=metas,
+                               models_dir=models, scan_cam=scan)
+    rp = mc.refine_capture(mc.load_capture(path), models)
+    assert all(r.accepted for r in rp.results), [r.reason for r in rp.results]
+    for r, p, Tt in zip(rp.results, rp.parts, truth):
+        mm, deg = mr.pose_delta(r.T, Tt, p.pts.mean(0))
+        assert mm < 0.5 and deg < 0.2, (r.name, mm, deg)
+        assert r.prior_shift_mm == pytest.approx(np.linalg.norm(d), abs=0.3)
+        assert r.beyond_mm < 0.5
+    assert "camera error at its scan pose" in mc.format_replay(rp)
+

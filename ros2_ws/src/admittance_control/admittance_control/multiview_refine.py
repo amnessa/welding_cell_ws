@@ -108,6 +108,10 @@ class Part:
     nrm: np.ndarray                       # outward normals, model frame
     verts: np.ndarray                     # model-frame vertices (m) - for the box
     T_saved: np.ndarray                   # 4x4 pose_static
+    # the camera that registered it (assembly.json T_static_camera): its share of a camera
+    # translation error, R_scan d, sits in T_saved too - the online self-calibration takes
+    # it out of the prior as well as out of the views
+    T_scan: Optional[np.ndarray] = None
 
 
 @dataclass
@@ -154,6 +158,10 @@ class PartResult:
     view_spread_mm: float = float("nan")
     view_spread_deg: float = float("nan")
     H: Optional[np.ndarray] = None        # data information at the joint pose, (rho*w, t)
+    prior_shift_mm: float = 0.0           # online self-calibration: R_scan d taken out of the prior
+    beyond_mm: float = 0.0                # ... and the correction beyond that (what the limits judge)
+    beyond_deg: float = 0.0
+    T_attempt: Optional[np.ndarray] = None   # the refined pose before judge/fallback (kept for the report)
 
 
 # ---------------------------------------------------------------- small helpers -------
@@ -457,6 +465,8 @@ def refine_assembly(parts: Sequence[Part], views: Sequence[View], cfg: Optional[
         if per_view:
             _per_view(res, p, i, poses, parts, pts, nrm, w, lab, owner, views, cfg, max_corr, rng, use_ownership)
         results.append(res)
+    for r in results:
+        r.T_attempt = r.T.copy()
     if per_view:
         estimate_extrinsic(parts, poses, views, owner, cfg, max_corr, diag, use_ownership)
         big = diag.extrinsic_d_mm is not None and np.linalg.norm(diag.extrinsic_d_mm) > cfg.online_selfcal_min_mm
@@ -464,8 +474,30 @@ def refine_assembly(parts: Sequence[Part], views: Sequence[View], cfg: Optional[
             # the views disagree by a camera translation: take it out and refine again
             d = diag.extrinsic_d_mm / 1000
             fixed = [View(v.pts - v.R_cam @ d, v.nrm, v.R_cam) for v in views]
+            # ... and out of the PRIOR: each saved pose was registered through the same
+            # camera, from its scan pose, so it carries R_scan d too. Without this, what the
+            # views do not measure (a plate's slide) stayed at the uncorrected saved pose
+            # while the measured rest moved - a fake 8 mm fit-up change on the bench
+            # (2026-10-02) and both parts rejected.
+            prior = []
+            for p in parts:
+                Tp = p.T_saved.copy()
+                if p.T_scan is not None:
+                    Tp[:3, 3] -= np.asarray(p.T_scan, float)[:3, :3] @ d
+                prior.append(Part(p.name, p.pts, p.nrm, p.verts, Tp, p.T_scan))
             again = dataclasses.replace(cfg, online_selfcal=False)
-            results2, diag2 = refine_assembly(parts, fixed, again, use_ownership, per_view, rng)
+            results2, diag2 = refine_assembly(prior, fixed, again, use_ownership, per_view, rng)
+            for r, p, q in zip(results2, parts, prior):
+                # judged against the corrected prior; reported against what was saved
+                r.prior_shift_mm = float(np.linalg.norm(q.T_saved[:3, 3] - p.T_saved[:3, 3]) * 1000)
+                r.beyond_mm, r.beyond_deg = pose_delta(q.T_saved, r.T_attempt if r.T_attempt is not None else r.T,
+                                                       p.pts.mean(0))
+                r.T_saved = p.T_saved
+                if not r.accepted:
+                    r.T = p.T_saved.copy()
+                # the correction as ATTEMPTED (a rejected part's T is back at its saved pose)
+                r.correction_mm, r.correction_deg = pose_delta(
+                    p.T_saved, r.T_attempt if r.T_attempt is not None else r.T, p.pts.mean(0))
             diag2.residual_d_mm = diag2.extrinsic_d_mm
             for name in ("extrinsic_d_mm", "extrinsic_info", "extrinsic_weak", "extrinsic_sigma_mm",
                          "extrinsic_cond", "extrinsic_rms_mm"):

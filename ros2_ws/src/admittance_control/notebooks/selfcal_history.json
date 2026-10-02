@@ -29,6 +29,151 @@
    "extrinsic_sha1": "a2338ff33420cdfeb88884c8d0b5e6f6f3bdb29c",
    "capture": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/scripts/foundationpose_results/multiview/20261001-173845",
    "n_views": 4
+  },
+  {
+   "time": "2026-10-02 13:25:36",
+   "d_cam_mm": [
+    -0.523087983757646,
+    2.039010278935994,
+    -3.931068049211209
+   ],
+   "info_per_mm2": [
+    [
+     427.4020115587646,
+     296.68323644301915,
+     366.82281007004354
+    ],
+    [
+     296.6832364430192,
+     456.57940367404035,
+     423.3618790765154
+    ],
+    [
+     366.82281007004354,
+     423.3618790765154,
+     521.7360944615327
+    ]
+   ],
+   "extrinsic_file": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/notebooks/T_tcp_to_cam.npy",
+   "extrinsic_sha1": "73f1074819cacb0825652f981eea36cb77b1a64d",
+   "capture": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/scripts/foundationpose_results/multiview/20261002-132515",
+   "n_views": 4
+  },
+  {
+   "time": "2026-10-02 14:03:11",
+   "d_cam_mm": [
+    0.4107422508937447,
+    4.539316054038357,
+    -4.995133927467222
+   ],
+   "info_per_mm2": [
+    [
+     388.07524325647864,
+     -165.2404478766587,
+     308.7790843390831
+    ],
+    [
+     -165.24044787665872,
+     399.10732899896925,
+     12.305741302613983
+    ],
+    [
+     308.7790843390831,
+     12.305741302613978,
+     551.3128834370083
+    ]
+   ],
+   "extrinsic_file": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/notebooks/T_tcp_to_cam.npy",
+   "extrinsic_sha1": "73f1074819cacb0825652f981eea36cb77b1a64d",
+   "capture": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/scripts/foundationpose_results/multiview/20261002-140251",
+   "n_views": 4
+  },
+  {
+   "time": "2026-10-02 14:05:17",
+   "d_cam_mm": [
+    -0.12336541453071098,
+    4.0510017879148235,
+    -4.784349652278671
+   ],
+   "info_per_mm2": [
+    [
+     394.9226444644377,
+     -175.46941860855617,
+     306.2081482364383
+    ],
+    [
+     -175.46941860855617,
+     410.74053733258256,
+     7.608083135863876
+    ],
+    [
+     306.2081482364383,
+     7.608083135863876,
+     551.393578348612
+    ]
+   ],
+   "extrinsic_file": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/notebooks/T_tcp_to_cam.npy",
+   "extrinsic_sha1": "73f1074819cacb0825652f981eea36cb77b1a64d",
+   "capture": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/scripts/foundationpose_results/multiview/20261002-140456",
+   "n_views": 4
+  },
+  {
+   "time": "2026-10-02 14:07:17",
+   "d_cam_mm": [
+    0.2263835680070088,
+    4.292258603040415,
+    -4.992323144628572
+   ],
+   "info_per_mm2": [
+    [
+     402.78827855645096,
+     -176.51108673852522,
+     314.3644675340825
+    ],
+    [
+     -176.51108673852522,
+     409.5550420430516,
+     -0.9734370918226162
+    ],
+    [
+     314.3644675340825,
+     -0.9734370918226231,
+     548.9634855143624
+    ]
+   ],
+   "extrinsic_file": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/notebooks/T_tcp_to_cam.npy",
+   "extrinsic_sha1": "73f1074819cacb0825652f981eea36cb77b1a64d",
+   "capture": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/scripts/foundationpose_results/multiview/20261002-140658",
+   "n_views": 4
+  },
+  {
+   "time": "2026-10-02 14:17:57",
+   "d_cam_mm": [
+    0.23148123953375457,
+    4.231313133005975,
+    -4.97093600752855
+   ],
+   "info_per_mm2": [
+    [
+     399.6111608383808,
+     -182.1162432716043,
+     310.4707445840741
+    ],
+    [
+     -182.1162432716043,
+     406.2568402092426,
+     -1.3854079740719965
+    ],
+    [
+     310.47074458407405,
+     -1.3854079740719898,
+     549.2908799555647
+    ]
+   ],
+   "extrinsic_file": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/notebooks/T_tcp_to_cam.npy",
+   "extrinsic_sha1": "73f1074819cacb0825652f981eea36cb77b1a64d",
+   "capture": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/scripts/foundationpose_results/multiview/20261002-141732",
+   "n_views": 4
   }
  ]
 }

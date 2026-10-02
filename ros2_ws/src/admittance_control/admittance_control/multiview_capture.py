@@ -107,7 +107,8 @@ def parts_from_assembly(assembly: dict[str, Any], models_dir: str | Path, n_poin
         v, f = load_ply_mesh(Path(models_dir) / o["model"])
         scale = 1e-3 if np.abs(v).max() > 5 else 1.0
         p, n = sample_mesh_surface(v, f, n_points, rng, return_normals=True)
-        parts.append(Part(o["model"], p * scale, n, v * scale, np.asarray(o["pose_static"], float)))
+        T_scan = np.asarray(o["T_static_camera"], float) if o.get("T_static_camera") is not None else None
+        parts.append(Part(o["model"], p * scale, n, v * scale, np.asarray(o["pose_static"], float), T_scan))
     return parts
 
 
@@ -186,7 +187,7 @@ def render_synthetic(out_dir: str | Path, parts: Sequence[Part], poses_true: Seq
                      d_cam_mm: Sequence[float] = (0.0, 0.0, 0.0), width: int = 424, height: int = 240,
                      noise_m: float = 0.0005, view_meta: Optional[Sequence[dict]] = None,
                      models_dir: str | Path | None = None, extra_meta: Optional[dict] = None,
-                     seed: int = 0) -> Path:
+                     seed: int = 0, scan_cam: Optional[np.ndarray] = None) -> Path:
     """Write a synthetic capture: each view rendered from its TRUE camera pose, but stored
     with the T_base_cam the robot would believe - shifted by R_cam d, the error of an
     extrinsic whose translation is off by R_tc d in tool0."""
@@ -200,7 +201,8 @@ def render_synthetic(out_dir: str | Path, parts: Sequence[Part], poses_true: Seq
         T_believed[:3, 3] += Tc[:3, :3] @ d
         raws.append(RawView(xyz, T_believed, dict((view_meta or [{}] * len(cam_poses_true))[k])))
     assembly = {"static_frame": "base_link",
-                "objects": [{"model": p.name, "pose_static": np.asarray(T, float).tolist()}
+                "objects": [{"model": p.name, "pose_static": np.asarray(T, float).tolist(),
+                             **({"T_static_camera": np.asarray(scan_cam, float).tolist()} if scan_cam is not None else {})}
                             for p, T in zip(parts, saved_poses)]}
     meta = {"synthetic": True, "d_cam_mm_injected": list(map(float, d_cam_mm)),
             "pose_true": [np.asarray(T, float).tolist() for T in poses_true], **(extra_meta or {})}
@@ -252,7 +254,12 @@ def format_replay(rp: Replay) -> str:
     for r in rp.results:
         lines.append(f"  {r.name}: {'ACCEPTED' if r.accepted else 'KEPT AS SAVED'}"
                      f"{'' if r.accepted else ' - ' + r.reason}")
-        lines.append(f"     correction {r.correction_mm:.2f} mm / {r.correction_deg:.2f} deg; fitness {r.fitness:.2f}, "
+        if getattr(r, "prior_shift_mm", 0.0):
+            lines.append(f"     of the correction below, {r.prior_shift_mm:.2f} mm is the camera error at its scan pose "
+                         f"(R_scan d, taken out of the saved pose first); beyond it {r.beyond_mm:.2f} mm / "
+                         f"{r.beyond_deg:.2f} deg (this is what the limits judge)")
+        lines.append(f"     {'correction' if r.accepted else 'attempted correction (not applied)'} "
+                     f"{r.correction_mm:.2f} mm / {r.correction_deg:.2f} deg; fitness {r.fitness:.2f}, "
                      f"rmse {r.rmse_mm:.2f} mm; {r.n_owned} points owned; overlap {r.max_penetration_mm:.2f} mm; "
                      f"single views spread {r.view_spread_mm:.2f} mm")
         if r.weak:

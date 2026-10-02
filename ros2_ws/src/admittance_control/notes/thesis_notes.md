@@ -12,6 +12,94 @@ the plans under `notes/`; this file keeps the story and the numbers.
 
 ---
 
+## 2026-10-02: Multi-view refinement on the bench after the depth fix
+
+### What happened
+
+Three `refine_pose` runs on the same untouched parts:
+
+- **The views were consistent with a pure camera translation:** d = (0.41, 4.54, −5.00),
+  (−0.12, 4.05, −4.78) and (0.23, 4.29, −4.99) mm in the camera frame.
+- **After taking d out, the views agreed to 0.1–0.2 mm,** with fit RMS 0.73–0.77 mm. The
+  RMS was 0.96 mm under the depth bias of the day before.
+- **Yet both parts were rejected:** each run "changed the fit-up" by about 8 mm.
+
+### Cause
+
+The saved poses were registered through the same camera, from the scan pose, so they
+carry that view's share of the error, R_scan·d. The run took d out of its views, but
+held the parts' unmeasured directions at the uncorrected saved pose:
+
+- the base's slide in its own plane stayed put, while
+- the ear's measured position moved by the camera error.
+
+The result was a fake relative change between the parts.
+
+### Fix
+
+Take R_scan·d out of the prior too. Each saved object already records its scan camera
+(`T_static_camera`). Replaying the same three captures offline with the fix:
+
+- **Runs 2 and 3 accepted.** Corrections of 8–10 mm, of which 6.3–6.6 mm is the camera
+  error at the scan pose.
+- **The root-relevant quantities repeat to under 1 mm between runs:** the ear's face to
+  0.66 mm / 0.08°, the base top at the ear's foot to 0.24 mm.
+- **The base's unmeasured in-plane slide and yaw differ by 2.7 mm / 0.48° between runs**:
+  in-plane only, and only through the prior.
+- **A synthetic test now covers it:** saved poses carrying R_scan·d, views carrying R_cam·d.
+  The result lands within 0.5 mm of the truth, the unmeasured slide included.
+
+### Self-calibration says "not ready", and why that is right
+
+- **A fourth run from earlier the same day,** with the same extrinsic file but another
+  scene and view set, gave d = (−0.52, 2.04, −3.93): 2.5 mm from the other three. The
+  spread rule (1 mm) refused to write a calibration.
+- **The three agreeing runs are repeat captures** of one scene from the same four views.
+  They show repeatability, not correctness.
+- **d therefore absorbs more than the extrinsic translation.** It also picks up
+  view-dependent leftovers: the 1.1 mm depth trend over range, the 0.07° tilt residual,
+  and kinematic residuals. Different view sets project those differently.
+
+### Then: a standing plate's in-plane rotation is the weak spot
+
+A fresh registration at 14:17 put the ear 3.6° off the 14:06 one, rotated in its own
+plane, about its normal. Its lean from vertical was about the same, 0.18° vs 0.35°. The
+multi-view refinement wanted to correct that by 3.07°, all of it in-plane.
+
+How the ear's foot sits against the base top:
+
+| ear pose | foot end 1 | foot end 2 | |
+|---|---|---|---|
+| saved | −2.3 mm | +0.8 mm | one end sunk into the base |
+| refined, no limits | +0.8 mm | +3.0 mm | lifted, still tilted 2.3 mm along its 250 mm length |
+| reality | ≈ 0 | ≈ 0 | it stands on the base |
+
+- **Why the camera can't pin it down:** only the plate's 8 mm top and end edges constrain
+  that rotation, so the views barely measure it ("not measured: turn about its normal").
+  The acceptance rules rightly refused a 3° change in that direction.
+- **The same weakness behind an older symptom:** the varying "fit-up gap 0.8–3.6 mm" that
+  `welding_points` reported registration after registration. The gap was the ear's foot
+  tilted along its length: registration error, not a real gap.
+- **Why it matters:** the root height changes by that much from one end of the seam to the
+  other.
+- **What would fix it is physics, not more views.** The ear rests on the base. A two-sided
+  "resting contact", with the foot ON the neighbour's face, would fix both the height and
+  that rotation, but turns the fit-up gap into an assumption. Decision pending.
+
+### What we learned
+
+1. **A correction learned from the data must be applied consistently** to everything that
+   carries the same error, here both the views and the prior. Otherwise the uncorrected
+   parts show up as fake geometric changes.
+2. **Repeat captures of one scene are not independent evidence for a calibration.** The
+   self-calibration should count distinct scenes or view sets: key runs by the registration
+   (the assembly) and require 3 distinct ones.
+3. **"Online" correction (per run) and "persistent" correction (the extrinsic file) need
+   different evidence.** Per run, d only has to make the views agree. Written into the
+   extrinsic, it has to hold across scenes.
+
+---
+
 ## 2026-10-02: The camera's depth was range-dependent; Tare fixed it on the second try
 
 ### What happened
@@ -124,7 +212,30 @@ about 7 mm low.
   (fit residual 0.07°, conditioning 1.00); it moves points 2.6 mm at a 300 mm range.
 - The table's own 0.44° came out separately: it is NOT a camera error, and a single-yaw
   check would have mixed the two.
-- Written as `T_tcp_to_cam_refined.npy`; promotion and re-check pending.
+- Written as `T_tcp_to_cam_refined.npy` and promoted.
+
+**Re-check after promotion** (same spot, wrist at −136, −46, 44, 134°):
+
+- **Every view's tilt now points the same way:** 137–148°, 0.36–0.51°, mean 0.44° toward
+  143°. That is the table's own tilt, matching the 0.44° separated above.
+- **The part that turns with the wrist (the camera) is about 0.07°,** down from 0.49°.
+- **Height:** +1.4 to +2.5 mm. The spread fits the 0.44° table tilt across view spots up
+  to 180 mm apart. What remains is a constant of about +2.0 mm at a 0.46 m range: the
+  camera places surfaces about 2 mm high.
+- **Consequence for marking:** on a 45° approach the pen must travel about 2.8 mm past
+  the plan, right at the 3 mm overshoot. Marking tests now use `overshoot_m` 6 mm until
+  the constant is calibrated out (multi-view self-calibration, or a touch-based offset).
+
+**Calibration state after 2026-10-02:**
+
+| quantity | value |
+|---|---|
+| depth trend over 0.3–0.65 m | ≈ 1.1 mm |
+| camera tilt | ≈ 0.07° |
+| constant height offset | ≈ +2 mm |
+
+Before the day it was −5.2 mm over that range, a 0.49° camera tilt, and about −7 mm at the
+scan home.
 
 ### Side effects worth reporting
 

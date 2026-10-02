@@ -101,7 +101,7 @@ class TackMarkingNode(Node):
         p('v_tip_m_s', 0.02)               # descent tip speed
         p('v_slow_m_s', 0.002)             # ... in the last slow_zone_m before the tack
         p('slow_zone_m', 0.006)            # (rigid parts: keeps the contact near 1.5 N)
-        p('overshoot_m', 0.003)
+        p('overshoot_m', 0.005)
         p('dwell_s', 0.5)
         # the stroke (C2): what to draw after contact and how to hold the pen on it
         p('stroke_mode', 'dot')            # dot | tack (own segment) | seam (whole seam)
