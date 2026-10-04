@@ -1,0 +1,81 @@
+// Pipeline haritası. Görüntü üretmek için:
+//   dot -Tpng -Gdpi=150 pipeline_map.dot -o pipeline_map.png
+//   dot -Tsvg pipeline_map.dot -o pipeline_map.svg
+digraph pipeline {
+  graph [rankdir=TB, fontname="Lato", fontsize=13, nodesep=0.45, ranksep=0.55,
+         newrank=true, compound=true, bgcolor="white", pad=0.3];
+  node  [shape=box, style="rounded,filled", fontname="Lato", fontsize=12,
+         color="#5b6b7a", fillcolor="#ffffff", penwidth=1.3, margin="0.18,0.10"];
+  edge  [fontname="Lato", fontsize=10.5, color="#5b6b7a", fontcolor="#33414e",
+         penwidth=1.2, arrowsize=0.8];
+
+  // ---------------------------------------------------------------- hazırlık
+  subgraph cluster_prep {
+    label=<<b>HAZIRLIK (bir kez)</b>>; style="rounded,filled"; fillcolor="#f3f0e8"; color="#c9bfa5";
+    CAD [fillcolor="#fffaf0", label=<<b>CAD kütüphanesi</b><br/>parça başına PLY mesh (mm)<br/>iki bilgisayarda aynı dosya adları<br/>her CAD için: PPF tablosu + kaynak ilkeli (plaka)>];
+    KAL [fillcolor="#fffaf0", label=<<b>Kalibrasyon zinciri</b><br/>robot kinematiği → kalem ucu → masa düzlemi<br/>→ kamera derinliği (Tare) → el-göz dönmesi<br/>referans: kalem ucunun dokunuşları>];
+  }
+
+  // ---------------------------------------------------------------- kamera
+  CAM [fillcolor="#e8f1fb", color="#4a78a8", label=<<b>Kamera (D435i, robot bileğinde)</b><br/>RGB + derinlik, aynı pikseller<br/>K: kamera iç parametreleri>];
+  OP  [shape=ellipse, fillcolor="#ffffff", style="filled,dashed", label="Operatör\n(parçanın üstüne tık)"];
+
+  // ---------------------------------------------------------------- sunucu
+  subgraph cluster_server {
+    label=<<b>GPU SUNUCUSU (Docker)  ·  parça başına bir kare</b>>; style="rounded,filled"; fillcolor="#eef3f8"; color="#a9bfd6";
+    SAM   [label=<<b>SAM2: hangi pikseller?</b><br/>tıkı içeren bölgenin maskesi<br/>yalnızca RGB kullanır>];
+    CLOUD [label=<<b>Maske → nokta bulutu</b><br/>maske ⊙ derinlik, K ile geri izdüşüm<br/>kenar aşındırma, normaller, seyreltme>];
+    PPF   [label=<<b>PPF: hangi parça?</b><br/>nokta çifti özellikleri (1 uzaklık + 3 açı)<br/>oylama → 12 poz hipotezi → ICP + skor<br/>skor = kapsama × açıklama>];
+    FP    [label=<<b>FoundationPose: nerede?</b><br/>~252 yönelim hipotezi<br/>render et ve karşılaştır, en iyisini seç>];
+  }
+
+  // ---------------------------------------------------------------- laptop, parça başına
+  subgraph cluster_part {
+    label=<<b>LAPTOP (ROS 2)  ·  her parça için (parça 1, sonra parça 2)</b>>; style="rounded,filled"; fillcolor="#eef6ef"; color="#a8c9ad";
+    LIVE  [label=<<b>Canlı nokta bulutu</b><br/>her karede derinlikten, düzenli H×W×3<br/>normaller piksel komşuluğundan>];
+    BASE  [label=<<b>Robot tabanına çevir</b><br/>T_taban←parça =<br/>FK(q) · T_bilek←kamera · T_kamera←parça>];
+    ICP1  [label=<<b>İlk oturtma</b><br/>FoundationPose pozundan ICP<br/>normal kapısı: arka yüz eşleşmez (60°)>];
+    TRACK [label=<<b>Takip</b><br/>parça elle taşınırken her karede poz<br/>kutu kırp · masayı at (kalemle ölçülmüş düzlem)<br/>· kayıtlı parçaları at>];
+    SAVE  [label=<<b>Kaydet</b><br/>son durma yerindeki pozların sağlam ortalaması<br/>(medyan konum, ortalama dönme, sıçramalar atılır)<br/>CAD bu pozda robot tabanına sabitlenir>];
+  }
+
+  // ---------------------------------------------------------------- laptop, montaj
+  subgraph cluster_asm {
+    label=<<b>LAPTOP (ROS 2)  ·  bütün parçalar kaydedilince</b>>; style="rounded,filled"; fillcolor="#f6eef4"; color="#cfa9c4";
+    MV    [label=<<b>Yakından tekrar bak</b><br/>dikiş bölgesini en iyi gören 4 görüş, 0.40 m<br/>her görüşte 16 karenin medyanı<br/>parçalar sırayla oturtulur, iç içe geçme yasak<br/>kameranın kendi konum hatası da çözülür<br/>parçalar arası aralık ISO 5817 ile kontrol>];
+    SEAM  [label=<<b>Dikişler</b><br/>her CAD'in kaynak ilkeli (plaka) pozunda<br/>yüz çiftlerinin düzlem kesişimi<br/>D4 kuralı: iki dış yüz, açıortay boşluğa çıkmalı<br/>(torç girebilmeli) · poz toleransı 10 mm>];
+    TACK  [label=<<b>Puntalar</b><br/>uzunluk 4t · aralık ≤ 33t · uç payı<br/>sıra: önce uçlar, sonra ortalar,<br/>bağlantının iki tarafı dönüşümlü>];
+    REACH [label=<<b>Erişilebilirlik</b><br/>her punta için kalem eğimi × dönmesi<br/>kol, takım, parçalar, masa: çarpışmasız<br/>en büyük boşluk seçilir>];
+    MOVE  [label=<<b>Hareket ve işaret</b><br/>geçiş: düz yol ya da RRT-Connect<br/>kalem ekseninde iniş, 1.5 N'da durur<br/>nokta ya da çizgi, geri çekil<br/>(kalem ucu kalibre edilmiş TCP)>];
+    CHECK [fillcolor="#fff7e6", label=<<b>Doğrulama</b><br/>kalem dokunuşları: işaret kökten kaç mm?<br/>(2 Ekim: ~2.5 mm)>];
+  }
+
+  // ---------------------------------------------------------------- akış
+  OP    -> SAM   [label=" tık (u, v)", style=dashed];
+  CAM   -> SAM   [label=" RGB 720×1280×3"];
+  CAM   -> CLOUD [label=" derinlik 720×1280 (mm,\n renge hizalı) + K 3×3"];
+  SAM   -> CLOUD [label=" maske 720×1280 (0/1)"];
+  CLOUD -> PPF   [label=" sahne bulutu N×6, N ≤ 2000\n (konum + normal, m,\n kamera çerçevesi)"];
+  CAD   -> PPF   [label=" model bulutları ~600×6\n (CAD çerçevesi)"];
+  PPF   -> FP    [label=" parça adı → CAD mesh (m)"];
+  SAM   -> FP    [headlabel="maske", labeldistance=4.5, labelangle=35];
+  CAM   -> FP    [label=" RGB + derinlik (m) + K"];
+
+  FP    -> BASE  [label=" T_kamera←parça 4×4 (m)\n + parça adı + maske"];
+  KAL   -> BASE  [label=" kinematik + el-göz"];
+  CAM   -> LIVE  [label=" her kare"];
+  BASE  -> ICP1  [label=" başlangıç pozu\n (robot tabanı)"];
+  LIVE  -> ICP1  [label=" maskenin altındaki noktalar"];
+  ICP1  -> TRACK [label=" düzeltilmiş poz"];
+  LIVE  -> TRACK [label=" her karede bulut"];
+  TRACK -> SAVE  [label=" poz akışı (her kare)"];
+  SAVE  -> TRACK [label=" kayıtlı CAD'ler: sonraki\n parçanın bulutundan çıkarılır", style=dashed, constraint=false];
+
+  SAVE  -> MV    [label=" her parça: pose_static 4×4\n (m, robot tabanı) + CAD"];
+  LIVE  -> MV    [label=" 4 görüşün bulutları\n + çekim anındaki kamera pozları"];
+  MV    -> SEAM  [label=" iyileştirilmiş pozlar\n + aralık uyarıları"];
+  SEAM  -> TACK  [label=" dikiş çizgileri (mm), sınıf,\n torç ekseni, aralık"];
+  TACK  -> REACH [label=" punta noktası, segment, sıra"];
+  REACH -> MOVE  [label=" punta başına kalem eğimi\n + dönmesi"];
+  MOVE  -> CHECK [label=" temas noktası + derinlik"];
+}
