@@ -1,0 +1,1601 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>admitans kontrol açıklama.md</title>
+<meta http-equiv="Content-type" content="text/html;charset=UTF-8">
+
+<style>
+/* https://github.com/microsoft/vscode/blob/master/extensions/markdown-language-features/media/markdown.css */
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+body {
+	font-family: var(--vscode-markdown-font-family, -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif);
+	font-size: var(--vscode-markdown-font-size, 14px);
+	padding: 0 26px;
+	line-height: var(--vscode-markdown-line-height, 22px);
+	word-wrap: break-word;
+}
+
+#code-csp-warning {
+	position: fixed;
+	top: 0;
+	right: 0;
+	color: white;
+	margin: 16px;
+	text-align: center;
+	font-size: 12px;
+	font-family: sans-serif;
+	background-color:#444444;
+	cursor: pointer;
+	padding: 6px;
+	box-shadow: 1px 1px 1px rgba(0,0,0,.25);
+}
+
+#code-csp-warning:hover {
+	text-decoration: none;
+	background-color:#007acc;
+	box-shadow: 2px 2px 2px rgba(0,0,0,.25);
+}
+
+body.scrollBeyondLastLine {
+	margin-bottom: calc(100vh - 22px);
+}
+
+body.showEditorSelection .code-line {
+	position: relative;
+}
+
+body.showEditorSelection .code-active-line:before,
+body.showEditorSelection .code-line:hover:before {
+	content: "";
+	display: block;
+	position: absolute;
+	top: 0;
+	left: -12px;
+	height: 100%;
+}
+
+body.showEditorSelection li.code-active-line:before,
+body.showEditorSelection li.code-line:hover:before {
+	left: -30px;
+}
+
+.vscode-light.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.15);
+}
+
+.vscode-light.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.40);
+}
+
+.vscode-light.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-dark.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.4);
+}
+
+.vscode-dark.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.60);
+}
+
+.vscode-dark.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-high-contrast.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 160, 0, 0.7);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 160, 0, 1);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+img {
+	max-width: 100%;
+	max-height: 100%;
+}
+
+a {
+	text-decoration: none;
+}
+
+a:hover {
+	text-decoration: underline;
+}
+
+a:focus,
+input:focus,
+select:focus,
+textarea:focus {
+	outline: 1px solid -webkit-focus-ring-color;
+	outline-offset: -1px;
+}
+
+hr {
+	border: 0;
+	height: 2px;
+	border-bottom: 2px solid;
+}
+
+h1 {
+	padding-bottom: 0.3em;
+	line-height: 1.2;
+	border-bottom-width: 1px;
+	border-bottom-style: solid;
+}
+
+h1, h2, h3 {
+	font-weight: normal;
+}
+
+table {
+	border-collapse: collapse;
+}
+
+table > thead > tr > th {
+	text-align: left;
+	border-bottom: 1px solid;
+}
+
+table > thead > tr > th,
+table > thead > tr > td,
+table > tbody > tr > th,
+table > tbody > tr > td {
+	padding: 5px 10px;
+}
+
+table > tbody > tr + tr > td {
+	border-top: 1px solid;
+}
+
+blockquote {
+	margin: 0 7px 0 5px;
+	padding: 0 16px 0 10px;
+	border-left-width: 5px;
+	border-left-style: solid;
+}
+
+code {
+	font-family: Menlo, Monaco, Consolas, "Droid Sans Mono", "Courier New", monospace, "Droid Sans Fallback";
+	font-size: 1em;
+	line-height: 1.357em;
+}
+
+body.wordWrap pre {
+	white-space: pre-wrap;
+}
+
+pre:not(.hljs),
+pre.hljs code > div {
+	padding: 16px;
+	border-radius: 3px;
+	overflow: auto;
+}
+
+pre code {
+	color: var(--vscode-editor-foreground);
+	tab-size: 4;
+}
+
+/** Theming */
+
+.vscode-light pre {
+	background-color: rgba(220, 220, 220, 0.4);
+}
+
+.vscode-dark pre {
+	background-color: rgba(10, 10, 10, 0.4);
+}
+
+.vscode-high-contrast pre {
+	background-color: rgb(0, 0, 0);
+}
+
+.vscode-high-contrast h1 {
+	border-color: rgb(0, 0, 0);
+}
+
+.vscode-light table > thead > tr > th {
+	border-color: rgba(0, 0, 0, 0.69);
+}
+
+.vscode-dark table > thead > tr > th {
+	border-color: rgba(255, 255, 255, 0.69);
+}
+
+.vscode-light h1,
+.vscode-light hr,
+.vscode-light table > tbody > tr + tr > td {
+	border-color: rgba(0, 0, 0, 0.18);
+}
+
+.vscode-dark h1,
+.vscode-dark hr,
+.vscode-dark table > tbody > tr + tr > td {
+	border-color: rgba(255, 255, 255, 0.18);
+}
+
+</style>
+
+<style>
+/* Tomorrow Theme */
+/* http://jmblog.github.com/color-themes-for-google-code-highlightjs */
+/* Original theme - https://github.com/chriskempson/tomorrow-theme */
+
+/* Tomorrow Comment */
+.hljs-comment,
+.hljs-quote {
+	color: #8e908c;
+}
+
+/* Tomorrow Red */
+.hljs-variable,
+.hljs-template-variable,
+.hljs-tag,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class,
+.hljs-regexp,
+.hljs-deletion {
+	color: #c82829;
+}
+
+/* Tomorrow Orange */
+.hljs-number,
+.hljs-built_in,
+.hljs-builtin-name,
+.hljs-literal,
+.hljs-type,
+.hljs-params,
+.hljs-meta,
+.hljs-link {
+	color: #f5871f;
+}
+
+/* Tomorrow Yellow */
+.hljs-attribute {
+	color: #eab700;
+}
+
+/* Tomorrow Green */
+.hljs-string,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-addition {
+	color: #718c00;
+}
+
+/* Tomorrow Blue */
+.hljs-title,
+.hljs-section {
+	color: #4271ae;
+}
+
+/* Tomorrow Purple */
+.hljs-keyword,
+.hljs-selector-tag {
+	color: #8959a8;
+}
+
+.hljs {
+	display: block;
+	overflow-x: auto;
+	color: #4d4d4c;
+	padding: 0.5em;
+}
+
+.hljs-emphasis {
+	font-style: italic;
+}
+
+.hljs-strong {
+	font-weight: bold;
+}
+</style>
+
+<style>
+/*
+ * Markdown PDF CSS
+ */
+
+ body {
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif, "Meiryo";
+	padding: 0 12px;
+}
+
+pre {
+	background-color: #f8f8f8;
+	border: 1px solid #cccccc;
+	border-radius: 3px;
+	overflow-x: auto;
+	white-space: pre-wrap;
+	overflow-wrap: break-word;
+}
+
+pre:not(.hljs) {
+	padding: 23px;
+	line-height: 19px;
+}
+
+blockquote {
+	background: rgba(127, 127, 127, 0.1);
+	border-color: rgba(0, 122, 204, 0.5);
+}
+
+.emoji {
+	height: 1.4em;
+}
+
+code {
+	font-size: 14px;
+	line-height: 19px;
+}
+
+/* for inline code */
+:not(pre):not(.hljs) > code {
+	color: #C9AE75; /* Change the old color so it seems less like an error */
+	font-size: inherit;
+}
+
+/* Page Break : use <div class="page"/> or <div class="page"></div> to insert page break
+-------------------------------------------------------- */
+.page {
+	page-break-after: always;
+}
+
+</style>
+
+<script src="https://unpkg.com/mermaid/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: document.body.classList.contains('vscode-dark') || document.body.classList.contains('vscode-high-contrast')
+          ? 'dark'
+          : 'default'
+    });
+  </script>
+<h1 id="robot-hattı-pozdan-punta-işaretine">Robot hattı: pozdan punta işaretine</h1>
+<p>Bu belge, FoundationPose sunucusundan <strong>parça adı ve 4×4 poz</strong> laptop'a geldikten sonra
+olan her şeyi baştan sona anlatır:</p>
+<ol>
+<li>Poz robot tabanına taşınır ve canlı bulutla iyileştirilir.</li>
+<li>Parça takip edilir ve yerine konunca kaydedilir.</li>
+<li>Robot parçalara yakından tekrar bakar (çok bakışlı iyileştirme).</li>
+<li>CAD'lerden kaynak dikişleri ve puntalar hesaplanır.</li>
+<li>Robot kalemle punta yerlerine dokunur.</li>
+</ol>
+<p>Her adımda verinin <strong>şekli, birimi ve hangi koordinat çerçevesinde olduğu</strong> yazılıdır.</p>
+<p>Sunucu tarafı (kamera, SAM2, nokta bulutu, PPF, FoundationPose) ayrı belgede:
+<a href="perception_aciklama.md">perception_aciklama.md</a>. Bu belge onun bittiği yerden, Bölüm 11
+&quot;Laptop: cevabı almak ve yayınlamak&quot;tan devam ediyor.</p>
+<p>Bilinen yöntemler (ICP, ters kinematik, RRT-Connect, Gauss-Newton) anlatılmıyor;
+yalnızca <strong>ne için</strong> ve <strong>hangi ayarla</strong> kullanıldıkları yazılı. Bu projeye özel olan
+kısımlar ayrıntılı anlatılıyor: koordinat zinciri, kaydetme, çok bakışlı iyileştirme,
+dikiş kuralı, punta kuralı, ölçüm zinciri.</p>
+<p>İngilizce teknik referans: <a href="../README.md">README.md</a>, özellikle §14 (hata bütçesi),
+§15 (çok bakışlı iyileştirme), §16 (derinlik kalibrasyonu). Deney günlüğü:
+<a href="thesis_notes.md">thesis_notes.md</a>.</p>
+<hr>
+<h2 id="i̇çindekiler">İçindekiler</h2>
+<ol>
+<li><a href="#1-genel-bak%C4%B1%C5%9F">Genel bakış</a></li>
+<li><a href="#2-koordinat-zinciri-kameradan-robot-taban%C4%B1na">Koordinat zinciri: kameradan robot tabanına</a></li>
+<li><a href="#3-kalibrasyon-zincirin-her-halkas%C4%B1-neyle-%C3%B6l%C3%A7%C3%BCld%C3%BC">Kalibrasyon: zincirin her halkası neyle ölçüldü?</a></li>
+<li><a href="#4-canl%C4%B1-nokta-bulutu">Canlı nokta bulutu</a></li>
+<li><a href="#5-foundationpose-pozu--icp-ile-ilk-oturtma">FoundationPose pozu + ICP ile ilk oturtma</a></li>
+<li><a href="#6-takip-par%C3%A7a-elle-ta%C5%9F%C4%B1n%C4%B1rken">Takip: parça elle taşınırken</a></li>
+<li><a href="#7-kaydetme-par%C3%A7a-yerine-konunca">Kaydetme: parça yerine konunca</a></li>
+<li><a href="#8-%C3%A7ok-bak%C4%B1%C5%9Fl%C4%B1-yak%C4%B1n-mesafe-iyile%C5%9Ftirme">Çok bakışlı yakın mesafe iyileştirme</a></li>
+<li><a href="#9-kaynak-diki%C5%9Fi-cadlerden-hesaplama">Kaynak dikişi: CAD'lerden hesaplama</a></li>
+<li><a href="#10-puntalar-nereye-ka%C3%A7-tane-hangi-s%C4%B1rayla">Puntalar: nereye, kaç tane, hangi sırayla?</a></li>
+<li><a href="#11-eri%C5%9Filebilirlik-kalem-her-puntaya-ula%C5%9Fabilir-mi">Erişilebilirlik: kalem her puntaya ulaşabilir mi?</a></li>
+<li><a href="#12-hareket-ve-i%C5%9Faretleme">Hareket ve işaretleme</a></li>
+<li><a href="#13-do%C4%9Frulama-hata-nas%C4%B1l-%C3%B6l%C3%A7%C3%BCl%C3%BCyor">Doğrulama: hata nasıl ölçülüyor?</a></li>
+<li><a href="#14-her-a%C5%9Famada-verinin-%C3%B6zeti">Her aşamada verinin özeti</a></li>
+<li><a href="#15-toplant%C4%B1dan-1-ekim-gelen-konular-ve-durumlar%C4%B1">Toplantıdan (1 Ekim) gelen konular ve durumları</a></li>
+</ol>
+<hr>
+<h2 id="1-genel-bakış">1. Genel bakış</h2>
+<pre class="hljs"><code><div> FoundationPose sunucusundan:  parça adı  +  T_kamera←parça (4×4, m)  +  maske
+                                    │
+┌─────────────────────── LAPTOP (ROS 2, icp_pose_refiner_node) ──────────────────────┐
+│                                    ▼                                                │
+│  [5] ilk oturtma     CAD'i T'ye koy, maskelenmiş canlı bulutla ICP ──▶ düzeltilmiş T │
+│                                    │                                                │
+│  [6] takip           her karede: kutu kırp → masayı at → kayıtlı parçaları at → ICP │
+│                      (parça elle taşınırken poz izlenir)                            │
+│                                    │                                                │
+│  [7] kaydet          parça durunca: son pozların sağlam ortalaması                  │
+│                      → robot tabanında sabit CAD bulutu (SEPC) + assembly.json      │
+│                                    │   (ikinci parça için [5]–[7] tekrar)            │
+│                                    ▼                                                │
+│  [8] refine_pose     robot 4 yakın görüşe (0.40 m) gider, her birinde 16 kare        │
+│                      → bütün parçalar birlikte iyileştirilir                         │
+│                      → kameranın kendi konum hatası da tahmin edilip çıkarılır       │
+│                      → parçalar arası aralık ISO 5817'ye göre kontrol edilir         │
+│                                    │                                                │
+│  [9] welding_points  CAD'ler pozlarında → yüz çiftleri → D4 kuralı                   │
+│                      → kaynaklanabilir dikişler (çizgi, mm, robot tabanı)            │
+│  [10] puntalar       tackrule-0.1: kalınlığa göre uzunluk, aralık, sıra              │
+│                                    │                                                │
+│  [11] erişilebilirlik  her punta için kalem açısı: çarpışmasız mı?                   │
+│  [12] işaretleme     yol planı → yaklaş → kuvvetle durdurulan iniş → nokta / çizgi   │
+│                                    │                                                │
+│  [13] doğrulama      kalem dokunuşları: işaret kökten kaç mm uzakta?                 │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+</div></code></pre>
+<p>Özetle sunucu <strong>&quot;bu parça, kameraya göre şurada&quot;</strong> diyor. Laptop:</p>
+<ol>
+<li>bunu robot tabanına çeviriyor;</li>
+<li>canlı görüntüyle düzeltiyor;</li>
+<li>parça yerine konunca sabitliyor;</li>
+<li>yakından tekrar bakıp milimetreye indiriyor;</li>
+<li>CAD'lerden <strong>dikişi hesaplıyor</strong> (dikiş görüntüde aranmıyor);</li>
+<li>robotu oraya götürüyor.</li>
+</ol>
+<p><strong>Şu anki sonuç (2 Ekim 2026):</strong> iki plakalı T bağlantıda bütün puntalar köke <strong>yaklaşık
+2.5 mm</strong> yakınlıkta işaretlendi. 24 Eylül'de bu hata ~8 mm idi.</p>
+<hr>
+<h2 id="2-koordinat-zinciri-kameradan-robot-tabanına">2. Koordinat zinciri: kameradan robot tabanına</h2>
+<p>FoundationPose'un verdiği poz <strong>kameraya göre</strong>. Robot ise yalnızca kendi tabanına
+(<code>base_link</code>) göre konum anlıyor. Arada üç dönüşüm var:</p>
+<pre class="hljs"><code><div>T_taban←parça  =  T_taban←bilek(q)  ·  T_bilek←kamera  ·  T_kamera←parça
+                  ───────────────     ──────────────     ───────────────
+                  ileri kinematik     el-göz             FoundationPose
+                  (eklem açıları q)   kalibrasyonu       + ICP
+                  her an değişir      sabit              her karede
+</div></code></pre>
+<ul>
+<li><strong><code>T_taban←bilek(q)</code></strong>: robotun eklem açılarından ileri kinematikle hesaplanıyor.
+Robot hareket ettikçe değişiyor.</li>
+<li><strong><code>T_bilek←kamera</code></strong>: kamera robotun bileğine vidalı (<strong>eye-in-hand</strong>). Bu dönüşüm sabit
+ve bir kez kalibre ediliyor (<code>notebooks/T_tcp_to_cam.npy</code>).</li>
+<li><strong><code>T_kamera←parça</code></strong>: görüntüden gelen poz.</li>
+</ul>
+<p>Her 4×4 matris aynı biçimde: sol üst 3×3 dönme, sağ sütun öteleme (metre). Çarpım
+soldan sağa okunuyor: parçadaki bir nokta önce kameraya, sonra bileğe, sonra tabana
+taşınıyor.</p>
+<p><strong>Kameranın robotta olmasının üç sonucu:</strong></p>
+<ol>
+<li><strong>Kaydedilen her şey robot tabanında tutuluyor.</strong> Kamera çerçevesi robotla birlikte
+hareket ediyor, taban sabit.</li>
+<li><strong>Her bulut, çekildiği anın robot pozuyla eşleştiriliyor.</strong> TF'e &quot;şimdi&quot; değil,
+bulutun zaman damgası soruluyor. Robot hareket halindeyken 50 ms'lik bir kayma bile
+birkaç milimetre demek.</li>
+<li><strong>Bir maske yalnızca çekildiği kare için geçerli.</strong> Robot hareket ederse aynı piksel
+başka bir yere bakar.</li>
+</ol>
+<p><strong>Zincirin hatası her halkanın hatalarının toplamı.</strong> Görüntüden gelen poz mükemmel olsa
+bile:</p>
+<ul>
+<li>kamera bilekte 3 mm yanlış yerde varsayılırsa, parça da 3 mm yanlış yerde görünür;</li>
+<li>robot kinematiği 3 mm yanlışsa, kalem 3 mm yanlış yere gider.</li>
+</ul>
+<p>Bu yüzden her halka ayrı ayrı ve <strong>birbirinden bağımsız bir referansa</strong> göre ölçüldü
+(Bölüm 3).</p>
+<hr>
+<h2 id="3-kalibrasyon-zincirin-her-halkası-neyle-ölçüldü">3. Kalibrasyon: zincirin her halkası neyle ölçüldü?</h2>
+<p>Temel kural: <strong>bir halkayı, ona bağlı olmayan bir şeyle ölç.</strong> Kameranın hatasını kamerayla
+ölçemezsin. Referans olarak robotun kendisi kullanıldı: kalemin ucu masaya ve parçalara
+dokundurularak.</p>
+<table>
+<thead>
+<tr>
+<th>sıra</th>
+<th>halka</th>
+<th>yöntem</th>
+<th>sonuç</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>robot kinematiği</td>
+<td>UR5e'nin fabrika kalibrasyonu (<code>ur5e_calibration.yaml</code>), sürücüde ve bütün araçlarda</td>
+<td>nominal model ucu 2.4–4.2 mm kaydırıyordu, şimdi &lt; 0.1 mm</td>
+</tr>
+<tr>
+<td>1</td>
+<td>kalem ucu (TCP)</td>
+<td>el kumandasında 4 noktalı TCP; masaya 4 farklı bilek açısıyla dokunarak kontrol</td>
+<td>yanal 0.2 mm</td>
+</tr>
+<tr>
+<td>2</td>
+<td>masa düzlemi</td>
+<td>kalemle 7 noktaya dokunup düzlem oturtma (<code>table_touchoff.py</code>)</td>
+<td>masa 1.57° eğik; düzlem referans oldu</td>
+</tr>
+<tr>
+<td>3</td>
+<td>kamera derinliği</td>
+<td>RealSense <strong>Tare</strong> kalibrasyonu; gerçek mesafe robottan hesaplanıyor (<code>tare_distance.py</code>)</td>
+<td>0.3–0.65 m arasında 1.1 mm</td>
+</tr>
+<tr>
+<td>4</td>
+<td>el-göz dönmesi</td>
+<td>kamera masayı 4 farklı bilek açısından görüyor; kameraya bağlı eğim masanınkinden ayrılıyor</td>
+<td>≈ 0.07°</td>
+</tr>
+<tr>
+<td>5</td>
+<td>el-göz ötelemesi</td>
+<td>her <code>refine_pose</code> çalışmasında görüntülerden tahmin ediliyor (Bölüm 8.7)</td>
+<td>yatay kısım düzeltiliyor; dikey kısımda 3–5 mm fazla düzeltme kaldı</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Sıra önemli.</strong> Bir adım, daha önceki düzeltilmemiş bir hatanın üstünde yapılırsa o
+hatayı kendi sonucu sanıp öğrenir. Örneğin derinlik hatası düzeltilmeden yapılan el-göz
+tahmini, derinlik hatasını kamera konumu hatası olarak kaydetti.</p>
+<p><strong>Derinlik hatası menzilin karesiyle büyüyor</strong> (Bölüm 8.1'in gerekçesi). Stereo kamerada
+küçük bir eşleşme (disparity) kayması δ, derinlikte şu hatayı veriyor:</p>
+<pre class="hljs"><code><div>Δz = z² · δ / (f · B)          f: odak uzaklığı (piksel), B: iki kamera arası mesafe
+</div></code></pre>
+<p>Aynı masa noktasına üç yükseklikten bakıldı. Tare'den önce kameranın gördüğü masa ile
+kalemle ölçülen masa arasındaki fark:</p>
+<table>
+<thead>
+<tr>
+<th>uzaklık</th>
+<th>291 mm</th>
+<th>439 mm</th>
+<th>626 mm</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Tare'den önce</td>
+<td>+1.92 mm</td>
+<td>+0.31 mm</td>
+<td>−3.28 mm</td>
+</tr>
+<tr>
+<td>Tare'den sonra</td>
+<td>+0.29 mm</td>
+<td>+1.06 mm</td>
+<td>+1.43 mm</td>
+</tr>
+</tbody>
+</table>
+<p>Tare'den önceki değerlere <code>a + k·z²</code> biçiminde bir eğri birebir oturuyor; düz çizgi
+oturmuyor. δ ≈ 0.6 piksel. Tarama konumundan (~0.6 m) bakınca bu hata her parçayı
+~7 mm aşağıda gösteriyordu.</p>
+<p>İlk Tare'de mesafe elle ölçüldü ve fazla düzeltti (%1.1 ölçek hatası). İkincisinde
+mesafe robottan hesaplandı:</p>
+<ul>
+<li>kalibre edilmiş kinematik;</li>
+<li>el-göz dönüşümü;</li>
+<li>kalemle ölçülmüş masa düzlemi.</li>
+</ul>
+<hr>
+<h2 id="4-canlı-nokta-bulutu">4. Canlı nokta bulutu</h2>
+<p><code>depth_image_proc</code>, kameranın renk görüntüsüne hizalanmış derinliğini <strong>düzenli (organized)
+bir nokta bulutuna</strong> çeviriyor. Geri izdüşüm formülü perception belgesinin Bölüm 7.1'indeki
+formülün aynısı.</p>
+<ul>
+<li><strong>Şekil:</strong> H×W×3, kameranın çözünürlüğünde (şu an 1280×720). Her piksel bir (x, y, z),
+metre, kamera çerçevesi.</li>
+<li><strong>Geçersiz pikseller</strong> NaN. Silinmiyorlar, delik olarak kalıyorlar.</li>
+<li><strong>&quot;Düzenli&quot; olmasının faydası:</strong> görüntüde komşu pikseller uzayda da komşu. Normal,
+komşu arama yapmadan bulunuyor: sağ–sol ve alt–üst farklarının vektörel çarpımı.
+Normaller kameraya doğru çevriliyor.</li>
+<li><strong>Seyreltme:</strong> voksel ızgarası, her vokselden ortalama nokta.</li>
+</ul>
+<p>Bu bulut sunucuya <strong>gitmiyor.</strong> Sunucuya giden yalnızca tek bir RGB + depth karesi.
+Takip, kaydetme ve iyileştirme bu canlı bulutla laptop'ta yapılıyor.</p>
+<hr>
+<h2 id="5-foundationpose-pozu--icp-ile-ilk-oturtma">5. FoundationPose pozu + ICP ile ilk oturtma</h2>
+<p><strong>Giriş:</strong></p>
+<ul>
+<li>sunucudan parça adı, <code>T_kamera←parça</code> ve maske (<code>detection_ism.npz</code>);</li>
+<li>canlı bulut.</li>
+</ul>
+<p><strong>Çıktı:</strong> düzeltilmiş <code>T_kamera←parça</code> ve takibin başlangıç pozu.</p>
+<ol>
+<li>Adla aynı isimli CAD yükleniyor: <code>models/&lt;ad&gt;.ply</code>, mm → m.</li>
+<li>CAD yüzeyinden noktalar örnekleniyor. Her noktaya üzerinde durduğu üçgenin <strong>dışa
+bakan normali</strong> veriliyor.</li>
+<li>Canlı buluttan maskenin altındaki noktalar alınıyor.</li>
+<li>FoundationPose pozundan başlayan noktadan-düzleme (point-to-plane) ICP çalıştırılıyor.
+Robust sürüm: Welsch ağırlıkları, Anderson hızlandırma. İyi bir başlangıç pozu ICP için
+şart; o pozu FoundationPose veriyor.</li>
+</ol>
+<p><strong>Bize özel ek: normal kapısı (29 Eylül).</strong> Kamera bir plakanın yalnızca bir yüzünü
+görüyor. Ama CAD noktaları <strong>her</strong> yüzden örnekleniyor. Kapı olmadan arka yüzün noktaları
+da en yakın sahne noktasını ön yüzde buluyor.</p>
+<p>8 mm'lik ince bir plakada bu yanlış bir çözüm yaratıyordu: model kendi iki yüzünün
+arasına &quot;yaslanıyor&quot;, bir ucunda ön yüz, diğer ucunda arka yüz veriye oturuyordu. Sonuç
+6.5° eğim ve kaynak kökünde 10 mm hata. ICP'nin kendi skoru ise iyi görünüyordu.</p>
+<p>Çözüm: bir CAD noktası, yalnızca normali sahne noktasının normaliyle <strong>60°'den az açı
+yapıyorsa</strong> eşleşiyor. Arka yüz ~180° ters baktığı için eşleşmeden çıkıyor. Aynı veride
+eğim 0.3–0.8°'ye, kök hatası ±0.2 mm'ye indi.</p>
+<p>Bu belgedeki bütün ICP çağrıları bu kapıyı kullanıyor.</p>
+<hr>
+<h2 id="6-takip-parça-elle-taşınırken">6. Takip: parça elle taşınırken</h2>
+<p><strong>Senaryo:</strong> parça masanın kenarında tanıtılıyor (sunucu adını ve pozunu buluyor). Sonra
+elle alınıp yerine konuyor. Bu sırada sistem parçanın nerede olduğunu bilmeye devam
+etmeli.</p>
+<p><strong>Şu anki yöntem: ICP ile takip.</strong> Her karede maske yerine üç geometrik süzgeç kullanılıyor.
+Maske tek kare için geçerliydi; sunucuya her karede gitmek de pahalı.</p>
+<ol>
+<li><strong>Yönlü kutu:</strong> CAD'in kutusu, kenar payıyla büyütülüp son poza konuyor. Yalnızca
+kutunun içindeki noktalar kalıyor. Parça hareket edince kutu da onu izliyor.</li>
+<li><strong>Masa çıkarma:</strong> noktalar robot tabanına çevriliyor, ölçülmüş masa düzleminin 2 mm
+üstüne kadar olanlar atılıyor. Masa eğik olduğu için düz bir yükseklik kesimi yerine
+ölçülmüş düzlem kullanılıyor. Düz kesim masanın bir kısmını içeride bırakıp parçanın
+yanında büyük bir düzlem bırakıyordu.</li>
+<li><strong>Kayıtlı parçaları çıkarma:</strong> daha önce kaydedilmiş parçaların CAD bulutuna (SEPC,
+Bölüm 7) yakın noktalar atılıyor. Böylece ikinci parçanın ICP'si, ona dayanmış birinci
+parçaya yapışamıyor.</li>
+</ol>
+<p>Kalan noktalarla önceki pozdan başlayan ICP yeni pozu veriyor. Eşleşme oranı düşerse
+takip duruyor ve sunucudan yeni bir poz isteniyor. Bir takip adımı 640×480 bulutta
+~23 ms.</p>
+<p><strong>Karar (2 Ekim): takip FoundationPose'a geçiyor.</strong> ICP CPU'da çalışıyor ve hareketli bir
+parçayı izlemek için yavaş. Literatürde de ICP genellikle <strong>duran</strong> bir nesnenin
+bulutlarını eşlemek için kullanılıyor. FoundationPose'un takip modu (<code>track_one</code>) son
+pozdan başlayıp yalnızca iyileştirme ağını GPU'da birkaç kez çalıştırıyor; çok daha
+hızlı. ICP yalnızca duran parçalarda kalıyor: ilk oturtma, kaydetme, <code>refine_pose</code>.
+Kalman füzyonu şimdilik yok.</p>
+<p><strong>Açık sorun:</strong> FoundationPose başka bir bilgisayarda Docker'da çalışıyor. Canlı takip için
+her karenin oraya gidip pozun geri gelmesi gerekiyor. Plan
+<a href="realtime_fp.md">realtime_fp.md</a> dosyasında:</p>
+<ul>
+<li>önce takibin hızı iki GPU'da (ev bilgisayarı ve laptop'un RTX 4060'ı) ölçülecek;</li>
+<li>laptop yeterince hızlıysa ağ tamamen devreden çıkacak.</li>
+</ul>
+<hr>
+<h2 id="7-kaydetme-parça-yerine-konunca">7. Kaydetme: parça yerine konunca</h2>
+<p><strong>Sorun.</strong> Duran bir parçada bile ICP takibinin pozu her karede biraz oynuyor. 25 Eylül'de,
+parça ve robot hareketsizken ölçülen değerler:</p>
+<table>
+<thead>
+<tr>
+<th>ölçü</th>
+<th>değer</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>konum sapması (std)</td>
+<td>5 mm</td>
+</tr>
+<tr>
+<td>konum aralığı (en büyük − en küçük)</td>
+<td>24 mm</td>
+</tr>
+<tr>
+<td>en büyük dönme</td>
+<td>6°</td>
+</tr>
+</tbody>
+</table>
+<p>Kaydetme anındaki tek bir kare bu dağılımdan rastgele bir örnek demek. Toplantıda
+sorulan &quot;takipte hata birikir mi?&quot; sorusunun pratik karşılığı bu.</p>
+<p><strong>Çözüm</strong> (<code>~/save_object</code>, <code>pose_stats.py</code>):</p>
+<ol>
+<li><strong>Yalnızca son durma yerine ait kareler alınıyor.</strong> En yeni pozdan geriye doğru
+yürünüyor. Bir kare, o ana kadarki karelerin medyanına 8 mm / 3° yakınsa durma yerine
+ait sayılıyor. Arka arkaya 3 uyuşmayan kare &quot;parça taşındı&quot; demek ve orada duruluyor.
+Böylece parça kaydetmeden hemen önce elle itildiyse, eski yeri ortalamaya karışmıyor.</li>
+<li><strong>Sağlam ortalama:</strong>
+<ul>
+<li>öteleme: eksen başına medyan;</li>
+<li>dönme: dönme matrislerinin toplamının SVD ile en yakın dönmeye izdüşümü
+(chordal mean);</li>
+<li>ICP'nin başka bir yerel minimuma atladığı kareler atılıyor.</li>
+</ul>
+</li>
+<li><strong>Sonuç robot tabanında sabitleniyor:</strong>
+<ul>
+<li><code>pose_static</code> (4×4, m, <code>base_link</code>);</li>
+<li>dağılım (<code>pose_stats</code>) da yanına yazılıyor;</li>
+<li>CAD noktaları bu pozda <strong>SEPC</strong>'ye (Static Environment Point Cloud) ekleniyor. SEPC,
+masaya konmuş her şeyin CAD modeli; Bölüm 6'da çıkarılan ve Bölüm 9'da dikişin
+hesaplandığı geometri bu.</li>
+</ul>
+</li>
+</ol>
+<p>Bunlar <code>assembly.json</code> dosyasına da yazılıyor: parça adı, poz, dağılım ve parçayı
+kaydeden kameranın pozu (<code>T_static_camera</code>). Bu sonuncusu Bölüm 8.7'de lazım oluyor.</p>
+<p><strong>Önemli:</strong> kaydedilen şey kameradan gelen nokta bulutu değil, <strong>CAD'in kendisi</strong>. Gürültülü
+sahne noktaları yerine kusursuz geometri. Bundan sonra gürültü yalnızca pozda var,
+şekilde yok.</p>
+<hr>
+<h2 id="8-çok-bakışlı-yakın-mesafe-iyileştirme">8. Çok bakışlı yakın mesafe iyileştirme</h2>
+<p>Servis: <code>ros2 service call /icp_pose_refiner/refine_pose std_srvs/srv/Trigger</code>. Kaydetme
+ile dikiş hesabı arasında, tek komutla çalışıyor. Robot kendi kendine dört görüşe gidip
+geliyor; sonuç RViz'de görünüyor ve hat oradan devam ediyor.</p>
+<p>Kod: <code>multiview.py</code> (görüş seçimi), <code>multiview_capture.py</code> (çekim, ön işleme),
+<code>multiview_refine.py</code> (iyileştirme), <code>multiview_service.py</code> (servis).</p>
+<h3 id="81-neden">8.1 Neden?</h3>
+<p>Toplantıda söylendiği gibi <strong>parçayı tanımak ile pozunu hassas bulmak iki ayrı iş.</strong></p>
+<ul>
+<li>Tanıma için uzaktan (tarama konumu, ~0.6 m) tek bir görüntü yetiyor.</li>
+<li>Hassas poz için iki sorun var:
+<ol>
+<li><strong>Derinlik hatası menzilin karesiyle büyüyor</strong> (Bölüm 3). 0.6 m'de 0.4 m'dekinin
+~2.25 katı. Tare sonrası bile bir kalıntı var.</li>
+<li><strong>Tek bakış bazı yönleri hiç ölçemiyor.</strong> Dik duran ince bir plakanın kendi
+düzlemindeki kayması ve dönmesi tek açıdan çok zayıf görünüyor. Gören yüzeyler bu
+harekete paralel.</li>
+</ol>
+</li>
+<li>Ayrıca tek görüşteki <strong>kamera kalibrasyon hatası</strong> her kaydedilmiş poza aynen geçiyor.</li>
+</ul>
+<p>Çözüm: parçalar kaydedildikten sonra robot kamerayı <strong>0.40 m'ye</strong> (D435i'nin minimum
+mesafesi ~0.28 m) <strong>dört farklı açıya</strong> götürüyor. Bütün parçalar bütün görüşlere
+<strong>birlikte</strong> oturtuluyor.</p>
+<h3 id="82-görüşlerin-seçimi">8.2 Görüşlerin seçimi</h3>
+<p><strong>Hedef:</strong> kaydedilmiş parçaların ortak kutusunun merkezi. Tek nokta.</p>
+<p><strong>Adaylar:</strong></p>
+<ul>
+<li>merkeze 0.40 m uzaktan bakan kamera pozları;</li>
+<li>yükseklik açısı 45° ve 60°;</li>
+<li>yatayda 30°'de bir;</li>
+<li>her biri için 4 farklı kamera dönmesi (roll).</li>
+</ul>
+<p><strong>Neye göre puanlanıyor?</strong> Önemli olan bütün parça değil, <strong>dikiş bölgesi</strong>: bir parçanın
+yüzeyinde başka bir parçaya 1–30 mm uzaklıktaki noktalar. Bir aday, bu noktalardan kaçını
+<strong>iyi</strong> görüyorsa o kadar puan alıyor. Bir noktanın iyi görülmesi için:</p>
+<ul>
+<li>kameraya uzaklığı &gt; 0.28 m;</li>
+<li>görüş alanının içinde (69° × 42°);</li>
+<li>yüzeye bakış açısı 60°'den dik (daha yatık bakılan yüzeyin derinliği kötü);</li>
+<li>başka bir parçanın kutusu tarafından örtülmüyor.</li>
+</ul>
+<p><strong>Seçim (açgözlü, greedy):</strong> her adımda en çok <strong>yeni</strong> bilgi veren aday seçiliyor. Bir
+noktanın 1., 2. ve 3. kez görülmesi 1, 0.5 ve 0.25 değerinde, yani aynı yeri tekrar tekrar
+görmek az değerli. Seçilen yönler birbirinden en az 30° ayrı. 4 görüş seçiliyor.</p>
+<p><strong>Fiziksel kontroller,</strong> yalnızca seçilmek üzere olan adaylarda (pahalı oldukları için):</p>
+<ul>
+<li>ters kinematik, robotun hep aynı kol duruşunda (dirsek yukarı);</li>
+<li>tekillik (bilek ve dirsek): kol açılara aşırı duyarlı olduğu yerlere gitmesin;</li>
+<li>çarpışma: kol kapsülleri, takım zarfı, parçaların kutuları, masa; 20 mm payla.</li>
+</ul>
+<p>Geçmeyen aday atlanıyor ve bir sonraki iyi aday deneniyor. Planlama birkaç saniye sürüyor.</p>
+<h3 id="83-çekim">8.3 Çekim</h3>
+<p>Her görüşte:</p>
+<ol>
+<li>Robot gidiyor. Hareket kuvvet sensörüyle izleniyor; beklenmedik bir temasta duruyor.</li>
+<li>Eklem hızları sıfırlanınca 0.5 s daha bekleniyor.</li>
+<li><strong>16 yeni kare</strong> alınıyor. Her piksel için 16 derinliğin <strong>medyanı</strong> alınıyor. Bu,
+piksel gürültüsünü bastırıyor ve tek karelik sıçramaları atıyor.</li>
+<li>Kameranın pozu, karenin zaman damgasında TF'ten okunuyor (<code>T_taban←kamera</code>).</li>
+</ol>
+<p>Dört görüş bitince robot eve dönüyor. Bütün çekim diske yazılıyor
+(<code>multiview/&lt;zaman&gt;/</code>: her görüşün bulutu, kamera pozu, o anki montaj). Bundan sonraki her
+şey bu kayıtlı veri üzerinde <strong>hesap.</strong> Aynı hesap robotsuz da tekrar çalıştırılabiliyor
+(<code>multiview_refine_offline.py</code>); deneylerin tekrarlanabilmesi bu sayede.</p>
+<h3 id="84-ön-işleme-görüş-başına">8.4 Ön işleme (görüş başına)</h3>
+<ol>
+<li>Normaller (Bölüm 4), robot tabanına çevirme.</li>
+<li>Kaydedilmiş parçaların kutularına 3 cm'den uzak noktalar atılıyor.</li>
+<li>Masa düzleminin 2 mm üstüne kadar olanlar atılıyor.</li>
+<li>3 mm voksel ile seyreltme.</li>
+</ol>
+<p><strong>Çıktı:</strong> her görüş için N×3 nokta + N×3 normal, robot tabanında, ve o görüşün kamera
+yönelimi.</p>
+<h3 id="85-hangi-nokta-hangi-parçanın">8.5 Hangi nokta hangi parçanın?</h3>
+<p>İki parça birbirine dayalı. Köşeye yakın bir sahne noktası iki parçaya da ait olabilir.
+Yanlış parçaya verilirse o parçayı yanlış yöne çeker.</p>
+<ul>
+<li><strong>Sahiplik:</strong> her sahne noktası, kaydedilmiş yüzeyi ona en yakın olan parçaya veriliyor.</li>
+<li><strong>Ölü bant:</strong> iki parçaya da 4 mm'den yakın noktalar <strong>hiçbirine verilmiyor.</strong> Köşedeki
+belirsiz bölge dışarıda kalıyor.</li>
+<li>Hiçbir parçaya 15 mm'den yakın olmayan noktalar da kullanılmıyor.</li>
+</ul>
+<h3 id="86-parçalar-sırayla-resim-çerçevesini-iki-kişi-düzeltir-gibi">8.6 Parçalar sırayla: &quot;resim çerçevesini iki kişi düzeltir gibi&quot;</h3>
+<p>Bütün parçaları tek seferde çözmek yerine <strong>sırayla</strong> gidiliyor (blok koordinat inişi):</p>
+<pre class="hljs"><code><div>tur 1:  taban fit edilir (kulak sabit)  →  kulak fit edilir (taban sabit)
+        sahiplik yeniden hesaplanır
+tur 2:  taban  →  kulak
+        (hiçbir parça 0.2 mm / 0.05°'den fazla oynamıyorsa erken durur)
+</div></code></pre>
+<p>Önce en çok noktası olan parça çözülüyor, genellikle taban. En iyi kısıtlı olan o ve
+üstündekilere referans oluyor. Bizim hücrede hep iki parça olduğu için 2 tur.</p>
+<p><strong>Tek bir parçanın çözümü.</strong> Bilinmeyen, kaydedilmiş poza göre küçük bir düzeltme ξ: 3
+dönme + 3 öteleme. Dönme, <strong>parçanın kendi merkezi</strong> etrafında yazılıyor. Robot tabanının
+orijini etrafındaki 1°'lik dönme, parçayı 9 mm kaydırırdı; dönme ile öteleme birbirine
+karışırdı. En aza indirilen toplam üç terimden oluşuyor:</p>
+<pre class="hljs"><code><div>  Σ  w · ρ( n·(T p − q) )²           1) veri: CAD noktası p, en yakın sahne noktası q,
+                                        normali n; noktadan-düzleme uzaklık
+                                        (normal kapısı + Welsch ağırlığı ρ)
+
++ ξᵀ Σ⁻¹ ξ                           2) önsel: kaydedilmiş pozdan uzaklaşmaya ceza
+                                        (Σ: 3 mm, 1°)
+
++ w_o Σ max(0, −sd − 0.5 mm)²        3) iç içe geçme yasağı: komşu parçaya bakan
+                                        yüzlerdeki CAD noktaları, komşunun kutusuna
+                                        0.5 mm'den fazla giremez (sd: kutuya işaretli
+                                        uzaklık, içeride negatif)
+</div></code></pre>
+<p>Terimlerin anlamı:</p>
+<ol>
+<li>
+<p><strong>Veri terimi:</strong> CAD yüzeyi sahne noktalarına otursun.</p>
+<ul>
+<li>Her görüşün <strong>toplam ağırlığı eşit.</strong> Yakın görüş çok nokta verdi diye diğerlerini
+bastırmıyor.</li>
+<li>Welsch ağırlığı, uzak eşleşmelerin etkisini yumuşakça sıfıra indiriyor. Bant genişliği
+önce gevşek tutuluyor, sonra sensör gürültüsüne (1.5 mm) kadar daraltılıyor.</li>
+</ul>
+</li>
+<li>
+<p><strong>Önsel:</strong> parçanın kaydedilmiş pozuna bağlı yumuşak bir yay. Verinin ölçemediği bir
+yönde parça başıboş kaymasın, kaydedildiği yerde kalsın.</p>
+</li>
+<li>
+<p><strong>İç içe geçme yasağı:</strong> gerçek parçalar birbirinin içine giremez. Bu tek yönlü bir kural:</p>
+<ul>
+<li>parçalar arasında boşluk olabilir ve ceza yok;</li>
+<li>içeri girerse ceza var.</li>
+</ul>
+<p>Yalnızca düz yüzler için yazıldı. Silindir, boru gibi kavisli parçalarda eğri yüzeye
+uzaklık gerekiyor; o parçalar gelince eklenecek.</p>
+</li>
+</ol>
+<p>Çözüm Gauss-Newton ile, en fazla 30 adım.</p>
+<p><strong>Hangi yönler gerçekten ölçüldü?</strong> Çözümün bilgi matrisi <code>H = Jᵀ W J</code>. Dönmeler parçanın
+yarıçapıyla çarpılıyor ki hepsi milimetre cinsinden olsun. H'nin her özdeğeri λ bir yönün
+ne kadar ölçüldüğünü söylüyor:</p>
+<pre class="hljs"><code><div>o yöndeki belirsizlik:  σ_yön = σ_gürültü / √λ          (σ_gürültü = 1.5 mm)
+σ_yön ≤ 0.5 mm  →  &quot;ölçüldü&quot;
+σ_yön &gt;  0.5 mm  →  &quot;ölçülemedi&quot;
+</div></code></pre>
+<p>Ölçülemeyen yönde düzeltme veriden değil önselden geliyor. Rapor bunu ayrıca yazıyor ve
+kabul kuralı (8.8) bu yönlere ayrıca bakıyor.</p>
+<p>Ölçüt <strong>mutlak</strong> olmak zorunda. İlk denenen göreli kural (&quot;en güçlü yönün %5'inden zayıfsa
+ölçülemedi&quot;) dik plakanın kendi düzlemindeki dönmesini &quot;ölçülemedi&quot; saydı. Oysa o yönü
+binlerce nokta sabitliyordu; sadece başka bir yön çok daha güçlüydü.</p>
+<h3 id="87-kameranın-kendi-hatası-görüşlerin-anlaşmazlığından-ölçmek">8.7 Kameranın kendi hatası: görüşlerin anlaşmazlığından ölçmek</h3>
+<p>Bu bölüm çok bakışın en önemli kazancı.</p>
+<p><strong>Fikir.</strong> El-göz kalibrasyonunun öteleme kısmı d kadar yanlış olsun: kamera bileğe,
+varsayılan yerden 4 mm farklı monte edilmiş. Bu hata <strong>kameranın kendi çerçevesinde</strong> sabit
+bir vektör. Ama her görüşte kamera farklı yöne döndüğü için robot tabanında <strong>farklı yönlere</strong>
+kayma yaratıyor: görüş v'nin bulutu <code>R_v · d</code> kadar kayıyor (<code>R_v</code>, o görüşteki kamera
+yönelimi).</p>
+<pre class="hljs"><code><div> görüş 1: bulut  R_1·d  kadar kaymış   ─┐
+ görüş 2: bulut  R_2·d  kadar kaymış    ├─▶  aynı parça her görüşte biraz farklı yerde
+ görüş 3: bulut  R_3·d  kadar kaymış    │    → bu anlaşmazlık d'yi ele veriyor
+ görüş 4: bulut  R_4·d  kadar kaymış   ─┘
+</div></code></pre>
+<p>Tek görüşle d görünmez: parça sadece biraz kaymış görünür. Farklı yönlerden bakan görüşler
+<strong>birbiriyle anlaşamaz</strong> ve anlaşmazlığın şekli d'yi verir.</p>
+<p><strong>Hesap.</strong> Her sahne noktasının artığına d terimi ekleniyor:</p>
+<pre class="hljs"><code><div>r = n · (T p − q + R_v d)
+</div></code></pre>
+<p>Bu, d'ye ve her parçanın düzeltmesine göre doğrusal. Bütün sahip olunmuş noktalar üzerinden
+tek bir en küçük kareler problemi kuruluyor ve ikisi birlikte çözülüyor.</p>
+<ul>
+<li>
+<p>d'nin kendi bilgisi, parçaların düzeltmeleri hesaba katıldıktan sonra kalan bilgi (Schur
+tümleyeni):</p>
+<pre class="hljs"><code><div>S = N_dd − N_dx N_xx⁺ N_xd
+</div></code></pre>
+</li>
+<li>
+<p>d'nin yalnızca σ ≤ 0.5 mm ile belirlenen yönleri kullanılıyor.</p>
+</li>
+</ul>
+<p><strong>Çevrim içi düzeltme.</strong> d yeterince büyükse (&gt; 0.5 mm):</p>
+<ol>
+<li>her görüşten <code>R_v·d</code> çıkarılıyor;</li>
+<li>her <strong>kaydedilmiş pozdan</strong> da <code>R_tarama·d</code> çıkarılıyor. Kaydedilmiş poz da aynı yanlış
+kamerayla, tarama konumundan bulunmuştu; Bölüm 7'deki <code>T_static_camera</code> burada lazım.</li>
+<li>İyileştirme tekrar çalıştırılıyor. Düzeltilmiş görüşler hâlâ bir d gösteriyorsa en fazla
+4 kez tekrarlanıyor.</li>
+</ol>
+<p>İkinci adım olmadan bir tuzak çıkıyordu. Görüşler düzeltildi ama kaydedilmiş poz
+düzeltilmedi. Parçanın ölçülen yönleri yeni yere gitti, ölçülemeyen yönleri önsel yüzünden
+eski (yanlış) yerde kaldı. Sonuç sahte bir 8 mm &quot;aralık değişimi&quot; ve iki parçanın da
+reddedilmesi.</p>
+<p><strong>Neden ortak çözüm tek başına yetmiyor?</strong> Bütün parçaları bütün görüşlere birlikte oturtmak
+d'yi kendiliğinden yok etmiyor. d'nin bütün görüşlerde ortak olan kısmı pozların içinde
+kalıyor. Sentetik testte d, ancak açıkça tahmin edildiğinde 0.2 mm'ye kadar bulundu.</p>
+<p><strong>Çalışmalar arası birikim.</strong> Her çalışma d'yi ve 3×3 bilgi matrisini kaydediyor; kayıtlar
+el-göz dosyasının özetiyle (sha1) eşleştiriliyor. Ayrı sahnelerden en az 3 çalışma 1 mm
+içinde anlaşınca düzeltilmiş bir el-göz dosyası yazılıyor. Elle onaylanıyor, otomatik
+değil. Aynı sahnenin tekrarları bağımsız kanıt sayılmıyor.</p>
+<p><strong>Bilinen zayıflık.</strong> 45° ve 60°'lik görüşlerin hepsi yukarıdan bakıyor. d'nin <strong>dikey</strong>
+kısmı, görüşlerin en zayıf ayırdığı yön. Şu anki ölçümlerde dikey kısım 3–5 mm fazla
+düzeltiliyor. Plan: yüksekliği kalemle ölçülmüş masaya bağlamak, görüşlerden yalnızca
+yatay kısmı almak.</p>
+<h3 id="88-kabul-ya-da-red">8.8 Kabul ya da red</h3>
+<p>Bir parçanın yeni pozu şu durumlarda <strong>reddediliyor</strong> ve kaydedilmiş pozu korunuyor:</p>
+<table>
+<thead>
+<tr>
+<th>kural</th>
+<th>sınır</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>düzeltme (kameranın payı çıkarıldıktan sonra)</td>
+<td>&gt; 10 mm veya &gt; 4°</td>
+</tr>
+<tr>
+<td>eşleşme oranı (fitness)</td>
+<td>&lt; 0.2</td>
+</tr>
+<tr>
+<td>komşu parçanın içine girme</td>
+<td>&gt; 1 mm</td>
+</tr>
+<tr>
+<td>dokunan iki parça arasındaki göreli değişim, <strong>ölçülemeyen yönlerde</strong></td>
+<td>&gt; 2 mm veya &gt; 1°</td>
+</tr>
+</tbody>
+</table>
+<p>Reddedilen parça kaydedildiği yerde tutuluyor ve diğerleri ona karşı bir kez daha
+iyileştiriliyor. <strong>Montaj ya birlikte iyileştirilir ya hiç:</strong> kabul edilen bir parçanın
+tutulan bir parçayla aralığı çok değişecekse o da tutuluyor. Rapor reddedilen parçanın
+denenen düzeltmesini de yazıyor.</p>
+<h3 id="89-montaj-aralığı-fit-up-kontrolü">8.9 Montaj aralığı (fit-up) kontrolü</h3>
+<p>Parçaları yerleştiren kişi onları birbirinden fazla uzak koyabilir. Sistem bunu fark edip
+<strong>uyarmalı.</strong></p>
+<ul>
+<li>
+<p>Bir parçanın komşusuna oturan alt yüzleri ile komşunun karşı yüzü arasındaki aralık,
+temas boyunca ölçülüyor.</p>
+</li>
+<li>
+<p>Sınır: <strong>ISO 5817:2023, Tablo 1, no. 617</strong> (köşe kaynağında kök aralığı), weld_generator'ın
+<code>root_gap_limit</code> fonksiyonuyla, a = 0.7·t. 8 mm plaka için:</p>
+<table>
+<thead>
+<tr>
+<th>kalite seviyesi</th>
+<th>B</th>
+<th>C (varsayılan)</th>
+<th>D</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>izin verilen aralık</td>
+<td>1.06 mm</td>
+<td>1.62 mm</td>
+<td>2.68 mm</td>
+</tr>
+</tbody>
+</table>
+</li>
+<li>
+<p>Aşılırsa <strong>uyarı</strong> veriliyor, <strong>red değil.</strong> Aralık ölçüm hatası değil, gerçek bir montaj
+durumu; operatöre söylenmesi gereken bir şey.</p>
+</li>
+</ul>
+<p>İlk denemede parçaları birbirine çeken bir &quot;oturma&quot; terimi vardı. Sentetik testte gerçek bir
+3 mm aralığı uyarmadan kapattı. Bu yüzden kapalı: aralığı <strong>varsaymak</strong> değil <strong>ölçmek</strong>
+gerekiyor.</p>
+<h3 id="810-çıktı">8.10 Çıktı</h3>
+<p>Kabul edilen pozlar <code>assembly.json</code> dosyasına ve SEPC'ye yazılıyor; eski poz yanında
+saklanıyor (<code>pose_before_refine</code>). RViz'de:</p>
+<ul>
+<li>görüşlerin bulutları, görüş başına bir renkle;</li>
+<li>kamera okları;</li>
+<li>yeni montaj.</li>
+</ul>
+<p><strong>Son çalıştırmadan örnek (2 Ekim):</strong></p>
+<ul>
+<li>iki parça da kabul edildi;</li>
+<li>kamera hatası d = (1.6, 3.6, −5.9) mm (kamera çerçevesi), tarama konumunda 7.1 mm'lik bir
+düzeltme demek;</li>
+<li>kulağın tabana oturan yüzünde 0.6–2.0 mm aralık ölçüldü ve C seviyesi (1.62 mm) için uyarı
+verildi;</li>
+<li>ardından işaretlenen bütün puntalar ~2.5 mm içindeydi.</li>
+</ul>
+<hr>
+<h2 id="9-kaynak-dikişi-cadlerden-hesaplama">9. Kaynak dikişi: CAD'lerden hesaplama</h2>
+<p>Servis: <code>~/welding_points</code>. Kod: <code>seam_from_registration.py</code>. Kural weld_generator
+projesinden (<code>weldgen/accessibility.py</code>).</p>
+<p><strong>Ana fikir.</strong> Kaydedilen şey CAD'in kendisi (Bölüm 7). Dikiş görüntüde <strong>aranmıyor</strong>; iki
+CAD'in yüzlerinden <strong>hesaplanıyor.</strong> Dikişin tek hatası pozların hatası.</p>
+<ol>
+<li>
+<p><strong>Her parça bir ilkel geometri olarak tanımlı.</strong> <code>models/weldgen_objects.json</code>
+(<code>build_weldgen_registry.py</code>), her CAD için:</p>
+<ul>
+<li>türünü (<code>slab</code> = plaka/kutu);</li>
+<li>CAD ile ilkel arasındaki dönüşümü;</li>
+<li>CAD'e karşı doğrulamasını</li>
+</ul>
+<p>tutuyor. Küçük çentikli/tırnaklı plakalar dış zarflarıyla kabul ediliyor (en fazla %10
+eksik).</p>
+</li>
+<li>
+<p><strong>İlkeller <code>pose_static</code> pozlarına konuyor,</strong> mm cinsinden, robot tabanında.</p>
+</li>
+<li>
+<p><strong>Her yüz çifti bir aday.</strong> Dikiş çizgisi iki yüz <strong>düzleminin</strong> kesişimi; yüzlerin
+üst üste geldiği kısımla sınırlı.</p>
+</li>
+<li>
+<p><strong>D4 erişilebilirlik kuralı</strong> her adayı yargılıyor: bir dikiş, iki <strong>dış</strong> yüzün
+kesişimi olmalı ve iki yüzün <strong>açıortayı boş alana çıkabilmeli.</strong> Yani torç oraya
+girebilmeli.</p>
+<p>Beş bağlantı türü (T, köşe, alın, bindirme, kenar) için tek kural. Sınıf yüzlerden
+çıkıyor:</p>
+<table>
+<thead>
+<tr>
+<th>sınıf</th>
+<th>yüzler</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>fillet</code> (köşe)</td>
+<td>açılı iki yüz</td>
+</tr>
+<tr>
+<td><code>butt</code> (alın)</td>
+<td>aynı düzlemde iki yüz</td>
+</tr>
+<tr>
+<td><code>lap_toe</code> (bindirme)</td>
+<td>kenar × yüz</td>
+</tr>
+<tr>
+<td><code>edge</code> (kenar)</td>
+<td>kenar × kenar</td>
+</tr>
+</tbody>
+</table>
+<p>Reddedilen adaylar da sebebiyle saklanıyor (<code>bisector_blocked</code>, <code>no_contact</code> …). &quot;Dikiş
+değil&quot; de kayıtlı bir karar; planlayıcı bunlardan da kaçınmalı.</p>
+</li>
+<li>
+<p><strong>Poz toleransı.</strong> weld_generator'ın kuralı parçaların tam temas ettiğini varsayıyor.
+Ölçülen pozlarda ise parçalar ya birkaç mm içe giriyor ya ayrık duruyor. Bu yüzden
+temas toleransı yerine <strong>poz toleransı</strong> (10 mm) kullanılıyor:</p>
+<ul>
+<li>
+<p>yüzler kesişim çizgisine 10 mm içinde ulaşmalı;</p>
+</li>
+<li>
+<p>her yüz diğerinin düzleminin 10 mm ötesine uzanmalı.</p>
+<p>Bu ikinci şart, tolerans plaka kalınlığını aşınca bir plakanın kendi alt yüzünün dik
+plakayla eşleşmesini önlüyor.</p>
+</li>
+</ul>
+<p>Dikiş çizgisi (iki düzlemin kesişimi), ince plakanın kendi düzlemindeki kaymasından
+<strong>etkilenmiyor</strong>. Bu kayma tek bakışın ölçemediği yöndü.</p>
+</li>
+<li>
+<p><strong>Her dikişe aralık değeri yazılıyor</strong> (<code>fitup_mm</code>): her parçanın yakın kenarının diğerinin
+yüz düzlemine işaretli uzaklığı. Aralık &gt; 0, içe girme &lt; 0.</p>
+</li>
+</ol>
+<p><strong>Çıktı</strong> (<code>welding_seams.json</code>, robot tabanı, mm):</p>
+<ul>
+<li>dikiş çizgisi (polyline);</li>
+<li>sınıf;</li>
+<li>torcun yaklaşma ekseni;</li>
+<li><code>weldable</code> (kaynaklanabilir mi) veya red sebebi;</li>
+<li><code>fitup_mm</code>.</li>
+</ul>
+<p><strong>Sınır.</strong> Şimdilik yalnızca <strong>düz plakalar.</strong> Boru-plaka ve boru-boru (elips, eyer eğrileri)
+weld_generator'da var, ama hücrede kayıt defterine <code>tube</code> / <code>swept_slab</code> girdileri ve
+eğri yüzeyler için iç içe geçme kuralı (8.6) gerekiyor.</p>
+<hr>
+<h2 id="10-puntalar-nereye-kaç-tane-hangi-sırayla">10. Puntalar: nereye, kaç tane, hangi sırayla?</h2>
+<p>Aynı servis, kaynaklanabilir dikişlere punta yerleştiriyor. Kural weld_generator'ın
+<strong>tackrule-0.1</strong>'i (<code>weldgen/tacks.py</code>). <code>t</code>, iki parçadan <strong>ince olanın</strong> kalınlığı.</p>
+<pre class="hljs"><code><div>punta uzunluğu   = clip(4t, 10, 50) mm
+en büyük aralık  = min(33t, 400) mm
+en küçük aralık  = 10t mm
+uç payı          = max(2t, punta uzunluğu)     (açık dikişte uçlara bu kadar yaklaşılmaz)
+
+açık dikiş:  L_etkin = L − 2·uç payı
+             L_etkin ≤ punta uzunluğu ise  → ortaya tek punta
+             değilse  n = max(2, ⌈L_etkin / en büyük aralık⌉ + 1)
+             puntalar [uç payı, L − uç payı] aralığına eşit dağıtılır
+</div></code></pre>
+<p><strong>Örnek: tezgâhtaki T bağlantı.</strong> 8 mm plakalar, dikiş boyu 250 mm.</p>
+<table>
+<thead>
+<tr>
+<th>büyüklük</th>
+<th>hesap</th>
+<th>sonuç</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>punta uzunluğu</td>
+<td>4·8</td>
+<td>32 mm</td>
+</tr>
+<tr>
+<td>uç payı</td>
+<td>max(16, 32)</td>
+<td>32 mm</td>
+</tr>
+<tr>
+<td>L_etkin</td>
+<td>250 − 64</td>
+<td>186 mm</td>
+</tr>
+<tr>
+<td>en büyük aralık</td>
+<td>min(264, 400)</td>
+<td>264 mm</td>
+</tr>
+<tr>
+<td>punta sayısı</td>
+<td>max(2, ⌈186/264⌉ + 1)</td>
+<td>2</td>
+</tr>
+<tr>
+<td>konumlar</td>
+<td></td>
+<td>32 mm ve 218 mm</td>
+</tr>
+</tbody>
+</table>
+<p>T'nin iki tarafı da kaynaklanabildiği için toplam 4 punta.</p>
+<p><strong>Sıra</strong> (<code>order</code>):</p>
+<ul>
+<li>önce uçlar, sonra aralıklar ikiye bölünerek;</li>
+<li>bir bağlantının iki tarafı sırayla değişiyor. Isı bir tarafta birikmiyor, çarpılma
+dengeleniyor.</li>
+</ul>
+<p><strong>Çıktı</strong> (<code>welding_tacks.json</code>), her punta için:</p>
+<ul>
+<li>nokta ve segment (<code>p0_mm</code>, <code>p1_mm</code>);</li>
+<li>dikişteki sırası (<code>tack_no</code>);</li>
+<li>kaynak sırası (<code>order</code>);</li>
+<li>yaklaşma ekseni.</li>
+</ul>
+<blockquote>
+<p>Toplantıda &quot;22t'de bir&quot; denmişti; kodda kullanılan aralık tavanı <strong>33t</strong>. Kural
+sürümlü olduğu için (tackrule-0.1) değer değişirse sürüm artırılıp her şey yeniden
+hesaplanabilir. Hangi kaynağın 22t dediği kontrol edilmeli.</p>
+</blockquote>
+<hr>
+<h2 id="11-erişilebilirlik-kalem-her-puntaya-ulaşabilir-mi">11. Erişilebilirlik: kalem her puntaya ulaşabilir mi?</h2>
+<p>Hareketten önce, masa başında: <code>tack_reachability.py</code>.</p>
+<p><strong>Takım modeli</strong> (<code>config/pen_tool.json</code>):</p>
+<ul>
+<li>kalem ucu;</li>
+<li>dokunma kuvveti 1.5 N;</li>
+<li>yaklaşma mesafesi 35 mm;</li>
+<li>tutucu, kalem, kamera kolu ve kamera gövdesinin çarpışma zarfları (CAD'den).</li>
+</ul>
+<p><strong>Çarpışma modeli:</strong></p>
+<ul>
+<li>robot kolu: eklem çerçevelerine bağlı kapsüller;</li>
+<li>takım zarfı;</li>
+<li>kayıtlı parçalar: kutu;</li>
+<li>masa: ölçülmüş düzlem.</li>
+</ul>
+<p><strong>Ne aranıyor?</strong> Her dikiş için kalemin <strong>eğim açısı × kendi ekseni etrafındaki dönmesi</strong>
+kombinasyonları deneniyor. Ters kinematik hep aynı kol duruşunda (dirsek yukarı, tarama
+konumunun duruşu). Kombinasyon başına üç durumdaki en küçük boşluk ölçülüyor:</p>
+<ol>
+<li>yaklaşma pozu;</li>
+<li>punta pozu;</li>
+<li>aradaki düz iniş.</li>
+</ol>
+<p>En küçük boşluğu <strong>en büyük</strong> olan kombinasyon seçiliyor. Sonuç <code>tack_reach.json</code> dosyasına
+yazılıyor; RViz'de her punta yeşil (ulaşılır) veya kırmızı.</p>
+<hr>
+<h2 id="12-hareket-ve-işaretleme">12. Hareket ve işaretleme</h2>
+<p>Düğüm: <code>tack_marking_node.py</code>, servisler <code>~/plan</code>, <code>~/next</code>, <code>~/all</code>, <code>~/home</code>, <code>~/abort</code>.
+Hareket kodu ortak bir yürütücüde (<code>motion.py</code>); <code>refine_pose</code> da robotu aynı yürütücüyle
+hareket ettiriyor.</p>
+<p><strong>Plan</strong> (<code>~/plan</code>):</p>
+<ul>
+<li><strong>puntadan puntaya geçiş:</strong> önce düz eklem yolu deneniyor; çarpışıyorsa RRT-Connect +
+kısaltma. Kalem parçalardan 20 mm uzak tutuluyor (başlangıç ve bitiş pozlarının izin verdiği kadar). Bu pay, kalemin parçaya
+yaslanarak gitmeye çalıştığı bir hatadan sonra eklendi.</li>
+<li><strong>iniş:</strong> kalem ekseni boyunca, kartezyen bir doğru üzerinde bir ters kinematik zinciri.</li>
+<li><strong>eve dönüş.</strong></li>
+<li><strong>kapılar:</strong> başlangıç eklemleri çarpışmasız olmalı, kol aynı duruşta olmalı, planın ilk
+noktası mevcut eklemlere 20° içinde olmalı.</li>
+</ul>
+<p><strong>Yürütme</strong>, her punta için:</p>
+<ol>
+<li>
+<p><strong>Kuvvet sıfırı yeniden ölçülüyor.</strong> Kuvvet sensörünün sıfırı kayıyor; açılıştan sonra
+robot dururken 7 N gösterdi. Serbest hareketlerden önce ve yaklaşma noktasında sıfır
+yeniden ölçülüyor.</p>
+</li>
+<li>
+<p><strong>Geçiş</strong> robotun hızı ölçeklenen yörünge denetleyicisiyle. 8 N'u aşan her kuvvet hareketi
+durduruyor.</p>
+</li>
+<li>
+<p><strong>İniş iki hızlı:</strong> önce 20 mm/s, son 6 mm 2 mm/s. Hareket, kalem ekseni boyunca kuvvet
+<strong>1.5 N</strong>'a ulaşınca iptal ediliyor. İptal anındaki eklemler temas noktası demek.</p>
+<p>Kalem yaylı değil. Yavaş son kısım olmadan 1.5 N'da algılanan temas, durma mesafesi
+yüzünden ~10 N'a çıkıyordu.</p>
+</li>
+<li>
+<p><strong>İşaret:</strong></p>
+<ul>
+<li>nokta modu: temasta kısa bekleme;</li>
+<li>çizgi modu (<code>stroke_mode:=tack|seam</code>): punta segmenti ya da bütün dikiş boyunca 10 mm'lik
+parçalarla. Derinlik temas noktasından ölçülüyor ve parçalar arasında kalem ekseni
+boyunca ölçülen kuvvetle düzeltiliyor.</li>
+</ul>
+</li>
+<li>
+<p><strong>Geri çekilme</strong> kalem ekseni boyunca.</p>
+</li>
+</ol>
+<p><code>tack_marks.json</code> her temas için şunları kaydediyor:</p>
+<ul>
+<li>uç konumu;</li>
+<li>kalem ekseni boyunca derinlik, yani beklenen yüzeye göre ne kadar erken/geç dokundu;</li>
+<li>çizgi kuvvetleri.</li>
+</ul>
+<p>Bölüm 13'teki ölçümlerin ham verisi bu.</p>
+<p><strong>Karar (2 Ekim):</strong> dokunma <strong>algılama</strong> olarak kullanılmıyor. Yöntem yalnızca görüntüye
+dayalı; parçalara dokunulamayan bir senaryo da geçerli kalmalı. Kalem dokunuşları yalnızca:</p>
+<ul>
+<li>kalibrasyonda (Bölüm 3);</li>
+<li>hatayı ölçmek için (Bölüm 13)</li>
+</ul>
+<p>kullanılıyor. Bir puntanın yerini düzeltmek için asla kullanılmıyor.</p>
+<hr>
+<h2 id="13-doğrulama-hata-nasıl-ölçülüyor">13. Doğrulama: hata nasıl ölçülüyor?</h2>
+<p>Kalem izi, bütün zincirin kameradan bağımsız testi. Zincir:</p>
+<pre class="hljs"><code><div>derinlik → el-göz → kinematik → kayıt → dikiş → plan → kalem ucu
+</div></code></pre>
+<p>Üç araç var:</p>
+<table>
+<thead>
+<tr>
+<th>araç</th>
+<th>ne ölçüyor</th>
+<th>neye karşı</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>check_registration.py</code></td>
+<td>kayıtlı her yüzün canlı buluta göre ofseti ve yüz boyunca eğimi (kaçıklığı)</td>
+<td>canlı bulut. Aynı kamerayı kullandığı için <strong>kalibrasyon hatasını göremez</strong>; yalnızca ICP'nin oturmasını test eder.</td>
+</tr>
+<tr>
+<td><code>touch_probe.py</code></td>
+<td>kalem ucu elle bir yüzeye dokundurulunca: masaya, en yakın kayıtlı yüze ve puntalara uzaklık</td>
+<td>robotun kendisi, kameradan bağımsız</td>
+</tr>
+<tr>
+<td><code>tack_marks.json</code></td>
+<td>işaretleme sırasındaki temas derinlikleri</td>
+<td>beklenen yüzey</td>
+</tr>
+</tbody>
+</table>
+<p><strong>8 mm'den 2.5 mm'ye</strong> (ayrıntı: README §14, <a href="thesis_notes.md">thesis_notes.md</a>):</p>
+<table>
+<thead>
+<tr>
+<th>tarih</th>
+<th>belirti</th>
+<th>sebep</th>
+<th>çözüm</th>
+<th>sonra</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>24 Eyl</td>
+<td>dokunuşlar 19–29 mm erken</td>
+<td>el-göz çözümü sessizce başarısız olmuştu</td>
+<td>numpy Park–Martin ile yeniden çözüm; artık her çözüm kendi artığını yazdırıyor</td>
+<td>derinlik doğru, yanal 6 cm</td>
+</tr>
+<tr>
+<td>24 Eyl</td>
+<td>yanal 6 cm</td>
+<td>kalibrasyon el kumandasının aktif TCP'sinde alınmış, ROS onu bileğe asıyor</td>
+<td>TCP kalemle kalibre edildi, dönüşüm bileğe taşındı</td>
+<td>yanal ~8 mm</td>
+</tr>
+<tr>
+<td>25 Eyl</td>
+<td>izler 5–8 mm</td>
+<td>duran parçada ICP pozu 5 mm std ile oynuyor</td>
+<td>kaydetmede sağlam ortalama (Bölüm 7)</td>
+<td></td>
+</tr>
+<tr>
+<td>28 Eyl</td>
+<td>hâlâ 5–8 mm</td>
+<td>masa 1.57° eğik; düz zemin kesimi masayı parçanın yanında bırakıyordu</td>
+<td>zemin kesimi ölçülmüş düzlemi izliyor</td>
+<td>3–5 mm</td>
+</tr>
+<tr>
+<td>28 Eyl</td>
+<td>kalibrasyonlar birbirini tutmuyor</td>
+<td>kameraya bağlı 0.36° eğim, kalibrasyonun kendi belirsizliği içinde</td>
+<td>masaya göre eğim düzeltmesi</td>
+<td>3.7–4.3 mm</td>
+</tr>
+<tr>
+<td>29 Eyl</td>
+<td>model hatası</td>
+<td>TF nominal kinematiği, robot kalibre kinematiği kullanıyordu</td>
+<td>kalibre kinematik her yerde</td>
+<td></td>
+</tr>
+<tr>
+<td>29 Eyl</td>
+<td>izler 14–16 mm'ye kötüleşti</td>
+<td>ICP ince plakanın iki yüzü arasına yaslandı</td>
+<td>normal kapısı (Bölüm 5)</td>
+<td>kök ±0.2 mm</td>
+</tr>
+<tr>
+<td>1 Eki</td>
+<td>temas 8.5–9 mm erken</td>
+<td>D435i derinliği menzilin karesiyle uzun</td>
+<td>robottan hesaplanan mesafeyle Tare (Bölüm 3)</td>
+<td>1.1 mm (0.3–0.65 m)</td>
+</tr>
+<tr>
+<td>2 Eki</td>
+<td>izler 3–7 mm, bir taraf erken bir taraf geç</td>
+<td>el-göz ötelemesi, tek bakışın payı, plakanın düzlem içi dönmesi</td>
+<td><code>refine_pose</code> (Bölüm 8)</td>
+<td><strong>~2.5 mm</strong></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Şu anki hata bütçesi:</strong></p>
+<table>
+<thead>
+<tr>
+<th>halka</th>
+<th>büyüklük</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>kinematik</td>
+<td>&lt; 0.1 mm</td>
+</tr>
+<tr>
+<td>kalem ucu</td>
+<td>yanal 0.2 mm, boy ~2 mm içinde</td>
+</tr>
+<tr>
+<td>derinlik</td>
+<td>0.3–0.65 m arasında 1.1 mm, sabit ≈ +2 mm kalıntı</td>
+</tr>
+<tr>
+<td>kamera eğimi</td>
+<td>≈ 0.07°</td>
+</tr>
+<tr>
+<td>el-göz ötelemesi</td>
+<td>yatay düzeltiliyor; <strong>dikeyde 3–5 mm fazla düzeltme</strong> (temaslar hâlâ 3–6 mm erken)</td>
+</tr>
+<tr>
+<td>parça kaydı</td>
+<td>yüzeylerde ~0.4 mm; tabanın kendi düzlemindeki kayması 1–3 mm (kökü oynatmıyor)</td>
+</tr>
+<tr>
+<td>sabitlenmemiş parçalar</td>
+<td>mıknatıslı; tarama, işaretleme ve dokunuş arasında ~1 mm oynayabiliyor</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="14-her-aşamada-verinin-özeti">14. Her aşamada verinin özeti</h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>nerede</th>
+<th>veri</th>
+<th>şekil</th>
+<th>birim</th>
+<th>çerçeve</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>sunucu → laptop</td>
+<td>parça adı, poz, maske</td>
+<td>ad + 4×4 + 720×1280</td>
+<td>m</td>
+<td>kamera</td>
+</tr>
+<tr>
+<td>2</td>
+<td>laptop</td>
+<td>canlı bulut</td>
+<td>H×W×3 (düzenli) + normaller</td>
+<td>m</td>
+<td>kamera</td>
+</tr>
+<tr>
+<td>3</td>
+<td>laptop</td>
+<td>CAD örneği</td>
+<td>N×3 + N×3 dışa bakan normal</td>
+<td>m</td>
+<td>CAD'in kendi çerçevesi</td>
+</tr>
+<tr>
+<td>4</td>
+<td><code>run_icp</code></td>
+<td>düzeltilmiş poz</td>
+<td>4×4</td>
+<td>m</td>
+<td>kamera → TF ile taban</td>
+</tr>
+<tr>
+<td>5</td>
+<td>takip</td>
+<td>poz, her adımda</td>
+<td>4×4</td>
+<td>m</td>
+<td>kamera</td>
+</tr>
+<tr>
+<td>6</td>
+<td><code>save_object</code></td>
+<td><code>pose_static</code> + dağılım; SEPC</td>
+<td>4×4; N×3</td>
+<td>m</td>
+<td><strong>taban</strong> (<code>base_link</code>)</td>
+</tr>
+<tr>
+<td>7</td>
+<td><code>refine_pose</code> çekimi</td>
+<td>4 görüş × (16 kare medyanı + kamera pozu)</td>
+<td>görüş başına H×W×3 + 4×4</td>
+<td>m</td>
+<td>kamera (+ taban←kamera)</td>
+</tr>
+<tr>
+<td>8</td>
+<td>ön işleme</td>
+<td>görüş başına nokta + normal</td>
+<td>N×3 + N×3, 3 mm voksel</td>
+<td>m</td>
+<td>taban</td>
+</tr>
+<tr>
+<td>9</td>
+<td>iyileştirme</td>
+<td>parça başına yeni poz, kamera hatası d, bilgi matrisleri, aralıklar</td>
+<td>4×4; 3; 6×6; mm</td>
+<td>m / mm</td>
+<td>taban (d: kamera)</td>
+</tr>
+<tr>
+<td>10</td>
+<td><code>welding_points</code></td>
+<td>dikişler</td>
+<td>çizgi + sınıf + eksen + <code>fitup_mm</code></td>
+<td><strong>mm</strong></td>
+<td>taban</td>
+</tr>
+<tr>
+<td>11</td>
+<td>puntalar</td>
+<td>nokta, segment, sıra</td>
+<td>punta başına</td>
+<td>mm</td>
+<td>taban</td>
+</tr>
+<tr>
+<td>12</td>
+<td>erişilebilirlik</td>
+<td>eğim, dönme, boşluklar</td>
+<td>punta başına</td>
+<td>derece, mm</td>
+<td>taban</td>
+</tr>
+<tr>
+<td>13</td>
+<td>plan</td>
+<td>eklem yörüngeleri</td>
+<td>eklem açıları × zaman</td>
+<td>rad, s</td>
+<td>eklem uzayı</td>
+</tr>
+<tr>
+<td>14</td>
+<td>işaretleme</td>
+<td>temastaki uç, derinlik, kuvvetler</td>
+<td>punta başına</td>
+<td>m, N</td>
+<td>taban</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Birim farkına dikkat:</strong> pozlar ROS'ta metre, dikiş ve punta dosyaları milimetre
+(weld_generator'ın birimi).</p>
+<hr>
+<h2 id="15-toplantıdan-1-ekim-gelen-konular-ve-durumları">15. Toplantıdan (1 Ekim) gelen konular ve durumları</h2>
+<table>
+<thead>
+<tr>
+<th>konu (toplantıda)</th>
+<th>durum</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>&quot;Kameraya göre poz var, robot tabanına alıyor musun?&quot;</td>
+<td>Evet: Bölüm 2'deki zincir. Her halka ayrı ölçüldü (Bölüm 3).</td>
+</tr>
+<tr>
+<td>&quot;Takipte hata birikebilir; yerine koyduktan sonra bir kez daha poz hesapla.&quot;</td>
+<td>Yapıldı, iki adımda: kaydetmede sağlam ortalama (Bölüm 7) ve yakından tekrar bakış (Bölüm 8).</td>
+</tr>
+<tr>
+<td>&quot;Sensörün en iyi ölçtüğü mesafeyi bul, oradan bak.&quot;</td>
+<td>Derinlik hatası menzilin karesiyle büyüyor (ölçüldü, Bölüm 3). Görüşler 0.40 m'den; 0.32–0.35 m denenecek (minimum 0.28 m).</td>
+</tr>
+<tr>
+<td>&quot;Tanıma ile hassas poz iki ayrı paket.&quot;</td>
+<td>Hattın yapısı bu: uzaktan tanıma ve kayıt, sonra yakından <code>refine_pose</code>.</td>
+</tr>
+<tr>
+<td>&quot;FoundationPose varken neden ICP ile takip? Bir tabloya dök.&quot;</td>
+<td>Karar verildi: takip FoundationPose'a geçiyor, ICP duran parçalar için kalıyor (Bölüm 6). Karşılaştırma tablosu (gürültü, gecikme, kayma; <code>pose_jitter_probe.py</code>) canlı takip kurulunca yapılacak (<a href="realtime_fp.md">realtime_fp.md</a> adım 5).</td>
+</tr>
+<tr>
+<td>&quot;Parçalar arasında üretimden kaynaklı aralık varsa bulunabilir.&quot;</td>
+<td>Yapıldı: aralık ölçülüyor ve ISO 5817 no. 617 sınırını aşınca uyarı veriliyor (Bölüm 8.9).</td>
+</tr>
+<tr>
+<td>&quot;Dokunarak mı, dokunmadan mı?&quot;</td>
+<td>Karar: dokunmadan, yalnızca görüntü. Dokunuşlar yalnızca kalibrasyon ve ölçüm için (Bölüm 12).</td>
+</tr>
+<tr>
+<td>Hocanın dikiş fikri: iki parçanın yüzeyinden rastgele birer nokta, her adımda kendi komşuları içinde diğerine en yakın olana atlıyor; durdukları yer dikişe çok yakın; çok çiftle dikiş oturtuluyor; kenarların neden &quot;çekici&quot; (attractor) olduğunun ispatı</td>
+<td><strong>Başlanmadı.</strong> Hattın dışında ayrı bir iş olarak, önce adım adım görselleştirilerek (boşluk tuşuyla ilerleyen) denenecek. Şu anki yöntem (Bölüm 9) düzlemlerin kesişimi; yeni yöntem kavisli parçalar ve CAD'siz durum için aday.</td>
+</tr>
+<tr>
+<td>Lazer işaretçi: &quot;şuraya punta atacağım&quot; diye önce göstermek</td>
+<td>Açık. Kalemin yanına 3B baskılı bir tutucuyla, dijital çıkıştan açılıp kapanan bir lazer. Kalibrasyon, robot dikken XY'de daire çizdirerek.</td>
+</tr>
+<tr>
+<td>Belirsiz PPF sonucunda başka açıdan bakmak (next-best-view)</td>
+<td>Açık. Görüş seçimi (Bölüm 8.2) buna temel olabilir.</td>
+</tr>
+<tr>
+<td>ODTÜ ağında Tailscale engelli; FoundationPose evdeki bilgisayarda</td>
+<td>Geçici çözüm VPN. Canlı takip için laptop'ta yerel çalıştırma da değerlendiriliyor (<a href="realtime_fp.md">realtime_fp.md</a> adım 0).</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Hâlâ açık olan teknik işler</strong> (<a href="todo.md">todo.md</a>):</p>
+<ul>
+<li>yüksekliği masaya bağlayıp dikeydeki 3–5 mm'lik fazla düzeltmeyi gidermek;</li>
+<li>parçaları sabitlemek (fikstür veya kelepçe);</li>
+<li>kavisli parçalar: kayıt girdileri, eğri yüzeyler için iç içe geçme kuralı, boru dikişleri;</li>
+<li>FoundationPose canlı takibi.</li>
+</ul>
+
+</body>
+</html>

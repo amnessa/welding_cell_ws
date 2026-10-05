@@ -111,6 +111,26 @@ All of the plan's open items live here now; the plan keeps the design and the hi
 
 ## OPEN — motion (`pen_marking_plan.md`)
 
+- **Rough transits between tacks on opposite sides of a plate** (2026-10-05). Going from a
+  front tack to a back one, the arm swung drastically through the workspace.
+  - **Implemented 2026-10-05:**
+    - `marking.smooth_transit`: the drawing server's Catmull-Rom spline through the
+      shortcut path, every sample re-checked against the collision model, and the
+      straight path kept if any sample fails;
+    - `TrajectoryExecutor.time_path`: TOTG through `/compute_totg`, every sample checked,
+      `marking.time_trapezoid` as the fallback;
+    - node parameters `smooth_transits` (true) and `a_joint_rad_s2` (0.5);
+    - the TOTG node is started by `pointcloud.launch.py`;
+    - tests: `test_transit_smoothing.py`, `test_motion.py`.
+  - **Still to do on the robot:**
+    1. restart the perception launch (it now starts the TOTG node) and the marking node.
+       No rebuild needed: the changed files are symlinked into the install space;
+    2. dry-run `~/plan` on a front↔back pair and compare the tip path in RViz;
+    3. check the `~/status` line "timed by TOTG";
+    4. then run it on the arm.
+  - The spline rounds corners; it does not change the route. If the shortcut path itself
+    swings around the robot, that remains. Then: best-of-N seeds, or a via pose above
+    the assembly.
 - **Tack 0 of the 29 Sep 18:10 session is refused at planning:** "descent clearance
   0.0 mm (overshoot)". Find which pair goes to 0 in the overshoot zone.
 - **Holding 1.5 N on metal:** UR's `force_mode_controller` (loaded, inactive) for strokes

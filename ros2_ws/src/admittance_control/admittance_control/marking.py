@@ -39,7 +39,7 @@ from typing import Any, Callable, Sequence
 import numpy as np
 
 from .collision import CollisionModel
-from .kinematics import _edge_valid, rrt_connect, ur5e_fk
+from .kinematics import _edge_valid, bezier_smooth_path, rrt_connect, ur5e_fk
 from .tack_reach import MarkingConfig, _unwrap_to, solve_on_branch
 
 
@@ -74,10 +74,36 @@ def transit_model(model: CollisionModel, cfg: MarkingConfig, *qs: np.ndarray) ->
     return dataclasses.replace(model, clearance=max(model.clearance, need))
 
 
+def smooth_transit(path: Sequence[np.ndarray], is_valid: Callable[[np.ndarray], bool],
+                   resolution: float = 0.01, max_step: float = 0.02) -> list[np.ndarray] | None:
+    """Round the corners of a shortcut path the way the drawing server does: a centripetal
+    Catmull-Rom spline through its waypoints (`kinematics.bezier_smooth_path`, continuous
+    joint velocity), sampled every ~`max_step` rad. The spline leaves the straight edges
+    that were collision-checked, so every edge between samples is checked again with the
+    planner's own `is_valid`. Returns the dense path, or None when any of it leaves free
+    space (the caller keeps the straight-segment path). Fewer than 3 points: nothing to round.
+    """
+    path = [np.asarray(q, float) for q in path]
+    if len(path) < 3:
+        return path
+    dense = bezier_smooth_path(path, max_step=max_step)
+    if np.abs(dense[0] - path[0]).max() > 1e-6 or np.abs(dense[-1] - path[-1]).max() > 1e-6:
+        return None
+    dense[0], dense[-1] = path[0].copy(), path[-1].copy()
+    for a, b in zip(dense[:-1], dense[1:]):
+        if not _edge_valid(a, b, resolution=resolution, is_valid=is_valid):
+            return None
+    return dense
+
+
 def transit_path(q_from: np.ndarray, q_to: np.ndarray, model: CollisionModel,
                  edge_resolution: float = 0.01, max_iter: int = 8000, seed: int = 0,
-                 unwrap: bool = True) -> list[np.ndarray] | None:
-    """Collision-free joint path: the straight edge when it is clear, else RRT + shortcut.
+                 unwrap: bool = True, smooth: bool = False) -> list[np.ndarray] | None:
+    """Collision-free joint path: the straight edge when it is clear, else RRT + shortcut,
+    and with ``smooth`` the shortcut path's corners rounded (`smooth_transit`; kept as it
+    is when the rounded one is not clear). Before 2026-10-05 the marking node drove the
+    straight segments of the first RRT-Connect path, corners and all - drastic swings
+    between tacks on opposite sides of a plate.
 
     ``unwrap``: go to the 2*pi-equivalent of ``q_to`` nearest ``q_from`` (between tacks:
     the shortest wrist turn). False = to ``q_to`` exactly - the way home, so a wrist that
@@ -94,8 +120,57 @@ def transit_path(q_from: np.ndarray, q_to: np.ndarray, model: CollisionModel,
         raw = rrt_connect(q_from, q_to, step_size=0.15, max_iter=max_iter,
                           is_valid=model.is_valid, edge_resolution=edge_resolution)
         if raw is not None:
-            return shortcut_path(raw, model.is_valid, edge_resolution, seed=seed + attempt)
+            short = shortcut_path(raw, model.is_valid, edge_resolution, seed=seed + attempt)
+            if smooth:
+                dense = smooth_transit(short, model.is_valid, edge_resolution)
+                if dense is not None:
+                    return dense
+            return short
     return None
+
+
+def _densify(path: Sequence[np.ndarray], max_step: float) -> list[np.ndarray]:
+    out = [np.asarray(path[0], float)]
+    for a, b in zip(path[:-1], path[1:]):
+        a, b = np.asarray(a, float), np.asarray(b, float)
+        n = max(1, int(np.ceil(float(np.abs(b - a).max()) / max_step)))
+        out.extend(a + (b - a) * (k / n) for k in range(1, n + 1))
+    return out
+
+
+def time_trapezoid(path: Sequence[np.ndarray], v_max: float = 0.3, a_max: float = 0.5,
+                   max_step: float = 0.02) -> list[tuple[np.ndarray, float]]:
+    """(q, t) along the path with a trapezoidal speed profile: accelerate at `a_max`,
+    cruise at `v_max`, decelerate to a stop, all in the arc length s = sum |dq|_inf, so no
+    joint exceeds `v_max`. The path is first sampled every `max_step` rad, so the ramps
+    happen inside straight segments too (the controller interpolates linearly between
+    points). The fallback when TOTG is unavailable (`TrajectoryExecutor.time_path`)."""
+    pts = _densify(path, max_step)
+    keep = [pts[0]]
+    for q in pts[1:]:
+        if np.abs(q - keep[-1]).max() > 1e-9:          # the controller wants rising times
+            keep.append(q)
+    if len(keep) == 1:
+        return [(keep[0], 0.0)]
+    s = np.concatenate([[0.0], np.cumsum([np.abs(b - a).max() for a, b in zip(keep[:-1], keep[1:])])])
+    S = float(s[-1])
+    if S <= v_max * v_max / a_max:                      # triangular: never reaches v_max
+        vp = float(np.sqrt(S * a_max))
+        s_acc = S / 2.0
+    else:
+        vp = v_max
+        s_acc = v_max * v_max / (2.0 * a_max)
+    t_acc = vp / a_max
+    T = 2.0 * t_acc + (S - 2.0 * s_acc) / vp
+
+    def t_of(x: float) -> float:
+        if x <= s_acc:
+            return float(np.sqrt(2.0 * x / a_max))
+        if x <= S - s_acc:
+            return t_acc + (x - s_acc) / vp
+        return T - float(np.sqrt(max(0.0, 2.0 * (S - x) / a_max)))
+
+    return [(q, t_of(float(x))) for q, x in zip(keep, s)]
 
 
 def time_joint_path(path: Sequence[np.ndarray], v_max: float = 0.3, t_min: float = 0.3
@@ -280,11 +355,12 @@ def stroke_targets(mode: str, report_tacks: Sequence[dict[str, Any]],
 def build_marking_plan(report: dict[str, Any], tool, model: CollisionModel,
                        cfg: MarkingConfig, q_now: np.ndarray, overshoot_m: float = 0.003,
                        edge_resolution: float = 0.01, strokes: dict[int, np.ndarray] | None = None,
-                       stroke_mode: str = "dot") -> MarkingPlan:
+                       stroke_mode: str = "dot", smooth_transits: bool = False) -> MarkingPlan:
     """Transit + descent for every reachable tack of a `tack_reach.json` report, in visit
     order, starting from the robot's current joints and ending with a path home. With
     `strokes` (from `stroke_targets`) the descent aims at the stroke's first point and the
-    step carries the polyline to draw after contact."""
+    step carries the polyline to draw after contact. `smooth_transits`: round the transits'
+    corners (`transit_path(..., smooth=True)`)."""
     q_now = np.asarray(q_now, float)
     steps: list[TackStep] = []
     q_prev = q_now
@@ -312,7 +388,7 @@ def build_marking_plan(report: dict[str, Any], tool, model: CollisionModel,
                 continue
             step.q_app = _unwrap_to(q_app, step.q_app)
         path = transit_path(q_prev, step.q_app, transit_model(model, cfg, q_prev, step.q_app),
-                            edge_resolution)
+                            edge_resolution, smooth=smooth_transits)
         if path is None:
             step.reason = "no collision-free transit"
             all_ok = False
@@ -353,7 +429,7 @@ def build_marking_plan(report: dict[str, Any], tool, model: CollisionModel,
         if step.transit_ok:
             q_prev = step.q_app
     home = (transit_path(q_prev, cfg.home_q, transit_model(model, cfg, q_prev, cfg.home_q),
-                         edge_resolution, unwrap=False) if steps else [q_now])
+                         edge_resolution, unwrap=False, smooth=smooth_transits) if steps else [q_now])
     if home is None:
         all_ok = False
     return MarkingPlan(steps=steps, q_start=q_now, home_path=home, ok=all_ok and bool(steps))

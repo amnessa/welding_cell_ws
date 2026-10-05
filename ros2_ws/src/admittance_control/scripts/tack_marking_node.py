@@ -73,7 +73,7 @@ from admittance_control.collision import CollisionModel, boxes_from_parts  # noq
 from admittance_control.kinematics import active_kinematics, ur5e_fk, use_kinematics  # noqa: E402
 from admittance_control.marking import (build_marking_plan, contact_depth_m, line_chain,  # noqa: E402
                                         plan_to_dict, stroke_chain, stroke_targets,
-                                        time_descent, time_joint_path)
+                                        time_descent, transit_model)
 from admittance_control.motion import TrajectoryExecutor  # noqa: E402
 from admittance_control.tack_reach import load_marking_config, same_branch  # noqa: E402
 from admittance_control.tool_model import load_tool_model  # noqa: E402
@@ -98,6 +98,10 @@ class TackMarkingNode(Node):
         # release_abort_force_n, bias_window_s, max_joint_jump_rad: declared by the
         # TrajectoryExecutor below (admittance_control/motion.py), same names and defaults
         p('v_joint_rad_s', 0.3)            # transit speed cap
+        p('a_joint_rad_s2', 0.5)           # transit acceleration cap (TOTG / trapezoid)
+        p('smooth_transits', True)         # round the transit corners (spline) and time them
+                                           # with TOTG, as the drawing server does; false = the
+                                           # straight shortcut segments (before 2026-10-05)
         p('v_tip_m_s', 0.02)               # descent tip speed
         p('v_slow_m_s', 0.002)             # ... in the last slow_zone_m before the tack
         p('slow_zone_m', 0.006)            # (rigid parts: keeps the contact near 1.5 N)
@@ -161,19 +165,30 @@ class TackMarkingNode(Node):
         """The real joints, or in a dry run where the last pretended motion ended."""
         return self._exec.where()
 
+    def _time_transit(self, path, label: str):
+        """Time a free move with TOTG (velocity and acceleration caps, blended corners),
+        every sample checked against the transit collision model; trapezoid otherwise."""
+        model = transit_model(self._model, self._cfg, path[0], path[-1])
+        timed, src = self._exec.time_path(path, float(self.get_parameter('v_joint_rad_s').value),
+                                          float(self.get_parameter('a_joint_rad_s2').value),
+                                          is_valid=model.is_valid)
+        self._say(f'{label}: {len(path)} path points -> {len(timed)} samples, '
+                  f'{timed[-1][1]:.1f} s, timed by {src}')
+        return timed
+
     def _replan_transit(self, target: np.ndarray, label: str, unwrap: bool = True):
         """The plan froze the transit at the joints of `~/plan`; if the arm has been jogged
         since (a TCP calibration, freedrive), re-plan from where it is now instead of
         refusing. Returns (path or None, message). `unwrap=False` for home: arrive at the
         home joints exactly, unwinding the wrist, not at a 2*pi-equivalent of them."""
-        from admittance_control.marking import transit_model, transit_path
+        from admittance_control.marking import transit_path
         q_now = self._where()
         if q_now is None:
             return None, f'{label}: no joint states'
         if self._model.in_collision(q_now):
             return None, f'{label}: current joints are in collision - ' + self._model.report(q_now)
         path = transit_path(q_now, target, transit_model(self._model, self._cfg, q_now, target),
-                            unwrap=unwrap)
+                            unwrap=unwrap, smooth=bool(self.get_parameter('smooth_transits').value))
         if path is None:
             return None, f'{label}: no collision-free transit from the current joints'
         return path, ''
@@ -239,7 +254,8 @@ class TackMarkingNode(Node):
         strokes = stroke_targets(mode, self._report['tacks'], self._tacks_json, self._seams_json)
         self._plan = build_marking_plan(self._report, self._tool, self._model, self._cfg, q,
                                         float(self.get_parameter('overshoot_m').value),
-                                        strokes=strokes, stroke_mode=mode)
+                                        strokes=strokes, stroke_mode=mode,
+                                        smooth_transits=bool(self.get_parameter('smooth_transits').value))
         self._drawn_seams = set()
         self._exec.set_sim(q)
         self._next_step = 0
@@ -298,7 +314,7 @@ class TackMarkingNode(Node):
             transit, err = self._replan_transit(step.q_app, f'{tag} transit')
             if transit is None:
                 return False, err
-        ok, msg = self._execute(time_joint_path(transit, float(self.get_parameter('v_joint_rad_s').value)),
+        ok, msg = self._execute(self._time_transit(transit, f'{tag} transit'),
                                 f'{tag} transit', watch_touch=False, rebias=True)
         if not ok:
             return False, msg
@@ -428,8 +444,7 @@ class TackMarkingNode(Node):
         path, err = self._replan_transit(self._cfg.home_q, 'home', unwrap=False)
         if path is None:
             return False, err
-        return self._execute(time_joint_path(path, float(self.get_parameter('v_joint_rad_s').value)),
-                             'home', watch_touch=False, rebias=True)
+        return self._execute(self._time_transit(path, 'home'), 'home', watch_touch=False, rebias=True)
 
     def _write_marks(self) -> None:
         (self._save_dir / 'tack_marks.json').write_text(json.dumps({

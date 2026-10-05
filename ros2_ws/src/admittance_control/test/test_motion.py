@@ -117,3 +117,71 @@ def test_abort_flag(ex):
     assert ex.aborted
     ex.clear_abort()
     assert not ex.aborted
+
+
+# ---------------------------------------------------------------- time_path (TOTG) -----
+def _fake_totg(node, name):
+    """A stand-in for totg_service_node: linear resampling of the waypoints at 0.1 rad/s."""
+    from admittance_control.motion import ComputeTOTG
+
+    def handle(req, res):
+        n = req.num_joints
+        q = np.asarray(req.waypoints_flat, float).reshape(-1, n)
+        dense = [q[0]]
+        for a, b in zip(q[:-1], q[1:]):
+            k = max(1, int(np.ceil(np.abs(b - a).max() / 0.01)))
+            dense += [a + (b - a) * (i / k) for i in range(1, k + 1)]
+        res.timed_positions_flat = [float(v) for p in dense for v in p]
+        res.timed_velocities_flat = [0.0] * (len(dense) * n)
+        res.timestamps = [0.1 * i for i in range(len(dense))]
+        res.num_output_points = len(dense)
+        res.success = True
+        return res
+    return node.create_service(ComputeTOTG, name, handle)
+
+
+@pytest.fixture
+def totg_ex(ros):
+    import threading
+
+    from rclpy.executors import MultiThreadedExecutor
+    from rclpy.parameter import Parameter
+    from admittance_control.motion import ComputeTOTG
+    if ComputeTOTG is None:
+        pytest.skip("ComputeTOTG not built")
+    server = Node("fake_totg")
+    _fake_totg(server, "/test_fake_totg")
+    client = Node("test_motion_totg",
+                  parameter_overrides=[Parameter("t_totg_service", value="/test_fake_totg")])
+    e = TrajectoryExecutor(client, prefix="t_", say=lambda s: None)
+    exe = MultiThreadedExecutor(num_threads=2)
+    exe.add_node(server); exe.add_node(client)
+    th = threading.Thread(target=exe.spin, daemon=True); th.start()
+    yield e
+    exe.shutdown(); server.destroy_node(); client.destroy_node()
+
+
+def test_time_path_uses_totg_when_it_answers(totg_ex):
+    path = [Q0, Q0 + np.array([0.2, 0, 0, 0, 0, 0]), Q0 + np.array([0.2, 0.1, 0, 0, 0, 0])]
+    timed, src = totg_ex.time_path(path, 0.3, 0.5, is_valid=lambda q: True)
+    assert src == "TOTG"
+    assert np.allclose(timed[0][0], path[0]) and np.allclose(timed[-1][0], path[-1])
+    assert len(timed) >= 31 and timed[-1][1] == pytest.approx(0.1 * (len(timed) - 1))   # the server's samples
+
+
+def test_time_path_falls_back_when_blending_leaves_free_space(totg_ex):
+    path = [Q0, Q0 + np.array([0.2, 0, 0, 0, 0, 0])]
+    timed, src = totg_ex.time_path(path, 0.3, 0.5, is_valid=lambda q: q[0] < Q0[0] + 0.1)
+    assert src.startswith("trapezoid (TOTG blending left free space")
+    from admittance_control.marking import time_trapezoid
+    assert [t for _, t in timed] == [t for _, t in time_trapezoid(path, 0.3, 0.5)]
+
+
+def test_time_path_without_the_service_is_a_trapezoid(ros):
+    from rclpy.parameter import Parameter
+    node = Node("test_motion_nototg",
+                parameter_overrides=[Parameter("t_totg_service", value="/no_such_totg")])
+    e = TrajectoryExecutor(node, prefix="t_", say=lambda s: None)
+    timed, src = e.time_path([Q0, Q0 + 0.1], 0.3, 0.5)
+    assert src.startswith("trapezoid") and timed[-1][1] > 0
+    node.destroy_node()

@@ -1,0 +1,1412 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>perception_aciklama.md</title>
+<meta http-equiv="Content-type" content="text/html;charset=UTF-8">
+
+<style>
+/* https://github.com/microsoft/vscode/blob/master/extensions/markdown-language-features/media/markdown.css */
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+body {
+	font-family: var(--vscode-markdown-font-family, -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif);
+	font-size: var(--vscode-markdown-font-size, 14px);
+	padding: 0 26px;
+	line-height: var(--vscode-markdown-line-height, 22px);
+	word-wrap: break-word;
+}
+
+#code-csp-warning {
+	position: fixed;
+	top: 0;
+	right: 0;
+	color: white;
+	margin: 16px;
+	text-align: center;
+	font-size: 12px;
+	font-family: sans-serif;
+	background-color:#444444;
+	cursor: pointer;
+	padding: 6px;
+	box-shadow: 1px 1px 1px rgba(0,0,0,.25);
+}
+
+#code-csp-warning:hover {
+	text-decoration: none;
+	background-color:#007acc;
+	box-shadow: 2px 2px 2px rgba(0,0,0,.25);
+}
+
+body.scrollBeyondLastLine {
+	margin-bottom: calc(100vh - 22px);
+}
+
+body.showEditorSelection .code-line {
+	position: relative;
+}
+
+body.showEditorSelection .code-active-line:before,
+body.showEditorSelection .code-line:hover:before {
+	content: "";
+	display: block;
+	position: absolute;
+	top: 0;
+	left: -12px;
+	height: 100%;
+}
+
+body.showEditorSelection li.code-active-line:before,
+body.showEditorSelection li.code-line:hover:before {
+	left: -30px;
+}
+
+.vscode-light.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.15);
+}
+
+.vscode-light.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.40);
+}
+
+.vscode-light.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-dark.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.4);
+}
+
+.vscode-dark.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.60);
+}
+
+.vscode-dark.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-high-contrast.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 160, 0, 0.7);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 160, 0, 1);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+img {
+	max-width: 100%;
+	max-height: 100%;
+}
+
+a {
+	text-decoration: none;
+}
+
+a:hover {
+	text-decoration: underline;
+}
+
+a:focus,
+input:focus,
+select:focus,
+textarea:focus {
+	outline: 1px solid -webkit-focus-ring-color;
+	outline-offset: -1px;
+}
+
+hr {
+	border: 0;
+	height: 2px;
+	border-bottom: 2px solid;
+}
+
+h1 {
+	padding-bottom: 0.3em;
+	line-height: 1.2;
+	border-bottom-width: 1px;
+	border-bottom-style: solid;
+}
+
+h1, h2, h3 {
+	font-weight: normal;
+}
+
+table {
+	border-collapse: collapse;
+}
+
+table > thead > tr > th {
+	text-align: left;
+	border-bottom: 1px solid;
+}
+
+table > thead > tr > th,
+table > thead > tr > td,
+table > tbody > tr > th,
+table > tbody > tr > td {
+	padding: 5px 10px;
+}
+
+table > tbody > tr + tr > td {
+	border-top: 1px solid;
+}
+
+blockquote {
+	margin: 0 7px 0 5px;
+	padding: 0 16px 0 10px;
+	border-left-width: 5px;
+	border-left-style: solid;
+}
+
+code {
+	font-family: Menlo, Monaco, Consolas, "Droid Sans Mono", "Courier New", monospace, "Droid Sans Fallback";
+	font-size: 1em;
+	line-height: 1.357em;
+}
+
+body.wordWrap pre {
+	white-space: pre-wrap;
+}
+
+pre:not(.hljs),
+pre.hljs code > div {
+	padding: 16px;
+	border-radius: 3px;
+	overflow: auto;
+}
+
+pre code {
+	color: var(--vscode-editor-foreground);
+	tab-size: 4;
+}
+
+/** Theming */
+
+.vscode-light pre {
+	background-color: rgba(220, 220, 220, 0.4);
+}
+
+.vscode-dark pre {
+	background-color: rgba(10, 10, 10, 0.4);
+}
+
+.vscode-high-contrast pre {
+	background-color: rgb(0, 0, 0);
+}
+
+.vscode-high-contrast h1 {
+	border-color: rgb(0, 0, 0);
+}
+
+.vscode-light table > thead > tr > th {
+	border-color: rgba(0, 0, 0, 0.69);
+}
+
+.vscode-dark table > thead > tr > th {
+	border-color: rgba(255, 255, 255, 0.69);
+}
+
+.vscode-light h1,
+.vscode-light hr,
+.vscode-light table > tbody > tr + tr > td {
+	border-color: rgba(0, 0, 0, 0.18);
+}
+
+.vscode-dark h1,
+.vscode-dark hr,
+.vscode-dark table > tbody > tr + tr > td {
+	border-color: rgba(255, 255, 255, 0.18);
+}
+
+</style>
+
+<style>
+/* Tomorrow Theme */
+/* http://jmblog.github.com/color-themes-for-google-code-highlightjs */
+/* Original theme - https://github.com/chriskempson/tomorrow-theme */
+
+/* Tomorrow Comment */
+.hljs-comment,
+.hljs-quote {
+	color: #8e908c;
+}
+
+/* Tomorrow Red */
+.hljs-variable,
+.hljs-template-variable,
+.hljs-tag,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class,
+.hljs-regexp,
+.hljs-deletion {
+	color: #c82829;
+}
+
+/* Tomorrow Orange */
+.hljs-number,
+.hljs-built_in,
+.hljs-builtin-name,
+.hljs-literal,
+.hljs-type,
+.hljs-params,
+.hljs-meta,
+.hljs-link {
+	color: #f5871f;
+}
+
+/* Tomorrow Yellow */
+.hljs-attribute {
+	color: #eab700;
+}
+
+/* Tomorrow Green */
+.hljs-string,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-addition {
+	color: #718c00;
+}
+
+/* Tomorrow Blue */
+.hljs-title,
+.hljs-section {
+	color: #4271ae;
+}
+
+/* Tomorrow Purple */
+.hljs-keyword,
+.hljs-selector-tag {
+	color: #8959a8;
+}
+
+.hljs {
+	display: block;
+	overflow-x: auto;
+	color: #4d4d4c;
+	padding: 0.5em;
+}
+
+.hljs-emphasis {
+	font-style: italic;
+}
+
+.hljs-strong {
+	font-weight: bold;
+}
+</style>
+
+<style>
+/*
+ * Markdown PDF CSS
+ */
+
+ body {
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif, "Meiryo";
+	padding: 0 12px;
+}
+
+pre {
+	background-color: #f8f8f8;
+	border: 1px solid #cccccc;
+	border-radius: 3px;
+	overflow-x: auto;
+	white-space: pre-wrap;
+	overflow-wrap: break-word;
+}
+
+pre:not(.hljs) {
+	padding: 23px;
+	line-height: 19px;
+}
+
+blockquote {
+	background: rgba(127, 127, 127, 0.1);
+	border-color: rgba(0, 122, 204, 0.5);
+}
+
+.emoji {
+	height: 1.4em;
+}
+
+code {
+	font-size: 14px;
+	line-height: 19px;
+}
+
+/* for inline code */
+:not(pre):not(.hljs) > code {
+	color: #C9AE75; /* Change the old color so it seems less like an error */
+	font-size: inherit;
+}
+
+/* Page Break : use <div class="page"/> or <div class="page"></div> to insert page break
+-------------------------------------------------------- */
+.page {
+	page-break-after: always;
+}
+
+</style>
+
+<script src="https://unpkg.com/mermaid/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: document.body.classList.contains('vscode-dark') || document.body.classList.contains('vscode-high-contrast')
+          ? 'dark'
+          : 'default'
+    });
+  </script>
+<h1 id="algılama-hattı-laptop--sunucu--laptop">Algılama hattı: laptop → sunucu → laptop</h1>
+<p>Bu belge, robotun kamerasından alınan <strong>tek bir RGB-D karenin</strong> laptop'tan çıkıp
+masaüstü sunucuda işlenmesini ve sonucun laptop'a geri dönmesini baştan sona
+anlatır. Her adımda verinin <strong>şekli, birimi ve hangi koordinat çerçevesinde
+olduğu</strong> yazılıdır. Kullanılan yöntemlerin (nokta bulutu, PPF, FoundationPose)
+nasıl çalıştığı da ayrı bölümlerde açıklanır.</p>
+<p>Sunucu tarafının İngilizce teknik referansı (ayarlar, uç noktalar, hata
+belirtileri) için: <a href="readme_perception.md">readme_perception.md</a>.
+PPF ayrıntıları için: <a href="docs/PPF.md">docs/PPF.md</a>.</p>
+<hr>
+<h2 id="i̇çindekiler">İçindekiler</h2>
+<ol>
+<li><a href="#1-genel-bak%C4%B1%C5%9F">Genel bakış</a></li>
+<li><a href="#2-kamera-intel-realsense-d435i">Kamera: Intel RealSense D435i</a></li>
+<li><a href="#3-laptop-kareyi-yakalay%C4%B1p-g%C3%B6ndermek">Laptop: kareyi yakalayıp göndermek</a></li>
+<li><a href="#4-cad-dosyalar%C4%B1">CAD dosyaları</a></li>
+<li><a href="#5-sunucu-veriyi-almak">Sunucu: veriyi almak</a></li>
+<li><a href="#6-segmentasyon-sam2">Segmentasyon: SAM2</a></li>
+<li><a href="#7-nokta-bulutuna-d%C3%B6n%C3%BC%C5%9Ft%C3%BCrme">Nokta bulutuna dönüştürme</a></li>
+<li><a href="#8-ppf-hangi-par%C3%A7a">PPF: hangi parça?</a></li>
+<li><a href="#9-foundationpose-par%C3%A7a-nerede-nas%C4%B1l-duruyor">FoundationPose: parça nerede, nasıl duruyor?</a></li>
+<li><a href="#10-sunucunun-cevab%C4%B1">Sunucunun cevabı</a></li>
+<li><a href="#11-laptop-cevab%C4%B1-almak-ve-yay%C4%B1nlamak">Laptop: cevabı almak ve yayınlamak</a></li>
+<li><a href="#12-her-a%C5%9Famada-verinin-%C3%B6zeti">Her aşamada verinin özeti</a></li>
+<li><a href="#13-s%C3%BCreler">Süreler</a></li>
+<li><a href="#14-kontrol-edilecekler-ve-a%C3%A7%C4%B1k-sorular">Kontrol edilecekler ve açık sorular</a></li>
+</ol>
+<hr>
+<h2 id="1-genel-bakış">1. Genel bakış</h2>
+<pre class="hljs"><code><div>┌──────────────────────── LAPTOP (robot tarafı, ROS 2) ────────────────────────┐
+│                                                                              │
+│  D435i ──▶ /camera/color/image_raw   (RGB)                                   │
+│        ──▶ /camera/depth/...         (depth)                                 │
+│                    │                                                         │
+│                    ▼                                                         │
+│        foundationpose_bridge_node                                            │
+│          • RGB ve depth zaman olarak eşleşmiş mi? (≤ 0.25 s)                 │
+│          • PNG'ye çevir, camera.json'u hazırla                               │
+│          • HTTP POST  ──────────────────────────────────────────┐            │
+│                                                                 │            │
+└─────────────────────────────────────────────────────────────────┼────────────┘
+                                                                  │  rgb.png
+                                                                  │  depth.png
+                                                                  │  camera.json
+┌──────────────────── MASAÜSTÜ (GPU, Docker, fp_server.py :5000) ─┼────────────┐
+│                                                                 ▼            │
+│   [5] veriyi çöz:  RGB 720×1280×3,  depth 720×1280 (metre),  K 3×3           │
+│                                     │                                        │
+│   [6] SAM2:        tık + RGB  ──▶  maske 720×1280 (0/1)                      │
+│                                     │                                        │
+│   [7] nokta bulutu: maske ⊙ depth, K ile geri izdüşüm ──▶ N×6, N ≤ 2000      │
+│                                     │                                        │
+│   [8] PPF:         sahne bulutu vs. CAD kütüphanesi ──▶ &quot;test_objv2_ear&quot;     │
+│                                     │                                        │
+│   [9] FoundationPose: RGB + depth + maske + test_objv2_ear.ply               │
+│                                     ──▶ T (4×4), kamera çerçevesi, metre     │
+│                                     │                                        │
+│  [10] cevap: JSON (isim, poz, skor tablosu, dosyalar)  ─────────┐            │
+└─────────────────────────────────────────────────────────────────┼────────────┘
+                                                                  │
+┌──────────────────────── LAPTOP ─────────────────────────────────┼────────────┐
+│                                                                 ▼            │
+│  [11] foundationpose_bridge_node                                             │
+│         • birim metre mi? kontrol et                                         │
+│         • dosyaları foundationpose_results/ klasörüne yaz                    │
+│         • /perception/detections   (Detection3DArray, poz + quaternion)      │
+│         • /perception/object_name  (&quot;test_objv2_ear&quot;, latched)               │
+│                    │                                                         │
+│                    ▼                                                         │
+│        ICP düğümü: aynı isimli .ply'yi yükler, T'ye oturtur, takip eder      │
+└──────────────────────────────────────────────────────────────────────────────┘
+</div></code></pre>
+<p>Özetle laptop sunucuya <strong>iki görüntü ve bir kamera dosyası</strong> gönderiyor. Sunucu
+ona <strong>bir parça adı ve bir 4×4 poz</strong> döndürüyor. Arada olan her şey (maske, nokta
+bulutu, sınıflandırma, poz) sunucuda yapılıyor.</p>
+<p>İki bilgisayarın aynı parçadan bahsedebilmesi için tek bir ortak anahtar var:
+<strong>CAD dosyasının adı.</strong> Bu yüzden iki taraftaki CAD klasörü aynı dosyaları aynı
+adlarla içeriyor (bkz. <a href="#4-cad-dosyalar%C4%B1">Bölüm 4</a>).</p>
+<hr>
+<h2 id="2-kamera-intel-realsense-d435i">2. Kamera: Intel RealSense D435i</h2>
+<p>D435i bir <strong>stereo derinlik kamerası</strong>. İki kızılötesi kamera ve sahneye desen
+düşüren bir projektör ile derinlik ölçüyor. Ayrıca ayrı bir RGB kamerası var.
+&quot;i&quot; harfi dahili IMU anlamına geliyor. Bu hatta IMU kullanılmıyor.</p>
+<table>
+<thead>
+<tr>
+<th>akış</th>
+<th>biçim</th>
+<th>bu projede</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RGB</td>
+<td>8 bit, 3 kanal</td>
+<td>1280×720</td>
+</tr>
+<tr>
+<td>Depth</td>
+<td>16 bit tek kanal, her piksel <strong>Z değeri</strong> (optik eksen boyunca uzaklık), ham birim = 1 mm</td>
+<td>1280×720</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Kamera iç parametreleri (K)</strong>, renk kamerasınınki (<code>Data/Input/camera.json</code>):</p>
+<pre class="hljs"><code><div>        ┌ fx   0  cx ┐   ┌ 919.47     0    650.85 ┐
+    K = │  0  fy  cy │ = │    0    918.94   350.62 │
+        └  0   0   1 ┘   └    0       0       1   ┘
+</div></code></pre>
+<ul>
+<li><code>fx, fy</code>: piksel cinsinden odak uzaklığı. Bir metre ötedeki 1 mm'lik bir şey
+yaklaşık 0.92 piksel tutar.</li>
+<li><code>cx, cy</code>: optik eksenin görüntüyü deldiği piksel (görüntü merkezine yakın).</li>
+</ul>
+<p><strong>Kamera koordinat çerçevesi</strong> (<code>camera_color_optical_frame</code>): orijin renk
+kamerasının optik merkezi. <strong>X sağa, Y aşağıya, Z ileriye</strong> (sahneye doğru)
+bakıyor. Bu belgedeki bütün 3B noktalar ve pozlar bu çerçevede. Robot tabanına
+dönüşüm bu hattın dışında, laptop'ta yapılıyor.</p>
+<p><strong>Hizalama (alignment).</strong> Derinlik ve renk farklı kameralardan geliyor. Bir
+<code>depth[v,u]</code> pikselinin <code>rgb[v,u]</code> ile aynı noktaya bakması için depth'in renk
+kamerasına <strong>hizalanması</strong> gerekiyor. RealSense sürücüsü bunu
+<code>/camera/aligned_depth_to_color/image_raw</code> topic'inde yapıyor. Hizalanmamış bir
+depth aynı boyutta olsa bile pikseller kayık olur. Maske nesnenin yanındaki
+derinlikleri alır. Bkz. <a href="#14-kontrol-edilecekler-ve-a%C3%A7%C4%B1k-sorular">Bölüm 14</a>.</p>
+<hr>
+<h2 id="3-laptop-kareyi-yakalayıp-göndermek">3. Laptop: kareyi yakalayıp göndermek</h2>
+<p>Bu işi <code>foundationpose_bridge_node.py</code> (ROS 2 düğümü) yapıyor.</p>
+<ol>
+<li><strong>Abone olur:</strong> RGB topic'i (<code>/camera/color/image_raw</code>) ve depth topic'i.
+Her topic'in son mesajını tutar.</li>
+<li><strong>Tetiklenir:</strong> <code>ros2 service call /foundationpose_bridge/trigger std_srvs/srv/Trigger</code>
+ile, ya da <code>auto_trigger=true</code> ise ilk eşleşen çiftte bir kez.</li>
+<li><strong>Senkron kontrolü:</strong> Son RGB ile son depth mesajının zaman damgaları arasındaki
+fark <strong>0.25 s'den büyükse</strong> gönderilmez. Farklı anlara ait bir RGB ve depth
+eşleştirilmiş olmasın diye.</li>
+<li><strong>Kodlar:</strong>
+<ul>
+<li>RGB → <code>rgb.png</code> (8 bit, 3 kanal),</li>
+<li>depth → <code>depth.png</code> (16 bit, mm),</li>
+<li><code>camera.json</code> → <code>{&quot;cam_K&quot;: [9 sayı], &quot;depth_scale&quot;: 1.0}</code>.
+<code>depth_scale</code>, ham depth değerini mm'ye çeviren çarpandır.</li>
+</ul>
+</li>
+<li><strong>Gönderir:</strong> Üç dosya tek bir HTTP <code>multipart/form-data</code> isteğiyle
+<code>http://&lt;masaüstü&gt;:5000/predict_pose</code> adresine POST edilir. Aynı dosyalar
+laptop'taki aktarım klasörüne de yazılır.</li>
+<li><strong>Bekler:</strong> Zaman aşımı <strong>300 s</strong>. Sunucuda operatörün nesneye tıklaması
+gerekebileceği için uzun tutuldu.</li>
+</ol>
+<hr>
+<h2 id="4-cad-dosyaları">4. CAD dosyaları</h2>
+<h3 id="41-nerede-duruyorlar">4.1 Nerede duruyorlar?</h3>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>konum</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Sunucu</td>
+<td><code>Data/Input/*.ply</code> (<code>CAD_DIR</code>). PPF kütüphanesi bu klasördeki <strong>bütün</strong> <code>.ply</code> dosyalarından kurulur.</td>
+</tr>
+<tr>
+<td>Laptop</td>
+<td>ICP düğümünün CAD klasörü. <strong>Aynı dosyalar, aynı adlarla.</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Sunucu cevapta parçanın adını gönderiyor (<code>&quot;test_objv2_ear&quot;</code>). Laptop bu adın
+sonuna <code>.ply</code> ekleyip kendi klasöründen yüklüyor. Bu nedenle:</p>
+<ul>
+<li>İki taraftaki dosya <strong>adları</strong> birebir aynı olmalı.</li>
+<li>İki taraftaki dosya <strong>içerikleri</strong> aynı olmalı. Sunucu pozu kendi dosyasına göre
+hesaplıyor. Laptop'taki dosyanın orijini veya ekseni farklıysa aynı poz başka bir
+yere oturur.</li>
+<li>Yeni bir parça iki tarafa birden eklenmeli. Sunucuya eklemek için
+<code>/add_model</code> uç noktası var (bkz. readme_perception.md).</li>
+</ul>
+<h3 id="42-dosya-biçimi">4.2 Dosya biçimi</h3>
+<p>Hepsi <strong>ikili (binary little-endian) PLY</strong> ve hepsi <strong>üçgen ağı (mesh)</strong>:</p>
+<ul>
+<li><code>vertex</code>: köşe noktaları, yalnızca <code>x, y, z</code> (float32). <strong>Normal, renk veya
+doku yok.</strong></li>
+<li><code>face</code>: her üçgenin hangi üç köşeden oluştuğu.</li>
+<li><strong>Birim: milimetre.</strong> Sunucu yüklerken <code>MESH_SCALE = 0.001</code> ile metreye çevirir.
+Bu çarpan bütün dosyalara aynı uygulanır. Bu yüzden her dosyanın mm olarak dışa
+aktarılmış olması gerekir. FreeCAD'de dışa aktarma birimi belge başına bir ayar,
+dikkat edilmesi gerekiyor.</li>
+</ul>
+<p>Mesh nokta bulutu değildir. Örneğin bir kutu 8 köşe ve 12 üçgenden oluşur. PPF
+için yüzeyden nokta örneklenmesi gerekir (<a href="#82-haz%C4%B1rl%C4%B1k-offline-cad--model-bulutu">Bölüm 8.2</a>).</p>
+<h3 id="43-kütüphanedeki-dosyalar">4.3 Kütüphanedeki dosyalar</h3>
+<p>Boyutlar dosyalardan okundu (eksen hizalı kutu, mm):</p>
+<table>
+<thead>
+<tr>
+<th>dosya</th>
+<th>kaynak</th>
+<th style="text-align:right">köşe</th>
+<th style="text-align:right">üçgen</th>
+<th>boyut (mm)</th>
+<th>not</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>test_objv2_ear.ply</code></td>
+<td>FreeCAD</td>
+<td style="text-align:right">8</td>
+<td style="text-align:right">12</td>
+<td>250 × 8 × 99</td>
+<td>ince plaka (kulak)</td>
+</tr>
+<tr>
+<td><code>test_objv2_base.ply</code></td>
+<td>FreeCAD</td>
+<td style="text-align:right">8</td>
+<td style="text-align:right">12</td>
+<td>249 × 8 × 256</td>
+<td>ince plaka (taban)</td>
+</tr>
+<tr>
+<td><code>test_objv2.ply</code></td>
+<td>FreeCAD</td>
+<td style="text-align:right">24</td>
+<td style="text-align:right">44</td>
+<td>256 × 250 × 108</td>
+<td>taban + kulak birleşik</td>
+</tr>
+<tr>
+<td><code>test_objv3.ply</code></td>
+<td>FreeCAD</td>
+<td style="text-align:right">24</td>
+<td style="text-align:right">44</td>
+<td>256 × 250 × 108</td>
+<td><code>test_objv2</code> ile aynı dış boyut</td>
+</tr>
+<tr>
+<td><code>test_objv1_base.ply</code></td>
+<td>FreeCAD</td>
+<td style="text-align:right">40</td>
+<td style="text-align:right">76</td>
+<td>180 × 4 × 100</td>
+<td>ince plaka</td>
+</tr>
+<tr>
+<td><code>test_objv1_ear.ply</code></td>
+<td>FreeCAD</td>
+<td style="text-align:right">16</td>
+<td style="text-align:right">28</td>
+<td>54 × 4 × 100</td>
+<td>ince plaka</td>
+</tr>
+<tr>
+<td><code>test_objectv1.ply</code></td>
+<td>FreeCAD</td>
+<td style="text-align:right">24</td>
+<td style="text-align:right">44</td>
+<td>180 × 100 × 54</td>
+<td>v1 birleşik</td>
+</tr>
+<tr>
+<td><code>plate.ply</code></td>
+<td>FreeCAD</td>
+<td style="text-align:right">8</td>
+<td style="text-align:right">12</td>
+<td>150 × 4 × 100</td>
+<td><code>test_objv1_base</code>'e çok benzer</td>
+</tr>
+<tr>
+<td><code>smallplate.ply</code></td>
+<td>FreeCAD</td>
+<td style="text-align:right">8</td>
+<td style="text-align:right">12</td>
+<td>100 × 50 × 4</td>
+<td></td>
+</tr>
+<tr>
+<td><code>vplate.ply</code></td>
+<td>FreeCAD</td>
+<td style="text-align:right">12</td>
+<td style="text-align:right">20</td>
+<td>100 × 104 × 100</td>
+<td>V şeklinde</td>
+</tr>
+<tr>
+<td><code>Tblock.ply</code></td>
+<td>FreeCAD</td>
+<td style="text-align:right">16</td>
+<td style="text-align:right">28</td>
+<td>150 × 80 × 100</td>
+<td>T profil</td>
+</tr>
+<tr>
+<td><code>270circle.ply</code></td>
+<td>FreeCAD</td>
+<td style="text-align:right">384</td>
+<td style="text-align:right">764</td>
+<td>150 × 50 × 150</td>
+<td>270°'lik ince halka, kavisli</td>
+</tr>
+<tr>
+<td><code>powerdrill.ply</code></td>
+<td>Artec 3B tarayıcı</td>
+<td style="text-align:right">249 998</td>
+<td style="text-align:right">500 000</td>
+<td>131 × 248 × 258</td>
+<td>taranmış gerçek nesne</td>
+</tr>
+<tr>
+<td><code>assembly_mesh.ply</code></td>
+<td>trimesh</td>
+<td style="text-align:right">16</td>
+<td style="text-align:right">24</td>
+<td>298 × 304 × 119</td>
+<td>program tarafından yazılmış montaj</td>
+</tr>
+</tbody>
+</table>
+<p>Bu tablodan çıkan sonuçlar:</p>
+<ul>
+<li>Parçaların çoğu <strong>düzlemsel yüzlü, birkaç köşeli</strong> basit katılar. Köşe sayısı
+geometrinin ne kadar ayrıntılı olduğunu değil, kaç düz yüzü olduğunu gösteriyor.</li>
+<li><strong>Ayırt etmesi zor çiftler:</strong> <code>plate</code> ile <code>test_objv1_base</code> (iki ince dikdörtgen,
+tek kenarda 30 mm fark). <code>test_objv2</code> ile <code>test_objv3</code> (dış boyutları aynı,
+yalnızca şekil ayırıyor).</li>
+<li><code>powerdrill</code> tarama verisi, diğerlerinden farklı türde. 20 MB, yüklemesi en yavaş
+olan dosya.</li>
+<li><code>assembly_mesh.ply</code> FreeCAD'den değil, bir programdan geliyor ve <code>CAD_DIR</code>
+içinde durduğu için kütüphaneye de giriyor. Sınıflandırma adayı olması
+isteniyor mu, kontrol edilmeli.</li>
+</ul>
+<hr>
+<h2 id="5-sunucu-veriyi-almak">5. Sunucu: veriyi almak</h2>
+<p><code>fp_server.py</code>, <code>/predict_pose</code> isteğini aldığında (<code>_receive_frame</code>):</p>
+<ol>
+<li>Üç dosyayı <code>Data/Input/</code> altına kaydeder (<code>rgb.png</code>, <code>depth.png</code>, <code>camera.json</code>).</li>
+<li><code>camera.json</code> → <code>K</code> (3×3) ve <code>depth_scale</code>.</li>
+<li><code>rgb.png</code> → 720×1280×3 dizi. OpenCV BGR okur, RGB'ye çevrilir.</li>
+<li><code>depth.png</code> → <strong>metre</strong>: <code>Z = ham × depth_scale / 1000</code>.</li>
+<li>Geçersiz derinlikler 0 yapılır: &lt; 1 mm (sensör ölçememiş, D435i'de bu değer 0
+gelir) veya ≥ 3 m (<code>ZFAR</code>).</li>
+<li>RGB ve depth boyutları farklıysa istek reddedilir.</li>
+</ol>
+<p><strong>Çıktı:</strong> <code>rgb</code> (720×1280×3, uint8), <code>depth</code> (720×1280, float32, m), <code>K</code> (3×3).</p>
+<p>Sunucu aynı anda tek istek işler. İkinci bir istek gelirse &quot;meşgul&quot; (HTTP 503)
+döner. GPU tek, tıklama penceresi de tek.</p>
+<hr>
+<h2 id="6-segmentasyon-sam2">6. Segmentasyon: SAM2</h2>
+<h3 id="61-ne-yapıyor">6.1 Ne yapıyor?</h3>
+<p>FoundationPose'un kendi nesne bulucusu yok. Hangi piksellerin nesneye ait olduğu
+ona <strong>söylenmeli.</strong> Bunu SAM2 (Meta, <em>Segment Anything Model 2</em>) yapıyor.</p>
+<ul>
+<li><strong>Giriş:</strong> yalnızca RGB görüntü ve bir veya birkaç <strong>tık</strong> (piksel koordinatı).
+Depth kullanılmıyor.</li>
+<li><strong>Çıktı:</strong> 720×1280 ikili maske (nesne = 1, geri kalan = 0).</li>
+</ul>
+<h3 id="62-nasıl-çalışıyor">6.2 Nasıl çalışıyor?</h3>
+<p>SAM2 &quot;istemle&quot; (prompt) çalışan bir segmentasyon ağı. &quot;Bu noktayı içeren nesne
+hangisi?&quot; sorusuna maske ile cevap veriyor. Sınıf adı bilmiyor ve nesneye özel
+eğitim gerektirmiyor. Çok büyük bir maske veri setinde, &quot;bir şeyin sınırı nerede&quot;
+sorusunu genel olarak öğrenmiş durumda. Üç parçadan oluşuyor:</p>
+<pre class="hljs"><code><div> RGB ──▶ görüntü kodlayıcı (Hiera) ──▶ özellik haritası ─┐
+                                                         ├──▶ maske çözücü ──▶ maske(ler) + skor
+ tıklar ──▶ istem kodlayıcı ──────────▶ istem vektörleri ─┘
+</div></code></pre>
+<ol>
+<li><strong>Görüntü kodlayıcı:</strong> Görüntüyü bir kez işleyip her bölgeyi anlatan bir özellik
+haritası çıkarır. En pahalı kısım budur.</li>
+<li><strong>İstem kodlayıcı:</strong> Her tıkın konumunu ve etiketini (1 = nesne, 0 = nesne değil)
+bir vektöre çevirir.</li>
+<li><strong>Maske çözücü:</strong> İkisini birleştirip maskeyi ve maskenin ne kadar iyi olduğuna
+dair bir tahmin (tahmini IoU) üretir.</li>
+</ol>
+<p>Kullanılan model: <code>sam2.1_hiera_small</code>.</p>
+<p><strong>Tek tık belirsizdir.</strong> Bir parçanın ortasına tıklamak &quot;parçanın tamamı&quot;, &quot;bu yüz&quot;
+veya &quot;bu delik&quot; anlamına gelebilir. Tek tıkta SAM2'den <strong>3 aday maske</strong> istenir ve
+tahmini skoru en yüksek olan alınır. Birden fazla tıkta tek maske istenir.</p>
+<p><strong>Zemin nasıl dışarıda kalıyor?</strong> Ayrı bir zemin çıkarma adımı yok. Tık parçanın
+üstünde olduğu için SAM2 parçayı döndürüyor. Masa ayrı bir bölge. Maske masaya
+taşarsa sağ tık (negatif nokta) ile oyuluyor.</p>
+<h3 id="63-tık-nereden-geliyor">6.3 Tık nereden geliyor?</h3>
+<p>Öncelik sırasıyla:</p>
+<ol>
+<li>İstemci hazır bir <code>mask</code> dosyası gönderdiyse doğrudan o kullanılır, SAM2 atlanır.</li>
+<li>İstemci <code>click</code> alanı gönderdiyse (<code>{&quot;u&quot;:640,&quot;v&quot;:360}</code> veya nokta listesi +
+<code>click_labels</code>) SAM2 bu noktalarla çalışır. Ekran gerekmez.</li>
+<li>İkisi de yoksa sunucuda bir pencere açılır. Operatör sol tık (nesne) / sağ tık
+(nesne değil) ile işaretler, ENTER ile onaylar. Maske her tıktan sonra yeniden
+çizilir.</li>
+</ol>
+<hr>
+<h2 id="7-nokta-bulutuna-dönüştürme">7. Nokta bulutuna dönüştürme</h2>
+<p>Kod: <code>scene_cloud_from_mask()</code> (<code>scripts/ppf_classifier.py</code>).</p>
+<h3 id="71-kamera-modeli-3b-nokta--piksel-ve-geri">7.1 Kamera modeli: 3B nokta → piksel ve geri</h3>
+<p>Kamera, uzaydaki bir <code>(X, Y, Z)</code> noktasını şu pikselde görür (iğne deliği modeli):</p>
+<pre class="hljs"><code><div>u = fx · X / Z + cx
+v = fy · Y / Z + cy
+</div></code></pre>
+<p>Depth görüntüsü bize her piksel için <code>Z</code>'yi veriyor. Denklemi ters çevirince o
+pikselin uzaydaki noktası bulunuyor:</p>
+<pre class="hljs"><code><div>X = (u − cx) · Z / fx
+Y = (v − cy) · Z / fy
+Z = depth[v, u]
+</div></code></pre>
+<p><strong>Örnek:</strong> <code>u = 900, v = 400</code> pikselinde <code>Z = 0.50 m</code> olsun:
+<code>X = (900 − 650.85) · 0.50 / 919.47 ≈ 0.135 m</code>,
+<code>Y = (400 − 350.62) · 0.50 / 918.94 ≈ 0.027 m</code>.
+Nokta kameranın 13.5 cm sağında, 2.7 cm aşağısında, 50 cm ilerisinde.</p>
+<h3 id="72-adımlar">7.2 Adımlar</h3>
+<pre class="hljs"><code><div> maske (720×1280, 0/1)    depth (720×1280, m)
+          └────────── ⊙ ──────────┘           eleman eleman çarpım
+                      │
+                      ▼
+      maskeli depth (720×1280): maske dışı 0, içi gerçek Z     ← hâlâ bir görüntü
+                      │
+                      ▼  Z &gt; 1 mm olan her (u,v) için geri izdüşüm
+      N×3 nokta (X, Y, Z), metre, kamera çerçevesi              ← artık nokta bulutu
+                      │
+                      ▼  normal tahmini + temizlik + seyreltme
+      N×6 (x, y, z, nx, ny, nz),  N ≤ 2000
+</div></code></pre>
+<ol>
+<li><strong>Maske 2 piksel aşındırılır (erode).</strong> Nesnenin kenarındaki pikseller hem
+nesneyi hem arkasındaki masayı görür. Derinlikleri ikisinin karışımıdır ve
+nesnenin etrafında var olmayan bir &quot;etek&quot; oluşturur. Kenarı atmak bunu önler.</li>
+<li><strong>Maske biraz genişletilmiş hâliyle (4 px dilate) geri izdüşülür.</strong> Bu genişletme
+yalnızca normaller için yapılıyor (3. madde).</li>
+<li><strong>Yüzey normalleri tahmin edilir.</strong> Her noktanın en yakın 12 komşusuna bir düzlem
+oturtulur. Düzlemin dik vektörü o noktanın normalidir (OpenCV
+<code>computeNormalsPC3d</code>). Kenardaki bir noktanın komşuları tek taraftadır ve normali
+içe yatar. Genişletilmiş bölgede hesaplayıp kenarı sonra atınca kalan her noktanın
+tam bir komşuluğu olur.</li>
+<li><strong>Normaller kameraya doğru çevrilir.</strong> CAD'lerdeki yüzey normalleri dışa bakar.
+Sahnedekiler de dışa, yani kameraya bakmalı. Yoksa PPF'deki açılar tutmaz.</li>
+<li><strong>Genişletilmiş kısım atılır</strong>, yalnızca aşındırılmış maskenin içi kalır.</li>
+<li><strong>Voksel ile seyreltilir.</strong> Uzay küçük küplere bölünür ve her küpten bir nokta
+tutulur. Küp kenarı = max(nesne çapı / 60, 1.5 mm). Sonra en fazla <strong>2000 nokta</strong>
+kalacak şekilde rastgele seçilir.</li>
+</ol>
+<h3 id="73-sonuç">7.3 Sonuç</h3>
+<p><strong>Sahne bulutu:</strong> N×6, N ≤ 2000, metre, kamera çerçevesi.</p>
+<p><strong>Neden 6 sütun?</strong> Her satır bir noktadır. 6 sayı <strong>konum + yüzey normali</strong>dir,
+konum + yönelim (roll-pitch-yaw) <strong>değil</strong>:</p>
+<pre class="hljs"><code><div>   x,  y,  z   → noktanın konumu (metre)
+  nx, ny, nz   → o noktadaki yüzeyin dışa bakan dik doğrultusu (birim vektör, uzunluğu 1)
+</div></code></pre>
+<p>Bir noktanın kendi yönelimi olmaz. Normal, noktanın üzerinde bulunduğu <strong>yüzeyin
+hangi yöne baktığını</strong> söyler. Uzunluğu hep 1 olduğu için 3 sayıyla yazılır ama
+yalnızca 2 serbestlik derecesi taşır. Bir masanın üst yüzündeki her noktanın
+normali yukarı bakar. Bir kutunun yan yüzündeki noktalarınki yana bakar.</p>
+<p>Örneğin <code>(0.135, 0.027, 0.500, 0, 0, −1)</code> satırı şunu söyler: nokta kameranın 50 cm
+ilerisinde ve bu noktada yüzey dümdüz kameraya bakıyor. Kamera +Z yönüne baktığı
+için kameraya dönük bir yüzeyin normali −Z olur.</p>
+<p>Bu bulut <strong>kısmi</strong>: kamera nesneye tek yönden baktığı için yalnızca görünen yüzler
+var. Altı ve arkası yok. PPF ve FoundationPose bunu hesaba katacak şekilde
+çalışıyor (bkz. 8.6 ve 9.2).</p>
+<hr>
+<h2 id="8-ppf-hangi-parça">8. PPF: hangi parça?</h2>
+<p>Kod: <code>scripts/ppf_classifier.py</code>, OpenCV <code>cv2.ppf_match_3d</code> modülü üzerine.
+Yöntem: Drost vd., <em>Model Globally, Match Locally</em> (CVPR 2010). Doğrulama skoru:
+Birdal &amp; Ilic (3DV 2015).</p>
+<p><strong>Giriş:</strong> sahne bulutu (N×6) ve kütüphanedeki her CAD'in model bulutu.
+<strong>Çıktı:</strong> yalnızca bir <strong>isim</strong> (ör. <code>&quot;test_objv2_ear&quot;</code>) ve tüm modellerin skor
+tablosu. PPF bu hatta <strong>sınıflandırıcı</strong> olarak kullanılıyor, poz vermiyor.</p>
+<h3 id="81-temel-fikir-point-pair-feature">8.1 Temel fikir: Point Pair Feature</h3>
+<p>Tek bir nokta tek başına bir şey anlatmaz. Ama <strong>iki nokta ve normalleri</strong>, aradaki
+geometri hakkında bilgi verir. İki nokta <code>m1</code>, <code>m2</code>, normalleri <code>n1</code>, <code>n2</code>,
+aralarındaki vektör <code>d = m2 − m1</code> olsun:</p>
+<pre class="hljs"><code><div>                n1                     n2
+                ↑                    ↗
+                │       d           /
+               m1 ─────────────▶ m2
+
+F(m1, m2) = ( ‖d‖ ,      ∠(n1, d) ,  ∠(n2, d) ,  ∠(n1, n2) )
+              uzaklık    açı         açı         iki normal arası açı
+</div></code></pre>
+<p>Bu <strong>4 sayı bir nokta çiftini</strong> tanımlar. Tek bir noktayı tanımlamaz. Nesneyi nasıl
+döndürür ya da kaydırırsanız kaydırın bu sayılar <strong>değişmez.</strong> Uzaklıklar ve açılar
+katı harekette korunur. Bu sayede PPF, nesnenin pozunu bilmeden sahnedeki çiftlerle
+modeldeki çiftleri karşılaştırabilir.</p>
+<p><code>‖d‖</code> metre cinsinden. Yani PPF <strong>ölçekten bağımsız değil.</strong> İki katı büyüklükte
+aynı şekildeki bir parçanın çiftleri farklı uzaklıklar üretir. Depth kamerası
+metrik ölçtüğü için nesneye uzaktan bakmak bulutu küçültmez. Sadece nokta sayısı
+azalır, gürültü artar. Yani çözülmesi gereken bir ölçek belirsizliği yok.</p>
+<h3 id="82-hazırlık-offline-cad--model-bulutu">8.2 Hazırlık (offline): CAD → model bulutu</h3>
+<p>Her CAD bir kez işlenir (<code>build_ppf_library.py</code>, <code>.npz</code> yoksa sunucu açılışta da
+yapar):</p>
+<ol>
+<li>Mesh yüklenir, mm → m ölçeklenir.</li>
+<li>Yüzeyden <strong>alanla orantılı 60 000 rastgele nokta</strong> örneklenir. Her nokta, üzerine
+düştüğü üçgenin <strong>kesin normalini</strong> alır (CAD'in normalleri sahneninkinin aksine
+gürültüsüz).</li>
+<li>Voksel ile <strong>~600 noktaya</strong> seyreltilir. Her vokselden ortalama değil, bir
+temsilci alınır. Ortalama köşeleri yuvarlar ve iki yüz arasında hiçbir yüze ait
+olmayan normaller üretir.</li>
+<li>Model bulutu (<strong>~600×6</strong>), çapı ve boyutları <code>Data/ppf_library.npz</code> dosyasına
+kaydedilir.</li>
+</ol>
+<p><strong>Bu 600×6 hangi çerçevede?</strong> Sahne bulutuyla aynı anlam (konum + normal), ama
+<strong>hiçbir yere dönüştürülmemiş</strong> hâlde: <strong>CAD'in kendi çerçevesinde.</strong> Orijin ve
+eksenler FreeCAD'de parça çizilirken neredeyse orada. Tek değişiklik mm → m
+ölçeklemesi.</p>
+<p>Yani elimizde iki ayrı çerçevede iki bulut var:</p>
+<pre class="hljs"><code><div>  model bulutu  →  CAD çerçevesi    (offline, CAD'den)
+  sahne bulutu  →  kamera çerçevesi (canlı, depth görüntüsünden)
+
+  ikisini bağlayan dönüşüm  =  T  =  zaten bulmaya çalıştığımız poz
+</div></code></pre>
+<p>PPF'nin işe yaramasının sebebi de bu. 8.1'deki özellikler (uzaklık ve açılar) hangi
+çerçevede hesaplanırsa hesaplansın aynı çıkar. Bu yüzden T'yi bilmeden iki bulutu
+karşılaştırabiliyoruz.</p>
+<h3 id="83-ppf3ddetectorın-iki-fonksiyonu">8.3 PPF3DDetector'ın iki fonksiyonu</h3>
+<p>OpenCV'nin <code>PPF3DDetector</code> sınıfının dışarıya açık iki fonksiyonu var. İkisi de
+aynı özelliği (<code>F</code>) hesaplıyor ama farklı bulutlarda ve farklı amaçla:</p>
+<pre class="hljs"><code><div>  trainModel(model bulutu)     offline / açılışta   CAD bulutundan hash tablosu kurar
+  match(sahne bulutu)          her istekte          depth'ten gelen bulutun çiftlerini
+                                                    tabloda arar, oy toplar, poz önerir
+</div></code></pre>
+<p>Yani PPF <strong>iki tarafta da</strong> çalışıyor. Model tarafında sonuçlar tabloya <strong>yazılıyor</strong>,
+sahne tarafında (kameranın depth görüntüsünden üretilen bulutta) tabloda
+<strong>aranıyor.</strong> Kütüphanedeki her CAD'in kendi dedektörü, yani kendi tablosu var.
+Sahne bulutu sırayla her birinde aranıyor.</p>
+<h3 id="84-eğitim-trainmodel-hash-tablosu">8.4 Eğitim (<code>trainModel</code>): hash tablosu</h3>
+<ol>
+<li>
+<p><strong>OpenCV kendi seyreltmesini yapar.</strong> Modelin sınırlayıcı kutusu her eksende 25
+parçaya bölünür (adım 0.04 = 1/25). Aynı hücreye düşen noktaların konumları ve
+normalleri ortalanır. 600 noktalık bulut bu adımdan sonra kütüphanemizde
+<strong>339–591 noktaya</strong> iniyor (ör. <code>test_objv2_ear</code>: 600 → ~543).</p>
+</li>
+<li>
+<p><strong>Bütün sıralı çiftler</strong> için <code>F</code> hesaplanır. Bu adımda kalan nokta sayısı
+M olsun. Her nokta kendisi dışındaki her noktayla eşleşir:</p>
+<pre class="hljs"><code><div>çift sayısı = M × (M − 1)          ← faktöriyel değil
+</div></code></pre>
+<p><code>test_objv2_ear</code> için 543 × 542 ≈ <strong>294 000 çift.</strong> Kütüphanede model başına
+115 000 ile 349 000 arasında. Çiftler <strong>sıralıdır</strong>, yani (a, b) ile (b, a)
+ayrı çiftlerdir. Çünkü <code>∠(n1, d)</code> ile <code>∠(n2, d)</code> yer değiştirince farklı bir
+özellik çıkar. Sırasız sayılsaydı M(M−1)/2 olurdu. Faktöriyel (M!) ise bütün
+noktaların dizilme sayısıdır, burada geçmiyor.</p>
+</li>
+<li>
+<p>Her çift için ayrıca bir <strong>α_m açısı</strong> saklanır. α_m şu demek: <code>m1</code> orijine
+taşınıp normali x eksenine çevrildiğinde, <code>m2</code> x ekseni etrafında hangi açıda
+duruyor? Bu açı eşleştirmede pozu bulmak için gerekli (8.5, 4. adım).</p>
+</li>
+<li>
+<p><code>F</code> nicelenir: uzaklık, çapın %4'ü genişliğinde kutulara, her açı 12°'lik
+kutulara bölünür (360° / 30). Yakın değerler aynı kutuya düştüğü için gürültüye
+dayanıklı olur.</p>
+</li>
+<li>
+<p>Nicelenmiş <code>F</code> bir <strong>anahtar</strong> olur. Hash tablosuna
+<code>anahtar → [(m1, m2, α_m), …]</code> yazılır: &quot;bu özellik modelde şu çiftlerde
+görülüyor&quot;.</p>
+</li>
+</ol>
+<p>Sonuçta elde bir matris yok, <strong>&quot;özellik → model çiftleri&quot; sözlüğü</strong> var. OpenCV
+bu tabloyu diske yazamadığı için sunucu her açılışta yeniden eğitiyor (model başına
+~1–2 s). <code>.npz</code> dosyasında tablo değil, model bulutları duruyor.</p>
+<h3 id="85-eşleştirme-match-oylama">8.5 Eşleştirme (<code>match</code>): oylama</h3>
+<p>İki bulutun nokta sayısı ve sırası farklı. Hangi sahne noktasının hangi model
+noktasına karşılık geldiği bilinmiyor. PPF bunu <strong>oylama</strong> ile buluyor.</p>
+<p><strong>Rastgelelik yok, her şey sistematik.</strong> Test karesinde (<code>test_objv2_ear</code>)
+ölçülen sayılarla:</p>
+<ol>
+<li>
+<p><strong>Sahne de seyreltilir.</strong> 2000 noktalık sahne bulutu 8.4'teki aynı 25×25×25
+ızgarayla <strong>~490 noktaya</strong> iner. (2000 noktanın hepsi doğrulamada, 8.6'da,
+kullanılıyor.)</p>
+</li>
+<li>
+<p><strong>Referans noktalar:</strong> Bu ~490 noktanın listesinde <strong>her 5. nokta</strong> (0., 5.,
+10., …) referans nokta <code>s_r</code> olur: <strong>~98 referans nokta.</strong></p>
+</li>
+<li>
+<p><strong>Her <code>s_r</code>, kalan bütün sahne noktalarıyla</strong> (<code>s_i</code>, ~489 nokta) eşleştirilir.
+Seçme yok, komşuluk sınırı yok. Model başına ~98 × 489 ≈ <strong>48 000 sahne çifti.</strong></p>
+</li>
+<li>
+<p>Her <code>(s_r, s_i)</code> çifti için:</p>
+<ul>
+<li><code>F(s_r, s_i)</code> hesaplanıp tabloda aranır,</li>
+<li>sahne için de α_s açısı hesaplanır (8.4, 3. adımdaki gibi),</li>
+<li>tabloda bulunan her model çifti <code>(m_r, m_i, α_m)</code> bir öneri yapar:
+&quot;<code>s_r</code> aslında modeldeki <code>m_r</code> noktası. İki çifti çakıştırmak için normal
+etrafında <code>α = α_m − α_s</code> kadar döndürmek gerekiyor&quot;,</li>
+<li>öneri, <strong>o <code>s_r</code>'ye ait</strong> oy tablosunun <code>[m_r, α]</code> hücresine <strong>1 oy</strong> ekler.
+Tablonun boyutu: model nokta sayısı × 30 açı kutusu.</li>
+</ul>
+</li>
+<li>
+<p><code>s_r</code>'nin bütün çiftleri bitince <strong>oy tablosundaki en yüksek hücre</strong> seçilir.
+<code>s_r ↔ m_r</code> eşleşmesi ve <code>α</code> birlikte <strong>tek bir tam poz</strong> (4×4) verir:</p>
+<ul>
+<li><code>s_r</code>'yi orijine taşıyıp normalini x eksenine çevir,</li>
+<li>x ekseni etrafında <code>α</code> kadar döndür,</li>
+<li><code>m_r</code>'nin aynı işleminin tersini uygula.</li>
+</ul>
+<p>Bu pozun <strong>oy sayısı</strong> o hücredeki oy sayısıdır.</p>
+</li>
+</ol>
+<p>Yanlış eşleşmeler oylarını rastgele hücrelere dağıtır. Doğru eşleşme hep aynı
+hücreye oy yığar (Hough dönüşümü mantığı). Noktaların sırası ve sayısı bu yüzden
+önemli değil.</p>
+<h3 id="86-doğrulama-12-poz-hipotezi-ve-hangi-modelin-kazandığı">8.6 Doğrulama: 12 poz hipotezi ve hangi modelin kazandığı</h3>
+<p><strong>12 hipotez nereden geliyor?</strong></p>
+<pre class="hljs"><code><div> ~98 referans nokta ──▶ her biri 1 poz ──▶ ~98 ham poz
+                                              │  birbirine yakın olanlar birleştirilir
+                                              ▼  (konum ve açı olarak yakın; oylar toplanır,
+                                                  pozların ortalaması alınır)
+                                         55 küme ── oy toplamına göre sıralı
+                                              │
+                                              ▼  bizim kod: ilk 12'yi al
+                                         12 poz hipotezi
+</div></code></pre>
+<ul>
+<li>
+<ol start="5">
+<li>adımda <strong>her referans nokta bir poz önerir.</strong> Referans nokta nesnenin doğru
+bir yerindeyse bu poz doğru pozdur. Birçok referans nokta aynı doğru pozu bulur.</li>
+</ol>
+</li>
+<li>OpenCV birbirine yakın pozları <strong>kümeler</strong> ve oylarını toplar. Test karesinde
+<code>test_objv2_ear</code> için ~98 ham poz <strong>55 kümeye</strong> indi. Kümelerin oyları
+884, 583, 459, 334, … şeklinde sıralandı.</li>
+<li>Bizim kod bu listenin <strong>ilk 12'sini</strong> alıyor (<code>n_hypotheses = 12</code>). Sadece birinciyi
+almıyoruz, çünkü simetrik veya düz parçalarda en çok oyu yanlış bir yönelim
+alabiliyor. İlk birkaç hipotezden biri doğruysa doğrulama onu bulur.</li>
+</ul>
+<p><strong>Model seçimi.</strong> Oy sayısı <strong>farklı modeller arasında karşılaştırılamaz.</strong> Çok
+noktalı, kendini tekrar eden yüzeyleri olan büyük bir model, sahnede olmasa bile
+küçük bir modelden fazla oy toplar. Bu yüzden her aday model için:</p>
+<ol>
+<li>Yukarıdaki <strong>12 poz hipotezi</strong> alınır.</li>
+<li>Her biri <strong>ICP</strong> (Iterative Closest Point, 50 iterasyon) ile birkaç milimetre
+düzeltilir. ICP iyi bir başlangıç pozu ister, onu PPF veriyor. Ayrıca PPF'nin
+12°'lik açı kutuları pozda küçük bir hata bırakıyor, ICP onu kapatıyor.</li>
+<li>Model bu pozda sahneye yerleştirilir. Kameradan <strong>görülemeyecek</strong> noktalar
+atılır: kameraya sırtını dönen yüzler ve modelin kendi kendini örttüğü kısımlar.
+Sahne kısmi olduğu için modelin de yalnızca görünen kısmıyla karşılaştırılması
+gerekiyor.</li>
+<li>İki yönlü skor, <code>τ = 8 mm</code> (sensör gürültüsü payı):</li>
+</ol>
+<pre class="hljs"><code><div>coverage  = (modele τ'dan yakın sahne noktası) / (tüm sahne noktaları)
+            → &quot;sahnenin ne kadarını bu model açıklıyor?&quot;
+explained = (sahneye τ'dan yakın görünür model noktası) / (tüm görünür model noktaları)
+            → &quot;modelin görünmesi gereken kısmının ne kadarı sahnede var?&quot;
+skor      = coverage × explained          (0 ile 1 arası)
+</div></code></pre>
+<p>Yalnızca <code>coverage</code> kullanılsa büyük bir model sahneyi örterek kazanır. Yalnızca
+<code>explained</code> kullanılsa küçük bir model sahnenin içine saklanarak kazanır. Çarpım
+ikisini de cezalandırır.</p>
+<ol start="5">
+<li>Her modelin skoru en iyi hipotezininkidir. <strong>En yüksek skor kazanır.</strong>
+Birinci ile ikinci arasındaki fark (<strong>margin</strong>) kararın ne kadar güvenli
+olduğunu gösterir.</li>
+</ol>
+<h3 id="87-boyut-ön-filtresi">8.7 Boyut ön-filtresi</h3>
+<p>Asıl maliyet doğrulamada (12 hipotez × ICP × skor), bu yüzden önce çok ucuz bir
+eleme yapılır. Sahne bulutunun
+çapı (noktalar arası uzaklıkların %99.5'lik değeri) her modelin çapıyla
+karşılaştırılır:</p>
+<ul>
+<li>Sahne modelden <strong>%15'ten fazla büyükse</strong> model elenir. Kısmi bir görüntü gerçek
+nesneden büyük olamaz.</li>
+<li>Sahne modelin <strong>%45'inden küçükse</strong> model elenir. Örtülme görünen kısmı
+küçültebilir, bu yüzden bu sınır gevşek tutuldu.</li>
+</ul>
+<p>Gerçek test karesinde 13 modelden 8'i burada elendi. Hepsi elenirse filtre yok
+sayılır ve bütün modeller puanlanır.</p>
+<h3 id="88-ppfnin-pozu-neden-kullanılmıyor">8.8 PPF'nin pozu neden kullanılmıyor?</h3>
+<p>8.5–8.6'da PPF bir poz hesaplıyor. Ama bu poz yalnızca skor için var: bir CAD'in
+bulutu açıklayıp açıklamadığını sormak için onu bir yere koymak gerekiyor. Bu poz
+sınıflandırıcıdan <strong>dışarı çıkmıyor.</strong> FoundationPose pozu sıfırdan hesaplıyor.
+FoundationPose'un daha doğru olduğu <strong>varsayıldı, ölçülmedi</strong> (bkz. Bölüm 14).</p>
+<h3 id="89-sınırlar">8.9 Sınırlar</h3>
+<ul>
+<li>Ayırt edici özellik görünmüyorsa (ör. alt yüzdeki bir kabartma) tek görüşten
+ayırt edilemez. Margin küçülür. Bu bir hata değil, bilginin olmadığını gösteren
+bir sinyal.</li>
+<li><code>plate</code> ile <code>test_objv1_base</code> tek görüşten çok zor ayrılıyor.</li>
+<li>İnce kavisli parçalar (<code>270circle</code>) daha ince bir örnekleme adımı istiyor.</li>
+</ul>
+<hr>
+<h2 id="9-foundationpose-parça-nerede-nasıl-duruyor">9. FoundationPose: parça nerede, nasıl duruyor?</h2>
+<p>Kod: <code>estimater.py</code> (NVIDIA FoundationPose, CVPR 2024), sunucuda <code>EST.register()</code>.</p>
+<p><strong>Giriş:</strong> <code>K</code>, <code>rgb</code> (720×1280×3), <code>depth</code> (m), <code>mask</code>, ve PPF'nin seçtiği <code>.ply</code>
+(metreye ölçeklenmiş).
+<strong>Çıktı:</strong> <code>T</code> (4×4), <strong>nesnenin kamera çerçevesindeki pozu</strong>:</p>
+<pre class="hljs"><code><div>        ┌ r11 r12 r13 | tx ┐     R (3×3): nesnenin kameraya göre dönmesi
+    T = │ r21 r22 r23 | ty │     t (3×1): nesnenin orijininin kameraya göre konumu (m)
+        │ r31 r32 r33 | tz │
+        └  0   0   0  |  1 ┘     CAD'deki bir nokta p  →  kamerada  R·p + t
+</div></code></pre>
+<h3 id="91-neden-foundationpose">9.1 Neden FoundationPose?</h3>
+<p>FoundationPose <strong>yeni nesneler için yeniden eğitim gerektirmiyor.</strong> CAD verilen her
+nesnede doğrudan çalışıyor. Ağlar çok büyük bir sentetik veri setinde (binlerce
+farklı nesne, render edilmiş sahneler) eğitilmiş. Öğrendiği şey belirli bir parça
+değil, &quot;bir CAD'in render'ı ile gerçek görüntü arasındaki farka bakıp pozu
+düzeltmek&quot;. Bu yüzden kütüphaneye yeni bir parça eklemek yalnızca dosyayı vermek
+demek.</p>
+<h3 id="92-nasıl-çalışıyor-render-et-ve-karşılaştır">9.2 Nasıl çalışıyor? &quot;Render et ve karşılaştır&quot;</h3>
+<pre class="hljs"><code><div>  hipotez üret ──▶ her hipotezi iyileştir (×5) ──▶ hepsini puanla ──▶ en iyisi
+  (~250 poz)        refiner ağı                     scorer ağı
+</div></code></pre>
+<ol>
+<li><strong>Depth ön işleme:</strong> Aşındırma ve bilateral filtre ile gürültü azaltılır.</li>
+<li><strong>Öteleme tahmini:</strong> Maskenin sınırlayıcı kutusunun merkez pikseli, maskedeki
+derinliklerin <strong>medyanı</strong> ile geri izdüşülür (Bölüm 7.1'deki formül). Bu, nesnenin
+kabaca nerede olduğunu verir.</li>
+<li><strong>Dönme hipotezleri:</strong> Nesnenin etrafındaki bir küre üzerinde <strong>42 bakış yönü</strong>
+(ikosfer köşeleri) alınır. Her yön için <strong>6 düzlem içi dönme</strong> (60°'de bir)
+eklenir: <strong>252 aday poz.</strong> Birbirine 30°'den yakın olanlar ve nesnenin simetrisi
+yüzünden aynı görünenler birleştirilir. Hepsi 2. adımdaki ötelemeyle başlar.</li>
+<li><strong>İyileştirme ağı (refiner),</strong> her hipotez için 5 tur:
+<ul>
+<li>CAD o pozda <strong>render edilir</strong> (renk ve derinlik görüntüsü olarak),</li>
+<li>gerçek RGB-D görüntünün aynı bölgesi kırpılır,</li>
+<li>ağ iki görüntüyü karşılaştırıp <strong>&quot;pozu şu kadar döndür, şu kadar kaydır&quot;</strong>
+düzeltmesini tahmin eder,</li>
+<li>düzeltme uygulanır, tekrar render edilir.</li>
+</ul>
+</li>
+<li><strong>Puanlama ağı (scorer):</strong> İyileştirilmiş bütün hipotezler için render ile gerçek
+görüntünün ne kadar uyuştuğunu puanlar. Hipotezleri birbirleriyle de karşılaştırarak
+sıralar.</li>
+<li><strong>En yüksek puanlı poz</strong> döndürülür.</li>
+</ol>
+<p>Notlar:</p>
+<ul>
+<li>Bizim CAD'lerimizde renk veya doku yok, render düz gri çıkıyor. Bu yüzden
+karşılaştırma ağırlıklı olarak <strong>geometriye ve derinliğe</strong> dayanıyor.</li>
+<li>Dönen <code>score</code> (son çalıştırmada 67.97) normalize edilmemiş bir sıralama puanı,
+olasılık değil.</li>
+<li>Ağlar parçadan bağımsız ve sunucu açılırken bir kez yükleniyor. Parça değiştirmek
+sadece <code>reset_object()</code> çağrısı, milisaniyeler sürüyor. PPF'nin her istekte farklı
+bir CAD seçebilmesi bu sayede mümkün.</li>
+<li>Simetrik parçalarda (düz plakalar gibi) birden fazla poz aynı görünür.
+<code>SYMMETRY_INFO</code> verilmezse sonuç bu eşdeğer pozlar arasında atlayabilir.</li>
+<li>FoundationPose'un bir <strong>takip modu</strong> da var (<code>track_one</code>): önceki pozdan başlayıp
+her yeni karede sadece iyileştirme yapıyor. Sunucu bunu <strong>kullanmıyor.</strong> Takibi
+laptop'taki ICP yapıyor.</li>
+</ul>
+<p><strong>Son çalıştırmadan örnek</strong> (<code>Data/Output/foundationpose_results/detection_pem.json</code>):
+parça <code>test_objv2_ear</code>, öteleme ≈ (164, 45, 499) mm. Yani kameradan yaklaşık 50 cm
+ileride, 16 cm sağda, 4.5 cm aşağıda.</p>
+<hr>
+<h2 id="10-sunucunun-cevabı">10. Sunucunun cevabı</h2>
+<h3 id="101-http-cevabı-json">10.1 HTTP cevabı (JSON)</h3>
+<pre class="hljs"><code><div><span class="hljs-punctuation">{</span>
+  <span class="hljs-attr">&quot;status&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;success&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;units&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;m&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;object_name&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;test_objv2_ear&quot;</span><span class="hljs-punctuation">,</span>           <span class="hljs-comment">// laptop bu adla .ply yükleyecek</span>
+  <span class="hljs-attr">&quot;object_file&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;test_objv2_ear.ply&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;pose&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">[</span><span class="hljs-punctuation">[</span>r11<span class="hljs-punctuation">,</span>r12<span class="hljs-punctuation">,</span>r13<span class="hljs-punctuation">,</span>tx<span class="hljs-punctuation">]</span><span class="hljs-punctuation">,</span> …<span class="hljs-punctuation">,</span> <span class="hljs-punctuation">[</span><span class="hljs-number">0</span><span class="hljs-punctuation">,</span><span class="hljs-number">0</span><span class="hljs-punctuation">,</span><span class="hljs-number">0</span><span class="hljs-punctuation">,</span><span class="hljs-number">1</span><span class="hljs-punctuation">]</span><span class="hljs-punctuation">]</span><span class="hljs-punctuation">,</span>  <span class="hljs-comment">// 4×4, metre, kamera çerçevesi</span>
+  <span class="hljs-attr">&quot;score&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-number">67.97</span><span class="hljs-punctuation">,</span>                            <span class="hljs-comment">// FoundationPose puanı</span>
+  <span class="hljs-attr">&quot;elapsed_sec&quot;</span><span class="hljs-punctuation">:</span> …<span class="hljs-punctuation">,</span>                          <span class="hljs-comment">// register() süresi</span>
+  <span class="hljs-attr">&quot;classification&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">{</span>                        <span class="hljs-comment">// PPF&#x27;nin kararı</span>
+    <span class="hljs-attr">&quot;score&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-number">0.588</span><span class="hljs-punctuation">,</span> <span class="hljs-attr">&quot;margin&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-number">0.438</span><span class="hljs-punctuation">,</span> <span class="hljs-attr">&quot;runner_up&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;test_objv2_base&quot;</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-attr">&quot;scores&quot;</span><span class="hljs-punctuation">:</span>   <span class="hljs-punctuation">{</span> <span class="hljs-attr">&quot;test_objv2_ear&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-number">0.588</span><span class="hljs-punctuation">,</span> <span class="hljs-attr">&quot;test_objv2_base&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-number">0.150</span><span class="hljs-punctuation">,</span> … <span class="hljs-punctuation">}</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-attr">&quot;rejected&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">{</span> <span class="hljs-attr">&quot;Tblock&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;scene 255mm exceeds CAD 181mm by 41%&quot;</span><span class="hljs-punctuation">,</span> … <span class="hljs-punctuation">}</span><span class="hljs-punctuation">,</span>
+    <span class="hljs-attr">&quot;elapsed_sec&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-number">1.4</span>
+  <span class="hljs-punctuation">}</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;mask_source&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;sam2(interactive click)&quot;</span><span class="hljs-punctuation">,</span>
+  <span class="hljs-attr">&quot;artifacts&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-punctuation">{</span> …base64 dosyalar… <span class="hljs-punctuation">}</span>
+<span class="hljs-punctuation">}</span>
+</div></code></pre>
+<h3 id="102-dosyalar-artifacts">10.2 Dosyalar (<code>artifacts</code>)</h3>
+<p>Cevaba base64 olarak gömülüyor ve sunucuda <code>Data/Output/foundationpose_results/</code>
+klasörüne de yazılıyor:</p>
+<table>
+<thead>
+<tr>
+<th>dosya</th>
+<th>içerik</th>
+<th>kim kullanıyor</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>detection_pem.json</code></td>
+<td>poz, eski SAM-6D biçiminde: <code>R</code> (3×3) ve <code>t</code> <strong>milimetre</strong>, <code>obj_name</code></td>
+<td>laptop ICP düğümü</td>
+</tr>
+<tr>
+<td><code>detection_ism.npz</code></td>
+<td><code>segmentation</code>: (1, 720, 1280) maske</td>
+<td>laptop ICP düğümü (sahne bulutunu kırpmak için)</td>
+</tr>
+<tr>
+<td><code>object_name.txt</code></td>
+<td>parça adı, düz metin</td>
+<td>dosya izleyen herhangi bir düğüm</td>
+</tr>
+<tr>
+<td><code>mask.png</code></td>
+<td>maske, görsel</td>
+<td>insan</td>
+</tr>
+<tr>
+<td><code>vis_pose.png</code></td>
+<td>RGB üstüne çizilmiş poz kutusu ve eksenler</td>
+<td>insan, ilk bakılacak dosya</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Birim farkına dikkat:</strong> HTTP cevabındaki <code>pose</code> <strong>metre</strong>, <code>detection_pem.json</code>
+içindeki <code>t</code> <strong>milimetre.</strong> İkincisi eski ICP düğümünün beklediği biçim olduğu için
+korundu.</p>
+<hr>
+<h2 id="11-laptop-cevabı-almak-ve-yayınlamak">11. Laptop: cevabı almak ve yayınlamak</h2>
+<p><code>foundationpose_bridge_node.py</code> cevabı aldığında:</p>
+<ol>
+<li>
+<p><strong>Kontrol eder:</strong> HTTP 200 mü, <code>status == &quot;success&quot;</code> mi, <code>units == &quot;m&quot;</code> mi?
+Birim metre değilse cevabı reddeder. Milimetre ile metre karışırsa poz 1000 kat
+yanlış olur.</p>
+</li>
+<li>
+<p><strong>Dosyaları yazar:</strong> <code>artifacts</code> içindekileri <code>foundationpose_results/</code>
+klasörüne çözer. ICP düğümünün <code>results_dir</code> parametresi bu klasörü göstermeli.</p>
+</li>
+<li>
+<p><strong>PPF kararını loglar:</strong> ilk üç skor ve margin. Belirsizse uyarı verir.</p>
+</li>
+<li>
+<p><strong><code>min_score</code> kontrolü</strong> (varsayılan 0, yani kapalı).</p>
+</li>
+<li>
+<p><strong>Yayınlar:</strong></p>
+<ul>
+<li><code>/perception/detections</code> (<code>vision_msgs/Detection3DArray</code>):
+<ul>
+<li><code>header.frame_id</code> = RGB mesajının çerçevesi (<code>camera_color_optical_frame</code>),</li>
+<li><code>id</code> ve <code>class_id</code> = parça adı,</li>
+<li><code>pose.position</code> = <code>T</code>'nin öteleme sütunu (metre),</li>
+<li><code>pose.orientation</code> = <code>T</code>'nin 3×3'lük dönme kısmından çevrilen <strong>quaternion</strong>,</li>
+<li><code>score</code> = FoundationPose puanı.</li>
+</ul>
+</li>
+<li><code>/perception/object_name</code> (<code>std_msgs/String</code>): parça adı.</li>
+</ul>
+<p>İkisi de <strong>latched</strong> (<code>TRANSIENT_LOCAL</code>). Sonradan başlayan bir düğüm de son
+sonucu alır.</p>
+</li>
+<li>
+<p><strong>ICP düğümü:</strong> Adı alır, <strong>kendi CAD klasöründen aynı adlı <code>.ply</code>'yi</strong>
+yükler, <code>T</code> pozuna oturtur ve kameradan gelen canlı bulut üzerinde ICP ile
+takibe başlar.</p>
+</li>
+</ol>
+<hr>
+<h2 id="12-her-aşamada-verinin-özeti">12. Her aşamada verinin özeti</h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>nerede</th>
+<th>veri</th>
+<th>şekil</th>
+<th>birim</th>
+<th>çerçeve</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>laptop</td>
+<td>RGB</td>
+<td>720×1280×3 uint8</td>
+<td>–</td>
+<td>renk kamerası pikselleri</td>
+</tr>
+<tr>
+<td>2</td>
+<td>laptop</td>
+<td>depth</td>
+<td>720×1280 uint16</td>
+<td>mm</td>
+<td>renk kamerası pikselleri (hizalıysa)</td>
+</tr>
+<tr>
+<td>3</td>
+<td>laptop → sunucu</td>
+<td><code>camera.json</code></td>
+<td>K 3×3 + <code>depth_scale</code></td>
+<td>piksel</td>
+<td>–</td>
+</tr>
+<tr>
+<td>4</td>
+<td>sunucu</td>
+<td>depth</td>
+<td>720×1280 float32</td>
+<td>m</td>
+<td>piksel</td>
+</tr>
+<tr>
+<td>5</td>
+<td>sunucu</td>
+<td>maske</td>
+<td>720×1280 bool</td>
+<td>–</td>
+<td>piksel</td>
+</tr>
+<tr>
+<td>6</td>
+<td>sunucu</td>
+<td>sahne bulutu</td>
+<td>N×6, N ≤ 2000</td>
+<td>m</td>
+<td>kamera</td>
+</tr>
+<tr>
+<td>7</td>
+<td>sunucu (offline)</td>
+<td>model bulutu</td>
+<td>~600×6 her CAD için</td>
+<td>m</td>
+<td>CAD'in kendi çerçevesi</td>
+</tr>
+<tr>
+<td>8</td>
+<td>sunucu</td>
+<td>PPF sonucu</td>
+<td>isim + skor tablosu</td>
+<td>skor 0–1</td>
+<td>–</td>
+</tr>
+<tr>
+<td>9</td>
+<td>sunucu</td>
+<td>poz <code>T</code></td>
+<td>4×4</td>
+<td>m</td>
+<td>kamera (CAD → kamera)</td>
+</tr>
+<tr>
+<td>10</td>
+<td>sunucu → laptop</td>
+<td>JSON + dosyalar</td>
+<td><code>pose</code> 4×4, <code>t</code> (pem)</td>
+<td><strong>m</strong> (JSON) / <strong>mm</strong> (pem)</td>
+<td>kamera</td>
+</tr>
+<tr>
+<td>11</td>
+<td>laptop</td>
+<td><code>Detection3DArray</code></td>
+<td>konum + quaternion</td>
+<td>m</td>
+<td><code>camera_color_optical_frame</code></td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="13-süreler">13. Süreler</h2>
+<table>
+<thead>
+<tr>
+<th>aşama</th>
+<th>süre</th>
+<th>durum</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Sunucu açılışı: FoundationPose ağları + PPF eğitimi + SAM2</td>
+<td>PPF model başına ~1–2 s</td>
+<td>bir kez</td>
+</tr>
+<tr>
+<td>Tıklama</td>
+<td>operatöre bağlı</td>
+<td><code>click</code> gönderilirse yok</td>
+</tr>
+<tr>
+<td>Nokta bulutu + PPF sınıflandırma</td>
+<td>~1.4 s (13 model)</td>
+<td>ölçüldü</td>
+</tr>
+<tr>
+<td>└ bunun içinde <code>match</code> (oylama), model başına</td>
+<td>~0.07 s</td>
+<td>ölçüldü (CPU, test karesi)</td>
+</tr>
+<tr>
+<td>└ geri kalanı: 12 hipotez × ICP + skor, her aday model için</td>
+<td>baskın kısım</td>
+<td>ayrıca ölçülmedi</td>
+</tr>
+<tr>
+<td>FoundationPose <code>register()</code></td>
+<td>cevapta <code>elapsed_sec</code></td>
+<td>ayrıca ölçülmedi</td>
+</tr>
+<tr>
+<td>Tüm zincir</td>
+<td>gözlemle &lt; 10 s</td>
+<td>adım adım ölçülmedi</td>
+</tr>
+<tr>
+<td>(Eski SAM-6D hattı)</td>
+<td>1–1.5 dk</td>
+<td>karşılaştırma için</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="14-kontrol-edilecekler-ve-açık-sorular">14. Kontrol edilecekler ve açık sorular</h2>
+<p><strong>Kontrol edilecekler:</strong></p>
+<ul>
+<li><input type="checkbox" id="checkbox0"><label for="checkbox0"><strong>Depth hizalaması.</strong> Bridge'in varsayılan depth topic'i</label>
+<code>/camera/depth/image_rect_raw</code>. Bu topic renk kamerasına <strong>hizalı değil.</strong>
+Sunucu yalnızca boyutların eşit olup olmadığına bakıyor, hizalamayı
+denetlemiyor. Laptop'ta <code>depth_topic</code> parametresinin
+<code>/camera/aligned_depth_to_color/image_raw</code> olduğu (veya <code>normalize_depth_image</code>
+fonksiyonunun hizalama yaptığı) doğrulanmalı. <code>camera.json</code>'daki K renk
+kamerasına ait. Hizasız depth ile kullanılırsa noktalar kayar.</li>
+<li><input type="checkbox" id="checkbox1"><label for="checkbox1"><strong>CAD eşliği.</strong> Laptop'taki ve sunucudaki CAD klasörleri aynı dosyaları aynı</label>
+adlarla ve aynı içerikle tutuyor mu? Bir sağlama toplamı (<code>md5sum</code>) karşılaştırması
+yeterli.</li>
+<li><input type="checkbox" id="checkbox2"><label for="checkbox2"><strong><code>assembly_mesh.ply</code></strong> kütüphanede olmalı mı? <code>CAD_DIR</code> içinde durduğu için</label>
+şu an aday.</li>
+</ul>
+<p><strong>Toplantıdan (1 Ekim 2026) gelen açık sorular:</strong></p>
+<ul>
+<li><input type="checkbox" id="checkbox3"><label for="checkbox3">PPF pozu ile FoundationPose pozunu 3–5 farklı sahnede karşılaştır (doğruluk +</label>
+süre). FoundationPose kullanmanın gerekçesi bu tablo olmalı.</li>
+<li><input type="checkbox" id="checkbox4"><label for="checkbox4">FoundationPose takibi (<code>track_one</code>) ile ICP takibini karşılaştır.</label></li>
+<li><input type="checkbox" id="checkbox5"><label for="checkbox5">Süreleri adım adım ölç: SAM2, model başına PPF, FoundationPose.</label></li>
+<li><input type="checkbox" id="checkbox6"><label for="checkbox6">D435i'nin en doğru ölçtüğü mesafeyi bul. Minimum mesafe ~28 cm, ama doğruluk</label>
+nerede en iyi? <code>PPF_TAU</code> (8 mm) buna göre ayarlanmalı.</li>
+<li><input type="checkbox" id="checkbox7"><label for="checkbox7">İki aşamalı bakış: uzaktan tanı, en iyi mesafeye yaklaşıp pozu yeniden hesapla.</label></li>
+<li><input type="checkbox" id="checkbox8"><label for="checkbox8">Parça yerine konduktan sonra pozu bir kez daha hesapla. Takipte biriken hata</label>
+sıfırlansın.</li>
+<li><input type="checkbox" id="checkbox9"><label for="checkbox9">Margin küçükse başka bir açıdan bak (<em>next-best-view</em>).</label></li>
+</ul>
+
+</body>
+</html>

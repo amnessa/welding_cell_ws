@@ -303,6 +303,16 @@ def launch_setup(context, *args, **kwargs):
             }],
         ))
 
+    # time-optimal timing for the arm's free moves (tack_marking_node transits / home,
+    # TrajectoryExecutor.time_path); without it they fall back to a trapezoidal profile
+    nodes.append(Node(
+        package="admittance_control",
+        executable="totg_service_node",
+        name="totg_service_node",
+        output="screen",
+        condition=IfCondition(LaunchConfiguration("launch_totg")),
+    ))
+
     nodes.append(Node(
         package="rviz2",
         executable="rviz2",
@@ -327,6 +337,11 @@ def generate_launch_description():
             "launch_camera", default_value="true",
             description="Start realsense_camera_node.py. Set false if the camera "
                         "is already streaming on the /camera/... topics."),
+        DeclareLaunchArgument(
+            "launch_totg", default_value="true",
+            description="Start totg_service_node (/compute_totg): time-optimal timing of "
+                        "the marking node's transits. Set false if the main "
+                        "admittance_control launch already runs it."),
         DeclareLaunchArgument(
             "launch_rviz", default_value="false",
             description="Open RViz alongside the pointcloud pipeline."),

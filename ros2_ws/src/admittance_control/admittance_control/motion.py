@@ -41,6 +41,34 @@ from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 from .tack_reach import UR_ORDER, joint_state_to_ur_order
 
+
+
+def _import_compute_totg():
+    """`admittance_control.srv.ComputeTOTG`, also when the package was imported from the
+    SOURCE tree. The scripts put the source dir first on sys.path and a symlink install
+    resolves them there, but the generated `srv` (and its type support) exists only in
+    the install space's copy of the package - add that copy to the package's path."""
+    try:
+        from admittance_control.srv import ComputeTOTG
+        return ComputeTOTG
+    except ImportError:
+        pass
+    import os
+    import sys
+    import admittance_control as pkg
+    for p in sys.path:
+        d = os.path.join(p, 'admittance_control')
+        if os.path.isdir(os.path.join(d, 'srv')) and d not in list(pkg.__path__):
+            pkg.__path__.append(d)
+    try:
+        from admittance_control.srv import ComputeTOTG
+        return ComputeTOTG
+    except ImportError:                 # a bare checkout without a build
+        return None
+
+
+ComputeTOTG = _import_compute_totg()
+
 # name -> default; declared as prefix + name on the owning node
 PARAMS: dict[str, Any] = {
     'dry_run': True,
@@ -51,6 +79,11 @@ PARAMS: dict[str, Any] = {
     'release_abort_force_n': 40.0,     # retract (moving away) is never blocked by abort_force_n
     'bias_window_s': 0.5,
     'max_joint_jump_rad': 0.35,
+    # time_path: MoveIt's TOTG via the package's C++ service (src/totg_service_node.cpp),
+    # the drawing server's timing; a trapezoidal profile when it is not running
+    'totg_service': '/compute_totg',
+    'totg_path_tolerance': 0.005,      # rad a blended corner may leave the given points by
+    'totg_resample_dt': 0.02,          # s between the returned samples
 }
 
 Timed = Sequence[tuple[np.ndarray, float]]
@@ -92,6 +125,8 @@ class TrajectoryExecutor:
                                  self._on_wrench, qos_profile_sensor_data, callback_group=cbg)
         self._client = ActionClient(node, FollowJointTrajectory, str(self.param('action')),
                                     callback_group=cbg)
+        self._totg = (node.create_client(ComputeTOTG, str(self.param('totg_service')),
+                                         callback_group=cbg) if ComputeTOTG is not None else None)
 
     # ------------------------------------------------------------- parameters -------
     def param(self, name: str) -> Any:
@@ -185,6 +220,55 @@ class TrajectoryExecutor:
                 pass
 
     # ------------------------------------------------------------- execute ----------
+    # ------------------------------------------------------------- timing -----------
+    def time_path(self, path: Sequence[np.ndarray], v_max: float, a_max: float,
+                  is_valid=None) -> tuple[list[tuple[np.ndarray, float]], str]:
+        """Time a free joint path (a transit, home) for `execute`. Returns (timed, source).
+
+        First choice is MoveIt's time-optimal parameterisation (TOTG, Kunz & Stilman),
+        through the same `compute_totg` service the drawing server uses: joint velocity
+        `v_max` and acceleration `a_max` on every joint, corners blended. Blending leaves
+        the given points by up to `totg_path_tolerance`, so with `is_valid` (the planner's
+        collision test) every returned sample is checked. If any is not clear, or the
+        service is not running, or the answer does not start and end on the path, the
+        path is timed with `marking.time_trapezoid`, which keeps the given points.
+        """
+        from .marking import time_trapezoid
+        path = [np.asarray(q, float) for q in path]
+        fallback = time_trapezoid(path, v_max, a_max)
+        if len(path) < 2 or self._totg is None:
+            return fallback, 'trapezoid (no TOTG interface)'
+        if not self._totg.service_is_ready() and not self._totg.wait_for_service(timeout_sec=0.5):
+            return fallback, 'trapezoid (TOTG service not running)'
+        req = ComputeTOTG.Request()
+        n = len(path[0])
+        req.num_joints = n
+        req.waypoints_flat = [float(v) for q in path for v in q]
+        req.max_velocity = [float(v_max)] * n
+        req.max_acceleration = [float(a_max)] * n
+        req.path_tolerance = float(self.param('totg_path_tolerance'))
+        req.resample_dt = float(self.param('totg_resample_dt'))
+        fut = self._totg.call_async(req)
+        deadline = time.monotonic() + 5.0
+        while not fut.done():
+            if time.monotonic() > deadline:
+                return fallback, 'trapezoid (TOTG timed out)'
+            time.sleep(0.005)
+        res = fut.result()
+        if res is None or not res.success or res.num_output_points < 2:
+            return fallback, f"trapezoid (TOTG failed: {getattr(res, 'message', 'no reply')})"
+        qs = np.asarray(res.timed_positions_flat, float).reshape(-1, n)
+        ts = list(res.timestamps)
+        if (np.abs(qs[0] - path[0]).max() > 1e-3 or np.abs(qs[-1] - path[-1]).max() > 1e-3
+                or any(b <= a for a, b in zip(ts[:-1], ts[1:]))):
+            return fallback, 'trapezoid (TOTG answer off the path)'
+        if is_valid is not None:
+            bad = sum(1 for q in qs if not is_valid(q))
+            if bad:
+                return fallback, f'trapezoid (TOTG blending left free space at {bad} samples)'
+        qs[0], qs[-1] = path[0], path[-1]
+        return [(q.copy(), float(t)) for q, t in zip(qs, ts)], 'TOTG'
+
     def execute(self, timed: Timed, label: str, watch_touch: bool = False,
                 want_contact: bool = False, away: bool = False,
                 sim_contact_fraction: float = 1.0, rebias: bool = False):
