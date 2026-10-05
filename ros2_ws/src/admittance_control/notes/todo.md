@@ -131,6 +131,83 @@ All of the plan's open items live here now; the plan keeps the design and the hi
   - The spline rounds corners; it does not change the route. If the shortcut path itself
     swings around the robot, that remains. Then: best-of-N seeds, or a via pose above
     the assembly.
+- **RRT\*-Connect for the transits** (2026-10-05). The smoothed path still deviates too
+  much: the spline rounds corners, but the route is whatever the first RRT-Connect
+  connection found.
+  - Paper: Klemm et al., *RRT\*-Connect: Faster, Asymptotically Optimal Motion Planning*,
+    ROBIO 2015 (`weld_generator/papers/RRT-Connect_Faster_asymptotically_optimal_motion_planning.pdf`).
+  - The idea, as the paper describes it:
+    - RRT-Connect's two trees (start and goal), alternating, with RRT\*'s `Extend*`.
+      A new node picks the cheapest parent among its neighbours within
+      r = min(γ·(log|V|/|V|)^(1/d), η), d = 6. Then the neighbours are rewired through it
+      when that is cheaper.
+    - `Connect*` grows the other tree towards the new node with the same `Extend*`.
+    - Unlike RRT-Connect it **does not stop at the first connection.** Every node reached
+      by both trees is a candidate, and the best path goes through
+      argmin over V_a ∩ V_b of cost_a(x) + cost_b(x).
+    - Asymptotically optimal like RRT\*, but its first solution comes much sooner. In
+      their benchmarks the median first solution came 2–4× sooner; on the maze RRT\*
+      solved 21 % of runs and RRT\*-Connect 100 %.
+    - The authors implemented it inside OMPL.
+  - Implementation plan, in `kinematics.py` next to `rrt_connect`, same `is_valid` /
+    `_edge_valid` interface:
+    1. **Cost:** joint travel, weighted toward the base and shoulder (they sweep the most
+       space), or the tool-tip path length. Decide which matches "deviates too much".
+    2. **Anytime with a time budget** (e.g. 0.5 / 1 / 2 s per transit): keep the best
+       path found so far and return it when the budget runs out. The first solution is
+       an RRT-Connect-quality path.
+    3. **Speed tricks for Python:**
+       - choose-parent checks the neighbours sorted by cost and stops at the first clear
+         edge (lazy collision checking);
+       - cache edge results;
+       - nearest-neighbour search vectorised in numpy (a few thousand nodes).
+
+       The collision model's `is_valid` is the expensive call, so count calls per transit.
+    4. Then the existing chain: `shortcut_path` → `smooth_transit` → TOTG.
+  - **Switch criterion:** benchmark on the bench session's front↔back pair and the full
+    T-joint plan, against today's RRT-Connect + shortcut + spline:
+    - planning time per transit and for the whole `~/plan`;
+    - path cost (weighted joint travel, tip path length);
+    - the largest tip distance from the parts;
+    - collision-check count.
+
+    Switch if a 1 s budget per transit gives a clearly shorter route and the whole plan
+    stays within a few seconds. Otherwise keep it as an option (`planner:=rrt_star_connect`).
+  - **OMPL checked (2026-10-05): it does not have RRT\*-Connect.** Neither the ROS copy
+    (`ros-jazzy-ompl` 1.7.0, C++ only, no Python bindings) nor the PyPI wheel
+    (`ompl` 2.0.1) contains it; the paper's OMPL implementation was never merged.
+  - **What OMPL does have** that targets the same problem (a short path, anytime, and
+    the planner internals in C++):
+    - **AIT\*** and **EIT\*** (informed trees): asymptotically optimal and
+      bidirectional in spirit. A reverse search from the goal provides the heuristic for
+      the forward search; they are OMPL's current best optimizing planners.
+    - **BIT\* / ABIT\***, **RRT#**, **Informed RRT\***: asymptotically optimal.
+    - **AnytimePathShortening**: runs several planners (e.g. RRT-Connect) in parallel,
+      **hybridizes** their paths and shortcuts the result, anytime. It is "best of N" done
+      properly.
+    - **BiTRRT**: bidirectional, follows a state-cost map; not optimal for path length.
+    - `PathSimplifier`: shortcutting, vertex reduction, B-spline smoothing.
+  - **Route: the PyPI wheel, not writing it ourselves.**
+    - `ompl-2.0.1-cp312-...-manylinux` matches this Python 3.12 / x86-64. It bundles its
+      own `libompl.so` and Boost, so it does not touch ROS's 1.7 library.
+    - Installing it is an environment change, so decide how: a venv with
+      `--system-site-packages` (keeps rclpy), or `pip install --break-system-packages`
+      in the container (Noble's system Python is externally managed). Add it to
+      `requirements.txt` either way.
+    - **Wiring:**
+      - a 6-D `RealVectorStateSpace` with the joint limits;
+      - state validity = our `CollisionModel.is_valid` (a Python callback; the
+        nearest-neighbour search and rewiring stay in C++);
+      - motion check at 0.01 rad, as `_edge_valid`;
+      - the weighted joint cost without a Python cost callback: plan in scaled
+        coordinates q_j·w_j (base and shoulder heavier), so OMPL's own Euclidean
+        distance *is* the weighted travel.
+    - Then the existing chain: `shortcut_path` → `smooth_transit` → TOTG.
+  - **Benchmark** (the switch criterion above), with 0.5 / 1 / 2 s budgets per transit:
+    today's RRT-Connect + shortcut + spline vs AIT\*, EIT\* and
+    AnytimePathShortening(RRT-Connect).
+  - Write RRT\*-Connect ourselves (the plan above) only if none of these meets the
+    criterion.
 - **Tack 0 of the 29 Sep 18:10 session is refused at planning:** "descent clearance
   0.0 mm (overshoot)". Find which pair goes to 0 in the overshoot zone.
 - **Holding 1.5 N on metal:** UR's `force_mode_controller` (loaded, inactive) for strokes
