@@ -45,6 +45,8 @@ def extract(A, B, params: Params | None = None, normals_A=None, normals_B=None,
     def lap(name):
         now = time.time(); T[name] = round(now - tick[0], 3); tick[0] = now
 
+    if min(len(A), len(B)) < max(prm.k_normals, 10):     # a part out of view: nothing to pair
+        return Result([], {}, float("nan"), T, {"n_A": len(A), "n_B": len(B), "seeds": 0})
     hA = prm.h_mm or estimate_spacing(np.asarray(A, float))
     hB = prm.h_mm or estimate_spacing(np.asarray(B, float))
     h = max(hA, hB)
@@ -191,6 +193,10 @@ def extract(A, B, params: Params | None = None, normals_A=None, normals_B=None,
              "theta_r": thr[g], "dihedral": dihedral, "joint_class": jc,
              "torch_axis": -bis, "nA": nA[g], "nB": nB[g], "n_seeds": int(m.sum())}
         seams.append(s)
+    if prm.cross_runs:
+        n0 = len(seams)
+        seams = assemble.drop_cross_runs(seams, prm.cross_run_tol_deg)
+        counts["cross_runs_dropped"] = n0 - len(seams)
     if prm.suppress_toes:
         n0 = len(seams)
         seams = assemble.suppress_toes(seams, h)

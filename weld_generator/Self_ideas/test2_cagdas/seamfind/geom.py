@@ -39,7 +39,7 @@ class PartSurface:
     """One labelled part: points, oriented PCA normals, KD-tree, MLS projection Pi(x)."""
 
     def __init__(self, P, h, k=25, orient=None, cam_pos=None, r_mls_h=3.0, gate=0.5,
-                 support_h=1.5, k_select=10):
+                 support_h=0.75, k_select=10):
         self.P = np.asarray(P, float)
         self.h = float(h)
         self.tree = cKDTree(self.P)

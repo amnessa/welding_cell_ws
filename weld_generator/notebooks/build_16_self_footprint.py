@@ -125,6 +125,7 @@ c = prep.cloud(VIEW, 0.0); A0 = sf.base_scan(prep, VIEW)
 polys, r = sf.detect(A0, c["xyz"], gap=float(prep.facts["root_gap_mm"]))
 out = FIG / FAM.replace("/", "_"); out.mkdir(exist_ok=True)
 ws.make_plots(str(out), r["CA"], r["CB"], r["A"], r["CB"], r["paths"], r["r_ball"], r["v"])
+get_ipython().run_line_magic("matplotlib", "inline")      # make_plots switched the backend to Agg
 print(f"v = {r['v']:.2f} mm, g = {r['g']:.2f} mm, ball r = {r['r_ball']:.2f} mm; footprints A {int(r['FA'].sum())}, B {int(r['FB'].sum())}; "
       f"root candidates {r['n_raw']} -> {len(r['X'])} exposed; {len(polys)} path(s)")
 for i, p in enumerate(r["paths"]):
@@ -161,7 +162,8 @@ for st in ORDER_STRATA:
         df["stratum"] = st; df["condition"] = view; rows.append(df)
 R1 = pd.concat(rows, ignore_index=True)
 print(f"{len(R1)} rows in {time.time() - t0:.0f}s")
-sp = spread(R1); assert (sp.spread == 0).all(); print("zero spread over seeds on every scene: deterministic\n")
+sp = pd.concat([spread(R1[R1.condition == v]) for v in ("full_exterior", "single")])
+assert (sp.spread == 0).all(); print(f"zero spread over seeds on all {len(sp)} scene x condition cells: deterministic\n")
 t = R1[R1.seed == 0].pivot_table(index="stratum", columns="condition", values=["f1", "precision", "recall", "n_pred_seams"]).reindex(ORDER_STRATA)
 print(t.round(2).to_string())
 """)
@@ -261,11 +263,10 @@ md(r"""
 ## Thin sheets — the footprint threshold against the plate thickness
 
 All thresholds are multiples of the voxel size `v` (the point spacing), and the footprint is
-`g = 3v + gap`. When the thinner part is thinner than a few `v`, the edge face of the upper
-part of a lap or edge joint contributes only a handful of points within `g`, and the single
-view, which sees that edge face alone, returns almost no root candidates. F1 against
-`t_min / v` on the plate strata, headline arm, one panel per stratum and condition (dotted:
-`t_min = 3v`), then the median split at `t_min = 3v`.
+`g = 3v + gap`. The question is whether a part thinner than `g` starves the projection of
+step 6: on a lap, the upper plate's edge face is the only B surface next to the root, and it
+is only `t` tall. F1 against `t_min / v` on the plate strata, headline arm, one panel per
+stratum and condition (dotted: `t_min = 3v`), then the median split at `t_min = 3v`.
 """)
 
 code(r"""
@@ -288,7 +289,49 @@ print(pl.assign(thin=pl.t_over_v < 3).groupby(["condition", "stratum", "thin"]).
 md(r"""
 ## Reading it
 
-READING_PLACEHOLDER
+**Coverage.** Under the perfect multi-view condition, `self-footprint` reaches a median F1 of
+0.75–1.00 on 10 of the 12 strata (saddle 1.00, swept path 0.93, butt line 0.88), with precision
+at or above 0.85 everywhere except the arc butt (0.50) and the grooved butt. One camera roughly
+halves recall (precision stays at 1.00), as it does for every method: half of a ring and the
+far side of a plate are out of view.
+
+**Path accuracy is its strength.** On matched seams it has the lowest median RMSE of all eight
+entries on 9 of the 12 strata in full view (all six T strata, butt line, arc butt, edge; 0.38–1.15
+mm); `lit-lobb` is lower on corner (0.45 vs 0.64) and lap (0.88 vs 0.90), `lit-modelreg` on the
+grooved butt.
+The mechanism explains it: step 6 slides footprint points until their distance to the other part
+equals the fit-up gap, so a root candidate is a measured point on the root edge itself, not an
+intersection of two fitted surfaces extrapolated to it.
+
+**Against the seven.** Its F1 is below the best of the seven on most strata (by 0.06–0.45, and by
+0.97 on the grooved butt) and ties
+or exceeds it on the saddle, the rounded rectangle (0.78 vs 0.75, full view) and the arc butt
+(0.94 vs 0.93, single view). The seven are scored at L0 with a truth-derived coarse stage each;
+this method gets a scan of part A alone and the WPS gap, nothing derived from the truth.
+
+**Where it fails, and why.**
+* *Grooved butt: 0 in both views.* The stored seam is the centreline between the two top faces,
+  which an ISO 9692-1 groove holds up to ~25 mm apart: no top-face point is within `g` of the
+  other part, so there is no footprint there. What candidates exist come from the groove's root
+  faces, a groove depth below the truth (matched RMSE 4.7 mm).
+* *Arc butt, full view: precision 0.50.* The truth lists one centreline; the method also returns
+  the line on the opposite face of the strips (median 4.5 paths for 1 truth seam). In the single
+  view that face is out of sight and F1 is 0.94.
+* *Edge joints, single view: 0.* 55 of the 60 edge scenes have plates of 1–2 mm, under `3v`;
+  their edge faces are a few samples tall and the single view yields almost no root candidates.
+* *Lap joints on thin sheet.* The thickness split confirms the mechanism for laps only: F1 0.85
+  → 0.42 (full) and 0.57 → 0.11 (single) when `t_min < 3v`. Thin T and corner joints are not
+  hurt (0.84 and 0.89 for thin against 0.75 and 0.64 for thick, full view): their B surface
+  next to the root is a broad face, not an edge.
+
+**The gap input is worth most where gaps are large.** With `gap = 0` (the CLI default), corner
+joints fall from 0.75 to 0.00 and square butts from 0.88 to 0.45 (single view: 0.51 to 0.00):
+the projection looks for a distance of zero that a gapped joint never reaches. The curved T
+strata, whose gaps stay at or below 1.2 mm, lose 0.01–0.16.
+
+**Deterministic.** Zero seed spread on every scene-condition cell of the live round; one seed
+per cell in the full run. 16 of 2 880 rows are failures, scenes where the segmentation leaves
+part B empty or a cloud is near-empty in one condition; they score 0 and are counted.
 """)
 
 nb["cells"] = C

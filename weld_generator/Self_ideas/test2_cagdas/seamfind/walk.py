@@ -1,7 +1,9 @@
 """Stage 4 — sphere-tracing walkers, and the root point.
 
-The walker is the plan's pseudocode, vectorised over all seeds at once. Two corpus-driven
-details:
+The walker is the plan's pseudocode, vectorised over all seeds at once. Three changes:
+  * the step is alpha x the tangential component of the vector to B (alpha d |t|), not
+    alpha d: at a root gap the full distance is longer than the in-plane distance to B's
+    foot and the plan's step overshoots (the never-overshoot test fails without this);
   * the step is followed by a SUPPORT test (`PartSurface.project(..).on`): an MLS plane is
     infinite, so on a butt the walker would otherwise extrapolate A's top face straight
     across the gap onto B. A step whose foot leaves A's samples stops the walker at A's
@@ -52,7 +54,10 @@ def walk(own, other, X0, alpha=0.9, eps=0.05, tol=0.01, k_max=50):
         gi = idx[go]
         if not len(gi):
             break
-        xn, nn_new, on = own.project(x[gi] + (alpha * d[go] / tl[go])[:, None] * t[go])
+        # step alpha x the TANGENTIAL part of (q - x), i.e. alpha d |t| along t/|t|. The
+        # plan's alpha d is safe only at zero gap: with B hovering g above A, d exceeds
+        # the in-plane distance to B's foot and a 0.9 d step overshoots the toe.
+        xn, nn_new, on = own.project(x[gi] + (alpha * d[go])[:, None] * t[go])
         # off the patch: the walker has reached own's boundary -> that IS the toe
         converged[gi[~on]] = True
         boundary[gi[~on]] = True

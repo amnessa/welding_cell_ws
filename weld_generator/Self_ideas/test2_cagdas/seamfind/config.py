@@ -35,7 +35,7 @@ class Params:
     k_normals: int = 25
     r_mls_h: float = 3.0
     mls_normal_gate: float = 0.5       # cos 60 deg; None/0 -> ungated (the plan's MLS)
-    support_h: float = 1.5             # a projection farther than this from any sample is off the patch
+    support_h: float = 0.75            # a projection farther than this from any sample is off the patch (0.71h = grid hole)
     # Stage 2a
     prefilter: bool = True
     n_rays: int = 24
@@ -71,6 +71,8 @@ class Params:
     normal_eps: float = 0.35           # split of a position cluster on (n_A, n_B), ~20 deg
     suppress_toes: bool = True         # ISO 17659 / generator rule: toes of a coplanar gap are not seams
     min_seam_mm: float = 10.0          # generator's min_seam_length_mm
+    cross_runs: bool = True            # generator SCHEMA 2.6.2: runs across the joint are not seams
+    cross_run_tol_deg: float = 45.0
     close_h: float = 3.0
     ds_mm: float = 2.0
     # Stage 2c

@@ -114,3 +114,26 @@ def suppress_toes(seams, h, frac=0.6):
     rad = float(np.nanmedian(np.concatenate([s["gap"] for s in cop]))) / 2 + 2 * h
     return [s for s in seams
             if not (s["joint_class"] == "fillet" and (Ct.query(s["points"])[0] < rad).mean() > frac)]
+
+
+def drop_cross_runs(seams, tol_deg=45.0, straight=0.9, candidate=0.6):
+    """Generator rule (SCHEMA 2.6.2, `_drop_cross_runs`): a joint has a direction - the
+    principal axis of the straight seams' chords, each weighted by its length - and a
+    roughly straight seam more than `tol_deg` off it is a run ACROSS the plate at an end,
+    not a seam. Voters: chord / length > `straight`; candidates for dropping: > `candidate`.
+    Closed rings and arcs below the candidate ratio are never dropped."""
+    def chord(s):
+        P = s["points"]
+        c = P[-1] - P[0]
+        L = float(np.linalg.norm(c))
+        return c / max(L, 1e-9), L
+    voters = [s for s in seams if not s["closed"] and chord(s)[1] > straight * s["length"]]
+    if not voters:
+        return seams
+    T = np.array([chord(s)[0] for s in voters]); W = np.array([s["length"] for s in voters])
+    dom = np.linalg.eigh((T * W[:, None]).T @ T)[1][:, -1]
+    cos_t = np.cos(np.radians(tol_deg))
+    # a short end run wobbles (chord / length ~0.7), so candidates are looser than voters
+    cands = [s for s in seams if not s["closed"] and chord(s)[1] > candidate * s["length"]]
+    drop = {id(s) for s in cands if abs(chord(s)[0] @ dom) < cos_t}
+    return [s for s in seams if id(s) not in drop]
