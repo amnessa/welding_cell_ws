@@ -406,6 +406,9 @@ class IcpPoseRefinerNode(Node):
         self.declare_parameter('fp_tracker_node', '/fp_tracker')
         self.declare_parameter('fp_save_pose_window', 75)   # ~3 s at the tracker's ~25 Hz
         self.declare_parameter('fp_max_pose_age_s', 1.0)    # save refuses an older last pose
+        # RViz: the tracked part drawn as the usual green model cloud (+ refined_pose and
+        # TF <object_frame>) at the tracker's pose, at most this often (0 = off)
+        self.declare_parameter('fp_display_hz', 10.0)
         self.declare_parameter('auto_track', True)
         self.declare_parameter('lost_fitness', 0.1)
         self.declare_parameter('min_scene_points', 50)
@@ -502,6 +505,7 @@ class IcpPoseRefinerNode(Node):
         self._fp_object = None      # CAD stem the tracker follows (the bridge's class_id)
         self._fp_state = None       # the tracker's own state, from its status topic
         self._fp_paused = False     # after save_object / stop: ignore until a new registration
+        self._fp_shown = 0.0        # monotonic time of the last RViz update from a tracker pose
         self._auto_track = bool(self.get_parameter('auto_track').value)
         self._lost_fitness = float(self.get_parameter('lost_fitness').value)
         self._min_scene = int(self.get_parameter('min_scene_points').value)
@@ -752,9 +756,11 @@ class IcpPoseRefinerNode(Node):
         with self._state_lock:
             self._tracking = False
             if self._source == 'fp':
-                self._fp_pause_and_stop()
+                self._fp_freeze()
         response.success = True
-        response.message = 'tracking stopped'
+        response.message = ('tracking stopped; the pose is frozen (save_object uses the frames '
+                            'before the stop, start_tracking resumes)'
+                            if self._source == 'fp' else 'tracking stopped')
         self.get_logger().info('tracking stopped.')
         return response
 
@@ -1796,6 +1802,28 @@ class IcpPoseRefinerNode(Node):
             self._tracking = True
             self._fp_last = (time.monotonic(), frame_id, msg.header.stamp)
             self._fp_window.append(T_sc @ T)
+            hz = float(self.get_parameter('fp_display_hz').value)
+            if hz > 0 and time.monotonic() - self._fp_shown >= 1.0 / hz:
+                self._fp_shown = time.monotonic()
+                self._publish_tracked(frame_id, T, msg.header.stamp)
+
+    def _publish_tracked(self, frame_id, T, stamp):
+        """The tracked part in RViz as during ICP tracking: the green model cloud,
+        refined_pose and TF <object_frame>, all at the IMAGE stamp, so RViz places them
+        where the moving camera was. (No white scene crop: FoundationPose does not crop.)"""
+        header = self._make_header(frame_id, stamp)
+        model_cam = self._model @ T[:3, :3].T + T[:3, 3]
+        green = np.tile(np.array([30, 220, 60], np.uint8), (len(model_cam), 1))
+        self._model_pub.publish(make_xyzrgb_cloud(header, model_cam, green))
+        qx, qy, qz, qw = rotmat_to_quat(T[:3, :3])
+        pose = PoseStamped()
+        pose.header = header
+        pose.pose.position.x, pose.pose.position.y, pose.pose.position.z = \
+            float(T[0, 3]), float(T[1, 3]), float(T[2, 3])
+        pose.pose.orientation.x, pose.pose.orientation.y = qx, qy
+        pose.pose.orientation.z, pose.pose.orientation.w = qz, qw
+        self._pose_pub.publish(pose)
+        self._send_object_tf(frame_id, T, stamp)
 
     def _fp_pose_for_save(self, min_n: int):
         """(T_static_obj, pose_stats) from the tracker's recent poses, or a reason."""
@@ -1805,7 +1833,10 @@ class IcpPoseRefinerNode(Node):
                     f'fp_tracker_node tracking? state={self._fp_state}, see /perception/fp/status')
         age = time.monotonic() - self._fp_last[0]
         max_age = float(self.get_parameter('fp_max_pose_age_s').value)
-        if age > max_age:
+        if self._fp_paused:
+            self.get_logger().info(f'save_object: tracking was stopped {age:.1f} s ago; saving '
+                                   'from the frames before the stop')
+        elif age > max_age:
             return (f'the FoundationPose tracker sent its last pose {age:.1f} s ago '
                     f'(> fp_max_pose_age_s={max_age:g}; state={self._fp_state}): the part is '
                     'lost or the tracker stopped. Re-register it, then save.')
@@ -1825,6 +1856,14 @@ class IcpPoseRefinerNode(Node):
             f'{len(self._fp_window)}, save_pose_min={min_n}); saving the last pose unaveraged. '
             'Hold still a moment, then save.')
         return self._fp_window[-1].copy(), None
+
+    def _fp_freeze(self) -> None:
+        """A deliberate stop (~/stop_tracking): stop following and free the tracker, but
+        KEEP the frames collected so far, like ICP tracking, whose stop only froze the
+        pose. save_object then uses them; start_tracking resumes."""
+        self._fp_paused = True
+        if self._fp_stop_cli.service_is_ready():
+            self._fp_stop_cli.call_async(Trigger.Request())
 
     def _fp_pause_and_stop(self) -> None:
         """Stop following: ignore the tracker's poses until the next registration, and

@@ -36,9 +36,19 @@ is three steps, not one:
 
 and outside segmentation:
 
-    Closed_Fist   run ICP           Open_Palm   stop tracking (undo while picking)
     Victory       save object       Thumb_Down  clear the frozen frame + points
     ILoveYou      capture (again -- re-capturing replaces a bad freeze)
+
+  tracking_source = fp (default since 2026-10-06; FoundationPose's tracker starts by
+  itself from the registration Thumb_Up produces, so tracking needs no gesture):
+    Closed_Fist   HELD `motion_hold_sec` (2 s): refine_pose - THE ROBOT MOVES to its
+                  close views. The long hold is deliberate: a gesture that moves the arm
+                  must not fire from a hand shape that merely passes by.
+    Open_Palm     welding_points (undo while picking). An open hand is how a part is
+                  held and placed, so it false-fires (20+ times on 2026-10-06); here
+                  that only recomputes the seams.
+  tracking_source = icp (the old mapping):
+    Closed_Fist   run ICP           Open_Palm   stop tracking (undo while picking)
 
 Thumb_Down and Open_Palm are the gestures that mean different things in the two
 modes, because a negative click and an undo are only meaningful while points are
@@ -94,6 +104,11 @@ GESTURE_TO_ACTION = {
     'Open_Palm':   'STOP_ICP',
     'Victory':     'SAVE_OBJECT',
 }
+# tracking_source=fp: tracking needs no gesture (it starts from the registration),
+# so the fist and the palm drive the rest of the cycle
+FP_GESTURE_TO_ACTION = dict(GESTURE_TO_ACTION,
+                            Closed_Fist='REFINE_POSE',     # held motion_hold_sec: the robot moves
+                            Open_Palm='UNDO_OR_WELD')      # undo while picking, else welding_points
 NEUTRAL = {None, 'None'}
 
 
@@ -118,6 +133,11 @@ class GestureLatch:
     """
     stable_frames: int = 6
     cooldown_sec: float = 0.4
+    #: gesture -> action (GESTURE_TO_ACTION or FP_GESTURE_TO_ACTION)
+    actions: Dict[str, str] = field(default_factory=lambda: dict(GESTURE_TO_ACTION))
+    #: gestures that must ALSO be held this many seconds (a robot-moving action)
+    hold_sec: Dict[str, float] = field(default_factory=dict)
+    _run_t0: float = 0.0
     _run_gesture: Optional[str] = None
     _run_count: int = 0
     _fired_run: bool = False
@@ -130,19 +150,21 @@ class GestureLatch:
         else:
             self._run_gesture = raw
             self._run_count = 1
+            self._run_t0 = time.monotonic()
             self._fired_run = False       # a new run has not fired yet
 
         if raw in NEUTRAL:
             self._last_fired_gesture = None
             return None
 
-        action = GESTURE_TO_ACTION.get(raw)
+        action = self.actions.get(raw)
         if action is None:
             return None
         if self._fired_run or raw == self._last_fired_gesture:
             return None                   # already acted on this pose
 
-        stable = self._run_count >= self.stable_frames
+        stable = (self._run_count >= self.stable_frames and
+                  time.monotonic() - self._run_t0 >= self.hold_sec.get(raw, 0.0))
         cooled = (time.monotonic() - self._last_fire) >= self.cooldown_sec
         if stable and cooled:
             self._fired_run = True
@@ -160,11 +182,14 @@ class GestureLatch:
         """
         if self._run_gesture in NEUTRAL or self._run_gesture is None:
             return 0.0
-        if GESTURE_TO_ACTION.get(self._run_gesture) is None:
+        if self.actions.get(self._run_gesture) is None:
             return 0.0
         if self._fired_run or self._run_gesture == self._last_fired_gesture:
             return 0.0
-        return min(1.0, self._run_count / max(1, self.stable_frames))
+        frames = self._run_count / max(1, self.stable_frames)
+        hold = self.hold_sec.get(self._run_gesture, 0.0)
+        held = (time.monotonic() - self._run_t0) / hold if hold > 0 else 1.0
+        return min(1.0, frames, held)
 
 
 @dataclass
@@ -261,6 +286,12 @@ class GestureControlNode(Node):
         self.declare_parameter('click_topic', '/perception/sam2_click')
         self.declare_parameter('bridge_ns', '/foundationpose_bridge')
         self.declare_parameter('icp_ns', '/icp_pose_refiner')
+        # must match the ICP node's tracking_source: fp = Closed_Fist (re)starts the
+        # FoundationPose tracker, icp = Closed_Fist runs ICP
+        self.declare_parameter('tracking_source', 'fp')
+        # fp mapping: Closed_Fist must be held this long before refine_pose fires (it
+        # moves the robot); every other gesture keeps the short stable_frames latch
+        self.declare_parameter('motion_hold_sec', 2.0)
         # Higher = fewer misfires, more lag before a gesture takes.
         self.declare_parameter('stable_frames', 6)
         # Short on purpose. Repeats are already blocked by the latch tracking which
@@ -281,10 +312,14 @@ class GestureControlNode(Node):
         self._show_window = bool(self.get_parameter('show_window').value)
         bridge_ns = str(self.get_parameter('bridge_ns').value).rstrip('/')
         icp_ns = str(self.get_parameter('icp_ns').value).rstrip('/')
+        self._fp = str(self.get_parameter('tracking_source').value).strip().lower() == 'fp'
 
         self._latch = GestureLatch(
             stable_frames=int(self.get_parameter('stable_frames').value),
-            cooldown_sec=float(self.get_parameter('cooldown_sec').value))
+            cooldown_sec=float(self.get_parameter('cooldown_sec').value),
+            actions=dict(FP_GESTURE_TO_ACTION if self._fp else GESTURE_TO_ACTION),
+            hold_sec=({'Closed_Fist': float(self.get_parameter('motion_hold_sec').value)}
+                      if self._fp else {}))
         self._cursor = DwellCursor(
             dwell_sec=float(self.get_parameter('dwell_sec').value),
             move_tol_px=int(self.get_parameter('move_tol_px').value))
@@ -317,6 +352,8 @@ class GestureControlNode(Node):
             'RUN_ICP':     self.create_client(Trigger, f'{icp_ns}/run_icp'),
             'STOP_ICP':    self.create_client(Trigger, f'{icp_ns}/stop_tracking'),
             'SAVE_OBJECT': self.create_client(Trigger, f'{icp_ns}/save_object'),
+            'REFINE_POSE': self.create_client(Trigger, f'{icp_ns}/refine_pose'),
+            'WELDING_POINTS': self.create_client(Trigger, f'{icp_ns}/welding_points'),
         }
 
         self._recognizer = self._build_recognizer()
@@ -324,7 +361,9 @@ class GestureControlNode(Node):
         self.get_logger().info(
             f'gesture control ready (model={self._model_path}); '
             f'ILoveYou=capture  Pointing_Up=cursor  Thumb_Down=negative/cancel  '
-            f'Thumb_Up=segment  Fist=run ICP  Palm=stop  Victory=save')
+            + (f'Thumb_Up=segment  Fist(hold {self.get_parameter("motion_hold_sec").value:g} s)'
+               f'=refine_pose (ROBOT MOVES)  Palm=welding_points  Victory=save'
+               if self._fp else 'Thumb_Up=segment  Fist=run ICP  Palm=stop  Victory=save'))
 
     # ── MediaPipe ────────────────────────────────────────────────────────
     def _build_recognizer(self):
@@ -445,6 +484,14 @@ class GestureControlNode(Node):
                 self._undo()                             # Open_Palm while picking = undo
             else:
                 self._call('STOP_ICP')
+        elif action == 'UNDO_OR_WELD':
+            if self._segmenting:
+                self._undo()                             # Open_Palm while picking = undo
+            else:
+                self._call('WELDING_POINTS')
+        elif action == 'REFINE_POSE':
+            self._say('refine_pose: the robot moves to its close views', 4.0)
+            self._call('REFINE_POSE')
         elif action == 'SAVE_OBJECT':
             self._call('SAVE_OBJECT')
         elif action == 'INDICATE':

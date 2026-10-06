@@ -202,7 +202,7 @@ Visualization Manager:
       Enabled: true
       Name: Marker
       Namespaces:
-        icp_crop_box: true
+        {}
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -210,6 +210,19 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /perception/icp/crop_box
+      Value: true
+    - Class: rviz_default_plugins/Marker
+      Enabled: true
+      Name: FP tracked mesh
+      Namespaces:
+        fp_object: true
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /perception/fp/marker
       Value: true
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
@@ -418,16 +431,7 @@ Visualization Manager:
       Enabled: true
       Name: MarkerArray
       Namespaces:
-        arm_0: true
-        arm_1: true
-        arm_2: true
-        arm_3: true
-        label: true
-        pen_axis: true
-        tool_0: true
-        tool_1: true
-        tool_2: true
-        tool_3: true
+        {}
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -469,7 +473,7 @@ Visualization Manager:
       Position Transformer: XYZ
       Selectable: true
       Size (Pixels): 3
-      Size (m): 0.009999999776482582
+      Size (m): 0.004999999888241291
       Style: Flat Squares
       Topic:
         Depth: 5
@@ -496,7 +500,7 @@ Visualization Manager:
       Enabled: true
       Name: Marker
       Namespaces:
-        {}
+        tip_path: true
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -504,6 +508,31 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /tack_marking/tip_path
+      Value: true
+    - Class: rviz_default_plugins/Marker
+      Enabled: true
+      Name: Marker
+      Namespaces:
+        fp_object: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /perception/fp/marker
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: MarkerArray
+      Namespaces:
+        {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /perception/fp/marker_array
       Value: true
   Enabled: true
   Global Options:
@@ -551,25 +580,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 1.3738584518432617
+      Distance: 1.3754119873046875
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: -0.5466110110282898
-        Y: 0.045562777668237686
-        Z: -0.006274138577282429
+        X: -0.48016729950904846
+        Y: 0.0696147009730339
+        Z: 0.05566352978348732
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.39040032029151917
+      Pitch: 0.3654002547264099
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
-      Yaw: 2.285426616668701
+      Yaw: 1.7704284191131592
     Saved: ~
 Window Geometry:
   Displays:
