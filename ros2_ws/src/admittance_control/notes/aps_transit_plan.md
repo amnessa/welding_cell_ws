@@ -9,6 +9,11 @@ APS-like loop in Python. Context: `todo.md` → OPEN — motion.*
 
 ## Status (2026-10-06): steps 1–4 done, APS is the marking node's default
 
+**Step 7 (bench), first run, 2026-10-06 evening:**
+- the marks were 2.3–2.7 mm off and planning was fast;
+- the roll fallback and the 2 mm APS margin were added on the way (`todo.md`, OPEN —
+  motion).
+
 **Built:**
 - `src/transit_cpp.cpp` → `admittance_control._transit_cpp`;
 - `CollisionModel.export_spec()`;

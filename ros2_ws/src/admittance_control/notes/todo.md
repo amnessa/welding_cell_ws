@@ -35,6 +35,13 @@ Mode A runs end to end on the robot, and the pen marks every tack within **~2.5 
 (`fp_track_server.py` in its container + `fp_tracker_node.py`). Measured: 25–29 Hz,
 70–90 ms, re-seed 4 s. `tracking_source` is `fp` by default (2026-10-06; `icp` = the old ICP tracking). Details are in the plan's status section.
 
+**Bench run with all of today's fixes (2026-10-06, evening): marks 2.3–2.7 mm** (the
+user: possibly within the measurement error).
+- The setup: FoundationPose tracking → save-time ICP → `refine_pose` → APS transits with
+  the roll fallback.
+- Planning was fast.
+- This is back at the 2 Oct ICP-tracking result, now with GPU tracking.
+
 **Bench run with save-time ICP (2026-10-06, capture `20261006-163931`).**
 - Every save was ICP-refined (1.8–7.9 mm).
 - `refine_pose` **accepted both parts**.
@@ -122,6 +129,30 @@ Still to do:
 3. **Check the mesh marker in RViz.** It loads `package://admittance_control/models/<object>.ply`
    at scale 0.001: does RViz's mesh loader take our PLYs?
 4. **`use_roi`** (off): measure whether the crop raises the rate.
+
+## LATER, but important: measure everything on this side of the pipeline
+
+The FoundationPose dockers are measured separately (`realtime_fp.md`, the perception
+notes). Here: every stage from the received pose to the pen mark, measured, not
+estimated, so the thesis can report them. Per stage:
+
+| stage | what to measure |
+|---|---|
+| bridge reply → detection | delay |
+| tracker pose → `base_link` | TF lookup time; rate actually used |
+| `save_object` | robust mean; save-time ICP time per cloud, fitness, rmse, correction |
+| `refine_pose` | view planning time; motion time per view; capture time (16 frames); preprocessing; refinement rounds and iterations; d estimate; total |
+| `welding_points` | seam + tack time |
+| `tack_reachability` | time, IK calls, collision checks |
+| `~/plan` | per transit: planner, time, cost, validity calls, path points; descent checks; TOTG time |
+| execution | per transit duration, descent / contact time, the whole cycle |
+
+- **Quantities:** time (wall and CPU), peak memory (RSS), rmse / fitness wherever ICP
+  runs, and point counts.
+- **Complexities:** how each stage scales with points, parts, views and transits, both
+  measured and stated.
+- **How:** one timing/metrics logger shared by the nodes, writing JSON per run, plus a
+  script that tabulates runs.
 
 ## Multi-view refinement: what is left (`multiview_refine_plan.md`)
 
