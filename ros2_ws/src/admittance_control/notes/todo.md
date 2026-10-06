@@ -35,6 +35,29 @@ Mode A runs end to end on the robot, and the pen marks every tack within **~2.5 
 (`fp_track_server.py` in its container + `fp_tracker_node.py`). Measured: 25–29 Hz,
 70–90 ms, re-seed 4 s. `tracking_source` is `fp` by default (2026-10-06; `icp` = the old ICP tracking). Details are in the plan's status section.
 
+**Bench run with save-time ICP (2026-10-06, capture `20261006-163931`).**
+- Every save was ICP-refined (1.8–7.9 mm).
+- `refine_pose` **accepted both parts**.
+- The fit-up gap is 0.3–2.9 mm again.
+- The camera offset estimate agrees with 2 Oct's: d = (0.6, 2.5, −5.4) mm.
+- Marks: **5.3 / 5.6 mm early** (was 12 mm).
+
+**Next lever: anchor the camera offset to the pen-measured table, not a looser prior.**
+- Replaying the capture with the prior at 3 / 8 / 15 mm changed the result by
+  < 0.5 mm: the views already dominate. `mv_prior_sigma_mm/deg` are now parameters.
+- The table offset per view, against `table_plane.json`:
+
+  | | views 0–3 | spread |
+  |---|---|---|
+  | raw | +2.5 / −1.6 / +2.6 / +5.3 mm | 6.9 mm |
+  | with R_v·d taken out | −1.1 / −3.9 / −1.6 / −0.2 mm | 3.7 mm, mean −1.7 mm |
+
+- So the correction is real: dropping its vertical part, the old idea, would make it
+  worse. But it leaves the scene ~1.7 mm low.
+- Add the table points (every view sees the table) as an observation with the pen plane
+  as the known geometry in the joint estimate of d.
+- Then the pen length (+1–3 mm, see "Accuracy: small items") explains most of the rest.
+
 **Save-time ICP implemented (2026-10-06)** for cause 1 below (`fp_save_icp`, on by default):
 - ICP from the averaged FoundationPose pose on 5 fresh live clouds, averaged in `base_link`;
 - used only if the fitness is ≥ 0.2 and the correction is ≤ 20 mm / 8°, otherwise the
@@ -268,6 +291,16 @@ All of the plan's open items live here now; the plan keeps the design and the hi
       equivalence test proves it matches `collision.py`.
     - Then `smooth_transit` → TOTG as now.
     - Benchmark before switching the default.
+- **Descent refused "clearance 0.0 mm (overshoot)": fixed 2026-10-06.**
+  - Cause: a stroke start 14.5 mm from the tack centre, at the report's roll (330°),
+    put the camera body box into the base plate 4 mm past the point. Box–box is an
+    intersection test, hence the "0.0".
+  - Fix: the plan now tries the other rolls (the report's first, then ± roll_step up to
+    ±90°) and records `roll 330 -> 0 deg (why)` in the summary.
+  - Probably the same cause as the 29 Sep refusal below.
+  - **APS re-check fallback, also fixed:** APS plans 2 mm wider
+    (`aps_clearance_margin_m`), because an optimised path runs along the clearance
+    boundary.
 - **Tack 0 of the 29 Sep 18:10 session is refused at planning:** "descent clearance
   0.0 mm (overshoot)". Find which pair goes to 0 in the overshoot zone.
 - **Holding 1.5 N on metal:** UR's `force_mode_controller` (loaded, inactive) for strokes

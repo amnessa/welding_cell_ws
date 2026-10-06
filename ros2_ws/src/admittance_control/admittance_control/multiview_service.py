@@ -79,6 +79,11 @@ PARAMS: dict[str, Any] = {
     "online_selfcal": True,
     "max_correction_mm": 10.0,
     "max_correction_deg": 4.0,
+    # the pull toward the saved pose (multiview_refine.RefineConfig.prior_sigma_*). A
+    # looser prior trusts the views more - but on the 2026-10-06 capture 3 / 8 / 15 mm
+    # changed the result by < 0.5 mm: the four close views already dominate.
+    "prior_sigma_mm": 3.0,
+    "prior_sigma_deg": 1.0,
     "max_relative_mm": 2.0,
     "max_relative_deg": 1.0,
     "resting_contact": False,
@@ -120,6 +125,8 @@ class MultiviewRefiner:
         rcfg = mr.RefineConfig(online_selfcal=bool(self.p("online_selfcal")),
                                max_correction_mm=float(self.p("max_correction_mm")),
                                max_correction_deg=float(self.p("max_correction_deg")),
+                               prior_sigma_mm=float(self.p("prior_sigma_mm")),
+                               prior_sigma_deg=float(self.p("prior_sigma_deg")),
                                max_relative_mm=float(self.p("max_relative_mm")),
                                max_relative_deg=float(self.p("max_relative_deg")),
                                resting_contact=bool(self.p("resting_contact")),

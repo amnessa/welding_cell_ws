@@ -108,6 +108,7 @@ class TackMarkingNode(Node):
         p('transit_budget_s', 1.0)         # per transit that is not a straight edge
         p('aps_num_planners', 4)
         p('aps_max_paths', 8)
+        p('aps_clearance_margin_m', 0.002)   # APS plans this much wider than the Python re-check
         p('smooth_transits', True)         # round the transit corners (spline) and time them
                                            # with TOTG, as the drawing server does; false = the
                                            # straight shortcut segments (before 2026-10-05)
@@ -177,7 +178,8 @@ class TackMarkingNode(Node):
     def _transit_opts(self) -> dict:
         g = lambda n: self.get_parameter(n).value  # noqa: E731
         return {'planner': str(g('transit_planner')), 'budget_s': float(g('transit_budget_s')),
-                'num_planners': int(g('aps_num_planners')), 'max_paths': int(g('aps_max_paths'))}
+                'num_planners': int(g('aps_num_planners')), 'max_paths': int(g('aps_max_paths')),
+                'margin_m': float(g('aps_clearance_margin_m'))}
 
     def _time_transit(self, path, label: str):
         """Time a free move with TOTG (velocity and acceleration caps, blended corners),

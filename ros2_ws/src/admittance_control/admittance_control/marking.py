@@ -39,7 +39,7 @@ from typing import Any, Callable, Sequence
 import numpy as np
 
 from .collision import CollisionModel
-from .kinematics import _edge_valid, bezier_smooth_path, rrt_connect, ur5e_fk
+from .kinematics import _edge_valid, _in_limits, bezier_smooth_path, rrt_connect, ur5e_fk
 from .tack_reach import MarkingConfig, _unwrap_to, solve_on_branch
 
 
@@ -98,19 +98,27 @@ def smooth_transit(path: Sequence[np.ndarray], is_valid: Callable[[np.ndarray], 
 
 def aps_path(q_from: np.ndarray, q_to: np.ndarray, model: CollisionModel,
              edge_resolution: float = 0.01, budget_s: float = 1.0, num_planners: int = 4,
-             max_paths: int = 8, info: dict | None = None) -> list[np.ndarray] | None:
+             max_paths: int = 8, info: dict | None = None,
+             margin_m: float = 0.002) -> list[np.ndarray] | None:
     """OMPL's official AnytimePathShortening (C++, `_transit_cpp`; notes/aps_transit_plan.md):
     `num_planners` RRT-Connect threads, their paths hybridized and shortcut until
     `budget_s`, on the C++ port of this collision model. Every edge of the answer is
     re-checked with the PYTHON model before it is used. None (and `info['why']`) when the
-    extension is not built, APS finds nothing, or the Python check disagrees."""
+    extension is not built, APS finds nothing, or the Python check disagrees.
+
+    APS plans with the clearance + `margin_m`: an optimised path runs ALONG the clearance
+    boundary, so the Python re-check, sampling elsewhere on the same edges, landed a hair
+    inside it (2026-10-06, "failed the Python collision re-check"). The margin gives the
+    re-check, at the nominal clearance, room to agree."""
     info = info if info is not None else {}
     try:
         from . import _transit_cpp
     except ImportError as exc:
         info["why"] = f"_transit_cpp not built ({exc})"
         return None
-    res = _transit_cpp.plan(_transit_cpp.Model(model.export_spec()), np.asarray(q_from, float),
+    spec = model.export_spec()
+    spec["clearance"] = float(spec["clearance"]) + float(margin_m)
+    res = _transit_cpp.plan(_transit_cpp.Model(spec), np.asarray(q_from, float),
                             np.asarray(q_to, float), planner="aps", budget_s=float(budget_s),
                             resolution=float(edge_resolution), num_planners=int(num_planners),
                             max_paths=int(max_paths))
@@ -131,7 +139,7 @@ def transit_path(q_from: np.ndarray, q_to: np.ndarray, model: CollisionModel,
                  edge_resolution: float = 0.01, max_iter: int = 8000, seed: int = 0,
                  unwrap: bool = True, smooth: bool = False, planner: str = "rrt_connect",
                  budget_s: float = 1.0, num_planners: int = 4, max_paths: int = 8,
-                 info: dict | None = None) -> list[np.ndarray] | None:
+                 info: dict | None = None, margin_m: float = 0.002) -> list[np.ndarray] | None:
     """Collision-free joint path: the straight edge when it is clear, else
     ``planner='aps'``: OMPL's AnytimePathShortening (`aps_path`; RRT-Connect + shortcut as
     the fallback, the reason in ``info['why']``), or ``'rrt_connect'``: RRT + shortcut.
@@ -154,7 +162,7 @@ def transit_path(q_from: np.ndarray, q_to: np.ndarray, model: CollisionModel,
         return [q_from, q_to]
     if planner == "aps":
         path = aps_path(q_from, q_to, model, edge_resolution, budget_s, num_planners,
-                        max_paths, info)
+                        max_paths, info, margin_m)
         if path is not None:
             info["how"] = (f"APS {info['time_s']:.2f} s, {info['solutions']} solutions, "
                            f"cost {info['cost']:.2f}")
@@ -356,6 +364,7 @@ class TackStep:
     stroke_mode: str = "dot"
     tack_point_m: np.ndarray | None = None
     transit_how: str = ""            # what produced the transit (straight / APS / RRT-Connect)
+    roll_note: str = ""              # the roll was changed from the report's (and why)
 
 
 @dataclass
@@ -374,6 +383,7 @@ class MarkingPlan:
                          f"transit {'ok' if s.transit_ok else 'FAIL'} ({n_t} wp"
                          + (f", {s.transit_how}" if s.transit_how else "") + "), "
                          + f"descent {'ok' if s.descent_ok else 'FAIL'} ({n_d} wp)"
+                         + (f" [{s.roll_note}]" if s.roll_note else "")
                          + (f" - {s.reason}" if s.reason else ""))
         lines.append(f"home path: {'ok' if self.home_path else 'FAIL'}"
                      + (f" ({self.home_how})" if self.home_how else ""))
@@ -408,6 +418,48 @@ def stroke_targets(mode: str, report_tacks: Sequence[dict[str, Any]],
     return out
 
 
+def _roll_offsets(cfg: MarkingConfig) -> list[float]:
+    """0, then +-step, +-2 step ... up to +-90 deg (the report's roll first)."""
+    step = float(getattr(cfg, "roll_step_deg", 15.0)) or 15.0
+    out = [0.0]
+    k = 1
+    while k * step <= 90.0 + 1e-9:
+        out += [k * step, -k * step]
+        k += 1
+    return out
+
+
+def descent_check(tool, model: CollisionModel, cfg: MarkingConfig, point: np.ndarray,
+                  axis: np.ndarray, roll_deg: float, q_app: np.ndarray,
+                  overshoot_m: float) -> tuple[list[np.ndarray] | None, str]:
+    """(the descent IK chain, "") if it is clear, else (None, why).
+
+    The chain must stay clear (except for the pen meeting the part) up to the tack point.
+    Beyond it lies the overshoot, which the pen only reaches when the real surface is
+    farther than registered - and then the plates are farther too - so there the bound is
+    the clearance the tack pose had minus the distance travelled past it (moving `s` along
+    the pen changes any distance by at most `s`), never a fixed number: what the model
+    shows as an overlap there is the registration's, not the motion's. (A box-box pair -
+    the camera body against a part - is an intersection test: 0 = overlapping.)"""
+    chain = descent_chain(tool, point, axis, np.deg2rad(roll_deg), q_app, cfg, overshoot_m)
+    if chain is None:
+        return None, "descent IK chain broke"
+    d_ref, past_ref = np.inf, 0.0            # clearance at the last point before the tack
+    for q in chain:
+        tip = tool.tip_in(ur5e_fk(q))
+        past = float((tip - point) @ axis)
+        pairs = [p for p in model.pair_distances(q) if not (p[1] == "pen" and p[2].startswith("part_"))]
+        d, a, b = min(pairs, key=lambda p: p[0]) if pairs else (np.inf, "", "")
+        if past <= 1e-4:
+            need, d_ref, past_ref = cfg.clearance_m, d, past
+        else:
+            need = max(0.0, d_ref - (past - past_ref))
+        if d < need:
+            return None, (f"descent clearance {d * 1000:.1f} mm ({a} x {b})"
+                          f"{' in the overshoot' if past > 1e-4 else ''}")
+    return chain, ""
+
+
 def build_marking_plan(report: dict[str, Any], tool, model: CollisionModel,
                        cfg: MarkingConfig, q_now: np.ndarray, overshoot_m: float = 0.003,
                        edge_resolution: float = 0.01, strokes: dict[int, np.ndarray] | None = None,
@@ -435,17 +487,44 @@ def build_marking_plan(report: dict[str, Any], tool, model: CollisionModel,
         if step.tack_id in strokes and len(strokes[step.tack_id]) >= 2:
             step.stroke_points_m = np.asarray(strokes[step.tack_id], float)
             step.stroke_mode = stroke_mode
-            # descend at the stroke's start; its approach pose must exist on the branch
-            step.point_m = step.stroke_points_m[0].copy()
-            T_app = tool.T_tool0_for_tip(step.point_m - cfg.standoff_m * step.axis_m, step.axis_m,
-                                         np.deg2rad(step.roll_deg))
-            q_app = solve_on_branch(T_app, [step.q_app, cfg.home_q], cfg)
-            if q_app is None:
-                step.reason = "no approach pose over the stroke start"
-                all_ok = False
-                steps.append(step)
-                continue
-            step.q_app = _unwrap_to(q_app, step.q_app)
+            step.point_m = step.stroke_points_m[0].copy()     # descend at the stroke's start
+        # The descent first: its approach pose decides where the transit goes. The
+        # reachability report chose one roll per seam for the TACK CENTRE; at a stroke start
+        # (2026-10-06: 14.5 mm from the centre) or in the overshoot that roll can fail - the
+        # camera body entered the base plate 4 mm past the point. The pen is round, so the
+        # roll is free: try the others before giving up.
+        chosen, first_why = None, ""
+        for droll in _roll_offsets(cfg):
+            roll = step.roll_deg + droll
+            if droll == 0 and step.stroke_points_m is None:
+                q_app = step.q_app                            # the report's own approach pose
+            else:
+                T_app = tool.T_tool0_for_tip(step.point_m - cfg.standoff_m * step.axis_m,
+                                             step.axis_m, np.deg2rad(roll))
+                q_app = solve_on_branch(T_app, [step.q_app, cfg.home_q], cfg)
+                if q_app is None:
+                    first_why = first_why or ("no approach pose over the stroke start"
+                                              if step.stroke_points_m is not None else
+                                              "no approach pose")
+                    continue
+                q_app = _unwrap_to(q_app, step.q_app)
+            chain, why = descent_check(tool, model, cfg, step.point_m, step.axis_m, roll, q_app,
+                                       overshoot_m)
+            if chain is not None:
+                chosen = (roll, q_app, chain)
+                break
+            first_why = first_why or why
+        if chosen is None:
+            step.reason = first_why
+            all_ok = False
+            steps.append(step)
+            continue
+        roll, q_app, chain = chosen
+        roll = float(roll % 360.0)
+        if abs((roll - step.roll_deg + 180.0) % 360.0 - 180.0) > 1e-6:
+            step.roll_note = f"roll {step.roll_deg:g} -> {roll:g} deg ({first_why} at {step.roll_deg:g})"
+            step.roll_deg = roll
+        step.q_app = q_app
         how: dict = {}
         path = transit_path(q_prev, step.q_app, transit_model(model, cfg, q_prev, step.q_app),
                             edge_resolution, smooth=smooth_transits, info=how, **opts)
@@ -454,38 +533,17 @@ def build_marking_plan(report: dict[str, Any], tool, model: CollisionModel,
             step.reason = "no collision-free transit"
             all_ok = False
         else:
-            step.transit, step.transit_ok = path, True
-            step.q_app = path[-1]                             # unwrapped to the previous q
-        chain = descent_chain(tool, step.point_m, step.axis_m, np.deg2rad(step.roll_deg),
-                              step.q_app, cfg, overshoot_m)
-        if chain is None:
-            step.reason = (step.reason + "; " if step.reason else "") + "descent IK chain broke"
-            all_ok = False
-        else:
-            # The chain must stay clear (except for the pen meeting the part) up to the
-            # tack point. Beyond it lies the overshoot, which the pen only reaches when
-            # the real surface is farther than registered - and then the plates are
-            # farther too - so there the bound is the clearance the tack pose had minus
-            # the distance travelled past it (moving `s` along the pen changes any
-            # distance by at most `s`), never a fixed number: what the model shows as an
-            # overlap there is the registration's, not the motion's.
-            d_ref, past_ref = np.inf, 0.0        # clearance at the last point before the tack
-            for q in chain:
-                tip = tool.tip_in(ur5e_fk(q))
-                past = float((tip - step.point_m) @ step.axis_m)
-                d = min((p[0] for p in model.pair_distances(q)
-                         if not (p[1] == "pen" and p[2].startswith("part_"))), default=np.inf)
-                if past <= 1e-4:
-                    need, d_ref, past_ref = cfg.clearance_m, d, past
-                else:
-                    need = max(0.0, d_ref - (past - past_ref))
-                if d < need:
-                    step.reason = (step.reason + "; " if step.reason else "") + \
-                        f"descent clearance {d * 1000:.1f} mm{' (overshoot)' if past > 1e-4 else ''}"
-                    all_ok = False
-                    break
-            else:
+            # the transit arrives at the 2*pi-equivalent of q_app nearest the previous pose;
+            # the descent is the same motion shifted by those whole turns
+            shift = path[-1] - step.q_app
+            chain = [q + shift for q in chain]
+            if all(_in_limits(q) for q in chain):
+                step.transit, step.transit_ok = path, True
+                step.q_app = path[-1]
                 step.descent, step.descent_ok = chain, True
+            else:
+                step.reason = "the descent leaves the joint limits after the transit's wrist unwrap"
+                all_ok = False
         steps.append(step)
         if step.transit_ok:
             q_prev = step.q_app

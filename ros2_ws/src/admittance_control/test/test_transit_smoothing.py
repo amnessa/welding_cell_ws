@@ -101,3 +101,32 @@ def test_full_plan_with_smooth_transits(scene):  # noqa: F811
     for s in plan.steps:
         assert np.allclose(s.transit[-1], s.q_app) and np.allclose(s.descent[0], s.q_app)
     assert np.allclose(plan.home_path[-1], cfg.home_q, atol=1e-9)
+
+
+def test_roll_offsets_try_the_reports_roll_first():
+    from admittance_control import tack_reach as tr
+    cfg = tr.load_marking_config()
+    offs = mk._roll_offsets(cfg)
+    st = cfg.roll_step_deg                        # 30 deg in config/marking.json
+    assert offs[0] == 0.0 and offs[1:3] == [st, -st] and max(offs) <= 90.0 and min(offs) >= -90.0
+    assert len(offs) == 1 + 2 * int(90.0 // st)
+
+
+def test_a_descent_that_fails_at_the_reports_roll_tries_the_next_roll(scene, monkeypatch):  # noqa: F811
+    tool, cfg, model, report = scene
+    real = mk.descent_check
+    first = {}
+
+    def fail_at_report_roll(tool_, model_, cfg_, point, axis, roll_deg, q_app, overshoot_m):
+        tid = id(point)
+        if tid not in first:                      # the first roll tried for this tack fails
+            first[tid] = roll_deg
+            return None, "descent clearance 0.0 mm (camera_body x part_A) in the overshoot"
+        return real(tool_, model_, cfg_, point, axis, roll_deg, q_app, overshoot_m)
+
+    monkeypatch.setattr(mk, "descent_check", fail_at_report_roll)
+    plan = mk.build_marking_plan(report, tool, model, cfg, cfg.home_q)
+    assert plan.ok, plan.summary()
+    for s, t in zip(plan.steps, mk.visit_order(report["tacks"])):
+        assert s.roll_note.startswith(f"roll {float(t['roll_deg']):g} -> ")
+        assert s.descent_ok and np.allclose(s.descent[0], s.q_app)
