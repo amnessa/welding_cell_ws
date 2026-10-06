@@ -5,6 +5,51 @@
 pose rate and low delay. ICP keeps the stationary work: the `run_icp` seed, `save_object`,
 `refine_pose`.*
 
+## Status (2026-10-06)
+
+**The split:** the desktop registers, the laptop tracks.
+- Registration (SAM2 + PPF + the scorer, full frame) does not fit the laptop's 8 GB
+  RTX 4060, so it stays on the desktop's `fp_server.py` `/predict_pose`.
+- Tracking (the refiner only, ~300 MB) runs on the laptop in the same FoundationPose
+  Docker image, so frames never cross the network.
+
+**Built** (mirrored in `scripts/scripts_in_foundationpose/`):
+
+| file | role |
+|---|---|
+| `fp_track_server.py` | tracking-only server, `ws://127.0.0.1:5001` |
+| `fp_tracking.py` | the tracker: `track_one`, fit, LOST, the re-seed mask |
+| `fp_stream.py` | the wire protocol; identical copy in `admittance_control/fp_stream.py`, checked by `test_fp_stream_copy.py` |
+| `track_bench.py`, `track_replay.py` | benchmarks |
+| `scripts/fp_tracker_node.py` | the ROS client |
+
+**Measured on the laptop** (a stand-in camera publishing a saved frame at 30 Hz):
+
+| quantity | result |
+|---|---|
+| pose rate | 25–29 Hz |
+| delay, image → pose | 70–90 ms with raw bytes; ~100 ms with JPEG/PNG, so raw is the default on localhost |
+| re-seed through `/predict_pose` | 4.0 s |
+
+2 frames in flight is the default: 1 halved the rate without lowering the delay.
+
+**Step 6 wired (2026-10-06).**
+- `pointcloud.launch.py` starts `fp_tracker_node` (`tracking_source:=fp`, the default since 2026-10-06; `icp` = the old ICP tracking).
+- The ICP node's `tracking_source: fp` then:
+  - idles its tracking timer;
+  - takes `/perception/fp/pose`, putting each pose into `base_link` with TF at its own
+    image stamp;
+  - averages the frames at rest at `save_object`;
+  - stops the tracker after a save and resumes on the next registration.
+- The bridge now stamps detections with the registered frame's stamp, so the seed's
+  TF is exact.
+- Smoke-tested with simulated tracker output.
+
+**Still to do:**
+- run on the real camera and arm;
+- step 5 (FP vs ICP: `pose_jitter_probe.py -p topic:=/perception/fp/pose`);
+- try `use_roi`, which is off by default.
+
 ## In simple terms
 
 Today FoundationPose runs once per part:

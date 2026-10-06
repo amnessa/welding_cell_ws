@@ -29,29 +29,24 @@ Mode A runs end to end on the robot, and the pen marks every tack within **~2.5 
   part. It stays for what it is good at: refining a stationary part (`~/run_icp` seed,
   `~/refine_pose`). No Kalman fusion for now.
 
-## NEXT: FoundationPose live tracking in ROS and RViz → `notes/realtime_fp.md`
+## NEXT: FoundationPose live tracking on the bench → `notes/realtime_fp.md`
 
-The plan, with speed as the priority. Steps:
+**Built and wired (2026-10-06).** The desktop registers; the laptop tracks
+(`fp_track_server.py` in its container + `fp_tracker_node.py`). Measured: 25–29 Hz,
+70–90 ms, re-seed 4 s. `tracking_source` is `fp` by default (2026-10-06; `icp` = the old ICP tracking). Details are in the plan's status section.
 
-0. Benchmark `track_one` alone on the host GPU and on the laptop's RTX 4060; this decides
-   where tracking runs.
-1. Check the Tailscale path: direct, not via DERP.
-2. A WebSocket tracking endpoint in `fp_server.py`.
-3. `fp_tracker_node.py`:
-   - latest-wins streaming;
-   - region-of-interest crop;
-   - robot-motion compensation;
-   - TF + latched mesh marker in RViz.
-4. Lost detection and automatic re-seed.
-5. Compare with ICP (`pose_jitter_probe`).
-6. `tracking_source: fp` in the ICP node, feeding `save_object`.
+Still to do:
 
-Targets: ≥ 15 Hz (goal 30) and ≤ 100 ms delay (goal 50).
-
-Open questions, in the plan:
-- Is the GPU host on the same LAN?
-- Which GPU is in the host?
-- Does the camera node really reach 30 Hz?
+1. **First real run:**
+   1. `fp_track_server.py` in the laptop container;
+   2. `pointcloud.launch.py launch_foundationpose:=true ...` (fp tracking is the default);
+   3. register a part and move it by hand; RViz shows the `fp_object` mesh;
+   4. `~/save_object`, the second part, `refine_pose`, marks.
+2. **Step 5:** FP vs ICP with `pose_jitter_probe.py` (still part and slow push): noise,
+   delay, drift. Then the saved pose vs `refine_pose`'s correction.
+3. **Check the mesh marker in RViz.** It loads `package://admittance_control/models/<object>.ply`
+   at scale 0.001: does RViz's mesh loader take our PLYs?
+4. **`use_roi`** (off): measure whether the crop raises the rate.
 
 ## Multi-view refinement: what is left (`multiview_refine_plan.md`)
 

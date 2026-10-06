@@ -224,8 +224,10 @@ from geometry_msgs.msg import Point, PoseStamped, TransformStamped
 from rcl_interfaces.msg import SetParametersResult
 from sensor_msgs.msg import PointCloud2, PointField
 from sensor_msgs_py import point_cloud2
+from std_msgs.msg import String
 from std_srvs.srv import Trigger
 from tf2_ros import Buffer, TransformBroadcaster, TransformListener, TransformException
+from vision_msgs.msg import Detection3DArray
 from visualization_msgs.msg import Marker, MarkerArray
 
 from admittance_control.geometry import quat_to_rotmat, rotmat_to_quat
@@ -390,6 +392,20 @@ class IcpPoseRefinerNode(Node):
         # save_object stays allowed: only the newest resting place is averaged.
         self.declare_parameter('save_pose_window', 30)
         self.declare_parameter('save_pose_min', 5)
+        # Who follows the part while it is moved (notes/realtime_fp.md, step 6):
+        #   'fp'  - (default since 2026-10-06) FoundationPose's GPU tracker on the laptop (fp_tracker_node.py,
+        #           <fp_pose_topic>, ~25 Hz). The ICP timer then idles, and save_object
+        #           averages the tracker's poses, each put into static_frame with TF at
+        #           its OWN image stamp (the wrist camera moves between them).
+        #   'icp' - the tracking timer below (CPU, ~10 Hz).
+        # ICP keeps the stationary work either way: run_icp, refine_pose.
+        self.declare_parameter('tracking_source', 'fp')
+        self.declare_parameter('fp_pose_topic', '/perception/fp/pose')
+        self.declare_parameter('fp_status_topic', '/perception/fp/status')
+        self.declare_parameter('fp_detections_topic', '/perception/detections')
+        self.declare_parameter('fp_tracker_node', '/fp_tracker')
+        self.declare_parameter('fp_save_pose_window', 75)   # ~3 s at the tracker's ~25 Hz
+        self.declare_parameter('fp_max_pose_age_s', 1.0)    # save refuses an older last pose
         self.declare_parameter('auto_track', True)
         self.declare_parameter('lost_fitness', 0.1)
         self.declare_parameter('min_scene_points', 50)
@@ -475,6 +491,17 @@ class IcpPoseRefinerNode(Node):
         self._track_hz = float(self.get_parameter('tracking_rate_hz').value)
         from collections import deque
         self._pose_window = deque(maxlen=max(1, int(self.get_parameter('save_pose_window').value)))
+        self._source = str(self.get_parameter('tracking_source').value).strip().lower()
+        if self._source not in ('icp', 'fp'):
+            self.get_logger().warn(f"tracking_source={self._source!r} unknown; using 'icp'")
+            self._source = 'icp'
+        # tracking_source=fp: the tracker's poses in STATIC frame (camera poses taken at
+        # different stamps cannot be averaged with the wrist camera moving)
+        self._fp_window = deque(maxlen=max(1, int(self.get_parameter('fp_save_pose_window').value)))
+        self._fp_last = None        # (monotonic receive time, frame_id, image stamp)
+        self._fp_object = None      # CAD stem the tracker follows (the bridge's class_id)
+        self._fp_state = None       # the tracker's own state, from its status topic
+        self._fp_paused = False     # after save_object / stop: ignore until a new registration
         self._auto_track = bool(self.get_parameter('auto_track').value)
         self._lost_fitness = float(self.get_parameter('lost_fitness').value)
         self._min_scene = int(self.get_parameter('min_scene_points').value)
@@ -545,6 +572,20 @@ class IcpPoseRefinerNode(Node):
             PointCloud2, str(self.get_parameter('pointcloud_topic').value),
             self._on_cloud, qos_profile_sensor_data,
             callback_group=self._cloud_cbg)
+        if self._source == 'fp':
+            fp_cbg = MutuallyExclusiveCallbackGroup()
+            g = lambda n: str(self.get_parameter(n).value)  # noqa: E731
+            self.create_subscription(PoseStamped, g('fp_pose_topic'), self._on_fp_pose, 10,
+                                     callback_group=fp_cbg)
+            self.create_subscription(String, g('fp_status_topic'), self._on_fp_status, 10,
+                                     callback_group=fp_cbg)
+            self.create_subscription(
+                Detection3DArray, g('fp_detections_topic'), self._on_fp_detection,
+                QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
+                callback_group=fp_cbg)
+            ns = g('fp_tracker_node').rstrip('/')
+            self._fp_stop_cli = self.create_client(Trigger, f'{ns}/stop', callback_group=fp_cbg)
+            self._fp_start_cli = self.create_client(Trigger, f'{ns}/start', callback_group=fp_cbg)
 
         # Latched: each trigger is a discrete result, so a late-joining RViz
         # still sees the last ICP output.
@@ -696,7 +737,10 @@ class IcpPoseRefinerNode(Node):
             # Re-seeding is the one moment the scene really can change (new part,
             # new stand-off), so drop the cached sensor-noise estimate with it.
             self._noise_floor, self._noise_age = None, 0
-            if ok and self._auto_track:
+            if ok and self._source == 'fp':
+                message += (' | the part is followed by the FoundationPose tracker '
+                            '(tracking_source=fp); the ICP tick idles')
+            elif ok and self._auto_track:
                 self._tracking = True
                 self.get_logger().info('tracking started (Phase 2).')
                 message += ' | tracking started'
@@ -707,12 +751,25 @@ class IcpPoseRefinerNode(Node):
     def _on_stop_tracking(self, request, response):
         with self._state_lock:
             self._tracking = False
+            if self._source == 'fp':
+                self._fp_pause_and_stop()
         response.success = True
         response.message = 'tracking stopped'
         self.get_logger().info('tracking stopped.')
         return response
 
     def _on_start_tracking(self, request, response):
+        if self._source == 'fp':
+            with self._state_lock:
+                self._fp_paused = False
+                self._fp_window.clear()
+            ok = self._fp_start_cli.service_is_ready()
+            if ok:
+                self._fp_start_cli.call_async(Trigger.Request())
+            response.success = ok
+            response.message = ('FoundationPose tracker restarted from the last registration'
+                                if ok else 'fp_tracker_node is not running (its ~/start is not available)')
+            return response
         with self._state_lock:
             if self._current_pose is None:
                 response.success = False
@@ -762,7 +819,10 @@ class IcpPoseRefinerNode(Node):
         with self._state_lock:
             if self._current_pose is None:
                 response.success = False
-                response.message = 'no refined pose to save; call ~/run_icp first'
+                response.message = (
+                    'no pose from the FoundationPose tracker yet (tracking_source=fp): '
+                    'register the part, check /perception/fp/status'
+                    if self._source == 'fp' else 'no refined pose to save; call ~/run_icp first')
                 return response
             try:
                 ok, message = self._save_object()
@@ -966,6 +1026,8 @@ class IcpPoseRefinerNode(Node):
             self._tracking = False
             self._current_pose = None
             self._noise_floor, self._noise_age = None, 0
+            if self._source == 'fp':
+                self._fp_pause_and_stop()
 
         # The SEPC and weld topics are latched, so RViz holds the last cloud it
         # was sent until something replaces it. Publish empties, or the orange
@@ -1447,6 +1509,8 @@ class IcpPoseRefinerNode(Node):
             self._track_tick_locked()
 
     def _track_tick_locked(self):
+        if self._source == 'fp':
+            return                              # FoundationPose follows the part
         if not self._tracking or self._current_pose is None:
             return
         try:
@@ -1680,6 +1744,97 @@ class IcpPoseRefinerNode(Node):
             keep &= dist > self._bg_dist
         return keep
 
+    # ── tracking_source=fp: FoundationPose's tracker follows the part ─────
+    def _on_fp_detection(self, msg: Detection3DArray) -> None:
+        """A registration from the bridge: the tracker seeds itself from it, so from now
+        on its poses are of THIS part (resume after a save, drop the old window)."""
+        if not msg.detections or not msg.detections[0].results:
+            return
+        name = msg.detections[0].results[0].hypothesis.class_id or None
+        with self._state_lock:
+            if self._fp_paused:
+                self.get_logger().info(f'new registration ({name}): following the '
+                                       'FoundationPose tracker again')
+            self._fp_paused = False
+            self._fp_window.clear()
+            self._fp_last = None
+            if name:
+                self._fp_object = name
+
+    def _on_fp_status(self, msg: String) -> None:
+        try:
+            st = json.loads(msg.data)
+        except ValueError:
+            return
+        self._fp_state = st.get('state')
+        if st.get('object'):
+            self._fp_object = st['object']
+
+    def _on_fp_pose(self, msg: PoseStamped) -> None:
+        """Every tracked frame: the pose into static_frame with TF at the IMAGE stamp."""
+        q, t = msg.pose.orientation, msg.pose.position
+        T = np.eye(4)
+        T[:3, :3] = quat_to_rotmat([q.x, q.y, q.z, q.w])
+        T[:3, 3] = [t.x, t.y, t.z]
+        frame_id = msg.header.frame_id or self._camera_frame
+        T_sc = self._lookup_tf(self._static_frame, frame_id, msg.header.stamp)
+        if T_sc is None:
+            self.get_logger().warn(f'FoundationPose pose: TF {self._static_frame}<-{frame_id} '
+                                   'unavailable; pose dropped', throttle_duration_sec=2.0)
+            return
+        with self._state_lock:
+            if self._fp_paused:
+                return
+            if self._fp_object:
+                try:
+                    self._load_model(self._fp_object)     # no-op unless the part changed
+                except Exception as exc:  # noqa: BLE001
+                    self.get_logger().warn(f'FoundationPose pose: no CAD for '
+                                           f'{self._fp_object!r} ({exc})', throttle_duration_sec=5.0)
+                    return
+            self._current_pose = T
+            self._tracking = True
+            self._fp_last = (time.monotonic(), frame_id, msg.header.stamp)
+            self._fp_window.append(T_sc @ T)
+
+    def _fp_pose_for_save(self, min_n: int):
+        """(T_static_obj, pose_stats) from the tracker's recent poses, or a reason."""
+        from admittance_control.pose_stats import robust_pose_mean, stationary_tail
+        if self._fp_last is None or not self._fp_window:
+            return ('no pose from the FoundationPose tracker yet (tracking_source=fp): is '
+                    f'fp_tracker_node tracking? state={self._fp_state}, see /perception/fp/status')
+        age = time.monotonic() - self._fp_last[0]
+        max_age = float(self.get_parameter('fp_max_pose_age_s').value)
+        if age > max_age:
+            return (f'the FoundationPose tracker sent its last pose {age:.1f} s ago '
+                    f'(> fp_max_pose_age_s={max_age:g}; state={self._fp_state}): the part is '
+                    'lost or the tracker stopped. Re-register it, then save.')
+        tail = stationary_tail(list(self._fp_window))
+        if len(tail) >= min_n:
+            T, stats = robust_pose_mean(tail)
+            stats['window'] = int(len(self._fp_window))
+            stats['source'] = 'foundationpose'
+            self.get_logger().info(
+                f"save_object: pose = robust mean of {stats['n_used']}/{stats['n']} "
+                f"FoundationPose frames at rest (window {len(self._fp_window)}); spread std "
+                f"{np.round(stats['std_mm'], 1)} mm, {stats['std_deg']:.2f} deg "
+                f"(range {np.round(stats['range_mm'], 1)} mm, max {stats['max_deg']:.1f} deg)")
+            return T, stats
+        self.get_logger().warn(
+            f'save_object: only {len(tail)} FoundationPose frame(s) at rest (window '
+            f'{len(self._fp_window)}, save_pose_min={min_n}); saving the last pose unaveraged. '
+            'Hold still a moment, then save.')
+        return self._fp_window[-1].copy(), None
+
+    def _fp_pause_and_stop(self) -> None:
+        """Stop following: ignore the tracker's poses until the next registration, and
+        free its GPU loop (fp_tracker ~/stop)."""
+        self._fp_paused = True
+        self._fp_window.clear()
+        self._fp_last = None
+        if self._fp_stop_cli.service_is_ready():
+            self._fp_stop_cli.call_async(Trigger.Request())
+
     def _save_object(self):
         """Bake the current object's CAD into the SEPC; clear tracking state."""
         frame_id = self._camera_frame
@@ -1698,10 +1853,20 @@ class IcpPoseRefinerNode(Node):
         from admittance_control.pose_stats import robust_pose_mean, stationary_tail
         min_n = int(self.get_parameter('save_pose_min').value)
         pose_stats = None
-        # the part may have been moved by hand since it was registered: average only
-        # the ticks since it came to rest
-        tail = stationary_tail(list(self._pose_window))
-        if len(tail) >= min_n:
+        if self._source == 'fp':
+            got = self._fp_pose_for_save(min_n)
+            if isinstance(got, str):
+                return False, got
+            T_static_obj, pose_stats = got
+            T = np.linalg.inv(T_sc) @ T_static_obj     # so pose_static below == T_static_obj
+            tail = None
+        else:
+            # the part may have been moved by hand since it was registered: average only
+            # the ticks since it came to rest
+            tail = stationary_tail(list(self._pose_window))
+        if tail is None:
+            pass
+        elif len(tail) >= min_n:
             T, pose_stats = robust_pose_mean(tail)
             pose_stats['window'] = int(len(self._pose_window))
             self.get_logger().info(
@@ -1737,6 +1902,8 @@ class IcpPoseRefinerNode(Node):
         self._tracking = False                  # ready for the next object
         self._current_pose = None
         self._pose_window.clear()
+        if self._source == 'fp':
+            self._fp_pause_and_stop()           # until the next part is registered
         # The part now lives in the SEPC (static frame). The green model cloud and
         # the scene crop were latched in the CAMERA frame at their last stamp: with
         # the eye-in-hand camera moving on, RViz keeps re-placing that old cloud with

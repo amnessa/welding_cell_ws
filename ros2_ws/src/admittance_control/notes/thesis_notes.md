@@ -12,6 +12,52 @@ the plans under `notes/`; this file keeps the story and the numbers.
 
 ---
 
+## 2026-10-06: Live FoundationPose tracking: register on the desktop, track on the laptop
+
+**What happened:** the plan was one GPU host doing both jobs over the network. Hardware
+decided otherwise:
+
+- A full-frame `register()` (SAM2 + PPF + the scorer, ~250 hypotheses) does not fit the
+  laptop's 8 GB RTX 4060. It stays on the desktop.
+- Tracking needs only the refiner (~300 MB), so it runs on the laptop, in the same
+  Docker image, next to the camera. Frames never cross the network; only a lost part
+  sends one frame (plus the CAD silhouette as mask) back to the desktop to re-register.
+
+**Evidence** (laptop, a stand-in camera publishing a saved frame at 30 Hz):
+
+| quantity | result |
+|---|---|
+| pose rate | 25–29 Hz (ICP tracking: ~10 Hz on the CPU) |
+| delay, image → pose, raw bytes over localhost | 70–90 ms |
+| delay with JPEG/PNG encoding | ~100 ms |
+| re-registration on the desktop | 4.0 s |
+
+- Encoding only costs time when nothing crosses a network.
+- 2 frames in flight doubles the rate over 1 at the same delay.
+
+**Wiring into the cell:**
+
+- The ICP node keeps everything stationary (`run_icp`, `save_object`, `refine_pose`).
+  With `tracking_source: fp` it averages the tracker's frames at rest.
+- Each tracker pose is put into `base_link` with TF at its **own image stamp** before
+  averaging. Camera-frame poses from a moving wrist camera cannot be averaged, because
+  each lives in a different frame.
+- The bridge now stamps detections with the **registered** frame's stamp instead of the
+  reply time. The robot pose at the seed is then the one the image was taken at, even
+  when capture, click and registration took a minute. The tracker's "stale seed" rule had
+  to change with it: only a latched detection delivered at start-up may be stale.
+
+**What we learned:** split a learned pipeline by what each stage needs, not by where the
+software happens to run.
+
+- Registration is rare and heavy, so it goes on the big GPU.
+- Tracking is frequent and light, so it goes on the machine with the camera.
+
+The network then carries only the rare event, and the frequent one stays local. Both
+machines run the same Docker image, so the split costs no extra maintenance.
+
+---
+
 ## 2026-10-02 (evening): Decisions: no touch sensing, FoundationPose for tracking
 
 **What happened:** with the marks at ~2.5 mm by vision alone, two open questions were

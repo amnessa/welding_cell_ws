@@ -15,7 +15,7 @@ OUTPUT_DIR = os.path.join(BASE_DIR, "Data", "Output")
 
 # CAD model is fixed per deployed object (client only sends rgb/depth/camera).
 # Override with the CAD_PATH env var if needed.
-CAD_PATH = os.environ.get("CAD_PATH", os.path.join(DATA_DIR, "test_objv2.ply"))
+CAD_PATH = os.environ.get("CAD_PATH", os.path.join(DATA_DIR, "test_objv2_base.ply"))
 
 # Instance-segmentation backbone. FastSAM (~2-3 GB VRAM) is the default so the
 # pipeline fits on an 8 GB GPU; set SEGMENTOR_MODEL=sam for the heavier, slightly
@@ -35,6 +35,22 @@ ARTIFACT_FILES = ("detection_ism.json", "detection_ism.npz", "detection_pem.json
 
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# In Docker we run as root on a bind-mounted workspace, so files we write are root-owned
+# on the host and the host user (uid 1000) can't overwrite them afterwards. run_container.sh
+# passes the host identity in; give ownership back for anything we create. demo.sh does the
+# same for Data/Output. Unset outside Docker -> no-op.
+HOST_UID = os.environ.get("HOST_UID")
+HOST_GID = os.environ.get("HOST_GID")
+
+
+def _give_back_ownership(path):
+    if not HOST_UID or os.geteuid() != 0:
+        return
+    try:
+        os.chown(path, int(HOST_UID), int(HOST_GID or HOST_UID))
+    except OSError as err:
+        print(f"WARNING: could not chown {path} back to the host user: {err}")
 
 # The pipeline is GPU-bound and single-GPU; running two at once OOMs. Serialize
 # requests instead of letting them race (the bridge may trigger repeatedly).
@@ -106,6 +122,8 @@ def predict_pose():
         rgb_input.save(rgb_path)
         depth_input.save(depth_path)
         camera_intrinsics.save(camera_path)
+        for path in (DATA_DIR, rgb_path, depth_path, camera_path):
+            _give_back_ownership(path)
 
         print("Input files received and saved.")
 

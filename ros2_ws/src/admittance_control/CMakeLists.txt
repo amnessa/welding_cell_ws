@@ -96,6 +96,7 @@ install(
     admittance_control/multiview_capture.py
     admittance_control/multiview_service.py
     admittance_control/selfcal.py
+    admittance_control/fp_stream.py
   DESTINATION ${PYTHON_INSTALL_DIR}/${PROJECT_NAME}
 )
 
@@ -108,6 +109,7 @@ install(PROGRAMS
   scripts/realsense_camera_node.py
   scripts/realsense_sim_camera_node.py
   scripts/foundationpose_bridge_node.py
+  scripts/fp_tracker_node.py
   scripts/gesture_control_node.py
   scripts/sam6d_bridge_node.py
   scripts/detection_marker_node.py

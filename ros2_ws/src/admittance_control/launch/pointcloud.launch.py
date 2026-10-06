@@ -233,6 +233,7 @@ def launch_setup(context, *args, **kwargs):
     # server opens on the GPU host -- that click is what SAM2 turns into the mask.
     launch_foundationpose = \
         LaunchConfiguration("launch_foundationpose").perform(context) == "true"
+    tracking_source = LaunchConfiguration("tracking_source").perform(context).strip().lower()
     if launch_foundationpose:
         nodes.append(Node(
             package="admittance_control",
@@ -299,6 +300,26 @@ def launch_setup(context, *args, **kwargs):
                 "ground_plane_file": (LaunchConfiguration("icp_ground_plane_file").perform(context)
                                       or _default_table_plane_path(pkg_share)),
                 "ground_plane_offset_m": float(LaunchConfiguration("icp_ground_plane_offset_m").perform(context)),
+                "tracking_source": tracking_source,
+                "use_sim_time": False,
+            }],
+        ))
+
+    # ---- live FoundationPose tracking (tracking_source:=fp, notes/realtime_fp.md) ----
+    # Registration stays on the desktop (the bridge -> fp_server.py /predict_pose);
+    # every frame is tracked on THIS machine's GPU by fp_track_server.py, which runs in
+    # the laptop's FoundationPose container (start it there first:
+    # `python scripts/fp_track_server.py`). Lost -> re-registered on the desktop.
+    if tracking_source == "fp":
+        nodes.append(Node(
+            package="admittance_control",
+            executable="fp_tracker_node.py",
+            name="fp_tracker",
+            output="screen",
+            parameters=[{
+                "track_url": LaunchConfiguration("fp_track_url").perform(context),
+                "register_url":
+                    LaunchConfiguration("foundationpose_server_url").perform(context),
                 "use_sim_time": False,
             }],
         ))
@@ -337,6 +358,15 @@ def generate_launch_description():
             "launch_camera", default_value="true",
             description="Start realsense_camera_node.py. Set false if the camera "
                         "is already streaming on the /camera/... topics."),
+        DeclareLaunchArgument(
+            "tracking_source", default_value="fp",
+            description="Who follows a part while it is moved: fp (default, FoundationPose's "
+                        "GPU tracker: starts "
+                        "fp_tracker_node; fp_track_server.py must run in this machine's "
+                        "FoundationPose container) or icp (the ICP node's CPU tracker)."),
+        DeclareLaunchArgument(
+            "fp_track_url", default_value="ws://127.0.0.1:5001",
+            description="fp_track_server.py's WebSocket (tracking_source:=fp)."),
         DeclareLaunchArgument(
             "launch_totg", default_value="true",
             description="Start totg_service_node (/compute_totg): time-optimal timing of "
