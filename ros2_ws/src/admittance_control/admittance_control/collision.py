@@ -243,6 +243,39 @@ class CollisionModel:
     def validity_fn(self) -> Callable[[np.ndarray], bool]:
         return self.is_valid
 
+    def export_spec(self) -> dict[str, Any]:
+        """Everything the C++ port (src/transit_cpp.cpp, `_transit_cpp.Model`) needs to
+        evaluate exactly this model: the ACTIVE kinematics as a joint-origin table, the
+        arm capsules' radii and offsets, the tool primitives in tool0, the scene boxes,
+        the table, the pairs, the clearance and the joint limits. Plain lists only."""
+        from . import kinematics as kin
+
+        def prim(p: dict[str, Any]) -> dict[str, Any]:
+            out = {"name": str(p["name"]), "type": p["type"]}
+            if p["type"] == "capsule":
+                out.update(p0=np.asarray(p["p0"], float).tolist(),
+                           p1=np.asarray(p["p1"], float).tolist(), radius=float(p["radius"]))
+            else:
+                out.update(centre=np.asarray(p["centre"], float).tolist(),
+                           half=np.asarray(p["half"], float).tolist(),
+                           R=np.asarray(p.get("R", np.eye(3)), float).tolist())
+            return out
+
+        table = kin.active_kinematics_table()
+        return {
+            "kin": [list(map(float, table[j])) for j in kin._KIN_JOINTS],
+            "radii": {k: float(v) for k, v in {**UR5E_RADII, **(self.radii or {})}.items()},
+            "shoulder_offset": float(SHOULDER_OFFSET),
+            "elbow_offset": float(ELBOW_OFFSET),
+            "tool": [prim(p) for p in (self.tool.primitives if self.tool is not None else [])],
+            "scene": [prim(b) for b in self.scene_boxes],
+            "table_z": None if self.table_z is None else float(self.table_z),
+            "table_exempt": list(self.table_exempt),
+            "self_pairs": list(self.self_pairs),
+            "clearance": float(self.clearance),
+            "limits": [list(map(float, lim)) for lim in kin.JOINT_LIMITS],
+        }
+
     def report(self, q: np.ndarray, worst: int = 5) -> str:
         pairs = sorted(self.pair_distances(q), key=lambda x: x[0])[:worst]
         d, a, b = pairs[0] if pairs else (np.inf, "", "")

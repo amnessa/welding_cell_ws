@@ -12,6 +12,53 @@ the plans under `notes/`; this file keeps the story and the numbers.
 
 ---
 
+## 2026-10-06 (evening): A tracker is not a registration; and a planner needs fast collision checks
+
+**What happened (1).** The first end-to-end run with FoundationPose tracking worked
+mechanically, but:
+- the saved parts interpenetrated by 6–11 mm;
+- `refine_pose` rejected both parts (they would still overlap by 3.8 / 4.0 mm);
+- the marks were 12 mm early on one seam, with no contact at all on the other.
+
+With ICP tracking the saved pose had always been an ICP pose; with FoundationPose it was
+the tracker's render-and-compare estimate. On a textureless 8 mm plate seen from ~0.6 m
+that estimate is good enough to follow a part, but not to weld it.
+
+**Fix:** at `save_object`, ICP on 5 fresh live clouds from the averaged tracker pose,
+used only when it fits and the correction stays within limits. On a rendered plate it
+took a 4.7 mm / 1.5° tracker error to 0.01 mm along the normal and 0.4° tilt. The
+remaining 1–2 mm is in the plate's own plane, the direction one view cannot fix; that
+is `refine_pose`'s job.
+
+**What happened (2).** The transits deviated: the planner took the first RRT-Connect
+path. OMPL's AnytimePathShortening (parallel planners + path hybridization +
+shortcutting) is the remedy, but its Python bindings do not exist, and a Python
+collision callback would serialize its threads.
+
+**Fix:** the collision model ported to C++ (a pybind11 module) and checked *against*
+the Python model rather than trusted:
+
+| quantity | result |
+|---|---|
+| FK | equal to 1e-12 |
+| `is_valid` | identical on 8 800 random and near-contact configurations |
+| distances | equal to 1e-9 |
+| speed | 590× faster |
+| front↔back transit | ~6× shorter weighted joint travel at a 1 s budget |
+| planner threads | CPU/wall 4.8 |
+
+**What we learned:**
+1. **A tracker answers "where is it now", a registration answers "where exactly is
+   it".** Keep each for its job, and refine before freezing.
+2. **To port a model, test the port against the original on the configurations where
+   they are most likely to differ** (bisected near the collision boundary), not only on
+   random ones.
+   - The equivalence test found nothing wrong with the geometry. It did find a pybind11
+     output bug that a "looks right" test would have missed, and one exact tie decided
+     by the last bit.
+
+---
+
 ## 2026-10-06: Live FoundationPose tracking: register on the desktop, track on the laptop
 
 **What happened:** the plan was one GPU host doing both jobs over the network. Hardware

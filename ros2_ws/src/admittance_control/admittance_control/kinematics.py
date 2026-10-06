@@ -189,6 +189,25 @@ def load_kinematics(path) -> dict:
     return {j: tuple(kin[j][k] for k in ("x", "y", "z", "roll", "pitch", "yaw")) for j in _KIN_JOINTS}
 
 
+# The nominal chain of `_ur5e_link_frames_nominal` as a kinematics table: every joint
+# origin as (x, y, z, roll, pitch, yaw) for `ur5e_link_frames_params`. The C++ collision
+# model (src/transit_cpp.cpp) runs only the parametrised chain, so the nominal case is
+# handed over as this table (test_transit_cpp checks it reproduces the nominal frames).
+NOMINAL_KIN = {
+    "shoulder":  (0.0, 0.0, 0.1625, 0.0, 0.0, 0.0),
+    "upper_arm": (0.0, 0.0, 0.0, math.pi / 2, 0.0, 0.0),
+    "forearm":   (-0.425, 0.0, 0.0, 0.0, 0.0, 0.0),
+    "wrist_1":   (-0.3922, 0.0, 0.1333, 0.0, 0.0, 0.0),
+    "wrist_2":   (0.0, -0.0997, 0.0, math.pi / 2, 0.0, 0.0),
+    "wrist_3":   (0.0, 0.0996, 0.0, math.pi / 2, math.pi, math.pi),
+}
+
+
+def active_kinematics_table() -> dict:
+    """The joint-origin table the ACTIVE kinematics use (the nominal one as a table)."""
+    return dict(_ACTIVE_KIN) if _ACTIVE_KIN is not None else dict(NOMINAL_KIN)
+
+
 def ur5e_link_frames_params(q: np.ndarray, kin: dict) -> dict:
     """`ur5e_link_frames` for arbitrary kinematics parameters: every joint origin is
     translate(x, y, z) @ rpy(roll, pitch, yaw) followed by the joint rotation Rz(q_i),

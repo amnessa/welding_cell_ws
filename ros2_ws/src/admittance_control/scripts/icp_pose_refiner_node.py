@@ -409,6 +409,17 @@ class IcpPoseRefinerNode(Node):
         # RViz: the tracked part drawn as the usual green model cloud (+ refined_pose and
         # TF <object_frame>) at the tracker's pose, at most this often (0 = off)
         self.declare_parameter('fp_display_hz', 10.0)
+        # save_object in fp mode: refine the averaged FoundationPose pose with ICP on
+        # fresh live clouds before saving (ICP is the tool for a STATIONARY part:
+        # normal gate, ground plane, background subtraction). 2026-10-06: the pure
+        # FoundationPose saves interpenetrated by 6-11 mm and refine_pose could not
+        # recover them. The ICP result is used only if enough clouds fit and the
+        # correction stays within the limits; otherwise the tracker's pose is saved.
+        self.declare_parameter('fp_save_icp', True)
+        self.declare_parameter('fp_save_icp_frames', 5)        # ICP runs, one per fresh cloud
+        self.declare_parameter('fp_save_icp_min_fitness', 0.2)
+        self.declare_parameter('fp_save_icp_max_mm', 20.0)     # beyond: keep the tracker pose
+        self.declare_parameter('fp_save_icp_max_deg', 8.0)
         self.declare_parameter('auto_track', True)
         self.declare_parameter('lost_fitness', 0.1)
         self.declare_parameter('min_scene_points', 50)
@@ -1857,6 +1868,89 @@ class IcpPoseRefinerNode(Node):
             'Hold still a moment, then save.')
         return self._fp_window[-1].copy(), None
 
+    def _fp_icp_refine(self, T_static_fp: np.ndarray):
+        """One-shot ICP at save: (T_static, info). Runs ICP from the averaged tracker pose
+        on `fp_save_icp_frames` fresh live clouds (each through the tracker's own crop,
+        ground cut, background subtraction and normal gate), averages the results in
+        static_frame, and returns them only if enough fit and the correction from the
+        tracker pose stays within the limits. The arm is at rest while a part is saved,
+        so every cloud sees the same scene."""
+        from admittance_control.pose_stats import robust_pose_mean, rotation_angle_deg
+        n_want = max(1, int(self.get_parameter('fp_save_icp_frames').value))
+        min_fit = float(self.get_parameter('fp_save_icp_min_fitness').value)
+        max_mm = float(self.get_parameter('fp_save_icp_max_mm').value)
+        max_deg = float(self.get_parameter('fp_save_icp_max_deg').value)
+        results, fits, rmses, low_fit = [], [], [], 0
+        seen = None
+        saved_pose = self._current_pose
+        deadline = time.monotonic() + 0.4 * n_want + 1.5
+        try:
+            while len(results) < n_want and time.monotonic() < deadline:
+                msg = self._latest_cloud
+                key = None if msg is None else (msg.header.stamp.sec, msg.header.stamp.nanosec)
+                if msg is None or key == seen:
+                    time.sleep(0.02)                 # wait for a fresh cloud
+                    continue
+                seen = key
+                frame_id = msg.header.frame_id or self._camera_frame
+                T_sc = self._lookup_tf(self._static_frame, frame_id, msg.header.stamp)
+                if T_sc is None:
+                    continue
+                self._current_pose = np.linalg.inv(T_sc) @ T_static_fp   # crop around it
+                try:
+                    scene, scene_n, _, _ = self._crop_live_scene()
+                except RuntimeError:
+                    continue
+                if self._use_o3d:
+                    scene, scene_n = self._prep_scene_o3d(scene) if len(scene) else (scene, scene_n)
+                else:
+                    scene, scene_n = voxel_downsample(scene, self._voxel, scene_n)
+                if len(scene) < max(10, self._min_scene // 5):
+                    continue
+                if len(scene) > self._max_target:
+                    sel = self._rng.choice(len(scene), self._max_target, replace=False)
+                    scene, scene_n = scene[sel], scene_n[sel]
+                index = NNIndex(scene)
+                T, info = icp_point_to_plane(
+                    self._model, scene, scene_n, init=self._current_pose,
+                    max_corr_dist=self._max_corr, max_iter=self._max_iter,
+                    anderson_depth=self._anderson, robust=self._robust,
+                    noise_floor=self._noise_floor_for(scene, scene_n, index),
+                    index=index, source_normals=self._model_n,
+                    normal_gate_deg=self._normal_gate())
+                if info['fitness'] < min_fit:
+                    low_fit += 1
+                    continue
+                results.append(T_sc @ T)
+                fits.append(float(info['fitness']))
+                rmses.append(float(info['inlier_rmse']))
+        finally:
+            self._current_pose = saved_pose
+        if not results:
+            reason = (f'no live cloud gave an ICP fit >= {min_fit:g} ({low_fit} below)'
+                      if low_fit else 'no fresh live cloud / TF within the time limit')
+            self.get_logger().warn(f'save_object: ICP refinement skipped ({reason}); saving '
+                                   'the FoundationPose pose')
+            return T_static_fp, {'applied': False, 'reason': reason}
+        T_icp = results[0] if len(results) == 1 else robust_pose_mean(results)[0]
+        d_mm = float(np.linalg.norm(T_icp[:3, 3] - T_static_fp[:3, 3]) * 1000.0)
+        d_deg = float(rotation_angle_deg(T_icp[:3, :3], T_static_fp[:3, :3]))
+        info = {'frames': len(results), 'fitness': float(np.mean(fits)),
+                'rmse_mm': float(np.mean(rmses) * 1000.0),
+                'correction_mm': round(d_mm, 2), 'correction_deg': round(d_deg, 2)}
+        if d_mm > max_mm or d_deg > max_deg:
+            info.update(applied=False, reason=f'correction {d_mm:.1f} mm / {d_deg:.1f} deg beyond '
+                                              f'{max_mm:g} mm / {max_deg:g} deg')
+            self.get_logger().warn(f"save_object: ICP refinement NOT applied: {info['reason']}; "
+                                   'saving the FoundationPose pose')
+            return T_static_fp, info
+        info['applied'] = True
+        self.get_logger().info(
+            f"save_object: ICP refined the FoundationPose pose on {len(results)} cloud(s): "
+            f"{d_mm:.1f} mm / {d_deg:.2f} deg, fitness {info['fitness']:.2f}, "
+            f"rmse {info['rmse_mm']:.2f} mm")
+        return T_icp, info
+
     def _fp_freeze(self) -> None:
         """A deliberate stop (~/stop_tracking): stop following and free the tracker, but
         KEEP the frames collected so far, like ICP tracking, whose stop only froze the
@@ -1897,6 +1991,9 @@ class IcpPoseRefinerNode(Node):
             if isinstance(got, str):
                 return False, got
             T_static_obj, pose_stats = got
+            if bool(self.get_parameter('fp_save_icp').value):
+                T_static_obj, icp_info = self._fp_icp_refine(T_static_obj)
+                pose_stats = dict(pose_stats or {}, icp_refine=icp_info)
             T = np.linalg.inv(T_sc) @ T_static_obj     # so pose_static below == T_static_obj
             tail = None
         else:
@@ -1958,9 +2055,14 @@ class IcpPoseRefinerNode(Node):
             f'+{len(model_static)} pts -> {len(self._sepc)} total. {note} '
             'Tracking cleared; trigger the next object and ~/run_icp -- its CAD is '
             'selected from the classifier automatically.')
-        spread = ('' if pose_stats is None else
+        spread = ('' if not pose_stats or 'n_used' not in pose_stats else
                   f" pose = mean of {pose_stats['n_used']}/{pose_stats['n']} ticks, std "
                   f"{np.round(pose_stats['std_mm'], 1)} mm / {pose_stats['std_deg']:.2f} deg;")
+        icp = (pose_stats or {}).get('icp_refine')
+        if icp:
+            spread += (f" ICP-refined at save: {icp['correction_mm']} mm / {icp['correction_deg']} deg "
+                       f"on {icp['frames']} cloud(s);" if icp.get('applied') else
+                       f" ICP refinement not applied ({icp.get('reason')});")
         return True, (f'object #{n} ({self._model_name}) saved into SEPC;{spread} '
                       f'({len(self._sepc)} pts total); tracking cleared')
 

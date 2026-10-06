@@ -96,12 +96,47 @@ def smooth_transit(path: Sequence[np.ndarray], is_valid: Callable[[np.ndarray], 
     return dense
 
 
+def aps_path(q_from: np.ndarray, q_to: np.ndarray, model: CollisionModel,
+             edge_resolution: float = 0.01, budget_s: float = 1.0, num_planners: int = 4,
+             max_paths: int = 8, info: dict | None = None) -> list[np.ndarray] | None:
+    """OMPL's official AnytimePathShortening (C++, `_transit_cpp`; notes/aps_transit_plan.md):
+    `num_planners` RRT-Connect threads, their paths hybridized and shortcut until
+    `budget_s`, on the C++ port of this collision model. Every edge of the answer is
+    re-checked with the PYTHON model before it is used. None (and `info['why']`) when the
+    extension is not built, APS finds nothing, or the Python check disagrees."""
+    info = info if info is not None else {}
+    try:
+        from . import _transit_cpp
+    except ImportError as exc:
+        info["why"] = f"_transit_cpp not built ({exc})"
+        return None
+    res = _transit_cpp.plan(_transit_cpp.Model(model.export_spec()), np.asarray(q_from, float),
+                            np.asarray(q_to, float), planner="aps", budget_s=float(budget_s),
+                            resolution=float(edge_resolution), num_planners=int(num_planners),
+                            max_paths=int(max_paths))
+    info.update(time_s=res["time_s"], cost=res["cost"], solutions=res["solutions"],
+                validity_calls=res["validity_calls"])
+    if not res["solved"]:
+        info["why"] = f"APS found no path ({res['status']})"
+        return None
+    path = [np.asarray(q, float) for q in res["path"]]
+    for a, b in zip(path[:-1], path[1:]):
+        if not _edge_valid(a, b, resolution=edge_resolution, is_valid=model.is_valid):
+            info["why"] = "APS path failed the Python collision re-check"
+            return None
+    return path
+
+
 def transit_path(q_from: np.ndarray, q_to: np.ndarray, model: CollisionModel,
                  edge_resolution: float = 0.01, max_iter: int = 8000, seed: int = 0,
-                 unwrap: bool = True, smooth: bool = False) -> list[np.ndarray] | None:
-    """Collision-free joint path: the straight edge when it is clear, else RRT + shortcut,
-    and with ``smooth`` the shortcut path's corners rounded (`smooth_transit`; kept as it
-    is when the rounded one is not clear). Before 2026-10-05 the marking node drove the
+                 unwrap: bool = True, smooth: bool = False, planner: str = "rrt_connect",
+                 budget_s: float = 1.0, num_planners: int = 4, max_paths: int = 8,
+                 info: dict | None = None) -> list[np.ndarray] | None:
+    """Collision-free joint path: the straight edge when it is clear, else
+    ``planner='aps'``: OMPL's AnytimePathShortening (`aps_path`; RRT-Connect + shortcut as
+    the fallback, the reason in ``info['why']``), or ``'rrt_connect'``: RRT + shortcut.
+    With ``smooth`` the path's corners are rounded (`smooth_transit`; kept as it is when
+    the rounded one is not clear). ``info['how']`` says what produced the path. Before 2026-10-05 the marking node drove the
     straight segments of the first RRT-Connect path, corners and all - drastic swings
     between tacks on opposite sides of a plate.
 
@@ -113,13 +148,30 @@ def transit_path(q_from: np.ndarray, q_to: np.ndarray, model: CollisionModel,
     q_from = np.asarray(q_from, float); q_to = np.asarray(q_to, float)
     if unwrap:
         q_to = _unwrap_to(q_to, q_from)
+    info = info if info is not None else {}
     if _edge_valid(q_from, q_to, resolution=edge_resolution, is_valid=model.is_valid):
+        info["how"] = "straight"
         return [q_from, q_to]
+    if planner == "aps":
+        path = aps_path(q_from, q_to, model, edge_resolution, budget_s, num_planners,
+                        max_paths, info)
+        if path is not None:
+            info["how"] = (f"APS {info['time_s']:.2f} s, {info['solutions']} solutions, "
+                           f"cost {info['cost']:.2f}")
+            if smooth:
+                dense = smooth_transit(path, model.is_valid, edge_resolution)
+                if dense is not None:
+                    return dense
+            return path
+    elif planner != "rrt_connect":
+        raise ValueError(f"planner {planner!r}: 'aps' or 'rrt_connect'")
     for attempt in range(3):
         random.seed(seed + attempt)
         raw = rrt_connect(q_from, q_to, step_size=0.15, max_iter=max_iter,
                           is_valid=model.is_valid, edge_resolution=edge_resolution)
         if raw is not None:
+            info["how"] = ("RRT-Connect" + (f" (APS fallback: {info['why']})"
+                                             if planner == "aps" else ""))
             short = shortcut_path(raw, model.is_valid, edge_resolution, seed=seed + attempt)
             if smooth:
                 dense = smooth_transit(short, model.is_valid, edge_resolution)
@@ -303,6 +355,7 @@ class TackStep:
     stroke_points_m: np.ndarray | None = None
     stroke_mode: str = "dot"
     tack_point_m: np.ndarray | None = None
+    transit_how: str = ""            # what produced the transit (straight / APS / RRT-Connect)
 
 
 @dataclass
@@ -310,6 +363,7 @@ class MarkingPlan:
     steps: list[TackStep]
     q_start: np.ndarray
     home_path: list[np.ndarray] | None = None                     # last q_app -> home
+    home_how: str = ""
     ok: bool = False
 
     def summary(self) -> str:
@@ -317,10 +371,12 @@ class MarkingPlan:
         for s in self.steps:
             n_t = len(s.transit); n_d = len(s.descent)
             lines.append(f"tack {s.tack_id} (seam {s.seam_id} #{s.tack_no}): "
-                         f"transit {'ok' if s.transit_ok else 'FAIL'} ({n_t} wp), "
-                         f"descent {'ok' if s.descent_ok else 'FAIL'} ({n_d} wp)"
+                         f"transit {'ok' if s.transit_ok else 'FAIL'} ({n_t} wp"
+                         + (f", {s.transit_how}" if s.transit_how else "") + "), "
+                         + f"descent {'ok' if s.descent_ok else 'FAIL'} ({n_d} wp)"
                          + (f" - {s.reason}" if s.reason else ""))
-        lines.append(f"home path: {'ok' if self.home_path else 'FAIL'}")
+        lines.append(f"home path: {'ok' if self.home_path else 'FAIL'}"
+                     + (f" ({self.home_how})" if self.home_how else ""))
         lines.append("PLAN OK" if self.ok else "PLAN INCOMPLETE")
         return "\n".join(lines)
 
@@ -355,12 +411,15 @@ def stroke_targets(mode: str, report_tacks: Sequence[dict[str, Any]],
 def build_marking_plan(report: dict[str, Any], tool, model: CollisionModel,
                        cfg: MarkingConfig, q_now: np.ndarray, overshoot_m: float = 0.003,
                        edge_resolution: float = 0.01, strokes: dict[int, np.ndarray] | None = None,
-                       stroke_mode: str = "dot", smooth_transits: bool = False) -> MarkingPlan:
+                       stroke_mode: str = "dot", smooth_transits: bool = False,
+                       transit_opts: dict | None = None) -> MarkingPlan:
     """Transit + descent for every reachable tack of a `tack_reach.json` report, in visit
     order, starting from the robot's current joints and ending with a path home. With
     `strokes` (from `stroke_targets`) the descent aims at the stroke's first point and the
     step carries the polyline to draw after contact. `smooth_transits`: round the transits'
-    corners (`transit_path(..., smooth=True)`)."""
+    corners (`transit_path(..., smooth=True)`). `transit_opts`: the planner choice for
+    every transit (`planner`, `budget_s`, `num_planners`, `max_paths`)."""
+    opts = dict(transit_opts or {})
     q_now = np.asarray(q_now, float)
     steps: list[TackStep] = []
     q_prev = q_now
@@ -387,8 +446,10 @@ def build_marking_plan(report: dict[str, Any], tool, model: CollisionModel,
                 steps.append(step)
                 continue
             step.q_app = _unwrap_to(q_app, step.q_app)
+        how: dict = {}
         path = transit_path(q_prev, step.q_app, transit_model(model, cfg, q_prev, step.q_app),
-                            edge_resolution, smooth=smooth_transits)
+                            edge_resolution, smooth=smooth_transits, info=how, **opts)
+        step.transit_how = how.get("how", how.get("why", ""))
         if path is None:
             step.reason = "no collision-free transit"
             all_ok = False
@@ -428,11 +489,14 @@ def build_marking_plan(report: dict[str, Any], tool, model: CollisionModel,
         steps.append(step)
         if step.transit_ok:
             q_prev = step.q_app
+    home_info: dict = {}
     home = (transit_path(q_prev, cfg.home_q, transit_model(model, cfg, q_prev, cfg.home_q),
-                         edge_resolution, unwrap=False, smooth=smooth_transits) if steps else [q_now])
+                         edge_resolution, unwrap=False, smooth=smooth_transits, info=home_info,
+                         **opts) if steps else [q_now])
     if home is None:
         all_ok = False
-    return MarkingPlan(steps=steps, q_start=q_now, home_path=home, ok=all_ok and bool(steps))
+    return MarkingPlan(steps=steps, q_start=q_now, home_path=home, ok=all_ok and bool(steps),
+                       home_how=home_info.get("how", home_info.get("why", "")))
 
 
 def plan_to_dict(plan: MarkingPlan) -> dict[str, Any]:

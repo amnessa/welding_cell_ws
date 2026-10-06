@@ -35,6 +35,58 @@ Mode A runs end to end on the robot, and the pen marks every tack within **~2.5 
 (`fp_track_server.py` in its container + `fp_tracker_node.py`). Measured: 25–29 Hz,
 70–90 ms, re-seed 4 s. `tracking_source` is `fp` by default (2026-10-06; `icp` = the old ICP tracking). Details are in the plan's status section.
 
+**Save-time ICP implemented (2026-10-06)** for cause 1 below (`fp_save_icp`, on by default):
+- ICP from the averaged FoundationPose pose on 5 fresh live clouds, averaged in `base_link`;
+- used only if the fitness is ≥ 0.2 and the correction is ≤ 20 mm / 8°, otherwise the
+  tracker pose is saved and the reply says why;
+- in a rendered test: a 4.7 mm normal / 1.5° tilt tracker error became 0.01 mm / 0.42°.
+
+Bench check: the same placement, then `welding_points` fit-up, `refine_pose` acceptance,
+marks.
+
+**First end-to-end run with FoundationPose tracking (2026-10-06) — investigate later.**
+The pipeline ran through: register → track → save ×2 → `refine_pose` (4 views) →
+`welding_points` → plan → marks, all by gestures. But the accuracy regressed:
+
+- `welding_points`: the ear sits **5.6–10.9 mm inside** the base on both fillets.
+  Before, with ICP: a 0.6–2.0 mm gap.
+- Marks:
+  - seam 0: contact **11.7 / 12.0 mm early**; one stroke lifted off;
+  - seam 1: **no contact** within the overshoot, on both tacks.
+- Candidate causes, most likely first:
+  1. **The saved pose is now a pure FoundationPose tracking pose.** With ICP tracking it
+     came from ICP (normal gate, background subtraction, measured table plane).
+     FoundationPose's render-and-compare on a textureless 8 mm plate at ~0.6 m is
+     probably the worse estimate, and `refine_pose` starts from it. Its prior
+     (3 mm / 1°) pulls back toward that saved pose, and corrections over 10 mm / 4° are
+     rejected.
+     - Fix to try: in fp mode, run a one-shot ICP from the averaged FoundationPose pose
+       at `save_object`, and save that. ICP is for stationary parts, as decided on 2 Oct.
+  2. **`refine_pose`'s result:** were both parts accepted? Did corrections hit the
+     limits? The gesture log truncates the reply, so read the full report in the ICP
+     node's log.
+  3. **The views:** your idea, more distance or other elevations than 0.40 m / 45°–60°.
+     Check after 1 and 2; the old ICP-seeded runs reached ~2.5 mm with these views.
+- **`refine_pose` on the same placement (capture `20261006-153623`) supports cause 1.**
+  - Both parts were **KEPT AS SAVED**: the refined poses would still overlap each other
+    by 3.8 mm (base) and 4.0 mm (ear), over the 1 mm limit.
+  - The corrections themselves were inside the limits:
+    - base: 2.9 mm / 0.9°;
+    - ear: 8.6 mm / 2.4°;
+    - both beyond a 6.0 mm camera share.
+  - So the saved poses interpenetrate by ~6–11 mm. The refinement moves them most of
+    the way back, but the prior anchored at the bad saves leaves them overlapping.
+  - The camera offset this run estimated, d = (−5.4, −2.3, −1.1) mm, disagrees with
+    2 Oct's ICP-seeded (1.6, 3.6, −5.9) mm. The bad saved poses probably leak into it.
+    **Do not use this run's d for self-calibration:** it was recorded in
+    `notebooks/selfcal_history.json`. `selfcal_extrinsic.py` needs 3 agreeing runs
+    anyway, but remove or mark the entry.
+- How to check:
+  - same placement: `check_registration.py` after the FoundationPose save vs after
+    `run_icp`;
+  - the `refine_pose` report;
+  - `touch_probe` on the base top and the ear faces.
+
 Still to do:
 
 1. **First real run:**
@@ -203,6 +255,19 @@ All of the plan's open items live here now; the plan keeps the design and the hi
     AnytimePathShortening(RRT-Connect).
   - Write RRT\*-Connect ourselves (the plan above) only if none of these meets the
     criterion.
+  - **2026-10-06: implemented, steps 1–4 (`notes/aps_transit_plan.md`, status
+    section); APS is the marking node's default (`transit_planner`).**
+    - The C++ collision model matches Python exactly and is ~590× faster.
+    - The front↔back transit's weighted joint travel is ~6× shorter than one
+      RRT-Connect's.
+    - Next: the benchmark on a real session (step 5), the bench run, box–box clearance,
+      and the multi-view planner on APS.
+  - The plan as written:
+    - ROS's `libompl` 1.7, with real parallel threads.
+    - The collision model is ported to C++ in a pybind11 module of this package, and an
+      equivalence test proves it matches `collision.py`.
+    - Then `smooth_transit` → TOTG as now.
+    - Benchmark before switching the default.
 - **Tack 0 of the 29 Sep 18:10 session is refused at planning:** "descent clearance
   0.0 mm (overshoot)". Find which pair goes to 0 in the overshoot zone.
 - **Holding 1.5 N on metal:** UR's `force_mode_controller` (loaded, inactive) for strokes

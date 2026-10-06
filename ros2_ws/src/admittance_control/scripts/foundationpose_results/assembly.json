@@ -75,13 +75,13 @@
         ]
       ],
       "refine": {
-        "capture": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/scripts/foundationpose_results/multiview/20261006-151845",
+        "capture": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/scripts/foundationpose_results/multiview/20261006-153623",
         "accepted": false,
         "reason": "overlaps a neighbour by 3.8 mm",
-        "correction_mm": 5.884262554500774,
-        "correction_deg": 0.9837203991451486,
+        "correction_mm": 2.8599709605221584,
+        "correction_deg": 0.9112201188372109,
         "not_measured": [],
-        "view_spread_mm": 4.291505974549312
+        "view_spread_mm": 1.816427956459266
       }
     },
     {
@@ -158,13 +158,13 @@
         ]
       ],
       "refine": {
-        "capture": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/scripts/foundationpose_results/multiview/20261006-151845",
+        "capture": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/scripts/foundationpose_results/multiview/20261006-153623",
         "accepted": false,
-        "reason": "correction 10.1 mm / 2.39 deg over 10 / 4; overlaps a neighbour by 3.9 mm",
-        "correction_mm": 9.117304686331396,
-        "correction_deg": 2.3937704047681057,
+        "reason": "overlaps a neighbour by 4.0 mm",
+        "correction_mm": 8.631758641482065,
+        "correction_deg": 2.3755491212413125,
         "not_measured": [],
-        "view_spread_mm": 5.134731168654149
+        "view_spread_mm": 2.7727358816970415
       }
     }
   ]

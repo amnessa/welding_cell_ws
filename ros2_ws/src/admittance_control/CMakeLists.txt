@@ -62,6 +62,22 @@ install(TARGETS
 )
 
 # ============================================
+# _transit_cpp: the collision model in C++ + OMPL's official AnytimePathShortening
+# (ROS's libompl 1.7), a pybind11 module next to the Python modules
+# (notes/aps_transit_plan.md). Python imports it as admittance_control._transit_cpp.
+# ============================================
+find_package(ompl REQUIRED)
+find_package(Python3 REQUIRED COMPONENTS Interpreter Development)
+find_package(pybind11 CONFIG REQUIRED)
+pybind11_add_module(_transit_cpp src/transit_cpp.cpp)
+target_include_directories(_transit_cpp PRIVATE ${OMPL_INCLUDE_DIRS})
+target_link_libraries(_transit_cpp PRIVATE ${OMPL_LIBRARIES} Eigen3::Eigen)
+target_compile_options(_transit_cpp PRIVATE -O2)
+install(TARGETS _transit_cpp
+  LIBRARY DESTINATION ${PYTHON_INSTALL_DIR}/${PROJECT_NAME}
+)
+
+# ============================================
 # Python library module (importable as `admittance_control.*`)
 # Shared code (kinematics, geometry, sam6d I/O) lives here and is imported
 # by the node scripts.

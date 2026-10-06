@@ -30,6 +30,9 @@
   <!-- Colored pointcloud from rgb + aligned depth (pointcloud.launch.py) -->
   <exec_depend>depth_image_proc</exec_depend>
   <exec_depend>rclcpp_components</exec_depend>
+  <!-- _transit_cpp: OMPL's AnytimePathShortening + the collision model in C++ -->
+  <depend>ompl</depend>
+  <build_depend>pybind11-dev</build_depend>
   <!-- fp_tracker_node.py: WebSocket client to the laptop's FoundationPose tracker -->
   <exec_depend>python3-websocket</exec_depend>
 

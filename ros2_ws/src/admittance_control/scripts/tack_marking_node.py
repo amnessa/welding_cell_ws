@@ -99,6 +99,15 @@ class TackMarkingNode(Node):
         # TrajectoryExecutor below (admittance_control/motion.py), same names and defaults
         p('v_joint_rad_s', 0.3)            # transit speed cap
         p('a_joint_rad_s2', 0.5)           # transit acceleration cap (TOTG / trapezoid)
+        # the free moves' planner (notes/aps_transit_plan.md): 'aps' = OMPL's official
+        # AnytimePathShortening in C++ (_transit_cpp: num_planners RRT-Connect threads,
+        # hybridized + shortcut until the budget; 2026-10-06 front<->back transit 6x
+        # shorter than one RRT-Connect), 'rrt_connect' = the first RRT-Connect path
+        # (before 2026-10-06; also APS's fallback)
+        p('transit_planner', 'aps')
+        p('transit_budget_s', 1.0)         # per transit that is not a straight edge
+        p('aps_num_planners', 4)
+        p('aps_max_paths', 8)
         p('smooth_transits', True)         # round the transit corners (spline) and time them
                                            # with TOTG, as the drawing server does; false = the
                                            # straight shortcut segments (before 2026-10-05)
@@ -165,6 +174,11 @@ class TackMarkingNode(Node):
         """The real joints, or in a dry run where the last pretended motion ended."""
         return self._exec.where()
 
+    def _transit_opts(self) -> dict:
+        g = lambda n: self.get_parameter(n).value  # noqa: E731
+        return {'planner': str(g('transit_planner')), 'budget_s': float(g('transit_budget_s')),
+                'num_planners': int(g('aps_num_planners')), 'max_paths': int(g('aps_max_paths'))}
+
     def _time_transit(self, path, label: str):
         """Time a free move with TOTG (velocity and acceleration caps, blended corners),
         every sample checked against the transit collision model; trapezoid otherwise."""
@@ -187,10 +201,13 @@ class TackMarkingNode(Node):
             return None, f'{label}: no joint states'
         if self._model.in_collision(q_now):
             return None, f'{label}: current joints are in collision - ' + self._model.report(q_now)
+        how: dict = {}
         path = transit_path(q_now, target, transit_model(self._model, self._cfg, q_now, target),
-                            unwrap=unwrap, smooth=bool(self.get_parameter('smooth_transits').value))
+                            unwrap=unwrap, smooth=bool(self.get_parameter('smooth_transits').value),
+                            info=how, **self._transit_opts())
         if path is None:
             return None, f'{label}: no collision-free transit from the current joints'
+        self._say(f"{label}: re-planned from the current joints ({how.get('how', '')})")
         return path, ''
 
 
@@ -255,7 +272,8 @@ class TackMarkingNode(Node):
         self._plan = build_marking_plan(self._report, self._tool, self._model, self._cfg, q,
                                         float(self.get_parameter('overshoot_m').value),
                                         strokes=strokes, stroke_mode=mode,
-                                        smooth_transits=bool(self.get_parameter('smooth_transits').value))
+                                        smooth_transits=bool(self.get_parameter('smooth_transits').value),
+                                        transit_opts=self._transit_opts())
         self._drawn_seams = set()
         self._exec.set_sim(q)
         self._next_step = 0
