@@ -55,11 +55,11 @@ dikiş kuralı, punta kuralı, ölçüm zinciri.
 │                                    ▼                                                │
 │  [5] ilk oturtma     CAD'i T'ye koy, maskelenmiş canlı bulutla ICP ──▶ düzeltilmiş T │
 │                                    │                                                │
-│  [6] takip           her karede: kutu kırp → masayı at → kayıtlı parçaları at → ICP │
+│  [6] takip           FoundationPose, laptop GPU'sunda, her kare (25–29 Hz)          │
 │                      (parça elle taşınırken poz izlenir)                            │
 │                                    │                                                │
-│  [7] kaydet          parça durunca: son pozların sağlam ortalaması                  │
-│                      → robot tabanında sabit CAD bulutu (SEPC) + assembly.json      │
+│  [7] kaydet          parça durunca: son pozların sağlam ortalaması → 5 canlı        │
+│                      bulutta ICP → robot tabanında sabit CAD (SEPC) + assembly.json │
 │                                    │   (ikinci parça için [5]–[7] tekrar)            │
 │                                    ▼                                                │
 │  [8] refine_pose     robot 4 yakın görüşe (0.40 m) gider, her birinde 16 kare        │
@@ -72,7 +72,7 @@ dikiş kuralı, punta kuralı, ölçüm zinciri.
 │  [10] puntalar       tackrule-0.1: kalınlığa göre uzunluk, aralık, sıra              │
 │                                    │                                                │
 │  [11] erişilebilirlik  her punta için kalem açısı: çarpışmasız mı?                   │
-│  [12] işaretleme     yol planı → yaklaş → kuvvetle durdurulan iniş → nokta / çizgi   │
+│  [12] işaretleme     APS yol planı → yaklaş → kuvvetle durdurulan iniş → nokta/çizgi │
 │                                    │                                                │
 │  [13] doğrulama      kalem dokunuşları: işaret kökten kaç mm uzakta?                 │
 └─────────────────────────────────────────────────────────────────────────────────────┘
@@ -87,8 +87,9 @@ dikiş kuralı, punta kuralı, ölçüm zinciri.
 5. CAD'lerden **dikişi hesaplıyor** (dikiş görüntüde aranmıyor);
 6. robotu oraya götürüyor.
 
-**Şu anki sonuç (2 Ekim 2026):** iki plakalı T bağlantıda bütün puntalar köke **yaklaşık
-2.5 mm** yakınlıkta işaretlendi. 24 Eylül'de bu hata ~8 mm idi.
+**Şu anki sonuç (6 Ekim 2026):** FoundationPose takibi, kaydetmede ICP ve APS yol planıyla
+iki plakalı T bağlantıda bütün puntalar köke **2.3–2.7 mm** yakınlıkta işaretlendi (ölçüm
+hatası içinde olabilir). 24 Eylül'de bu hata ~8 mm, 2 Ekim'de (ICP takibiyle) ~2.5 mm idi.
 
 ---
 
@@ -239,35 +240,37 @@ Bu belgedeki bütün ICP çağrıları bu kapıyı kullanıyor.
 elle alınıp yerine konuyor. Bu sırada sistem parçanın nerede olduğunu bilmeye devam
 etmeli.
 
-**Şu anki yöntem: ICP ile takip.** Her karede maske yerine üç geometrik süzgeç kullanılıyor.
-Maske tek kare için geçerliydi; sunucuya her karede gitmek de pahalı.
+**Yöntem (6 Ekim'den beri varsayılan): FoundationPose ile takip** (`tracking_source: fp`).
 
-1. **Yönlü kutu:** CAD'in kutusu, kenar payıyla büyütülüp son poza konuyor. Yalnızca
-   kutunun içindeki noktalar kalıyor. Parça hareket edince kutu da onu izliyor.
-2. **Masa çıkarma:** noktalar robot tabanına çevriliyor, ölçülmüş masa düzleminin 2 mm
-   üstüne kadar olanlar atılıyor. Masa eğik olduğu için düz bir yükseklik kesimi yerine
-   ölçülmüş düzlem kullanılıyor. Düz kesim masanın bir kısmını içeride bırakıp parçanın
-   yanında büyük bir düzlem bırakıyordu.
-3. **Kayıtlı parçaları çıkarma:** daha önce kaydedilmiş parçaların CAD bulutuna (SEPC,
-   Bölüm 7) yakın noktalar atılıyor. Böylece ikinci parçanın ICP'si, ona dayanmış birinci
-   parçaya yapışamıyor.
+- Kayıt (SAM2 + PPF + FoundationPose `register`) **masaüstünde** kalıyor: tam karede
+  kayıt laptop'un 8 GB'lık GPU'suna sığmıyor.
+- Takip **laptop'ta**, aynı Docker imajında çalışıyor (`fp_track_server.py`). Yalnızca
+  iyileştirme ağı yükleniyor (~300 MB). `track_one` son pozdan başlayıp her karede
+  pozu biraz düzeltiyor.
+- `fp_tracker_node` her RGB-D kareyi yerel bağlantıdan (WebSocket) gönderiyor. Her karede
+  en fazla 2 kare yolda, en yenisi kazanıyor.
+- **Ölçülen:** 25–29 Hz, kareden poza 70–90 ms. Kaybolursa (uyum < 0.5, 3 kare) son pozdan
+  çizilen maskeyle masaüstünde yeniden kaydediliyor (~4 s), tık gerekmiyor.
+- **Robotun kendi hareketi** her karenin zaman damgasındaki TF ile çıkarılıyor: bileğe
+  bağlı kamera hareket edince parça hareket etmiş görünmüyor.
+- ICP düğümü her pozu o karenin zaman damgasıyla robot tabanına çeviriyor, parçayı
+  RViz'de yeşil model bulutu olarak gösteriyor ve kaydetme için topluyor (Bölüm 7).
 
-Kalan noktalarla önceki pozdan başlayan ICP yeni pozu veriyor. Eşleşme oranı düşerse
-takip duruyor ve sunucudan yeni bir poz isteniyor. Bir takip adımı 640×480 bulutta
-~23 ms.
+**Neden?** ICP CPU'da çalışıyor ve hareketli bir parçayı izlemek için yavaş. Literatürde de
+ICP genellikle **duran** bir nesnenin bulutlarını eşlemek için kullanılıyor. ICP yalnızca
+duran parçalarda kalıyor: kaydetmede (Bölüm 7) ve `refine_pose`'da (Bölüm 8). Kalman
+füzyonu yok.
 
-**Karar (2 Ekim): takip FoundationPose'a geçiyor.** ICP CPU'da çalışıyor ve hareketli bir
-parçayı izlemek için yavaş. Literatürde de ICP genellikle **duran** bir nesnenin
-bulutlarını eşlemek için kullanılıyor. FoundationPose'un takip modu (`track_one`) son
-pozdan başlayıp yalnızca iyileştirme ağını GPU'da birkaç kez çalıştırıyor; çok daha
-hızlı. ICP yalnızca duran parçalarda kalıyor: ilk oturtma, kaydetme, `refine_pose`.
-Kalman füzyonu şimdilik yok.
+**Eski yöntem (`tracking_source: icp`): ICP ile takip.** Her karede maske yerine üç
+geometrik süzgeç:
 
-**Açık sorun:** FoundationPose başka bir bilgisayarda Docker'da çalışıyor. Canlı takip için
-her karenin oraya gidip pozun geri gelmesi gerekiyor. Plan
-[realtime_fp.md](realtime_fp.md) dosyasında:
-- önce takibin hızı iki GPU'da (ev bilgisayarı ve laptop'un RTX 4060'ı) ölçülecek;
-- laptop yeterince hızlıysa ağ tamamen devreden çıkacak.
+1. **Yönlü kutu:** CAD'in kutusu, kenar payıyla büyütülüp son poza konuyor.
+2. **Masa çıkarma:** ölçülmüş masa düzleminin 2 mm üstüne kadar olanlar atılıyor.
+3. **Kayıtlı parçaları çıkarma:** daha önce kaydedilmiş parçaların CAD bulutuna (SEPC)
+   yakın noktalar atılıyor; ikinci parça birinciye yapışmıyor.
+
+Kalan noktalarla ICP; bir adım 640×480 bulutta ~23 ms. Bu süzgeçler kaydetmedeki ICP'de
+(Bölüm 7) aynen kullanılıyor.
 
 ---
 
@@ -305,6 +308,27 @@ sorulan "takipte hata birikir mi?" sorusunun pratik karşılığı bu.
 
 Bunlar `assembly.json` dosyasına da yazılıyor: parça adı, poz, dağılım ve parçayı
 kaydeden kameranın pozu (`T_static_camera`). Bu sonuncusu Bölüm 8.7'de lazım oluyor.
+
+**4. FoundationPose takibinde: kaydetmeden önce ICP** (`fp_save_icp`, 6 Ekim).
+
+- **Neden:** takip pozu "parça şu an nerede" sorusunun cevabı, kaynak için gereken
+  "tam olarak nerede" değil. İlk denemede yalnızca takip pozuyla kaydedilen parçalar
+  birbirinin **6–11 mm içine** girdi, `refine_pose` iki parçayı da reddetti ve izler
+  12 mm erken düştü. Dokusuz 8 mm'lik plakada, ~0.6 m'den, FoundationPose'un render
+  karşılaştırması takip için yeterli, kaynak için değil.
+- **Ne yapılıyor:**
+  1. ortalama takip pozundan başlayarak 5 yeni canlı bulutta ICP çalıştırılıyor
+     (Bölüm 6'daki süzgeçler ve normal kapısıyla);
+  2. sonuçlar robot tabanında ortalanıyor.
+- **Ne zaman kullanılıyor:** yalnızca uyum ≥ 0.2 ve düzeltme ≤ 20 mm / 8° ise. Değilse
+  takip pozu kaydediliyor ve cevap nedenini söylüyor.
+- **Sonuç:**
+  - render edilmiş bir plakada 4.7 mm / 1.5°'lik takip hatası, normal yönünde 0.01 mm'ye
+    ve 0.4°'ye indi;
+  - robotta: iki parça da `refine_pose`'da kabul edildi, aralık 0.3–2.9 mm, izler
+    2.3–2.7 mm.
+  - Kalan 1–2 mm plakanın kendi düzleminde; tek bakışın ölçemediği yön, `refine_pose`'un
+    işi.
 
 **Önemli:** kaydedilen şey kameradan gelen nokta bulutu değil, **CAD'in kendisi**. Gürültülü
 sahne noktaları yerine kusursuz geometri. Bundan sonra gürültü yalnızca pozda var,
@@ -738,10 +762,26 @@ Hareket kodu ortak bir yürütücüde (`motion.py`); `refine_pose` da robotu ayn
 hareket ettiriyor.
 
 **Plan** (`~/plan`):
-- **puntadan puntaya geçiş:** önce düz eklem yolu deneniyor; çarpışıyorsa RRT-Connect +
-  kısaltma. Kalem parçalardan 20 mm uzak tutuluyor (başlangıç ve bitiş pozlarının izin verdiği kadar). Bu pay, kalemin parçaya
-  yaslanarak gitmeye çalıştığı bir hatadan sonra eklendi.
+- **puntadan puntaya geçiş:**
+  - önce düz eklem yolu deneniyor;
+  - çarpışıyorsa **OMPL'in AnytimePathShortening'i (APS)** çalışıyor (6 Ekim'den beri):
+    - 4 paralel RRT-Connect;
+    - yollarının en iyi parçaları birleştiriliyor (hybridization) ve kısaltılıyor;
+    - 1 saniyelik süre boyunca yol iyileşmeye devam ediyor.
+  - Çarpışma modeli bunun için C++'a taşındı (`_transit_cpp`):
+    - Python modeliyle aynı sonucu verdiği test ediliyor: 8 800 durumda birebir aynı;
+    - ~590 kat hızlı.
+  - Sonuç: ön–arka geçişte eklem yolu tek bir RRT-Connect'e göre **~6 kat kısa**.
+  - APS çarpışma payını 2 mm geniş tutuyor; yol Python modeliyle yeniden denetleniyor.
+    Olmazsa RRT-Connect yedek olarak devreye giriyor.
+  - Köşeler spline ile yuvarlatılıyor ve TOTG ile zamanlanıyor.
+  - Kalem parçalardan 20 mm uzak tutuluyor (başlangıç ve bitiş pozlarının izin verdiği
+    kadar).
 - **iniş:** kalem ekseni boyunca, kartezyen bir doğru üzerinde bir ters kinematik zinciri.
+  Erişilebilirlik raporunun seçtiği kalem dönmesi (roll) o noktada çarpışıyorsa diğer
+  dönmeler deneniyor; kalem yuvarlak, dönme serbest.
+  - 6 Ekim'de çizginin başlangıcında, uç noktanın 4 mm ötesinde kamera gövdesi taban
+    plakasına giriyordu; 330° yerine 0° ile çözüldü.
 - **eve dönüş.**
 - **kapılar:** başlangıç eklemleri çarpışmasız olmalı, kol aynı duruşta olmalı, planın ilk
   noktası mevcut eklemlere 20° içinde olmalı.
@@ -810,6 +850,7 @@ derinlik → el-göz → kinematik → kayıt → dikiş → plan → kalem ucu
 | 29 Eyl | izler 14–16 mm'ye kötüleşti | ICP ince plakanın iki yüzü arasına yaslandı | normal kapısı (Bölüm 5) | kök ±0.2 mm |
 | 1 Eki | temas 8.5–9 mm erken | D435i derinliği menzilin karesiyle uzun | robottan hesaplanan mesafeyle Tare (Bölüm 3) | 1.1 mm (0.3–0.65 m) |
 | 2 Eki | izler 3–7 mm, bir taraf erken bir taraf geç | el-göz ötelemesi, tek bakışın payı, plakanın düzlem içi dönmesi | `refine_pose` (Bölüm 8) | **~2.5 mm** |
+| 6 Eki | takip FoundationPose'a geçince parçalar 6–11 mm iç içe, izler 12 mm erken | kaydedilen poz takip pozuydu, ICP pozu değil | kaydetmede 5 bulutta ICP (Bölüm 7) + APS yol planı + dönme yedeği | **2.3–2.7 mm** |
 
 **Şu anki hata bütçesi:**
 
@@ -819,7 +860,7 @@ derinlik → el-göz → kinematik → kayıt → dikiş → plan → kalem ucu
 | kalem ucu | yanal 0.2 mm, boy ~2 mm içinde |
 | derinlik | 0.3–0.65 m arasında 1.1 mm, sabit ≈ +2 mm kalıntı |
 | kamera eğimi | ≈ 0.07° |
-| el-göz ötelemesi | yatay düzeltiliyor; **dikeyde 3–5 mm fazla düzeltme** (temaslar hâlâ 3–6 mm erken) |
+| el-göz ötelemesi | `refine_pose` her çalışmada tahmin edip düzeltiyor. Düzeltme gerçek (görüşlerin masa yüksekliği farkı 6.9 → 3.7 mm), ama sahneyi kalemle ölçülmüş masanın ~1.7 mm altında bırakıyor. Sıradaki: masayı tahmine katmak |
 | parça kaydı | yüzeylerde ~0.4 mm; tabanın kendi düzlemindeki kayması 1–3 mm (kökü oynatmıyor) |
 | sabitlenmemiş parçalar | mıknatıslı; tarama, işaretleme ve dokunuş arasında ~1 mm oynayabiliyor |
 
@@ -833,7 +874,7 @@ derinlik → el-göz → kinematik → kayıt → dikiş → plan → kalem ucu
 | 2 | laptop | canlı bulut | H×W×3 (düzenli) + normaller | m | kamera |
 | 3 | laptop | CAD örneği | N×3 + N×3 dışa bakan normal | m | CAD'in kendi çerçevesi |
 | 4 | `run_icp` | düzeltilmiş poz | 4×4 | m | kamera → TF ile taban |
-| 5 | takip | poz, her adımda | 4×4 | m | kamera |
+| 5 | takip (FoundationPose) | poz, her karede | 4×4 | m | kamera → TF ile taban |
 | 6 | `save_object` | `pose_static` + dağılım; SEPC | 4×4; N×3 | m | **taban** (`base_link`) |
 | 7 | `refine_pose` çekimi | 4 görüş × (16 kare medyanı + kamera pozu) | görüş başına H×W×3 + 4×4 | m | kamera (+ taban←kamera) |
 | 8 | ön işleme | görüş başına nokta + normal | N×3 + N×3, 3 mm voksel | m | taban |
@@ -857,13 +898,13 @@ derinlik → el-göz → kinematik → kayıt → dikiş → plan → kalem ucu
 | "Takipte hata birikebilir; yerine koyduktan sonra bir kez daha poz hesapla." | Yapıldı, iki adımda: kaydetmede sağlam ortalama (Bölüm 7) ve yakından tekrar bakış (Bölüm 8). |
 | "Sensörün en iyi ölçtüğü mesafeyi bul, oradan bak." | Derinlik hatası menzilin karesiyle büyüyor (ölçüldü, Bölüm 3). Görüşler 0.40 m'den; 0.32–0.35 m denenecek (minimum 0.28 m). |
 | "Tanıma ile hassas poz iki ayrı paket." | Hattın yapısı bu: uzaktan tanıma ve kayıt, sonra yakından `refine_pose`. |
-| "FoundationPose varken neden ICP ile takip? Bir tabloya dök." | Karar verildi: takip FoundationPose'a geçiyor, ICP duran parçalar için kalıyor (Bölüm 6). Karşılaştırma tablosu (gürültü, gecikme, kayma; `pose_jitter_probe.py`) canlı takip kurulunca yapılacak ([realtime_fp.md](realtime_fp.md) adım 5). |
+| "FoundationPose varken neden ICP ile takip? Bir tabloya dök." | Yapıldı (6 Ekim): takip FoundationPose ile (25–29 Hz, laptop GPU'su), ICP duran parçalar için kalıyor (Bölüm 6, 7). Karşılaştırma tablosu (gürültü, gecikme, kayma; `pose_jitter_probe.py`) sırada ([todo.md](todo.md), "Benchmarks"). |
 | "Parçalar arasında üretimden kaynaklı aralık varsa bulunabilir." | Yapıldı: aralık ölçülüyor ve ISO 5817 no. 617 sınırını aşınca uyarı veriliyor (Bölüm 8.9). |
 | "Dokunarak mı, dokunmadan mı?" | Karar: dokunmadan, yalnızca görüntü. Dokunuşlar yalnızca kalibrasyon ve ölçüm için (Bölüm 12). |
 | Hocanın dikiş fikri: iki parçanın yüzeyinden rastgele birer nokta, her adımda kendi komşuları içinde diğerine en yakın olana atlıyor; durdukları yer dikişe çok yakın; çok çiftle dikiş oturtuluyor; kenarların neden "çekici" (attractor) olduğunun ispatı | **Başlanmadı.** Hattın dışında ayrı bir iş olarak, önce adım adım görselleştirilerek (boşluk tuşuyla ilerleyen) denenecek. Şu anki yöntem (Bölüm 9) düzlemlerin kesişimi; yeni yöntem kavisli parçalar ve CAD'siz durum için aday. |
 | Lazer işaretçi: "şuraya punta atacağım" diye önce göstermek | Açık. Kalemin yanına 3B baskılı bir tutucuyla, dijital çıkıştan açılıp kapanan bir lazer. Kalibrasyon, robot dikken XY'de daire çizdirerek. |
 | Belirsiz PPF sonucunda başka açıdan bakmak (next-best-view) | Açık. Görüş seçimi (Bölüm 8.2) buna temel olabilir. |
-| ODTÜ ağında Tailscale engelli; FoundationPose evdeki bilgisayarda | Geçici çözüm VPN. Canlı takip için laptop'ta yerel çalıştırma da değerlendiriliyor ([realtime_fp.md](realtime_fp.md) adım 0). |
+| ODTÜ ağında Tailscale engelli; FoundationPose evdeki bilgisayarda | Takip artık laptop'ta yerel çalışıyor; ağdan yalnızca kayıt (parça başına bir kare) ve kayıp parçanın yeniden kaydı geçiyor. Kayıt için VPN. |
 
 **Hâlâ açık olan teknik işler** ([todo.md](todo.md)):
 - yüksekliği masaya bağlayıp dikeydeki 3–5 mm'lik fazla düzeltmeyi gidermek;

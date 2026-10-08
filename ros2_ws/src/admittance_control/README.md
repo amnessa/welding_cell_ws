@@ -7,10 +7,12 @@ digital twin**. It bundles these cooperating pipelines:
 1. **Surface drawing / admittance control** — detect a work surface, generate a
    tool path on it, plan + execute the motion, and (optionally) follow the
    surface under force control.
-2. **Perception → object ID → 6D pose → ICP refinement → tracking** — capture
+2. **Perception → object ID → 6D pose → live tracking → stationary refinement** — capture
    RGB‑D, have the server **name the part** (a PPF classifier picks the CAD from a
-   library), run FoundationPose to get its 6D pose + mask, visualize it, refine that
-   pose with point‑to‑plane ICP against the segmented point cloud, then track it live.
+   library) and run FoundationPose to get its 6D pose + mask; **track the part live on
+   the laptop's GPU with FoundationPose** while it is moved into place (25–29 Hz); when it
+   rests, **refine that pose with point‑to‑plane ICP** against the live point cloud and
+   freeze it. (ICP tracking, `tracking_source:=icp`, is the older alternative.)
    The classified name drives which CAD the ICP node loads, so no part has to be
    selected by hand.
 3. **Assembly → weld seams and tacks (mode A) → new-model export** — freeze each
@@ -123,7 +125,7 @@ map that follows this table.
 | `urdf/`, `meshes/ur5e/` | UR5e robot description (visual + collision meshes) for `robot_state_publisher`. |
 | **`models/`** | The CAD library: `*.ply` meshes (mm) that the pose server classifies against and the ICP node registers (`models/<obj_name>.ply` must match the server's library names), their `.usda` twins for Isaac, `assembly_mesh.ply` (the last exported assembly), and **`weldgen_objects.json`**, the part registry mode A needs: for each CAD its `weld_generator` primitive (slab / envelope slab) and the frame between CAD and primitive, built and verified by `scripts/build_weldgen_registry.py --verify`. |
 | **`notebooks/`** | Calibration artefacts, not notebooks only. **`T_tcp_to_cam.npy`** is the hand-eye extrinsic (camera in `tool0`) the extrinsic TF publisher broadcasts; `T_tcp_to_cam.json` says which samples, which TCP offset and how good; `handeye_samples.npz` the raw hand-eye samples (re-solvable offline); `T_tcp_to_cam_wrong.npy` the July file that failed silently, `T_tcp_to_cam_raw_tcpframe_*.npy` an uncomposed solve, both kept as evidence; `realsense_intrinsics.npy`, `charuco_reference.png`, `handeye_debug_latest.png`; `T_base_to_cam.npy` from the old fixed-camera days; **`table_plane.json`** (the table measured by pen touches: the height reference for the ground cut, `extrinsic_check` and the Tare distance), `extrinsic_check.json` (the camera's view of the table vs that plane, per wrist yaw), `T_tcp_to_cam_refined.npy` (+ `.json`, the tilt-refined extrinsic, promoted into `T_tcp_to_cam.npy`), `T_tcp_to_cam_unrefined.npy` / `_before_tilt_*.npy` (the files it replaced), `tcp_check.json`, `selfcal_history.json` (the camera offset each `refine_pose` run estimated, for `selfcal_extrinsic.py`); `gesture_recognizer.task` (MediaPipe model for the gesture node); the notebooks (`Sam_to_Surface_Plane`, `camera_calibration_test`, `force_control_learning`, `gesture_control_sandbox`, `media_pipe_sandbox`, `sam_testing2`) are exploration history; `idea.md` an early plan (Turkish). |
-| **`notes/`** | The design record. `todo.md` (all open work), **`thesis_notes.md`** (the running log of what we ran into, measured and learned - raw material for the thesis), `multiview_refine_plan.md` (the multi-view refinement, design and step-by-step results), **`realtime_fp.md`** (the plan for live FoundationPose tracking, speed first; not built yet), `seam_two_modes_plan.md` (mode A / mode B, validation), `pen_marking_plan.md` (milestones 1–6 of the pen marking, with bench results), `Welding_Robots_Approach_and_Trajectory_Literature_Report.md` (the literature the motion design draws on), `realtime_icp.md`, `model_based_background.md`, `ground_removal.md` (the tracker's three filters), `welding_edge_sampling.md` (the radius-PCA fallback; outdated for the seam itself), `sam6d_client_notes.md` (Isaac → server data flow), `implementation_notes.md` (bench recipes), `quality_field_k_point_selection.md` (the thesis' quality field / tack selection, not built yet). |
+| **`notes/`** | The design record. `todo.md` (all open work), **`thesis_notes.md`** (the running log of what we ran into, measured and learned - raw material for the thesis), `multiview_refine_plan.md` (the multi-view refinement, design and step-by-step results), **`realtime_fp.md`** (live FoundationPose tracking: plan + status, built 2026-10-06), **`aps_transit_plan.md`** (OMPL's AnytimePathShortening in C++ for the transits), **`curved_parts_print_list.md`** (the parts to 3D print for the strata MDF cannot make), `perception_aciklama.md` / `admitans kontrol açıklama.md` / `pipeline map.md` (Turkish explanations for the advisor), `seam_two_modes_plan.md` (mode A / mode B, validation), `pen_marking_plan.md` (milestones 1–6 of the pen marking, with bench results), `Welding_Robots_Approach_and_Trajectory_Literature_Report.md` (the literature the motion design draws on), `realtime_icp.md`, `model_based_background.md`, `ground_removal.md` (the tracker's three filters), `welding_edge_sampling.md` (the radius-PCA fallback; outdated for the seam itself), `sam6d_client_notes.md` (Isaac → server data flow), `implementation_notes.md` (bench recipes), `quality_field_k_point_selection.md` (the thesis' quality field / tack selection, not built yet). |
 | **`helper/`** | Run directly, not installed. `calibration/extract_extrinsics.py` (hand-eye capture: ChArUco + RTDE, requires `--tcp-offset`, prints a residual judge), `calibration/resolve_handeye.py` (numpy re-solve of saved samples, leave-one-out, TCP composition, `--write`), `calibration/refine_extrinsic_from_table.py` (rotates the extrinsic by the camera-fixed tilt `extrinsic_check` separated, writes `T_tcp_to_cam_refined.npy`), `calibration/sam6d_client.py` (old), `gui/drawing_gui.py`, `legacy_sand_drawer/` (the pre-welding drawing tools). |
 | `test/` | pytest: `test_seam_from_registration.py` (mode A on synthetic and bench assemblies), `test_tool_model.py`, `test_collision.py`, `test_tack_reach.py`, `test_marking.py`, `test_pose_stats.py`, `test_charuco_detection.py`, `test_table_probe.py`, `test_kinematics_params.py`, `test_icp_normal_gate.py`, the multi-view set (`test_multiview_views.py`, `test_multiview_touching_parts.py`, `test_multiview_capture.py`, `test_selfcal.py`: synthetic views and rendered captures of the bench T with known truth), and `test_motion.py` (needs a sourced ROS shell, skipped otherwise). Run `.venv/bin/python -m pytest test/` from the package. |
 | `world/` | Isaac Sim assets: `welding_world.usda` (robot + eye-in-hand camera + table), `penholder_assembly.step/.usda` (the pen and camera holder), `Realsense435i_custom.usda`, `table_v1.usda`. |
@@ -150,10 +152,13 @@ right are what every number downstream depends on.
        │  writes detection_pem.json (obj_name, R, t), detection_ism.npz (mask), object_name.txt
        ▼
  icp_pose_refiner_node
-   ~/run_icp        loads models/<obj_name>.ply, refines the pose with Fast & Robust ICP on the masked cloud,
-                    then tracks it (crop box + ground cut + model-based background subtraction, Phase 2)
-   ~/save_object    robust mean of the tracked poses since the part came to rest → the part is baked into
-                    the SEPC (static_env.ply/.npy) and assembly.json gets {model, pose_static, pose_stats}
+   (tracking)       tracking_source=fp (default): fp_tracker_node streams every frame to fp_track_server.py
+                    (this laptop's FoundationPose container, ws://127.0.0.1:5001, GPU) and publishes
+                    /perception/fp/pose; the ICP node puts each pose into base_link and draws the part
+                    (green model cloud). tracking_source=icp: ~/run_icp + the ICP tracking tick (Phase 2)
+   ~/save_object    robust mean of the tracked poses since the part came to rest, then (fp) ICP on 5 fresh
+                    live clouds from it → the part is baked into the SEPC (static_env.ply/.npy) and
+                    assembly.json gets {model, pose_static, pose_stats (+ icp_refine)}
    ~/refine_pose    MULTI-VIEW: the robot looks at the saved parts from 4 close views (0.4 m), captures each
                     (median of 16 frames), refines all parts jointly against all views, estimates and takes
                     out the camera's translation error, measures the fit-up gaps (ISO 5817 warning) and
@@ -171,7 +176,8 @@ right are what every number downstream depends on.
    tack_reach_marker_node shows it in RViz (pen axis per tack, green/red, arm + tool envelope)
        ▼
  tack_marking_node (real robot)  tack_reach.json (+ welding_tacks/seams.json for strokes)
-   ~/plan   transit paths from the current joints (RRT + shortcut, collision-checked), descent IK chains
+   ~/plan   transit paths from the current joints (straight, else OMPL's AnytimePathShortening in C++,
+            _transit_cpp; spline + TOTG), descent IK chains (the report's roll, else the next free roll)
    ~/next   transit → force-gated descent (FollowJointTrajectory goal cancelled at 1.5 N on the wrench)
             → dot, or the stroke (tack segment / whole seam, contact-referenced, force-corrected depth)
             → retract along the pen        writes tack_marks.json: tip at contact, depth along the pen,
@@ -309,11 +315,20 @@ Negative points let SAM2 be told what *not* to grab, which is how you stop it
 swallowing a neighbouring part pushed flush against the target. At least one
 positive point is required — negatives only carve, they cannot start a mask.
 
-The tracking loop is the [`notes/realtime_icp.md`](notes/realtime_icp.md)
-methodology: SAM-6D only *initializes* the pose, then a CropBox that follows
-`current_pose` replaces the mask and Fast-ICP re-aligns the CAD to the live
-cloud every tick. Move the object and the box (and pose) follow it; if ICP
-fitness drops below `lost_fitness` tracking pauses for a fresh SAM-6D re-seed.
+**Tracking (since 2026-10-06: FoundationPose, `tracking_source:=fp`).** The registration
+seeds `fp_tracker_node`, which streams every RGB-D frame to `fp_track_server.py` in this
+laptop's FoundationPose container: refiner only, `track_one` from the last pose, 25–29 Hz,
+70–90 ms. The robot's own motion is cancelled with TF at each image stamp. A lost part is
+re-registered on the desktop from a projected mask, no click. The ICP node consumes
+`/perception/fp/pose` (static frame, image stamp), shows the part, and at `~/save_object`
+refines the resting pose with ICP: a tracker answers "where is it now", the save needs
+"where exactly" (`notes/realtime_fp.md`).
+
+The older **ICP tracking loop** (`tracking_source:=icp`) is the
+[`notes/realtime_icp.md`](notes/realtime_icp.md) methodology: the detection only
+*initializes* the pose, then a CropBox that follows `current_pose` replaces the mask and
+Fast-ICP re-aligns the CAD to the live cloud every tick; if ICP fitness drops below
+`lost_fitness` tracking pauses for a fresh re-seed (§7).
 
 ### D. Assembly → weld seam
 
@@ -492,7 +507,7 @@ or retrain the classifier head with MediaPipe Model Maker for your viewing angle
 | `camera_extrinsic_tf_publisher.py` | Broadcasts the static eye‑in‑hand extrinsic `tool0 → camera_color_optical_frame` from a 4×4 `.npy` (hand‑eye calibration, `notebooks/T_tcp_to_cam.npy`). **This is what puts perception in the robot frame.** | out: static `/tf` |
 | `foundationpose_bridge_node.py` | **The pose bridge in use.** `~/capture` freezes one synced RGB‑D pair and republishes its colour image on latched `/perception/frozen_rgb` for the operator to pick points on; `~/trigger` POSTs that frozen frame — plus any click points received on `/perception/sam2_click` — to `fp_server.py`, and republishes the reply as `Detection3DArray` **plus the classified object name** on latched `/perception/object_name`. A click whose `stamp_ns` does not match the held frame is refused, so a pixel picked on one image can never be segmented on another. `~/trigger` with nothing frozen grabs the latest pair and sends no click, leaving the server to ask a human (hence `request_timeout_sec` = 300). The pose comes back as a 4×4 **in metres** — no mm→m division, unlike SAM‑6D. Saves server artifacts to `foundationpose_results/`. `~/add_model` uploads the `.ply` at `model_ply_path` to the server's `/add_model` so a newly-generated part becomes classifiable without a restart. | in: color+depth, `/perception/sam2_click`; srv: `~/capture`, `~/trigger`, `~/clear_click`, `~/add_model`; out: `/perception/detections`, `/perception/object_name`, `/perception/frozen_rgb` (all latched) |
 | `fp_tracker_node.py` | **Live FoundationPose tracking** (`notes/realtime_fp.md`). Seeds from the bridge's latched detection (pose + PPF name, stamped with the registered frame), pairs RGB-D by stamp and streams the newest frame (≤ 2 in flight, raw bytes on localhost, `T_base_cam` from TF at each image stamp) to `fp_track_server.py` in this machine's FoundationPose container (`ws://127.0.0.1:5001`, refiner only; the 8 GB laptop GPU cannot register). Publishes the pose every tracked frame (25–29 Hz, 70–90 ms on the laptop), TF `camera_color_optical_frame → fp_object` at the image stamp, a latched CAD mesh marker (frame-locked) and a JSON status at 2 Hz. LOST (fit < 0.5 for 3 frames) → one frame + the CAD silhouette as mask to the desktop's `/predict_pose`, restart from the answer, no click. Reconnects by itself. Started by `pointcloud.launch.py` (`tracking_source:=fp`, the default). | in: rgb, aligned depth, camera_info, `/perception/detections`, TF; out: `/perception/fp/pose`, `/perception/fp/status`, `/perception/fp/marker`, TF `fp_object`; srv: `~/start`, `~/stop`, `~/reseed` |
-| `gesture_control_node.py` | **Hands‑free operator console.** Runs MediaPipe's gesture recognizer on the RealSense colour stream, turns the 7 built‑in gestures into `Trigger` calls on the bridge and the ICP node, and turns the index fingertip into a SAM2 click via dwell‑to‑latch. Draws the frozen frame with the cursor and picked points so what the server will see is exactly what the operator sees. Needs `gesture_recognizer.task` (`model_path`). See [Data flow §E](#e-gesture-control). | in: `/camera/color/image_raw`, `/perception/frozen_rgb`; out: `/perception/sam2_click`; calls: bridge `~/capture`/`~/trigger`/`~/clear_click`, ICP `~/run_icp`/`~/stop_tracking`/`~/save_object` |
+| `gesture_control_node.py` | **Hands‑free operator console.** Runs MediaPipe's gesture recognizer on the RealSense colour stream, turns the 7 built‑in gestures into `Trigger` calls on the bridge and the ICP node, and turns the index fingertip into a SAM2 click via dwell‑to‑latch. Draws the frozen frame with the cursor and picked points so what the server will see is exactly what the operator sees. Needs `gesture_recognizer.task` (`model_path`). See [Data flow §E](#e-gesture-control). | in: `/camera/color/image_raw`, `/perception/frozen_rgb`; out: `/perception/sam2_click`; calls: bridge `~/capture`/`~/trigger`/`~/clear_click`, ICP `~/save_object`, and with FoundationPose tracking `~/refine_pose` (fist held 2 s) / `~/welding_points` (palm), with ICP tracking `~/run_icp` / `~/stop_tracking` |
 | `fp_server.py` | The **FoundationPose Flask server** (GPU machine, not the robot). `POST /predict_pose` with rgb/depth/camera → SAM2 mask from a click → **PPF classifier names the CAD** → `reset_object()` to that mesh → `register()`. Has **no detector of its own**: send a `mask` file, or `click` (`{"u":…,"v":…}` or `[[u,v],…]`) with optional parallel `click_labels` (1 = object, 0 = not‑object), to skip the window entirely — with a click it never needs `DISPLAY`, so the container can run without X11 forwarding. Click points are validated against the frame they arrived with, so a client that latched a pixel on a differently‑sized image is rejected (400) rather than quietly segmenting the wrong thing. Also serves `POST /classify` (classification only, ~1 s, for bring-up) and `POST /add_model` (index a new `.ply` into the live library and persist it). Re‑emits the result in SAM‑6D's on‑disk format (now with `obj_name`) so the ICP node needs no changes. Set `PPF_ENABLE=0` to pin it to a single `MESH_PATH` like before. | HTTP `:5000/{predict_pose,classify,add_model,health}` |
 | `sam6d_bridge_node.py` | *Superseded by the FoundationPose bridge.* Same trigger→POST→publish cycle against `server.py`, parsing a list of detections (`R`, `t` mm→m). Still installed so an old SAM‑6D setup can be run for comparison. | in: color+depth; srv: `~/trigger`; out: `/perception/detections` (latched) |
 | `server.py` | *Superseded by `fp_server.py`.* The SAM‑6D Flask server: instance seg (FastSAM/SAM) + pose estimation against `CAD_PATH`, re‑running `demo.sh` per request. | HTTP `:5000/predict_pose` |
@@ -728,6 +743,9 @@ This is a NumPy port of Zhang et al., *Fast and Robust Iterative Closest Point*
 
 ### 7. Tracking: three filters replace the mask
 
+*The ICP tracker (`tracking_source:=icp`). Since 2026-10-06 the default tracker is
+FoundationPose's (`fp_tracker_node`, Data flow §C); ICP keeps the stationary refinement.*
+
 SAM‑6D is expensive (a GPU round trip), so it runs **once**, to initialize. Every
 subsequent frame the object is isolated geometrically instead
 ([`notes/realtime_icp.md`](notes/realtime_icp.md)):
@@ -864,7 +882,7 @@ reason when `weld_fallback_pca` is false.
 Mode B (no CAD, sensor points, quadric intersection) is the next step of the plan.
 
 
-**Status 2026-10-02: mode A validated on the robot**; the marking error went from ~8 mm to ~2.5 mm. [§14](#14-placement-accuracy-from-8-mm-to-25-mm-and-how-each-millimetre-was-found) tells how, with the error budget.
+**Status 2026-10-06: mode A validated on the robot with FoundationPose tracking**; the marking error went from ~8 mm (24 Sep) to ~2.5 mm (2 Oct, ICP tracking) and 2.3–2.7 mm (6 Oct, FoundationPose tracking + ICP at save + APS transits). [§14](#14-placement-accuracy-from-8-mm-to-25-mm-and-how-each-millimetre-was-found) tells how, with the error budget.
 The full open list of both projects is [`notes/todo.md`](notes/todo.md).
 
 **Pen-marking the tacks** ([`notes/pen_marking_plan.md`](notes/pen_marking_plan.md)):
@@ -1122,6 +1140,7 @@ gain far below 1/stiffness.
 | 1 Oct | contact 8.5–9 mm early on both sides, registration OK | pen touches: base top +6 / +8 mm vs the registration; the multi-view capture: close views see the base +4 mm, the 0.6 m view 0 → error grows with range; `extrinsic_check` at 3 heights: +1.9 / +0.3 / −3.3 mm at 0.29 / 0.44 / 0.63 m | **D435i depth too long, growing with range²** (a ~0.6 px disparity offset) | RealSense Tare against a distance computed from the robot (`tare_distance.py`), after re-measuring the table; a first Tare with a hand-measured distance over-corrected to a 1.1 % scale error | over 0.3–0.65 m the camera vs the pen varies 1.1 mm (§16) |
 | 2 Oct | 0.5° tilt left | `extrinsic_check` at 4 wrist yaws: camera-fixed 0.49°, table 0.44°, residual 0.05° | the extrinsic's rotation | `refine_extrinsic_from_table.py` | camera ≈ 0.07° |
 | 2 Oct | marks 3–7 mm, one side early, one late | contact depths of both seams; `refine_pose` | the extrinsic's **translation** (never measured by the table) and the scan view's share of it in every saved pose; the standing plate's rotation in its own plane | `~/refine_pose`: 4 close views, the camera offset estimated and taken out of views and prior (§15) | **all tacks ~2.5 mm** |
+| 6 Oct | tracking moved to FoundationPose: ear 6–11 mm *inside* the base, marks 12 mm early / no contact, `refine_pose` rejected both parts (overlap 3.8 / 4.0 mm) | the `refine_pose` report; `welding_points` fit-up | the saved pose was now the tracker's render-and-compare estimate (a textureless 8 mm plate at ~0.6 m), not an ICP pose | ICP on 5 live clouds from the averaged tracker pose at `~/save_object` (`fp_save_icp`) | both parts accepted, gap 0.3–2.9 mm, marks 5.3–5.6 mm early, then **2.3–2.7 mm** with the APS transits and the roll fallback |
 
 **Error budget now (2 Oct):**
 
@@ -1131,12 +1150,12 @@ gain far below 1/stiffness.
 | pen tip (TCP) | measured on the plane | 0.2 mm lateral; length within ~2 mm |
 | camera depth vs range | Tare against the robot | 1.1 mm across 0.3–0.65 m, a constant ≈ +2 mm left |
 | camera tilt | separated at 4 yaws, refined | ≈ 0.07° |
-| extrinsic translation | estimated per run by `refine_pose` (online) | horizontal part removed; the **vertical part is over-corrected by ~3–5 mm** (it is the direction 45°/60° views separate worst) - contacts still 3–6 mm early |
+| extrinsic translation | estimated per run by `refine_pose` (online) | the correction is real (it halves the views' disagreement about the table, 6.9 → 3.7 mm), but leaves the scene ~1.7 mm below the pen-measured table (6 Oct capture) |
 | registration of the parts | multi-view, 2 registrations agree | ~0.4 mm on the surfaces; the base's slide in its own plane 1–3 mm (does not move the roots) |
 | parts not fixed | magnets | can move ~1 mm between scan, marking and touches |
 
-Next steps are in [`notes/todo.md`](notes/todo.md): anchor the vertical to the
-pen-referenced table instead of the views, and fixture the parts.
+Next steps are in [`notes/todo.md`](notes/todo.md): add the pen-measured table to the
+camera-offset estimate (every view sees it), re-check the pen length, and fixture the parts.
 
 ### 15. Multi-view close-range refinement
 
@@ -1247,8 +1266,8 @@ extrinsic translation. A step done on top of an uncorrected earlier one learns i
 | `~/clear_click` (foundationpose_bridge) | `std_srvs/Trigger` | Drop the frozen frame and the points picked on it. |
 | `~/add_model` (foundationpose_bridge) | `std_srvs/Trigger` | Upload the `.ply` at the `model_ply_path` param to the server's `/add_model`, indexing it into the live PPF library. Must be a **faced mesh** (a point cloud is rejected). |
 | `~/run_icp` (icp_pose_refiner) | `std_srvs/Trigger` | Phase‑1 init: segment (mask) + ICP‑refine the best detection, seed the tracker, and (if `auto_track`) start Phase‑2 tracking. |
-| `~/stop_tracking` / `~/start_tracking` (icp_pose_refiner) | `std_srvs/Trigger` | Pause / resume the Phase‑2 tracking loop. |
-| `~/save_object` (icp_pose_refiner) | `std_srvs/Trigger` | Freeze the tracked CAD into the SEPC at the robust mean of the tracked poses since the part came to rest (the tracker wanders 5 mm / 6° on a stationary part; moving the part by hand before saving stays allowed, earlier resting places are excluded; the spread goes into `assembly.json` as `pose_stats`); persist `static_env.*` + `assembly.json`; clear tracking for the next part. Hold still a few seconds before saving. |
+| `~/stop_tracking` / `~/start_tracking` (icp_pose_refiner) | `std_srvs/Trigger` | Pause / resume tracking. With FoundationPose tracking they forward to `fp_tracker_node` (`~/stop` / `~/start` from the last registration); a stop freezes the pose (a later save uses the frames before it). |
+| `~/save_object` (icp_pose_refiner) | `std_srvs/Trigger` | Freeze the tracked CAD into the SEPC at the robust mean of the tracked poses since the part came to rest (with FoundationPose tracking: then refined by ICP on 5 live clouds) (the tracker wanders 5 mm / 6° on a stationary part; moving the part by hand before saving stays allowed, earlier resting places are excluded; the spread goes into `assembly.json` as `pose_stats`); persist `static_env.*` + `assembly.json`; clear tracking for the next part. Hold still a few seconds before saving. |
 | `~/welding_points` (icp_pose_refiner) | `std_srvs/Trigger` | Mode A: compute every seam of the saved assembly from the poses (D4 rule, pose tolerance `weld_pose_tol_mm`, fit-up reported) and the tacks (tackrule-0.1, `tack_no` + `order`); publish seams, tacks and labels; persist `welding_seams.json`, `welding_tacks.json`, `welding_points.*`. Needs ≥ 2 saved objects with registry entries; otherwise falls back to radius-PCA (or fails, `weld_fallback_pca=false`). |
 | `~/export_mesh` (icp_pose_refiner) | `std_srvs/Trigger` | Boolean-union the saved parts' CADs at their poses → watertight `assembly_mesh.ply` (mm), ready to feed the bridge's `~/add_model`. Needs `trimesh`+`manifold3d`. |
 | `~/reset_environment` (icp_pose_refiner) | `std_srvs/Trigger` | Start a new assembly: drop the SEPC + saved objects + tracking state, blank the latched SEPC/weld clouds, and archive the on-disk assembly into `previous_assemblies/<timestamp>/`. Call it after `add_model`, or the stale SEPC keeps subtracting itself out of the live crop. |

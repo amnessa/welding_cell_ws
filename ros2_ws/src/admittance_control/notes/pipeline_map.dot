@@ -34,9 +34,8 @@ digraph pipeline {
     label=<<b>LAPTOP (ROS 2)  ·  her parça için (parça 1, sonra parça 2)</b>>; style="rounded,filled"; fillcolor="#eef6ef"; color="#a8c9ad";
     LIVE  [label=<<b>Canlı nokta bulutu</b><br/>her karede derinlikten, düzenli H×W×3<br/>normaller piksel komşuluğundan>];
     BASE  [label=<<b>Robot tabanına çevir</b><br/>T_taban←parça =<br/>FK(q) · T_bilek←kamera · T_kamera←parça>];
-    ICP1  [label=<<b>İlk oturtma</b><br/>FoundationPose pozundan ICP<br/>normal kapısı: arka yüz eşleşmez (60°)>];
-    TRACK [label=<<b>Takip</b><br/>parça elle taşınırken her karede poz<br/>kutu kırp · masayı at (kalemle ölçülmüş düzlem)<br/>· kayıtlı parçaları at>];
-    SAVE  [label=<<b>Kaydet</b><br/>son durma yerindeki pozların sağlam ortalaması<br/>(medyan konum, ortalama dönme, sıçramalar atılır)<br/>CAD bu pozda robot tabanına sabitlenir>];
+    TRACK [label=<<b>Takip: FoundationPose</b><br/>laptop GPU'sunda (ayrı Docker), her kare, 25–29 Hz<br/>son pozdan track_one · robot hareketi TF ile çıkarılır<br/>kaybolursa masaüstünde yeniden kayıt (tık yok)>];
+    SAVE  [label=<<b>Kaydet</b><br/>son durma yerindeki pozların sağlam ortalaması<br/>→ 5 taze canlı bulutta ICP (normal kapısı, masa ve<br/>kayıtlı parçalar atılır) → CAD robot tabanına sabitlenir>];
   }
 
   // ---------------------------------------------------------------- laptop, montaj
@@ -46,8 +45,8 @@ digraph pipeline {
     SEAM  [label=<<b>Dikişler</b><br/>her CAD'in kaynak ilkeli (plaka) pozunda<br/>yüz çiftlerinin düzlem kesişimi<br/>D4 kuralı: iki dış yüz, açıortay boşluğa çıkmalı<br/>(torç girebilmeli) · poz toleransı 10 mm>];
     TACK  [label=<<b>Puntalar</b><br/>uzunluk 4t · aralık ≤ 33t · uç payı<br/>sıra: önce uçlar, sonra ortalar,<br/>bağlantının iki tarafı dönüşümlü>];
     REACH [label=<<b>Erişilebilirlik</b><br/>her punta için kalem eğimi × dönmesi<br/>kol, takım, parçalar, masa: çarpışmasız<br/>en büyük boşluk seçilir>];
-    MOVE  [label=<<b>Hareket ve işaret</b><br/>geçiş: düz yol ya da RRT-Connect<br/>kalem ekseninde iniş, 1.5 N'da durur<br/>nokta ya da çizgi, geri çekil<br/>(kalem ucu kalibre edilmiş TCP)>];
-    CHECK [fillcolor="#fff7e6", label=<<b>Doğrulama</b><br/>kalem dokunuşları: işaret kökten kaç mm?<br/>(2 Ekim: ~2.5 mm)>];
+    MOVE  [label=<<b>Hareket ve işaret</b><br/>geçiş: düz yol ya da APS (4 paralel RRT-Connect,<br/>birleştir + kısalt, C++) · iniş çarpışırsa diğer roll<br/>kalem ekseninde iniş, 1.5 N'da durur<br/>nokta ya da çizgi, geri çekil<br/>(kalem ucu kalibre edilmiş TCP)>];
+    CHECK [fillcolor="#fff7e6", label=<<b>Doğrulama</b><br/>kalem dokunuşları: işaret kökten kaç mm?<br/>(6 Ekim: 2.3–2.7 mm)>];
   }
 
   // ---------------------------------------------------------------- akış
@@ -64,12 +63,10 @@ digraph pipeline {
   FP    -> BASE  [label=" T_kamera←parça 4×4 (m)\n + parça adı + maske"];
   KAL   -> BASE  [label=" kinematik + el-göz"];
   CAM   -> LIVE  [label=" her kare"];
-  BASE  -> ICP1  [label=" başlangıç pozu\n (robot tabanı)"];
-  LIVE  -> ICP1  [label=" maskenin altındaki noktalar"];
-  ICP1  -> TRACK [label=" düzeltilmiş poz"];
-  LIVE  -> TRACK [label=" her karede bulut"];
-  TRACK -> SAVE  [label=" poz akışı (her kare)"];
-  SAVE  -> TRACK [label=" kayıtlı CAD'ler: sonraki\n parçanın bulutundan çıkarılır", style=dashed, constraint=false];
+  BASE  -> TRACK [label=" başlangıç pozu (kayıt)"];
+  CAM   -> TRACK [label=" her kare: RGB + derinlik + K"];
+  TRACK -> SAVE  [label=" poz akışı, robot tabanında\n (görüntünün zaman damgasıyla)"];
+  LIVE  -> SAVE  [label=" 5 taze canlı bulut"];
 
   SAVE  -> MV    [label=" her parça: pose_static 4×4\n (m, robot tabanı) + CAD"];
   LIVE  -> MV    [label=" 4 görüşün bulutları\n + çekim anındaki kamera pozları"];
