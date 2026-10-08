@@ -1,0 +1,148 @@
+% =====================================================================================
+%  MSc thesis, METU Graduate School of Natural and Applied Sciences, Robotics
+%  Built on the official METU LaTeX template v5 (template/metu-thesis-template_v5).
+%  The plan, the rules and what goes where: ../THESIS_PLAN.md
+%
+%  Drafting helpers (defined below):
+%    \TODO{...}        a yellow note: something to write or decide
+%    \SRC{...}         a blue note: where in the repo the material already exists
+%    \figplaceholder{fig:label}{what the figure shows}{caption}
+%  Before submission: \usepackage[disable]{todonotes} hides every note at once.
+% =====================================================================================
+% MSc: 3 jury members (FBE allows 3 or 5); "rob" = Robotics (added to metu.cls).
+\documentclass[chaparabic,rob,ms,12pt,oneandhalf,threejury]{metu}
+\usepackage{appendix}
+\usepackage{longtable}
+\usepackage[pdftex]{hyperref}
+\usepackage[all]{hypcap}
+\usepackage[colorinlistoftodos]{todonotes}   % [disable] for the submitted version
+\usepackage{graphicx}
+\graphicspath{{./figures/}}
+\usepackage[figuresright]{rotating}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{color}
+\usepackage{listings}
+\usepackage{pdfpages}
+\usepackage{array}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{adjustbox}
+\usepackage{amsmath,amssymb}
+\usepackage{mathtools}
+\usepackage{siunitx}
+\usepackage{textcomp}
+\usepackage{tikz}
+
+\renewcommand{\sectionautorefname}{\S}
+\renewcommand{\subsectionautorefname}{\S}
+\captionsetup{belowskip=12pt,aboveskip=8pt}
+\DeclareGraphicsExtensions{.pdf,.png,.jpg}
+
+% ---- notation used throughout (keep it consistent; see THESIS_PLAN.md "Notation") ----
+\newcommand{\norm}[1]{\left\lVert#1\right\rVert}
+\newcommand{\Tf}[2]{{}^{#1}\mathbf{T}_{#2}}        % \Tf{B}{C}: frame C expressed in frame B
+\newcommand{\Rf}[2]{{}^{#1}\mathbf{R}_{#2}}
+\newcommand{\vect}[1]{\mathbf{#1}}
+\DeclarePairedDelimiter\ceil{\lceil}{\rceil}
+
+% ---- drafting helpers ----
+\newcommand{\TODO}[1]{\todo[inline,color=yellow!35]{\textbf{TODO:} #1}}
+\newcommand{\SRC}[1]{\todo[inline,color=blue!12]{\textbf{Source:} #1}}
+\newcommand{\figplaceholder}[3]{%
+  \begin{figure}[htbp]\centering
+  \missingfigure[figwidth=0.9\textwidth]{#2}
+  \caption{#3}\label{#1}
+  \end{figure}}
+
+% ---- personal and title information --------------------------------------------------
+\author{Name Surname}                                 % TODO: your full name
+% Title: UPPERCASE on the cover is done by the class. Candidates in THESIS_PLAN.md.
+\title{Vision-Only Robotic Tack Placement on Registered Weld Assemblies}
+\turkishtitle{Kayıtlı Kaynak Montajlarında Yalnızca Görüntüye Dayalı Robotik Puntalama}
+\date{Month 2027}                                     % TODO: month and year of the defence
+
+% prof / assocprof / assistprof / dr
+\director[prof]{Name Surname}                         % TODO: director of FBE
+\headofdept[prof]{Name Surname}                       % TODO: head of the Robotics programme
+\supervisor[prof]{Ahmet Buğra Surname}                % TODO: title and full name of the advisor
+\departmentofsupervisor{Mechanical Engineering, METU} % TODO: the advisor's department
+%\cosupervisor[dr]{Name Surname}
+%\departmentofcosupervisor{Department, University}
+
+% Committee (3 for MSc). First = chair; second = the supervisor; affiliations on one line.
+\committeememberi[prof]{Name Surname}
+\affiliationi{Department, METU}
+\committeememberii[prof]{Ahmet Buğra Surname}
+\affiliationii{Mechanical Engineering, METU}
+\committeememberiii[assistprof]{Name Surname}
+\affiliationiii{Department, University}           % at least one member outside METU: check
+%\committeememberiv[assistprof]{Name Surname}
+%\affiliationiv{Department, University}
+%\committeememberv[assistprof]{Name Surname}
+%\affiliationv{Department, University}
+
+\thesisdefencedate{01.01.2027}                       % DD.MM.YYYY
+
+% At most 5 keywords each.
+\keywords{Robotic Welding, Tack Welding, Weld Seam Detection, 6D Pose Estimation, Synthetic Dataset}
+\anahtarklm{Robotik Kaynak, Puntalama, Kaynak Dikişi Tespiti, 6B Poz Kestirimi, Sentetik Veri Kümesi}
+
+% Abstract and Öz: at most 250 words each. Write them LAST (THESIS_PLAN.md, writing order).
+\abstract{
+\TODO{Abstract, at most 250 words: the problem (tacks are placed by hand; seam
+detection is benchmarked against hand-annotated, private data), the approach (analytic
+ground truth in WeldSet; a vision-only cell that registers CAD parts, computes seams and
+tacks, and marks them with a pen on a UR5e), the key numbers (marks within 2.3--2.7 mm,
+the error chain, ...), the conclusion.}
+}
+\oz{
+\TODO{Öz, en fazla 250 kelime (Abstract'ın Türkçesi).}
+}
+\dedication{\TODO{Dedication (at most 2 lines) or remove.}}
+\acknowledgments{
+\TODO{Acknowledgments, at most 300 words: advisor, lab (CHERI / ROMER), funding
+(ADEP project?), family.}
+}
+
+\hypersetup{colorlinks=true, linkcolor=black, citecolor=black, urlcolor=blue}
+\begin{document}
+\begin{preliminaries}
+\input{abbreviations.tex}
+\end{preliminaries}
+
+\setlength{\parindent}{0em}
+\setlength{\parskip}{10pt}
+
+\input{chapters/ch1_introduction.tex}
+\input{chapters/ch2_background.tex}
+\input{chapters/ch3_weldset.tex}
+\input{chapters/ch4_system_calibration.tex}
+\input{chapters/ch5_perception_registration.tex}
+\input{chapters/ch6_seams_tacks_motion.tex}
+\input{chapters/ch7_experiments.tex}
+\input{chapters/ch8_conclusion.tex}
+
+\bibliographystyle{ieeetr}
+\bibliography{thesis}
+
+% ---- appendices -----------------------------------------------------------------------
+\chapter*{APPENDICES}
+\addcontentsline{toc}{chapter}{APPENDICES}
+\renewcommand{\thesection}{\Alph{section}}
+\counterwithin{figure}{section}
+\counterwithin{table}{section}
+\counterwithin{equation}{section}
+\input{appendices/a_parameters.tex}
+\newpage
+\input{appendices/b_standards.tex}
+\newpage
+\input{appendices/c_derivations.tex}
+\newpage
+\input{appendices/d_software_data.tex}
+
+% No CV for an MSc thesis.
+\end{document}

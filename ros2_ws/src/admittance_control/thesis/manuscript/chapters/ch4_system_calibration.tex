@@ -1,0 +1,103 @@
+% =====================================================================================
+\chapter{SYSTEM OVERVIEW AND CALIBRATION}
+\label{chp:system}
+% Material: README "Big picture", "How the pieces connect", §1 (frames), §16 (depth),
+% §14 (calibration story); notes/pen_marking_plan.md; thesis_notes.md (calibration
+% entries); config/pen_tool.json; notes/realtime_fp.md (the GPU split).
+% =====================================================================================
+
+\section{Hardware}
+\label{sec:sys_hardware}
+\begin{table}[htbp]
+\caption{Hardware of the cell.}
+\label{tab:hardware}
+\centering\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Component & Model & Role \\
+\midrule
+Manipulator & Universal Robots UR5e (factory-calibrated kinematics) & motion, F/T sensing \\
+Camera & Intel RealSense D435i, eye-in-hand, off-axis & RGB-D, 1280$\times$720 \\
+Tool & pen in a holder (CAD envelope) & marks instead of a torch \\
+Workpieces & 8 mm MDF plates; 3D-printed curved parts & \\
+Desktop & GPU (RTX 5070 Ti) & registration (SAM2, PPF, FoundationPose) \\
+Laptop & GPU (RTX 4060, 8 GB) & ROS 2, tracking, planning \\
+\bottomrule
+\end{tabular}
+\end{table}
+\figplaceholder{fig:tool}{The pen tool: holder, pen, camera arm; the collision envelope
+(RViz, /tool\_model/markers)}{The pen tool and its collision envelope.}
+
+\section{Software Architecture}
+\label{sec:sys_software}
+\TODO{ROS 2 Jazzy nodes and what feeds what; the desktop registers, the laptop tracks
+and plans; the operator's gestures.}
+\SRC{README ``How the pieces connect''; notes/pipeline\_map.png; realtime\_fp.md status.}
+\figplaceholder{fig:architecture}{Nodes, topics and the two GPUs (desktop: registration;
+laptop: tracking, refinement, planning)}{Software architecture of the cell.}
+
+\section{Frames and Transformations}
+\label{sec:sys_frames}
+A part's pose in the robot base frame chains forward kinematics, the hand-eye extrinsic
+and the camera's estimate:
+\begin{equation}
+\Tf{B}{O}(t) = \Tf{B}{E}\big(\vect{q}(t)\big)\;\Tf{E}{C}\;\Tf{C}{O}(t).
+\label{eq:frame_chain}
+\end{equation}
+\TODO{Eye-in-hand consequences: everything stored in the base frame; TF looked up at
+the image stamp; masks valid for one frame only.}
+\SRC{README Algorithms \S1; admitans kontrol açıklama.md \S2.}
+\figplaceholder{fig:frames}{TF tree: base\_link -- tool0 -- camera\_color\_optical\_frame --
+object; the frame chain drawn on the robot}{Coordinate frames.}
+
+\section{The Calibration Chain}
+\label{sec:sys_calibration}
+\TODO{The principle: measure each link against a reference that does not depend on it;
+the robot (pen touches) is the reference. The order matters: a step on top of an
+uncorrected earlier one learns its error.}
+\begin{table}[htbp]
+\caption{The calibration chain: each link, its reference and its residual.}
+\label{tab:calib_chain}
+\centering\small
+\begin{tabular}{@{}llll@{}}
+\toprule
+Link & Method & Reference & Residual \\
+\midrule
+Kinematics & factory calibration in every tool & pendant TCP pose & $<0.1$ mm \\
+Pen tip (TCP) & 4-point TCP; roll / tilt touches & table plane & 0.2 mm lateral \\
+Table plane & 7 pen touches, plane fit & the robot & RMSE 0.22 mm \\
+Camera depth & Tare with a robot-computed distance & table plane & 1.1 mm (0.3--0.65 m) \\
+Extrinsic rotation & tilt split at 4 wrist yaws & table plane & $\approx 0.07^\circ$ \\
+Extrinsic translation & online, from multi-view disagreement & views + table & \S\ref{sec:mv_selfcal} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Kinematics, Tool and Table}
+\TODO{Factory calibration (nominal vs.\ calibrated: 2.4--4.2 mm at the tip); pen TCP;
+table plane by touch (tilt 1.57$^\circ$).}
+\SRC{README \S14 (29 Sep row), scripts/table\_touchoff.py, tcp\_offset\_probe.py.}
+
+\subsection{Hand-Eye Calibration}
+\TODO{AX = XB; the Park--Martin solve \cite{park1994handeye}; the residual judge; the
+TCP-frame pitfall; the tilt separation at four yaws.}
+\begin{equation}
+\mathbf{A}_i\,\mathbf{X} = \mathbf{X}\,\mathbf{B}_i,\qquad \mathbf{X} = \Tf{E}{C}.
+\label{eq:handeye}
+\end{equation}
+\SRC{README \S14 (24 Sep, 28 Sep rows); helper/calibration/; thesis\_notes.md.}
+
+\subsection{Depth Calibration Against the Robot}
+A disparity offset $\delta$ (pixels) in a stereo camera with focal length $f$ and baseline
+$B$ produces a depth error that grows with the square of the range:
+\begin{equation}
+\Delta z = \frac{z^{2}\,\delta}{f\,B}.
+\label{eq:depth_error}
+\end{equation}
+\TODO{Measurement at three heights; the Tare with a ground-truth distance computed from
+the robot; the first Tare's 1.1\% scale error with a hand-measured distance.}
+\SRC{README \S16; scripts/tare\_distance.py, extrinsic\_check.py; thesis\_notes.md
+(calibration story).}
+\figplaceholder{fig:depth_law}{Camera-vs-pen table offset at 0.29 / 0.44 / 0.63 m, before
+and after the Tare, with the $a+kz^2$ fit}{Depth error against range, before and after
+calibration.}

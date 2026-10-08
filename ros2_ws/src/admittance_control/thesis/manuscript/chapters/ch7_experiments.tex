@@ -1,0 +1,117 @@
+% =====================================================================================
+\chapter{EXPERIMENTS AND RESULTS}
+\label{chp:experiments}
+% Material: README §14 (the error chain and budget), §15-16; thesis_notes.md (every
+% number with its date); scripts/foundationpose_results/{tack_marks.json, multiview/};
+% todo.md "Benchmarks to run" and "measure everything" (sections marked PLANNED).
+% =====================================================================================
+
+\section{Experimental Setup and Protocol}
+\label{sec:exp_setup}
+\TODO{The workpieces (8 mm MDF T-joints, magnets; printed curved parts); the reference:
+pen contact, independent of the camera (tack\_marks.json depth along the pen,
+touch\_probe on faces); how a mark error is measured (ruler / flatbed scan); repeats.}
+\figplaceholder{fig:exp_marks}{Photo of marks on a T-joint seam with the measured offsets}{Pen
+marks on the weld root and their measured errors.}
+
+\section{Calibration Results}
+\label{sec:exp_calib}
+\begin{table}[htbp]
+\caption{Camera depth against the pen-measured table, three ranges (mm).}
+\label{tab:exp_depth}
+\centering
+\begin{tabular}{@{}lccc@{}}
+\toprule
+ & 0.29 m & 0.44 m & 0.63 m \\
+\midrule
+Before the Tare & +1.92 & +0.31 & $-$3.28 \\
+After the Tare (robot-computed distance) & +0.29 & +1.06 & +1.43 \\
+\bottomrule
+\end{tabular}
+\end{table}
+\TODO{Tilt separation (camera-fixed 0.49$^\circ$ / table 0.44$^\circ$ $\to$ 0.07$^\circ$);
+hand-eye residuals; TCP check.}
+\SRC{README \S14, \S16; thesis\_notes.md.}
+
+\section{Registration Accuracy}
+\label{sec:exp_registration}
+\TODO{The normal gate (lean 6.5$^\circ\to$0.3--0.8$^\circ$, root 10 mm $\to\pm$0.2 mm);
+pose jitter of the tracker on a still part (5.2 / 2.5 / 3.0 mm std, 24 mm range) and the
+robust mean; the save-time ICP (synthetic: 4.7 mm / 1.5$^\circ\to$ 0.01 mm / 0.4$^\circ$;
+bench: corrections 1.8--7.9 mm).}
+
+\section{Multi-View Refinement}
+\label{sec:exp_multiview}
+\TODO{Synthetic: recovery of an injected extrinsic error (to 0.2 mm), acceptance logic.
+Real: corrections per part, the estimated $\vect{d}$ across days, fit-up gaps, the
+table offset per view before / after the correction (6.9 $\to$ 3.7 mm spread), the
+prior sweep (3 / 8 / 15 mm: $<$0.5 mm change).}
+\begin{table}[htbp]
+\caption{Table height seen by each view relative to the pen-measured plane (mm).}
+\label{tab:exp_table_views}
+\centering
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+ & view 0 & view 1 & view 2 & view 3 & spread \\
+\midrule
+Raw & +2.46 & $-$1.62 & +2.64 & +5.26 & 6.9 \\
+$\mathbf{R}_v\vect{d}$ taken out & $-$1.07 & $-$3.89 & $-$1.63 & $-$0.21 & 3.7 \\
+\bottomrule
+\end{tabular}
+\end{table}
+\SRC{capture multiview/20261006-163931; multiview\_refine\_offline.py; todo.md.}
+
+\section{Placement Accuracy}
+\label{sec:exp_placement}
+\begin{table}[htbp]
+\caption{The error chain: each cause found, how it was measured, and the mark error after
+its fix.}
+\label{tab:exp_error_chain}
+\centering\small
+\begin{tabular}{@{}llll@{}}
+\toprule
+Date & Cause & Fix & Mark error after \\
+\midrule
+24 Sep & failed hand-eye solve; TCP frame & Park--Martin re-solve; TCP composed & $\sim$8 mm \\
+25 Sep & tracker jitter at save & robust mean of poses at rest & 5--8 mm \\
+28 Sep & flat ground cut on a tilted table & measured table plane & 3--5 mm \\
+28 Sep & camera-fixed tilt 0.36$^\circ$ & tilt refinement & 3.7--4.3 mm \\
+29 Sep & nominal kinematics; plate face straddle & calibrated chain; normal gate & \\
+1 Oct & depth $\propto z^2$ & Tare against the robot & \\
+2 Oct & extrinsic translation; single view & multi-view refinement & $\sim$2.5 mm \\
+6 Oct & tracker pose saved (FoundationPose) & ICP at save; APS; roll fallback & 2.3--2.7 mm \\
+\bottomrule
+\end{tabular}
+\end{table}
+\SRC{README \S14 tables; thesis\_notes.md.}
+\TODO{The error budget per link (README \S14), and repeated trials with statistics
+(mean, std, max over $N$ tacks), not single runs.}
+
+\section{Live Tracking: FoundationPose versus ICP}
+\label{sec:exp_tracking}
+\TODO{PLANNED (todo.md, Benchmarks): pose\_jitter\_probe on both trackers, still part
+and slow push: noise, delay, drift; rate 25--29 Hz vs.\ $\sim$10 Hz.}
+
+\section{Transit Planning: APS versus RRT-Connect}
+\label{sec:exp_planning}
+\TODO{PLANNED (aps\_transit\_plan.md step 5): per transit, planning time, weighted joint
+travel, tool-tip path length, deviation, clearance, TOTG duration. Known so far:
+front-back transit $\sim$6$\times$ shorter at a 1 s budget; C++ collision check
+$\sim$590$\times$ faster and identical on 8\,800 configurations.}
+\figplaceholder{fig:exp_transits}{Tool-tip paths of RRT-Connect and APS for the
+front--back transit (RViz or matplotlib, same view)}{Transit paths: RRT-Connect vs.\ APS.}
+
+\section{Timing and Resources}
+\label{sec:exp_timing}
+\TODO{PLANNED (todo.md, ``measure everything''): wall and CPU time, memory, per stage
+from the received pose to the mark; scaling with points, parts, views and transits.}
+
+\section{Curved Parts}
+\label{sec:exp_curved}
+\TODO{PLANNED: the printed parts (C1, E2, R2+S3, RR1, SP3) through the cell, once mode A
+handles curved seams.}
+
+\section{Discussion}
+\label{sec:exp_discussion}
+\TODO{What limits accuracy now (the remaining vertical offset, the pen length, unfixed
+parts); what the measurements say about vision-only placement.}

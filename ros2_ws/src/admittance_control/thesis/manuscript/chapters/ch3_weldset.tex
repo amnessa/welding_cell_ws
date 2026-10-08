@@ -1,0 +1,119 @@
+% =====================================================================================
+\chapter{WELDSET: SYNTHETIC WELD ASSEMBLIES WITH ANALYTIC GROUND TRUTH}
+\label{chp:weldset}
+% The weld_generator project. Material: weld_generator/docs/MANUAL.md, PARAMETERS.md,
+% SCHEMA.md, notes/dataset_plan.md, phase8_plan.md, phase9_plan.md, the ICRA submission.
+% Scope check with the advisor: the full benchmark here, or a summary + the paper?
+% =====================================================================================
+
+\section{Design Goals}
+\label{sec:ws_goals}
+\TODO{Exact (analytic) ground truth instead of annotation; regenerable at any point
+density; public code; strata reported separately, never pooled.}
+\SRC{thesis\_direction\_handoff.md \S3; MANUAL.md introduction.}
+
+\section{Parts, Joints and Assemblies}
+\label{sec:ws_parts}
+\TODO{Primitives: Slab, Prism, PreparedSlab (ISO 9692-1 grooves), PreparedPrism, Tube,
+SweptSlab. Joint types and the fixture.}
+\SRC{MANUAL.md \S3.1--3.2 (the primitive table).}
+
+\section{Curved Seams by Construction}
+\label{sec:ws_curves}
+\TODO{Curve-first families (D29): the seam curve is drawn first and the parts are derived
+from it, so the seam is exact by construction. Seven families: line, circle, ellipse
+(tilted pipe), saddle, rounded rectangle, swept path, arc butt.}
+\SRC{weldgen/d29.py, constructors.py, curves.py; MANUAL.md \S3.2.}
+
+\figplaceholder{fig:ws_families}{One rendered example per curved family, seam drawn in
+colour}{The seven seam families of WeldSet.}
+
+\section{Seams by the Accessibility Rule}
+\label{sec:ws_d4}
+For two planar faces with unit normals $\vect{n}_1,\vect{n}_2$ and points
+$\vect{p}_1,\vect{p}_2$, the nominal seam is the line of intersection of their planes:
+\begin{equation}
+\vect{d} = \frac{\vect{n}_1\times\vect{n}_2}{\norm{\vect{n}_1\times\vect{n}_2}},\qquad
+\vect{x}(s) = \vect{x}_0 + s\,\vect{d},\quad
+\vect{n}_i^{\top}\vect{x}_0 = \vect{n}_i^{\top}\vect{p}_i\ (i=1,2).
+\label{eq:plane_intersection}
+\end{equation}
+\TODO{The D4 rule: a seam is the intersection of an exterior face pair whose dihedral
+bisector escapes to free space (torch reachability); classes fillet / butt / lap\_toe /
+edge; rejected candidates kept with a reason; root vs.\ gap-mid curves (D19).}
+\SRC{MANUAL.md \S3.3; weldgen/accessibility.py.}
+
+\section{Tack Placement Rule}
+\label{sec:ws_tacks}
+With $t$ the thinner member and $L$ the seam length (open seam), tackrule-0.1:
+\begin{gather}
+\ell_{\mathrm{tack}} = \operatorname{clip}(4t,\,10,\,50)\ \mathrm{mm},\qquad
+d_{\max} = \min(33t,\,400)\ \mathrm{mm},\qquad d_{\min} = 10t,
+\label{eq:tackrule_len}\\
+m = \max(2t,\ \ell_{\mathrm{tack}}),\qquad
+n = \max\!\left(2,\ \ceil*{\frac{L-2m}{d_{\max}}}+1\right).
+\label{eq:tackrule_n}
+\end{gather}
+\TODO{Order: ends first, then recursive bisection, the two sides of a joint
+interleaved. Closed seams. Why a versioned rule (tacks as a derived layer).}
+\SRC{weldgen/tacks.py docstring.}
+
+\section{Sensor Model, Visibility and Rendering}
+\label{sec:ws_sensor}
+\TODO{Stereo camera profiles (d435i, stereo\_good, stereo\_poor); camera pose regimes;
+per-point visibility (exact ray casting) and exterior flags; tier 1 (analytic noise) and
+tier 2 (Isaac Sim renders, materials, the twin gate).}
+\SRC{MANUAL.md \S3.4; phase8\_plan.md; memory: Phase 8 status (render layer, twin gate).}
+
+\section{The Corpus and Its Strata}
+\label{sec:ws_corpus}
+\begin{table}[htbp]
+\caption{WeldSet strata, their geometry ranges and corpus sizes.}
+\label{tab:ws_strata}
+\centering\small
+\begin{tabular}{@{}llll@{}}
+\toprule
+Stratum & Geometry (generator range) & Scenes & Notes \\
+\midrule
+T/line & plates $t$ 1--12 mm, $\alpha$ 60--120$^\circ$ & \textit{TBD} & \\
+corner & & \textit{TBD} & \\
+butt square & & \textit{TBD} & \\
+butt grooved & $t$ 4--20 mm; V / bevel / U & \textit{TBD} & excluded from the real subset \\
+lap & & \textit{TBD} & \\
+edge & $t$ 1--2 mm & \textit{TBD} & \\
+T/circle & tube $r$ 30--80 mm, wall 3--8 & \textit{TBD} & \\
+T/ellipse & tilted tube, 10--40$^\circ$ & \textit{TBD} & \\
+T/saddle & branch $r$ 0.3--0.7$R$ & \textit{TBD} & \\
+T/rounded\_rect & $w,h$ 60--160 mm & \textit{TBD} & \\
+T/swept\_path & band 4--10 mm, height 50--156 & \textit{TBD} & \\
+butt arc & $R$ 100--400 mm & \textit{TBD} & \\
+\bottomrule
+\end{tabular}
+\end{table}
+\SRC{phase9\_plan.md \S2 (ranges); the Phase 4 corpus (desktop, out/bench\_phase4).}
+
+\section{Benchmark of Literature Methods}
+\label{sec:ws_benchmark}
+\TODO{The re-implemented methods (lobb, pcaslice, regiongrow, quadric, ppf/ransac,
+modelreg, ...), the fidelity audit, metrics (seam error, coverage), conditions
+(views, noise), results per stratum.}
+\begin{table}[htbp]
+\caption{Seam error per method and stratum (median, mm).}
+\label{tab:ws_benchmark}
+\centering\small
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+Method & T/line & corner & butt & lap & \ldots \\
+\midrule
+\textit{TBD} & & & & & \\
+\bottomrule
+\end{tabular}
+\end{table}
+\SRC{weld\_generator Phase 4 batch (desktop, 268\,320 rows after the fidelity audit);
+notebooks; memory: Phase 4 run, project state.}
+
+\section{The Annotation-Error Experiment}
+\label{sec:ws_annotation}
+\TODO{If run: hand-annotate scenes as the literature does and measure the annotation
+against analytic truth (the label-noise floor of the field).}
+\SRC{thesis\_direction\_handoff.md \S3 ``killer experiment''.}

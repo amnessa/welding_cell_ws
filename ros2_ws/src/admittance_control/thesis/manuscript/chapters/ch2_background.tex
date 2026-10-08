@@ -1,0 +1,75 @@
+% =====================================================================================
+\chapter{BACKGROUND AND RELATED WORK}
+\label{chp:background}
+% Each section: what exists, what it does not do, and how this thesis uses or differs
+% from it. Literature map: weld_generator/notes/thesis_direction_handoff.md §5,
+% weld_generator/papers/, ros2_ws/.../notes/Welding_Robots_Approach_and_Trajectory_
+% Literature_Report.md.
+% =====================================================================================
+
+\section{Welded Joints, Tack Welds and Standards}
+\label{sec:bg_welding}
+\TODO{Joint types (T, corner, butt, lap, edge; pipe-to-plate, pipe-to-pipe), the weld
+root, fit-up gap. Tack welds: purpose, spacing and length rules, sequence. ISO 9692-1
+(joint preparation), ISO 5817 (quality levels, no.~617 root gap), ISO 2553 (symbols).}
+\SRC{weld\_generator docs/MANUAL.md \S3; notes/ISO 5817 and ISO 9692-1 PDFs;
+the tack rule in weldgen/tacks.py.}
+
+\section{Weld Seam Detection from 3D Data}
+\label{sec:bg_seam}
+\TODO{Point-cloud methods: curvature / PCA, region growing, plane and quadric fitting,
+PointNet++-based (LWSNet), ICP + RANSAC pipelines (Yi et al.), 2D-to-3D (SANet, Lin et
+al.), intersecting pipes (Wang et al.). Their sensors, data sizes, reported accuracy.}
+
+\begin{table}[htbp]
+\caption{Weld-seam perception literature: sensor, data, ground truth and availability.}
+\label{tab:lit_seam}
+\centering\small
+\begin{tabular}{@{}lllll@{}}
+\toprule
+Work & Sensor & Data & Ground truth & Public \\
+\midrule
+LWSNet \cite{song2025lwsnet} & \textit{TBD} & 94 raw clouds (658 aug.) & hand-labelled & on request \\
+Yi et al. \cite{yi2026seam} & \textit{TBD} & 800 samples / 4 workpieces & hand-labelled & on request \\
+Lin et al. \cite{lin2026coating} & \textit{TBD} & 13 workpieces, 1690 groups & LabelMe & project page \\
+SANet \cite{zhu2025sanet} & RGB only & 4000+ images & hand-labelled & no \\
+\textit{(more)} & & & & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Datasets and Ground Truth for Weld Seams}
+\label{sec:bg_datasets}
+\TODO{Every dataset is hand-annotated and private; annotation consistency measures
+precision, not accuracy; the annotation-error experiment.}
+
+\section{Object Recognition and 6D Pose Estimation}
+\label{sec:bg_pose}
+\TODO{PPF \cite{drost2010ppf,birdal2015ppf}; learned pose estimation and tracking for
+novel objects, FoundationPose \cite{wen2024foundationpose}; promptable segmentation,
+SAM2 \cite{ravi2024sam2}.}
+
+\section{Point Cloud Registration}
+\label{sec:bg_icp}
+\TODO{ICP \cite{besl1992icp}, point-to-plane \cite{chen1992p2plane}, robust and
+accelerated ICP \cite{zhang2022fricp}; multi-view registration; observability of the
+registration from the information matrix.}
+
+\section{Camera Calibration for Eye-in-Hand Systems}
+\label{sec:bg_calib}
+\TODO{Hand-eye calibration \cite{tsai1989handeye,park1994handeye}; stereo depth error
+growing with range squared, RealSense \cite{keselman2017realsense}; on-chip / Tare
+calibration; self-calibration.}
+
+\section{Motion Planning and Trajectory Generation}
+\label{sec:bg_planning}
+\TODO{RRT-Connect \cite{kuffner2000rrtconnect}; asymptotic optimality, RRT*
+\cite{karaman2011rrtstar}, RRT*-Connect \cite{klemm2015rrtstarconnect};
+AnytimePathShortening \cite{luo2014aps} in OMPL \cite{sucan2012ompl}; time-optimal
+parameterisation, TOTG \cite{kunz2012totg}; robot-in-the-loop weld planning
+\cite{liu2023rcim}.}
+
+\section{Summary and Research Gap}
+\label{sec:bg_gap}
+\TODO{The gaps this thesis addresses, one paragraph each, each pointing to the chapter
+that answers it.}

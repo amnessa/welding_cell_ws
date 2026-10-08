@@ -1,5 +1,14 @@
 # Parts to 3D print: the strata MDF cannot make (rough list, 2026-10-08)
 
+**Status (2026-10-08).**
+- **Printing now** on the Creality K1 Max (300 × 300 × 300 mm bed): **C1, E2, R2, S3, RR1,
+  SP3**.
+- **BA parts:** laser-cut from MDF.
+- **The cell is not building the dataset,** so not every item below will be made: one
+  geometry per curved stratum is enough for the cell.
+- **The MDF stock is 8 mm:** no plate thinner than 8 mm (the t 4 / t 6 variants of BA and
+  G do not apply).
+
 **What MDF covers.** The plate strata (T/line, corner, butt square, lap, edge) are cut
 from MDF, and so are the base plates every printed part below stands on.
 
@@ -13,8 +22,7 @@ extension" flag the bought pipes needed: their 2 mm walls were below the 3–8 m
 
 **Phase 9 rule per stratum:** ≥ 3 distinct geometries and ≥ 2 wall/plate thicknesses.
 
-*Assumed:* a print bed of ~220 × 220 × 250 mm, PLA or PETG. Change the sizes if the
-printer differs.
+*Printer:* Creality K1 Max, 300 × 300 × 300 mm bed, so every part fits.
 
 ## The list
 

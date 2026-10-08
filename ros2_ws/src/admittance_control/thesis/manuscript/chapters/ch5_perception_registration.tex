@@ -1,0 +1,110 @@
+% =====================================================================================
+\chapter{PERCEPTION AND REGISTRATION OF THE ASSEMBLY}
+\label{chp:perception}
+% Material: notes/perception_aciklama.md, readme_perception.md (the server side);
+% README Data flow C/D, Algorithms §2-7, §15; notes/realtime_fp.md;
+% notes/multiview_refine_plan.md; admitans kontrol açıklama.md §5-8.
+% =====================================================================================
+
+\section{Segmentation and Part Classification}
+\label{sec:per_classify}
+\TODO{The operator's click (gesture) on a frozen frame; SAM2 mask; masked depth to a
+point cloud; PPF classifier against the CAD library \cite{drost2010ppf}: point-pair
+features, voting, 12 hypotheses verified by coverage $\times$ explanation \cite{birdal2015ppf}.}
+\SRC{perception\_aciklama.md \S6--8; scripts/scripts\_in\_foundationpose/ppf\_classifier.py.}
+\begin{equation}
+\mathbf{F}(\vect{m}_1,\vect{m}_2) = \big(\norm{\vect{d}},\ \angle(\vect{n}_1,\vect{d}),\
+\angle(\vect{n}_2,\vect{d}),\ \angle(\vect{n}_1,\vect{n}_2)\big),\quad
+\vect{d}=\vect{m}_2-\vect{m}_1.
+\label{eq:ppf}
+\end{equation}
+
+\section{6D Pose Registration}
+\label{sec:per_register}
+\TODO{FoundationPose \cite{wen2024foundationpose}: hypotheses, render-and-compare
+refinement, scoring; untextured CAD; symmetric parts.}
+\SRC{perception\_aciklama.md \S9.}
+
+\section{Live Tracking}
+\label{sec:per_tracking}
+\TODO{FoundationPose's track\_one on the laptop GPU; latest-wins streaming; ego-motion
+cancelled with TF at the image stamp; lost detection and re-registration; 25--29 Hz,
+70--90 ms. The alternative ICP tracker and why it was replaced (CPU, moving parts).}
+\SRC{realtime\_fp.md (design S1--S11, status); thesis\_notes.md 2026-10-02 and 2026-10-06.}
+\figplaceholder{fig:tracking_split}{Desktop registers, laptop tracks: data flow and rates}{The
+registration / tracking split between two GPUs.}
+
+\section{Stationary Refinement and Saving}
+\label{sec:per_stationary}
+Point-to-plane ICP minimises the distance of each model point to the tangent plane of
+its closest scene point,
+\begin{equation}
+E(\mathbf{R},\vect{t}) = \sum_i w_i\,\Big(\big(\mathbf{R}\vect{p}_i+\vect{t}-\vect{q}_i\big)^{\!\top}\vect{n}_i\Big)^2,
+\qquad w_i = \exp\!\Big(-\frac{r_i^2}{2\nu^2}\Big),
+\label{eq:p2plane}
+\end{equation}
+with Welsch weights $w_i$ \cite{zhang2022fricp}. A pair counts only if the normals agree
+(the normal gate):
+\begin{equation}
+(\mathbf{R}\,\vect{n}^{\mathrm{model}}_i)^{\top}\vect{n}^{\mathrm{scene}}_j \ge \cos 60^\circ .
+\label{eq:normal_gate}
+\end{equation}
+\TODO{Why the gate: the 8 mm plate straddling its own two faces (6.5$^\circ$ lean, root
+10 mm off). The robust mean of poses at rest (median translation, chordal mean
+rotation). The save-time ICP from the tracker pose (6--11 mm interpenetration without it).}
+\SRC{README Algorithms \S4--7; pose\_stats.py; icp\_pose\_refiner\_node \_fp\_icp\_refine;
+thesis\_notes.md 2026-09-29, 2026-10-06 (evening).}
+
+\section{Multi-View Close-Range Refinement}
+\label{sec:per_multiview}
+\SRC{multiview\_refine\_plan.md (design D1--D8, steps); README \S15;
+admitans kontrol açıklama.md \S8.}
+
+\subsection{View Planning}
+\TODO{Seam-region targets; visibility (range, field of view, incidence, occlusion);
+greedy selection with diminishing returns; IK, singularity and collision checks.}
+\figplaceholder{fig:views}{The four planned views around a T-joint (RViz arrows) and the
+stacked clouds coloured by view}{Planned close-range views.}
+
+\subsection{Joint Refinement of Touching Parts}
+For part $k$ with correction $\boldsymbol{\xi}_k\in\mathfrak{se}(3)$ about its centre,
+\begin{equation}
+\min_{\boldsymbol{\xi}_k}\ \sum_{v}\sum_{i\in\mathcal{O}_k^v} \rho\big(r_{v,i}\big)^2
++ \boldsymbol{\xi}_k^{\top}\boldsymbol{\Sigma}^{-1}\boldsymbol{\xi}_k\,\sigma^2
++ w_o\sum_{c}\max\!\big(0,\,-\mathrm{sd}_c-\varepsilon\big)^2,
+\label{eq:mv_objective}
+\end{equation}
+\TODO{Ownership with a dead band; parts take turns (block coordinate descent, 2 rounds);
+the prior; the one-sided overlap rule; equal weight per view.}
+
+\subsection{Observability}
+With the information matrix $\mathbf{H}=\mathbf{J}^{\top}\mathbf{W}\mathbf{J}$ and its
+eigenvalues $\lambda$, a direction is measured when
+\begin{equation}
+\sigma_{\mathrm{dir}} = \frac{\sigma_{\mathrm{noise}}}{\sqrt{\lambda}} \le 0.5\ \mathrm{mm}.
+\label{eq:observability}
+\end{equation}
+
+\subsection{Online Estimation of the Camera's Extrinsic Translation}
+\label{sec:mv_selfcal}
+An extrinsic translation error $\vect{d}$ (camera frame) shifts view $v$'s cloud by
+$\mathbf{R}_v\vect{d}$:
+\begin{equation}
+r_{v,i} = \vect{n}_i^{\top}\big(\mathbf{T}\vect{p}_i - \vect{q}_i + \mathbf{R}_v\vect{d}\big),
+\qquad
+\mathbf{S} = \mathbf{N}_{dd} - \mathbf{N}_{dx}\mathbf{N}_{xx}^{+}\mathbf{N}_{xd}.
+\label{eq:extrinsic_d}
+\end{equation}
+\TODO{The joint estimate and its Schur-complement information; taking $\mathbf{R}_v\vect{d}$
+out of the views and $\mathbf{R}_{\mathrm{scan}}\vect{d}$ out of the saved poses; why the
+joint fit alone does not remove $\vect{d}$; the table as a reference (open).}
+
+\subsection{Acceptance and the Fit-Up Gap}
+\TODO{Rejection rules (correction, fitness, overlap, unmeasured relative change); the
+fit-up gap against ISO 5817:2023 no.~617.}
+\begin{equation}
+h_{\max} = c_0 + c_1\,a,\quad a = 0.7\,t:\ \ (c_0,c_1) = (0.5,0.1)_{B},\ (0.5,0.2)_{C},\ (1,0.3)_{D}\ \mathrm{mm}
+\label{eq:iso_gap}
+\end{equation}
+\TODO{Verify Eq.~\ref{eq:iso_gap} and its caps against the standard's Table~1, no.~617
+\cite{iso5817}. For $t=8$ mm it gives 1.06 / 1.62 / 2.68 mm (B / C / D).}

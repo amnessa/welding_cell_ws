@@ -1,0 +1,61 @@
+% =====================================================================================
+\chapter{SEAMS, TACKS AND MOTION}
+\label{chp:seams}
+% Material: notes/seam_two_modes_plan.md; README Algorithms §8; notes/pen_marking_plan.md;
+% notes/aps_transit_plan.md; admitans kontrol açıklama.md §9-12.
+% =====================================================================================
+
+\section{Seams from the Registered Assembly}
+\label{sec:seam_modeA}
+\TODO{Mode A: each part as a WeldSet primitive at its registered pose; the D4 rule of
+\S\ref{sec:ws_d4} with a pose tolerance instead of a contact tolerance; the seam line
+is invariant to a plate's in-plane slide; the fit-up diagnostic. Limits (thin laps).}
+\SRC{seam\_from\_registration.py docstring; README Algorithms \S8.}
+
+\section{Tack Placement}
+\label{sec:tack_placement}
+\TODO{tackrule-0.1 applied to the computed seams (Eq.~\ref{eq:tackrule_n}); the weld
+order.}
+\TODO{OPEN DECISION: robot-aware placement, i.e.\ a quality field over the arc length and
+the tool roll (IK feasibility, $\sigma_{\min}(\mathbf{J})$, force transmission, joint
+margins, camera visibility, clearance) and the exact dynamic programme for $k$ tacks.
+Is it in this thesis (then a section with its results) or future work (then
+Chapter~\ref{chp:conclusion})?}
+\SRC{thesis\_direction\_handoff.md \S4 (stages 1--3); notes/quality\_field\_k\_point\_selection.md.}
+
+\section{Reachability}
+\label{sec:reach}
+\TODO{Elbow-up branch lock; per seam a tilt $\times$ roll search maximising the smallest
+clearance over the approach pose, the tack pose and the straight descent.}
+\SRC{tack\_reach.py; README node table (tack\_reachability).}
+
+\subsection{Collision Model}
+\TODO{Arm capsules on the joint frames, the tool envelope from CAD, parts as boxes, the
+table; capsule--capsule and capsule--box distances; box--box as an intersection test
+(a known limitation).}
+\SRC{collision.py docstring.}
+
+\section{Transit Planning}
+\label{sec:transit}
+\TODO{The straight edge first; otherwise OMPL's AnytimePathShortening
+\cite{luo2014aps,sucan2012ompl}: parallel RRT-Connect planners, path hybridisation,
+shortcutting, within a time budget; planning in scaled joint coordinates
+$y_j = w_j q_j$ so that path length is weighted joint travel; the collision model ported
+to C++ and proven equal to the Python model; a 2 mm planning margin; the spline and
+time-optimal parameterisation \cite{kunz2012totg}.}
+\SRC{aps\_transit\_plan.md (design and status); src/transit\_cpp.cpp; test\_transit\_cpp.py.}
+\begin{equation}
+c(\text{path}) = \sum_{k}\norm{\mathbf{W}(\vect{q}_{k+1}-\vect{q}_k)}_2,\qquad
+\mathbf{W}=\operatorname{diag}(2,\,2,\,1.5,\,1,\,1,\,0.5).
+\label{eq:transit_cost}
+\end{equation}
+
+\section{Force-Gated Descent and Marking}
+\label{sec:marking}
+\TODO{Descent as an IK chain along the pen axis; the roll fallback when the reachability
+roll fails at the stroke start; two-speed approach (20 / 2 mm/s); cancellation at
+1.5 N; dot or stroke with force-corrected depth; the wrench bias re-measured before free
+moves.}
+\SRC{tack\_marking\_node.py, marking.py, motion.py; pen\_marking\_plan.md.}
+\figplaceholder{fig:marking_sequence}{Approach, descent, contact, stroke, retract: joint
+trajectory and the force along the pen axis}{One tack, from transit to retract.}

@@ -1,0 +1,69 @@
+% =====================================================================================
+\chapter{INTRODUCTION}
+\label{chp:introduction}
+% Lab convention (all six examples): Motivation and Problem Definition -> Proposed
+% Methods and Models -> Contributions and Novelties -> The Outline of the Thesis.
+% Write this chapter after Chapters 3-7 (THESIS_PLAN.md, writing order).
+% =====================================================================================
+
+\section{Motivation and Problem Definition}
+\label{sec:motivation}
+
+\TODO{Tack welding: what a tack is, why assemblies are tacked before welding, and that
+in industry a human places the tacks (``human tacks, robot welds'').}
+\SRC{weld\_generator/notes/thesis\_direction\_handoff.md \S4 (the LWSNet \S5.5.1 quote);
+the literature map in \S5 of the same file.}
+
+\TODO{Why this is hard for a robot: the parts are placed by hand and their poses are not
+known; the seam must be found; the tool must reach it; the accuracy budget is a few
+millimetres with a consumer RGB-D camera.}
+
+\TODO{The ground-truth problem of the field: every published weld-seam dataset is
+hand-annotated and private (``available on reasonable request'').}
+
+\TODO{Problem statement in one paragraph: given CAD models of the parts and an
+eye-in-hand RGB-D camera, place the tacks of a hand-placed assembly with a robot,
+vision only (no touch sensing), and measure how close they land.}
+
+\figplaceholder{fig:intro_cell}{Photo of the cell: UR5e, wrist camera, pen tool, a T-joint
+of two MDF plates, a mark on the seam}{The tack-marking cell: UR5e with an eye-in-hand
+D435i and a pen in place of the torch.}
+
+\section{Proposed Methods and Models}
+\label{sec:proposed}
+
+\TODO{Two parts, one sentence each:
+(i) WeldSet: a synthetic dataset generator whose seam and tack ground truth is
+analytic (exact), and a benchmark of literature methods on it;
+(ii) a vision-only robotic cell: CAD registration, live tracking, multi-view
+refinement with online camera self-calibration, seams computed from the registered
+CAD, tacks by a published rule, collision-free planning and force-gated pen marking.}
+
+\figplaceholder{fig:intro_pipeline}{The pipeline map (notes/pipeline\_map.png, redrawn in
+English)}{Overview of the pipeline from an RGB-D frame to a pen mark.}
+
+\section{Contributions and Novelties}
+\label{sec:contributions}
+
+\TODO{Rewrite each item as one sentence that says what is new, and keep the pointer.}
+\begin{itemize}
+\item Analytic seam and tack ground truth, regenerable at any density, public code
+      (Chapter~\ref{chp:weldset}).
+\item A benchmark of literature seam-detection methods on 12 strata (Chapter~\ref{chp:weldset}).
+\item Seams computed from registered CAD with a pose-tolerant accessibility rule
+      (Chapter~\ref{chp:seams}).
+\item Multi-view close-range refinement that estimates the camera's extrinsic
+      translation online from the views' disagreement (Chapter~\ref{chp:perception}).
+\item A calibration chain referenced to the robot itself, with the depth error's
+      $z^2$ law measured and removed (Chapter~\ref{chp:system}).
+\item A validated vision-only cell: pen marks within 2.3--2.7~mm of the seam root
+      (Chapter~\ref{chp:experiments}).
+\end{itemize}
+\TODO{Decide with the advisor whether robot-aware tack placement (quality field +
+dynamic programming) is a contribution here or future work (THESIS\_PLAN.md, open
+decisions).}
+
+\section{The Outline of the Thesis}
+\label{sec:outline}
+
+\TODO{One short paragraph per chapter, written last.}
