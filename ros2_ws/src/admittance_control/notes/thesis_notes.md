@@ -12,6 +12,66 @@ the plans under `notes/`; this file keeps the story and the numbers.
 
 ---
 
+## 2026-10-09 (night): The first curved-parts bench, and three silent failures
+
+**What happened.** The printed parts went through the live pipeline. Perception worked:
+PPF named every part, and FoundationPose registered and tracked them. Behind that,
+three things failed quietly:
+1. **The seam step never ran.** A new module was missing from the package's explicit
+   install list. Every test imports from the source tree and passed. The launched node
+   imports the installed package, logged one warning, and fell back to the old
+   point-cloud detector.
+2. **Re-registration jumped to another part.** When the tracker lost a part, it sent the
+   frame with a mask projected from the last pose. The desktop reclassified it and
+   answered the plate under the part.
+3. **A near miss was invisible.** S3 on R2 produced the right saddle, 69.4° against
+   70° drawn, but one end of the gap reached 10.5 mm against a 10 mm tolerance, so the
+   pair was dropped without a word.
+
+**Evidence.**
+- C1 → `test_objv2_ear` and E2 → ear → base on re-registration.
+- PPF margins of 0.04–0.39 (R2 the thinnest).
+- ICP at save refused 30.8° on R2: all of it spin about the pipe's own axis, which is
+  unobservable.
+- S3's axis was registered 7 mm to the side of R2's.
+
+**What we learned.**
+- A fallback that only logs makes a failure look like a result. Each one now either
+  fails a test (the install list), refuses loudly (a re-registration naming another
+  part), or reports the near miss with its numbers.
+- Symmetry must be told to the estimator. An axisymmetric part's spin is noise, so the
+  gate measures only the tilt of the axis.
+
+---
+
+## 2026-10-09 (evening): A loop round a pipe needs a pen roll per tack
+
+**What happened.** The tack planner chose one pen roll per seam and capped the joint
+step between consecutive tacks at 69°. That rule had served the straight plate seams
+well. On the first closed seam, the 4 tacks round the 62 mm pipe C1, it failed the
+whole seam at the second tack: the wrist would have to turn 115°. The collision model
+also boxed each pipe with one box, whose corners stood 41 % of r (13 mm on C1) outside
+the wall, right where 45° tacks sit.
+
+**Evidence.**
+- With a roll per tack (chosen by clearance up to 10 mm, then the smallest joint step),
+  bench-like scenes reach every tack of C1, E2 and RR1, with 6.6–9.7 mm minimum
+  clearance.
+- The two failures are geometric and reported, not forced:
+  - SP3: 4/6, the holder within 1.7 mm of the band at its concave lobes;
+  - S3 on R2: 3/4, the far side has no elbow-up solution.
+- Pipes as 6 rotated boxes stand ≤ 3.3 % of r proud (1 mm on C1). Mitred and
+  saddle-cut pipes become sector boxes, each from its own lowest cut point. Bands become
+  box chains within 1 mm. The C++ planner did not change.
+
+**What we learned.** On a straight seam the torch frame is fixed, so "one orientation
+per seam" is a smoothness rule. On a closed seam the frame rotates through 360°, and the
+same rule becomes an impossibility. The right unit of planning follows the seam's
+geometry: per seam for lines, per tack for curves, with each move between tacks left
+to the transit planner.
+
+---
+
 ## 2026-10-09: Fitting printed parts back to analytic primitives; a CAD that looked right was not
 
 **What happened.** The first six 3D-printed curved parts were fitted back to WeldSet

@@ -581,13 +581,23 @@ class FpTrackerNode(Node):
         try:
             if not mask_b64:
                 raise RuntimeError('the tracker had no pose to project a mask from')
+            with self._lock:
+                tracked = self._object
             T, name, sec = fs.post_predict_pose(
                 self._cfg['register_url'], K, 0.001, rgb, depth, base64.b64decode(mask_b64),
-                timeout=self._cfg['request_timeout_sec'])
+                timeout=self._cfg['request_timeout_sec'], object_name=tracked)
             with self._lock:
                 stopped = self._seed is None
             if stopped:
                 return
+            # A re-registration re-finds the SAME part. Without the name the desktop's
+            # PPF reclassified the projected mask and the tracker jumped to the plate
+            # under the part (2026-10-09: C1 -> test_objv2_ear, E2 -> ear -> base); a
+            # server that ignores `object_name` can still answer another part - refuse it.
+            if tracked and name and name != tracked:
+                raise RuntimeError(f"the desktop answered '{name}', not the tracked "
+                                   f"'{tracked}' (update fp_server.py for object_name); "
+                                   "still LOST - re-trigger the part")
             self._start(T, name, T_base_cam)
             self.get_logger().info(f're-registered {name} on the desktop in {sec:.1f} s; '
                                    'tracking restarted from it')

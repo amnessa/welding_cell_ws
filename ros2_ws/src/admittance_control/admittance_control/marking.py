@@ -411,11 +411,46 @@ def stroke_targets(mode: str, report_tacks: Sequence[dict[str, Any]],
     seams = {int(s["id"]): s for s in (seams_json or [])}
     for t in report_tacks:
         tid = int(t["tack_id"])
-        if mode == "tack" and tid in by_id:
-            out[tid] = np.array([by_id[tid]["p0_mm"], by_id[tid]["p1_mm"]], float) / 1000.0
-        elif mode == "seam" and int(t["seam_id"]) in seams:
-            out[tid] = np.asarray(seams[int(t["seam_id"])]["polyline_mm"], float) / 1000.0
+        seam = seams.get(int(t["seam_id"]))
+        tk = by_id.get(tid)
+        curved = bool(seam and seam.get("approach_per_point"))
+        if tk is not None and (mode == "tack" or (mode == "seam" and curved)):
+            # a curved seam: the tack's own piece of the curve (a chord p0->p1 misses a
+            # 31 mm pipe by 0.6 mm at a 12 mm tack), and in `seam` mode too - one pen
+            # axis cannot draw a loop round a pipe
+            if curved and "arclength_mm" in tk:
+                out[tid] = seam_section(seam, float(tk["arclength_mm"]),
+                                        float(tk["tack_length_mm"])) / 1000.0
+            elif mode == "tack":
+                out[tid] = np.array([tk["p0_mm"], tk["p1_mm"]], float) / 1000.0
+        elif mode == "seam" and seam is not None:
+            out[tid] = np.asarray(seam["polyline_mm"], float) / 1000.0
     return out
+
+
+def stroke_modes(mode: str, report_tacks: Sequence[dict[str, Any]],
+                 seams_json: Sequence[dict[str, Any]] | None = None) -> dict[int, str]:
+    """The stroke each tack really draws, by tack id: `mode`, except `seam` on a curved
+    seam, which draws the tack's own section (`stroke_targets`) and is therefore `tack` -
+    so the node's once-per-seam skip does not drop the other tacks of a loop."""
+    curved = {int(s["id"]) for s in (seams_json or []) if s.get("approach_per_point")}
+    return {int(t["tack_id"]): ("tack" if mode == "seam" and int(t["seam_id"]) in curved
+                                else mode) for t in report_tacks}
+
+
+def seam_section(seam: dict[str, Any], s_mid_mm: float, length_mm: float,
+                 step_mm: float = 1.0) -> np.ndarray:
+    """The piece of a seam polyline centred at arclength `s_mid_mm`, `length_mm` long,
+    resampled every `step_mm` (mm; a closed seam wraps)."""
+    poly = np.asarray(seam["polyline_mm"], float)
+    closed = bool(seam.get("closed"))
+    if closed:
+        poly = np.vstack([poly, poly[:1]])
+    cum = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(poly, axis=0), axis=1))])
+    n = max(2, int(np.ceil(length_mm / step_mm)) + 1)
+    s = np.linspace(s_mid_mm - 0.5 * length_mm, s_mid_mm + 0.5 * length_mm, n)
+    s = np.mod(s, cum[-1]) if closed else np.clip(s, 0.0, cum[-1])
+    return np.column_stack([np.interp(s, cum, poly[:, k]) for k in range(3)])
 
 
 def _roll_offsets(cfg: MarkingConfig) -> list[float]:
@@ -463,12 +498,13 @@ def descent_check(tool, model: CollisionModel, cfg: MarkingConfig, point: np.nda
 def build_marking_plan(report: dict[str, Any], tool, model: CollisionModel,
                        cfg: MarkingConfig, q_now: np.ndarray, overshoot_m: float = 0.003,
                        edge_resolution: float = 0.01, strokes: dict[int, np.ndarray] | None = None,
-                       stroke_mode: str = "dot", smooth_transits: bool = False,
+                       stroke_mode: str | dict[int, str] = "dot", smooth_transits: bool = False,
                        transit_opts: dict | None = None) -> MarkingPlan:
     """Transit + descent for every reachable tack of a `tack_reach.json` report, in visit
     order, starting from the robot's current joints and ending with a path home. With
     `strokes` (from `stroke_targets`) the descent aims at the stroke's first point and the
-    step carries the polyline to draw after contact. `smooth_transits`: round the transits'
+    step carries the polyline to draw after contact (`stroke_mode`: one mode, or one per
+    tack id from `stroke_modes`). `smooth_transits`: round the transits'
     corners (`transit_path(..., smooth=True)`). `transit_opts`: the planner choice for
     every transit (`planner`, `budget_s`, `num_planners`, `max_paths`)."""
     opts = dict(transit_opts or {})
@@ -486,7 +522,8 @@ def build_marking_plan(report: dict[str, Any], tool, model: CollisionModel,
         step.tack_point_m = step.point_m.copy()
         if step.tack_id in strokes and len(strokes[step.tack_id]) >= 2:
             step.stroke_points_m = np.asarray(strokes[step.tack_id], float)
-            step.stroke_mode = stroke_mode
+            step.stroke_mode = (stroke_mode.get(step.tack_id, "tack")
+                                if isinstance(stroke_mode, dict) else stroke_mode)
             step.point_m = step.stroke_points_m[0].copy()     # descend at the stroke's start
         # The descent first: its approach pose decides where the transit goes. The
         # reachability report chose one roll per seam for the TACK CENTRE; at a stroke start

@@ -457,7 +457,10 @@ def compute_tacks(parts, seams: Sequence[dict[str, Any]], scene_id: str = "cell"
                       "point_mm": [float(v) for v in block["points_mm"][k]],
                       "p0_mm": [float(v) for v in ends[0]], "p1_mm": [float(v) for v in ends[1]],
                       "tack_length_mm": float(block["tack_length_mm"][k]),
-                      "approach": _approach_at(seam, s_mid)})
+                      "approach": _approach_at(seam, s_mid),
+                      # a curved seam's axes rotate along it: reachability picks the pen
+                      # roll per tack there, not once per seam
+                      "seam_closed": closed, "seam_curved": bool(seam.get("approach_per_point"))})
     # 1-based position along each seam, by arclength from the seam's p0
     for sid in set(t["seam_id"] for t in tacks):
         on = sorted((t for t in tacks if t["seam_id"] == sid), key=lambda t: t["arclength_mm"])

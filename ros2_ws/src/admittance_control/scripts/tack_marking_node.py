@@ -16,8 +16,11 @@ no controller switching.
     ros2 service call /tack_marking/all   std_srvs/srv/Trigger   # every remaining tack, then home
     ros2 service call /tack_marking/home  std_srvs/srv/Trigger
     ros2 service call /tack_marking/abort std_srvs/srv/Trigger   # cancel the running goal
-    # -p stroke_mode:=tack   draw each tack's own segment (p0 -> p1, welding_tacks.json)
+    # -p stroke_mode:=tack   draw each tack's own segment (p0 -> p1, welding_tacks.json;
+    #                        on a curved seam its own piece of the curve)
     # -p stroke_mode:=seam   draw the whole weldable seam (welding_seams.json), once per seam
+    #                        (a curved seam: each tack draws its piece - one pen axis
+    #                        cannot draw a loop round a pipe)
 
 `dry_run:=true` (default) computes and publishes everything (the planned tip path on
 /tack_marking/tip_path, the log) and sends NO goal. Set it false only after the plan
@@ -72,7 +75,8 @@ from admittance_control import seam_from_registration as sfr  # noqa: E402
 from admittance_control.collision import CollisionModel, boxes_from_parts  # noqa: E402
 from admittance_control.kinematics import active_kinematics, ur5e_fk, use_kinematics  # noqa: E402
 from admittance_control.marking import (build_marking_plan, contact_depth_m, line_chain,  # noqa: E402
-                                        plan_to_dict, stroke_chain, stroke_targets,
+                                        plan_to_dict, stroke_chain, stroke_modes,
+                                        stroke_targets,
                                         time_descent, transit_model)
 from admittance_control.motion import TrajectoryExecutor  # noqa: E402
 from admittance_control.tack_reach import load_marking_config, same_branch  # noqa: E402
@@ -273,7 +277,9 @@ class TackMarkingNode(Node):
         strokes = stroke_targets(mode, self._report['tacks'], self._tacks_json, self._seams_json)
         self._plan = build_marking_plan(self._report, self._tool, self._model, self._cfg, q,
                                         float(self.get_parameter('overshoot_m').value),
-                                        strokes=strokes, stroke_mode=mode,
+                                        strokes=strokes,
+                                        stroke_mode=stroke_modes(mode, self._report['tacks'],
+                                                                 self._seams_json),
                                         smooth_transits=bool(self.get_parameter('smooth_transits').value),
                                         transit_opts=self._transit_opts())
         self._drawn_seams = set()

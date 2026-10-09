@@ -315,12 +315,16 @@ class LatestSlot:
 
 # ── registration server (/predict_pose) ───────────────────────────────────
 
-def post_predict_pose(url, K, depth_scale_m, rgb, depth, mask_png, timeout=120.0):
+def post_predict_pose(url, K, depth_scale_m, rgb, depth, mask_png, timeout=120.0,
+                      object_name=None):
     """One frame + object mask -> fp_server.py /predict_pose -> (T_cam_obj, name, s).
 
     The same payload the bridge node sends: rgb.png, 16-bit depth.png, camera.json
     ({"cam_K", "depth_scale": raw units -> mm}), plus `mask` so the server needs no
     operator. `rgb` is RGB uint8, `depth` uint16 raw units, `mask_png` PNG bytes.
+    `object_name` (a re-registration: the part is already known) asks the server to
+    register that CAD and skip PPF; a server without that field ignores it and
+    classifies - the caller compares the returned name.
     The pose is in the camera frame of this frame, CAD frame, metres. Raises
     RuntimeError with the server's message on any failure.
     """
@@ -329,6 +333,8 @@ def post_predict_pose(url, K, depth_scale_m, rgb, depth, mask_png, timeout=120.0
     parts = [("rgb", "rgb.png", cv2.imencode(".png", cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))[1]),
              ("depth", "depth.png", cv2.imencode(".png", np.asarray(depth, np.uint16))[1]),
              ("camera", "camera.json", camera), ("mask", "mask.png", mask_png)]
+    if object_name:
+        parts.append(("object_name", "object_name.txt", str(object_name).encode()))
     boundary = uuid.uuid4().hex
     body = b"".join(
         f"--{boundary}\r\nContent-Disposition: form-data; name=\"{f}\"; "

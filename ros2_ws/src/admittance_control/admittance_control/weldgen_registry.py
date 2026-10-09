@@ -606,3 +606,16 @@ def load_registry(path) -> dict[str, Any]:
 
 def save_registry(reg: dict[str, Any], path) -> None:
     Path(path).write_text(json.dumps(reg, indent=2))
+
+
+def symmetry_axis(entry: dict[str, Any] | None) -> np.ndarray | None:
+    """The axis (CAD frame, unit) a part is fully symmetric about, or None.
+
+    A tube with no cut end (C1, R2) looks the same at any rotation about its axis, so
+    that rotation is unobservable to ICP and to the tracker. A cut end (E2's mitre,
+    S3's saddle) fixes it; a rounded-rect tube is only 4-fold symmetric."""
+    if not entry or entry.get("primitive") != "tube":
+        return None
+    if (entry.get("params") or {}).get("base_cut"):
+        return None
+    return np.asarray(entry["T_cad_prim"], float)[:3, 2]

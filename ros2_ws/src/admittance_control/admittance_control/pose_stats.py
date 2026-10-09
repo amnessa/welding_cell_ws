@@ -101,3 +101,42 @@ def robust_pose_mean(poses: Sequence[np.ndarray], k_mad: float = 3.5,
              "range_mm": [float(v) for v in (t.max(axis=0) - t.min(axis=0)) * 1000.0],
              "std_deg": float(ang_in.std()), "max_deg": float(ang.max())}
     return T_mean, stats
+
+
+def remove_twist(R_ref: np.ndarray, R_new: np.ndarray, axis_obj: np.ndarray
+                 ) -> tuple[np.ndarray, float, float]:
+    """`R_new` with its rotation about a symmetry axis put back to `R_ref`'s.
+
+    For an axisymmetric part (a pipe with two flat ends) the rotation about its own axis
+    is unobservable: ICP and the tracker each return an arbitrary one. Split the
+    correction R_d = R_ref^T R_new (object frame) into swing (tilts the axis) and twist
+    (spins about it); keep the swing only. Returns (R_ref @ swing, swing_deg, twist_deg).
+    """
+    a = np.asarray(axis_obj, float)
+    a = a / np.linalg.norm(a)
+    R_d = np.asarray(R_ref, float).T @ np.asarray(R_new, float)
+    # quaternion (w, v) of R_d
+    w = np.sqrt(max(0.0, 1.0 + np.trace(R_d))) / 2.0
+    v = np.array([R_d[2, 1] - R_d[1, 2], R_d[0, 2] - R_d[2, 0], R_d[1, 0] - R_d[0, 1]])
+    if w > 1e-6:
+        v = v / (4.0 * w)
+    else:                                   # 180 deg: axis from the symmetric part
+        Bm = (R_d + np.eye(3)) / 2.0
+        k = int(np.argmax(np.diag(Bm)))
+        v = Bm[:, k] / np.sqrt(max(Bm[k, k], 1e-12))
+    p = (v @ a) * a                         # twist: the part of the axis along `a`
+    tw = np.array([w, *p])
+    n = np.linalg.norm(tw)
+    tw = np.array([1.0, 0.0, 0.0, 0.0]) if n < 1e-12 else tw / n
+
+    def qmat(q):
+        qw, qx, qy, qz = q
+        return np.array([[1 - 2 * (qy * qy + qz * qz), 2 * (qx * qy - qz * qw), 2 * (qx * qz + qy * qw)],
+                         [2 * (qx * qy + qz * qw), 1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz - qx * qw)],
+                         [2 * (qx * qz - qy * qw), 2 * (qy * qz + qx * qw), 1 - 2 * (qx * qx + qy * qy)]])
+
+    R_twist = qmat(tw)
+    R_swing = R_d @ R_twist.T
+    swing = float(np.degrees(np.arccos(np.clip((np.trace(R_swing) - 1) / 2, -1.0, 1.0))))
+    twist = float(np.degrees(2 * np.arccos(np.clip(abs(tw[0]), -1.0, 1.0))))
+    return np.asarray(R_ref, float) @ R_swing, swing, twist

@@ -20,6 +20,10 @@ elbow-up / wrist-not-flipped signature of `home_q`) must match at every solution
 solutions on another branch are discarded, never used. IK is the package's damped
 least squares, seeded from the previous solution (continuity) and from the home pose.
 
+Curved seams (closed loops round a pipe, S-bands) are the exception: their approach
+axis rotates along the seam, so each tack gets its own (tilt, roll) and the seam reports
+how many of its tacks are reachable (`_plan_per_tack`).
+
 Orientation choice per seam: every (work-angle tilt, roll) on the grids is tried for all
 tacks of the seam (ascending `tack_no`). The tilt rotates the pen off the bisector about
 the seam tangent within the admissible cone (`work_angles_deg`); the roll is the free
@@ -301,9 +305,53 @@ def _score(plans: Sequence[TackPlan], q_from: np.ndarray, cfg: MarkingConfig) ->
     return travel + 3.0 * sing
 
 
+#: On a curved seam each tack picks its own (tilt, roll): past this clearance (m) more
+#: room is not worth a bigger wrist move, so the smaller joint step from the previous
+#: tack wins.
+PER_TACK_ENOUGH_CLEARANCE_M = 0.010
+
+
+def _plan_per_tack(seam_tacks: Sequence[dict[str, Any]], tilts, rolls, q_from: np.ndarray,
+                   tool, model: CollisionModel, cfg: MarkingConfig, rng) -> list[TackPlan]:
+    """A curved seam (round a pipe, along an S-band): the approach axis rotates with the
+    seam, so one roll for the whole seam would put the camera arm into the pipe on the
+    far side. Every tack is solved on its own - the best (tilt, roll) by clearance up to
+    `PER_TACK_ENOUGH_CLEARANCE_M`, then by the smallest joint step from the previous
+    reachable tack - and an unreachable tack is reported with the reason of its best
+    attempt without stopping the others. The joint-step limit between tacks does not
+    apply: each tack is reached by its own planned transit (APS), not by a wrist turn."""
+    plans: list[TackPlan] = []
+    q_prev = np.asarray(q_from, float)
+    seeds = [q_prev, cfg.home_q]
+    for t_ in seam_tacks:
+        best, best_key, fail = None, None, None
+        for tilt in tilts:
+            for roll in rolls:
+                p = _try_tack(t_, roll, tilt, seeds, tool, model, cfg, rng)
+                if p.ok:
+                    clr = min(p.clearance_app_m, p.clearance_tack_m, p.lin_min_clearance_m)
+                    step = float(np.abs(_unwrap_to(p.q_app, q_prev) - q_prev).max())
+                    key = (-min(round(clr, 3), PER_TACK_ENOUGH_CLEARANCE_M), step)
+                    if best_key is None or key < best_key:
+                        best, best_key = p, key
+                elif fail is None or (np.isfinite(p.clearance_tack_m)
+                                      and p.clearance_tack_m > fail.clearance_tack_m):
+                    fail = p
+        chosen = best or fail
+        if chosen.q_app is not None:
+            chosen.joint_step_from_prev_rad = float(
+                np.abs(_unwrap_to(chosen.q_app, q_prev) - q_prev).max())
+        plans.append(chosen)
+        if chosen.ok:
+            q_prev = chosen.q_app
+            seeds = [q_prev, cfg.home_q]
+    return plans
+
+
 def plan_tacks(tacks: Sequence[dict[str, Any]], tool, model: CollisionModel,
                cfg: MarkingConfig, seed: int = 0) -> dict[str, Any]:
-    """One roll per seam, every tack judged; returns the report as a dict."""
+    """One roll per straight seam, one per tack on a curved seam (`_plan_per_tack`);
+    every tack judged; returns the report as a dict."""
     rng = np.random.default_rng(seed)
     rolls = np.deg2rad(np.asarray(cfg.roll_list_deg, float) if cfg.roll_list_deg
                        else np.arange(0.0, 360.0, cfg.roll_step_deg))
@@ -316,6 +364,24 @@ def plan_tacks(tacks: Sequence[dict[str, Any]], tool, model: CollisionModel,
     q_from = cfg.home_q
     for sid in sorted(by_seam):
         seam_tacks = sorted(by_seam[sid], key=lambda t_: int(t_["tack_no"]))
+        if any(t_.get("seam_curved") for t_ in seam_tacks):
+            chosen = _plan_per_tack(seam_tacks, tilts, rolls, q_from, tool, model, cfg, rng)
+            ok_plans = [p for p in chosen if p.ok]
+            if ok_plans:
+                q_from = ok_plans[-1].q_app
+            seams_out.append({
+                "seam_id": sid, "ok": len(ok_plans) == len(chosen), "per_tack": True,
+                "closed": bool(seam_tacks[0].get("seam_closed")),
+                "roll_deg": None, "tilt_deg": None, "n_tacks": len(chosen),
+                "n_reachable": len(ok_plans),
+                "unreachable": [{"tack_no": p.tack_no, "reason": p.reason}
+                                for p in chosen if not p.ok],
+                "min_clearance_m": (min(min(p.clearance_app_m, p.clearance_tack_m,
+                                            p.lin_min_clearance_m) for p in ok_plans)
+                                    if ok_plans else None),
+                "score": _score(ok_plans, cfg.home_q, cfg) if ok_plans else None})
+            all_plans.extend(chosen)
+            continue
         best: tuple[tuple[float, float], list[TackPlan]] | None = None
         best_failed: list[TackPlan] | None = None
         best_clr: tuple[float, str] | None = None        # the best tack-pose clearance seen
@@ -379,6 +445,16 @@ def plan_tacks(tacks: Sequence[dict[str, Any]], tool, model: CollisionModel,
 def format_report(report: dict[str, Any]) -> str:
     lines = [f"branch lock (lift, elbow, wrist_2 signs): {report['branch_signature']}"]
     for s in report["seams"]:
+        if s.get("per_tack"):
+            kind = "closed" if s.get("closed") else "curved"
+            head = (f"seam {s['seam_id']} ({kind}, roll per tack): "
+                    f"{s['n_reachable']}/{s['n_tacks']} tacks reachable")
+            if s["min_clearance_m"] is not None:
+                head += f", min clearance {s['min_clearance_m'] * 1000:.1f} mm"
+            lines.append(head)
+            for u in s["unreachable"]:
+                lines.append(f"  tack {s['seam_id']}.{u['tack_no']} UNREACHABLE - {u['reason']}")
+            continue
         if s["ok"]:
             lines.append(f"seam {s['seam_id']}: OK, tilt {s['tilt_deg']:+.0f} deg off the bisector, "
                          f"roll {s['roll_deg']:.0f} deg, {s['n_tacks']} tacks, min clearance "

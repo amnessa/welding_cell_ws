@@ -195,6 +195,8 @@ def test_a_tube_collision_box_wraps_the_tube_not_its_base_frame():
     reg = {"parts": {"pipe": {"primitive": "tube", "T_cad_prim": np.eye(4).tolist(),
                               "params": {"r_outer_mm": 31.0, "wall_mm": 3.0,
                                          "length_mm": 100.0}}}}
-    (b,) = boxes_from_parts(sfr.posed_parts([("pipe.ply", np.eye(4))], reg))
-    assert b["centre"] == pytest.approx([0.0, 0.0, 0.05], abs=1e-6)       # metres
-    assert b["half"] == pytest.approx([0.031, 0.031, 0.05], abs=1e-4)
+    boxes = boxes_from_parts(sfr.posed_parts([("pipe.ply", np.eye(4))], reg))
+    assert len(boxes) == 6 and all(b["name"].startswith("part_A_") for b in boxes)
+    for b in boxes:                                   # metres; about the axis, not the base
+        assert b["centre"] == pytest.approx([0.0, 0.0, 0.05], abs=1e-6)
+        assert b["half"] == pytest.approx([0.031, 0.031 * np.sin(np.pi / 12), 0.05], abs=1e-6)

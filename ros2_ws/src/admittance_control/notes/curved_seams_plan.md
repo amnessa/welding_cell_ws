@@ -146,10 +146,8 @@ sends every pair with a tube or a band to `pair_seams`.
 - `runtime_access` takes the sheet-thickness cap from flat parts only (a tube wall is
   not a sheet).
 - Bench-like scenes run in 0.1–0.8 s (C1, E2, RR1, S3 on R2).
-- `collision.boxes_from_parts` boxes a tube or band around its mesh. Before, a tube
-  would have been boxed about its base frame, half its length off. The box is
-  conservative (a pipe's box corners stand r(√2 − 1) proud of the wall); step 3
-  decides whether the collision model needs a cylinder.
+- `collision.boxes_from_parts` boxed a tube or band around its mesh (before, a tube
+  was boxed about its base frame, half its length off); step 3 replaced the one box.
 
 **Tests:**
 - `test/test_curved_registry.py` (13):
@@ -172,6 +170,115 @@ sends every pair with a tube or a band to `pair_seams`.
   - closed-seam tacks with their own approach;
   - an unsupported pair.
 
-**Next:** step 3. Run `tack_reachability` on a closed seam: full loops need large wrist
-rolls, so expect and report unreachable far-side tacks, and decide on the cylinder in
-the collision model. Then step 4, the bench (C1 on the 8 mm plate first).
+**Step 3 done (2026-10-09).** Reachability, collision boxes and strokes for curved
+seams.
+
+- **One roll per seam does not work round a pipe.** The approach axis rotates with the
+  seam. The planner's rule (one roll per seam, at most 69° of joint step between
+  consecutive tacks) failed C1 at its second tack: the wrist would have to turn 115°.
+  - **Fix:** on a curved seam (`seam_curved` on the tack), `tack_reach._plan_per_tack`
+    solves every tack on its own.
+  - The best (tilt, roll) is chosen by clearance up to 10 mm, then by the smallest joint
+    step from the previous tack.
+  - An unreachable tack is reported with its reason, and the others go on.
+  - The step limit does not apply: each tack has its own APS transit.
+  - The seam reports `n_reachable / n_tacks`. `marking.visit_order` already marks only
+    the reachable tacks.
+- **The collision model gets the curved parts' real shape**, still as boxes, so the C++
+  planner is unchanged.
+  - **Pipe:** 6 boxes rotated about the axis. The union covers the disk and stands at
+    most 3.3 % of r outside it (1.0 mm on C1); the single box stood 41 % proud.
+  - **Cut pipe** (E2, S3): radial half-box sectors, each starting at its own lowest cut
+    point (E2: 33, S3: 23). They stand 0.2 mm outside the wall and hang at most 4.5 mm
+    below the cut under the wall, which is inside the 8 mm plate or inside R2.
+  - **Band:** a chain of boxes along the spine, each within 1 mm of the band (RR1: 9,
+    SP3: 12). A pipe's boxes are solid (bore included); a band's follow its wall.
+- **Strokes:** in `tack` mode, a tack on a curved seam draws its own piece of the curve
+  (`marking.seam_section`). The chord p0→p1 missed C1 by 0.6 mm at a 12 mm tack. In
+  `seam` mode a curved seam draws per-tack pieces too, because one pen axis cannot draw
+  a loop round a pipe. `stroke_modes` tells the node, so its once-per-seam skip does not
+  drop the loop's other tacks.
+
+Bench-like scenes (8 mm plate top at z 20 mm, the part centred at (0.55, 0.10) m,
+1 mm gap, the configured 3 mm clearance):
+
+| part | tacks | reachable | min clearance | unreachable because | plan time |
+|---|---|---|---|---|---|
+| C1 | 4 | 4 | 9.7 mm | | 14 s |
+| C1, one roll per seam (old) | 4 | fails at tack 2 | | joint step 115° > 69° | 7 s |
+| E2 | 4 | 4 | 6.6 mm | | 55 s |
+| RR1 | 4 | 4 | 9.6 mm | | 21 s |
+| SP3 (two fillets) | 6 | 4 | 9.1 mm | at the lobes' concave sides the holder is 1.7–1.8 mm from the band | 24 s |
+| S3 on R2 (R2 along x, axis 80 mm up) | 4 | 3 | 10.0 mm | the far-side tack has no IK on the elbow-up branch | 77 s |
+
+- The unreachable tacks are the expected kinds: the far side of a saddle, and a
+  concave fillet tighter than the pen holder. They are reported, not forced.
+  Turning the part by hand, or a slimmer holder, would reach them.
+- Planning is 14–77 s per part, offline (`scripts/tack_reachability.py`); the marking
+  node reads the result.
+
+**Tests:** `test/test_curved_reach.py` (6):
+- pipe boxes cover it, ≈ 1 mm proud;
+- mitre sectors hug the cut;
+- band chain covers the wall and leaves RR1's interior free;
+- the C1 loop reached with a roll per tack, and the old one-roll rule failing on it;
+- curved strokes follow the seam, and `seam` mode becomes per-tack.
+
+`test_curved_registry.py`'s tube-box test now expects the 6 boxes.
+
+**Step 4, first bench (2026-10-09, perception only).** All printed parts except SP3
+(still printing) went through capture → SAM2 → PPF → FoundationPose → tracking → save.
+
+| part | PPF margin over the runner-up | notes |
+|---|---|---|
+| C1 | 0.285 / 0.379 (over RR1) | tracker LOST once (fit 0.32) |
+| E2 | 0.386 (over smallplate) | tracker LOST (fit 0.12) |
+| RR1 | 0.103 (over C1) | tracker LOST (fit 0.49) |
+| R2 | **0.040** (over vplate) | the thinnest margin; ICP at save refused (spin) |
+| S3 | named S3 twice (scores 105, 108) | saved with ICP 1.1 mm / 1.3° |
+
+**What the bench found, and the fixes:**
+1. **Mode A never ran.** `curved_seams.py` was missing from CMakeLists' explicit install
+   list, so the installed package could not import it, and `~/welding_points` fell back
+   to the radius-PCA detector. The tests import from the source tree, so they passed.
+   - **Fixed:** the module is added, and `test/test_install_list.py` now fails on any
+     module missing from the list.
+2. **Re-registration switched parts.** On LOST, the tracker sends one frame and a mask
+   projected from the last pose to the desktop. The desktop's PPF reclassified that
+   mask and answered the plate under the part: C1 → `test_objv2_ear`, E2 → ear → base.
+   - **Fixed:** `fp_stream.post_predict_pose(..., object_name=)` sends the tracked name.
+     `fp_server.py` (the copy in `scripts_in_foundationpose`; **deploy it to the
+     desktop**) registers that CAD and skips PPF. `fp_tracker_node` refuses an answer
+     that names another part and stays LOST.
+3. **ICP at save was refused on the pipes:** R2 5.7 mm / 30.8°, C1 8.5 mm / 9.0°, against
+   the 8° gate. A flat-ended pipe looks the same at any spin about its own axis, so
+   that spin is arbitrary.
+   - **Fixed:** `pose_stats.remove_twist` keeps the tracker's spin, and applies and
+     gates only the axis tilt. It is used for uncut tubes only
+     (`weldgen_registry.symmetry_axis`; a cut end fixes the spin).
+4. **A near miss was silent.** In the replay of the saved assembly, S3 on R2 gives the
+   saddle at the right angle (69.4° vs 70°). But S3's axis is registered 7 mm to the
+   side of R2's, so the gap reads −5.3 to +10.5 mm against the 10 mm tolerance, and the
+   pair was dropped without a word.
+   - **Fixed:** within 2× the tolerance a pair is reported, rejected, as
+     `fitup_beyond_pose_tol (lo..hi mm)`.
+   - In that replay C1 and R2 overlap (axes 11 mm apart) because the parts were swapped
+     after saving, so C1's `bisector_blocked` there is not a finding.
+5. Not ours: the laptop tracker replied "Logger severity cannot be changed between
+   calls" after several LOST events (the FoundationPose docker side).
+
+**Still to bench (step 4 proper).** Each joint is assembled physically and left as
+saved: `~/reset_environment`, then save the base, then the part, without moving
+anything afterwards. Per joint:
+1. `~/welding_points`: the seam in RViz on the real joint; the log's summary
+   (`fillet … gap a..b mm`) is the registration's fit-up;
+2. `tack_reachability.py`: which tacks are reachable;
+3. `tack_marking` `~/plan` (dry run), then `~/all`;
+4. measure every mark's offset from the real seam root (the 2.3–2.7 mm of the plate T
+   is the number to compare).
+
+Order: C1, E2, RR1, S3 on R2 (two V-blocks), SP3 when printed. Restart the launch after
+`colcon build` (the rebuild installs `curved_seams.py`).
+
+**Then step 5,** multi-view refinement for curved parts. The S3/R2 replay already shows
+why: a 7 mm sideways registration error is too much for a saddle.

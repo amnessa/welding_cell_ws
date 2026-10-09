@@ -1158,11 +1158,7 @@ class IcpPoseRefinerNode(Node):
         if len(self._saved) < 2:
             return False, ('mode A needs at least two saved objects (assembly.json); '
                            f'have {len(self._saved)}')
-        reg_path = str(self.get_parameter('weldgen_registry').value)
-        if not reg_path:
-            model_dir = str(self.get_parameter('model_dir').value) or \
-                str(Path(str(self.get_parameter('model_path').value)).expanduser().parent)
-            reg_path = str(Path(model_dir).expanduser() / 'weldgen_objects.json')
+        reg_path = self._registry_path()
         registry = load_registry(reg_path)
         objects = [(o['model'], np.asarray(o['pose_static'], dtype=np.float64).reshape(4, 4))
                    for o in self._saved]
@@ -1868,6 +1864,24 @@ class IcpPoseRefinerNode(Node):
             'Hold still a moment, then save.')
         return self._fp_window[-1].copy(), None
 
+    def _registry_path(self) -> str:
+        reg_path = str(self.get_parameter('weldgen_registry').value)
+        if not reg_path:
+            model_dir = str(self.get_parameter('model_dir').value) or \
+                str(Path(str(self.get_parameter('model_path').value)).expanduser().parent)
+            reg_path = str(Path(model_dir).expanduser() / 'weldgen_objects.json')
+        return reg_path
+
+    def _symmetry_axis(self):
+        """The current part's full-symmetry axis (CAD frame) from the registry, or None
+        (no entry, no registry, or not an uncut tube)."""
+        from admittance_control.weldgen_registry import load_registry, symmetry_axis
+        try:
+            reg = load_registry(self._registry_path())
+        except (OSError, ValueError):
+            return None
+        return symmetry_axis(reg.get('parts', {}).get(Path(self._model_name).stem))
+
     def _fp_icp_refine(self, T_static_fp: np.ndarray):
         """One-shot ICP at save: (T_static, info). Runs ICP from the averaged tracker pose
         on `fp_save_icp_frames` fresh live clouds (each through the tracker's own crop,
@@ -1875,7 +1889,8 @@ class IcpPoseRefinerNode(Node):
         static_frame, and returns them only if enough fit and the correction from the
         tracker pose stays within the limits. The arm is at rest while a part is saved,
         so every cloud sees the same scene."""
-        from admittance_control.pose_stats import robust_pose_mean, rotation_angle_deg
+        from admittance_control.pose_stats import (remove_twist, robust_pose_mean,
+                                                   rotation_angle_deg)
         n_want = max(1, int(self.get_parameter('fp_save_icp_frames').value))
         min_fit = float(self.get_parameter('fp_save_icp_min_fitness').value)
         max_mm = float(self.get_parameter('fp_save_icp_max_mm').value)
@@ -1938,6 +1953,16 @@ class IcpPoseRefinerNode(Node):
         info = {'frames': len(results), 'fitness': float(np.mean(fits)),
                 'rmse_mm': float(np.mean(rmses) * 1000.0),
                 'correction_mm': round(d_mm, 2), 'correction_deg': round(d_deg, 2)}
+        axis = self._symmetry_axis()
+        if axis is not None:
+            # a pipe with flat ends: its spin about its own axis is arbitrary (R2: ICP
+            # "corrected" 30.8 deg of it, 2026-10-09) - keep the tracker's spin, gate
+            # and apply only the tilt of the axis
+            R_keep, swing, twist = remove_twist(T_static_fp[:3, :3], T_icp[:3, :3], axis)
+            T_icp = T_icp.copy()
+            T_icp[:3, :3] = R_keep
+            d_deg = swing
+            info.update(correction_deg=round(swing, 2), spin_ignored_deg=round(twist, 2))
         if d_mm > max_mm or d_deg > max_deg:
             info.update(applied=False, reason=f'correction {d_mm:.1f} mm / {d_deg:.1f} deg beyond '
                                               f'{max_mm:g} mm / {max_deg:g} deg')
@@ -1948,7 +1973,9 @@ class IcpPoseRefinerNode(Node):
         self.get_logger().info(
             f"save_object: ICP refined the FoundationPose pose on {len(results)} cloud(s): "
             f"{d_mm:.1f} mm / {d_deg:.2f} deg, fitness {info['fitness']:.2f}, "
-            f"rmse {info['rmse_mm']:.2f} mm")
+            f"rmse {info['rmse_mm']:.2f} mm"
+            + (f" (spin about the pipe axis {info['spin_ignored_deg']:.1f} deg ignored)"
+               if 'spin_ignored_deg' in info else ''))
         return T_icp, info
 
     def _fp_freeze(self) -> None:

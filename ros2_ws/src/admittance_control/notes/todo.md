@@ -54,11 +54,21 @@ The plate strata (T/line, corner, butt square, lap, edge) are MDF cuts. The curv
    - the PPF library rebuilt;
    - a registry entry;
    - one bench cycle.
-5. **Mode A for the curved strata** (`curved_seams_plan.md`): steps 1 and 2 done on
-   2026-10-09. All six printed parts are in the registry (verified to 0.06 mm), and
-   `compute_seams` computes their seams (circle, ellipse, saddle, rounded-rect, band
-   fillets) with fit-up and per-point approach. Closed seams get tacks. Next: step 3
-   (reachability round a loop, cylinder collision), then the bench, C1 first.
+5. **Mode A for the curved strata** (`curved_seams_plan.md`): steps 1–3 done on
+   2026-10-09.
+   - All six printed parts are in the registry (verified to 0.06 mm).
+   - `compute_seams` computes their seams with fit-up and per-point approach.
+   - Tacks on curved seams are planned with a roll per tack. In front of the robot: C1,
+     E2 and RR1 4/4; SP3 4/6 (concave lobes); S3 on R2 3/4 (far side).
+   - Pipes and bands are boxed to within ~1 mm.
+   - Step 4, first bench (perception only), 2026-10-09: PPF named every part (R2 by a
+     thin 0.040 margin). Mode A did not run (an install-list bug, now fixed). Also
+     fixed: re-registration switching to the plate, ICP refused on a pipe's arbitrary
+     spin, silent near misses.
+   - **Deploy the updated `scripts_in_foundationpose/fp_server.py` to the desktop**
+     (`object_name` on re-registration).
+   - Next: bench C1, E2, RR1, S3 on R2 end to end (seams → reach → marks → measured
+     offsets), each joint left as saved. Then step 5.
 
 ## Benchmarks to run (for the thesis)
 

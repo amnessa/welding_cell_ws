@@ -19,7 +19,8 @@ tube sliding along its axis does not change it), and the distance from the membe
 END (its cut or cap, which the error does move) to that curve, along the member's axis,
 is the fit-up: positive = gap, negative = penetration, reported per seam as the plate
 seams report theirs. Which end stands on the other part is not assumed: both ends are
-tried, and an end counts only when its fit-up stays within `pose_tol_mm` all round.
+tried, and an end counts only when its fit-up stays within `pose_tol_mm` all round
+(within `NEAR_MISS` times it the seam is still reported, rejected, with its fit-up).
 
 Every seam carries per-point frames, because on a curved seam they rotate with it:
 `n_a_per_point` (the base surface), `n_b_per_point` (the member's wall), and
@@ -42,6 +43,19 @@ CELL_BORE_MIN_DIAMETER_MM = 200.0
 #: plane ∩ cylinder ellipse runs off to infinity (a pipe lying on a plate touches it
 #: along a line, which is not a seam this module computes).
 MIN_AXIS_TO_FACE_DEG = 10.0
+
+#: A pair whose best end misses by more than the pose tolerance but within this many
+#: tolerances is reported as a rejected seam with its fit-up ("fitup_beyond_pose_tol")
+#: instead of dropped: on the 2026-10-09 bench S3 sat on R2 with its axis registered
+#: 7 mm aside, -5.3..10.5 mm against 10, and nothing at all was shown.
+NEAR_MISS = 2.0
+
+
+def _near_miss(gap: np.ndarray, tol: float) -> str | None:
+    if float(np.abs(gap).max()) <= tol:
+        return None
+    return (f"fitup_beyond_pose_tol ({gap.min():.1f}..{gap.max():.1f} mm, "
+            f"pose_tol {tol:g} mm)")
 
 
 def _kind(part) -> str:
@@ -168,16 +182,17 @@ def _tube_on_slab(tube, slab, parts, access, density, acc) -> list[dict[str, Any
             pts = curve.point(_sample(curve, density))
             gap = _end_gap(tube, pts, s, z_end, tube.r_outer_mm)
             worst = float(np.abs(gap).max())
-            if worst <= tol and (best is None or worst < best[0]):
+            if worst <= NEAR_MISS * tol and (best is None or worst < best[0]):
                 best = (worst, face, end, s, z_end, pl, pts, gap)
     if best is None:
         return []
     _, face, end, s, z_end, pl, pts, gap = best
     off_edge = _on_slab_face(slab, pts, tol) < 1.0
+    miss = _near_miss(gap, tol)
     nA = np.tile(pl.n, (len(pts), 1))
     out = [_record((f"{slab.id}:{face}", f"{tube.id}:lateral+"), "weld", True, pts, nA,
                    _radial(tube, pts, True), gap, tube.id, parts, access, acc,
-                   member_end=end, reject="off_plate_edge" if off_edge else None)]
+                   member_end=end, reject=miss or ("off_plate_edge" if off_edge else None))]
     # the bore meets the plate too: kept as the negative weldgen keeps
     bore = ellipse_from_plane_cylinder(-pl.d * pl.n, pl.n, T[:3, 3], z, tube.r_inner_mm)
     bp = bore.point(_sample(bore, density))
@@ -185,7 +200,7 @@ def _tube_on_slab(tube, slab, parts, access, density, acc) -> list[dict[str, Any
                        np.tile(pl.n, (len(bp), 1)), _radial(tube, bp, False),
                        _end_gap(tube, bp, s, z_end, tube.r_inner_mm), tube.id, parts,
                        access, acc, cavity=2.0 * tube.r_inner_mm, member_end=end,
-                       reject="off_plate_edge" if off_edge else None))
+                       reject=miss or ("off_plate_edge" if off_edge else None)))
     return out
 
 
@@ -212,14 +227,15 @@ def _tube_on_tube(branch, main, parts, access, density, acc) -> list[dict[str, A
         zm = _local(main, pts)[:, 2]
         on_main = bool(((zm >= -tol) & (zm <= main.length_mm + tol)).all())
         worst = float(np.abs(gap).max())
-        if worst <= tol and on_main and (best is None or worst < best[0]):
+        if worst <= NEAR_MISS * tol and on_main and (best is None or worst < best[0]):
             best = (worst, end, s, z_end, toward, pts, gap)
     if best is None:
         return []
     _, end, s, z_end, toward, pts, gap = best
+    miss = _near_miss(gap, tol)
     out = [_record((f"{main.id}:lateral+", f"{branch.id}:lateral+"), "weld", True, pts,
                    _radial(main, pts, True), _radial(branch, pts, True), gap, branch.id,
-                   parts, access, acc, member_end=end)]
+                   parts, access, acc, member_end=end, reject=miss)]
     try:
         bore = saddle_from_cylinders(Tb[:3, 3], toward, branch.r_inner_mm,
                                      Tm[:3, 3], Tm[:3, 2], main.r_outer_mm)
@@ -228,7 +244,7 @@ def _tube_on_tube(branch, main, parts, access, density, acc) -> list[dict[str, A
                            bp, _radial(main, bp, True), _radial(branch, bp, False),
                            _end_gap(branch, bp, s, z_end, branch.r_inner_mm), branch.id,
                            parts, access, acc, cavity=2.0 * branch.r_inner_mm,
-                           member_end=end))
+                           member_end=end, reject=miss))
     except ValueError:
         pass
     return out
@@ -275,7 +291,7 @@ def _band_on_slab(band, slab, parts, access, density, acc) -> list[dict[str, Any
                 traced.append((wface, side, pts, _unit_rows(n_out @ R.T),
                                s * (z_cap - lam), q))
             worst = max(float(np.abs(g).max()) for *_, g, _q in traced)
-            if worst <= tol and (best is None or worst < best[0]):
+            if worst <= NEAR_MISS * tol and (best is None or worst < best[0]):
                 best = (worst, face, cap, pl, traced)
     if best is None:
         return []
@@ -285,13 +301,14 @@ def _band_on_slab(band, slab, parts, access, density, acc) -> list[dict[str, Any
     out = []
     for wface, side, pts, nB, gap, q in traced:
         off_edge = _on_slab_face(slab, pts, tol) < 1.0
+        miss = _near_miss(gap, tol)
         role, cavity = "weld", None
         if closed and wface != exterior:
             role, cavity = "bore", _min_width(q[:, :2])
         out.append(_record((f"{slab.id}:{face}", f"{band.id}:{wface}"), role, closed, pts,
                            np.tile(pl.n, (len(pts), 1)), nB, gap, band.id, parts, access,
                            acc, cavity=cavity, member_end=cap,
-                           reject="off_plate_edge" if off_edge else None))
+                           reject=miss or ("off_plate_edge" if off_edge else None)))
     return out
 
 

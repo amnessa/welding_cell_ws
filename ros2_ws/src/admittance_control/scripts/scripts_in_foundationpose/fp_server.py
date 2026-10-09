@@ -949,7 +949,21 @@ def predict_pose():
         # PPF names the part; that name selects the mesh; FoundationPose then
         # estimates the pose from that mesh, from scratch. The classifier's own
         # internal pose hypotheses do not survive this line.
-        cad_path, report = classify_object(depth, K, mask, timer)
+        # A re-registration (fp_tracker_node on LOST) already knows the part: register
+        # that CAD and skip PPF, which reclassified the projected mask and answered
+        # the plate under the part (2026-10-09, C1 -> test_objv2_ear).
+        forced = (request.form.get('object_name')
+                  or (request.files['object_name'].read().decode().strip()
+                      if 'object_name' in request.files else ''))
+        if forced:
+            cad_path = cad_path_for(forced)
+            if cad_path is None:
+                return jsonify({"status": "error",
+                                "message": f"object_name '{forced}' is not in the CAD "
+                                           f"library"}), 400
+            report = {"object_name": forced, "forced": True}
+        else:
+            cad_path, report = classify_object(depth, K, mask, timer)
         if cad_path is None:
             if PPF_STRICT and LIBRARY is not None:
                 return jsonify({

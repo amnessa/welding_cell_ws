@@ -52,25 +52,121 @@ def box(name: str, centre, R, half, group: str = "scene") -> dict[str, Any]:
             "R": np.asarray(R, float), "half": np.asarray(half, float), "group": group}
 
 
+#: A pipe is the union of this many boxes rotated about its axis, each spanning the
+#: diameter with half-width r sin(pi / 2k): the union covers the disk and stands at most
+#: r (sqrt(1 + sin^2(pi / 2k)) - 1) proud of it - 3.3 % of r for 6 (1.0 mm on C1), where
+#: one box would stand 41 % proud at its corners, right where a 45 deg tack is.
+TUBE_BOXES = 6
+#: A swept band is a chain of boxes along its spine, each piece as long as its chord
+#: stays within this much of the band (the box is never thinner than the band).
+BAND_SAG_MM = 1.0
+
+
+#: A tube with a CUT base (a mitre, a saddle) is split into radial half-box sectors
+#: instead, each starting at its own sector's lowest cut point, with as many sectors as
+#: keep the cut's rise within one sector under this (at most `MAX_SECTORS`) - one box
+#: from the cut's lowest point would hang 39 mm below a 25 deg mitre, under the plate.
+CUT_RISE_MM = 4.0
+MAX_SECTORS = 36
+
+
+def _tube_boxes(p) -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    """(centre_local, R_local, half) boxes, mm, in the tube's frame."""
+    r, L = float(p.r_outer_mm), float(p.length_mm)
+    phis = np.linspace(0.0, 2 * np.pi, 1440, endpoint=False)
+    radii = (float(p.r_inner_mm), 0.5 * (p.r_inner_mm + r), r)
+    h = np.min([p.base_height(phis, rr) for rr in radii], axis=0)   # lowest over the wall
+    out = []
+    if np.ptp(h) < 1e-6:                              # flat base: full-diameter boxes
+        half = np.array([r, r * np.sin(np.pi / (2 * TUBE_BOXES)), 0.5 * (L - h[0])])
+        for j in range(TUBE_BOXES):
+            a = j * np.pi / TUBE_BOXES
+            c, s_ = np.cos(a), np.sin(a)
+            Rz = np.array([[c, -s_, 0.0], [s_, c, 0.0], [0.0, 0.0, 1.0]])
+            out.append((np.array([0.0, 0.0, 0.5 * (L + h[0])]), Rz, half))
+        return out
+    # cut base: n radial sectors, each a half-box from the axis to r (half-width
+    # r sin(pi/n) covers the sector's +-pi/n), from the sector's own lowest cut point
+    slope = float(np.max(np.abs(np.gradient(h, phis))))           # mm per rad
+    n = int(np.clip(np.ceil(2 * np.pi * slope / CUT_RISE_MM), 2 * TUBE_BOXES, MAX_SECTORS))
+    for j in range(n):
+        a = 2 * np.pi * j / n
+        dphi = np.angle(np.exp(1j * (phis - a)))
+        z0 = float(h[np.abs(dphi) <= np.pi / n + 1e-9].min())
+        c, s_ = np.cos(a), np.sin(a)
+        Rz = np.array([[c, -s_, 0.0], [s_, c, 0.0], [0.0, 0.0, 1.0]])
+        half = np.array([0.5 * r, r * np.sin(np.pi / n), 0.5 * (L - z0)])
+        out.append((Rz @ np.array([0.5 * r, 0.0, 0.0]) + [0.0, 0.0, 0.5 * (L + z0)], Rz, half))
+    return out
+
+
+def _band_boxes(p, sag_mm: float = BAND_SAG_MM) -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    """(centre_local, R_local, half) boxes, mm, in the band's frame: the band cut into
+    pieces whose cross-section stays within `sag_mm` of a straight box."""
+    sp = p.spine
+    n = max(64, int(np.ceil(sp.length_mm / 0.5)))
+    ts = np.linspace(0.0, sp.t_period, n + (0 if sp.closed else 1), endpoint=not sp.closed)
+    c = sp.point(ts)[:, :2]
+    tan = sp.tangent(ts)[:, :2]
+    nrm = np.column_stack([-tan[:, 1], tan[:, 0]])
+    lo_e = c + p.offset_lo_mm * nrm
+    hi_e = c + p.offset_hi_mm * nrm
+    width = float(p.offset_hi_mm - p.offset_lo_mm)
+    idx = np.arange(len(c))
+    if sp.closed:
+        idx = np.append(idx, 0)                       # wrap: the last piece closes the loop
+    zc, hz = 0.5 * (p.z0_mm + p.z1_mm), 0.5 * (p.z1_mm - p.z0_mm)
+
+    def piece(i0, i1):
+        sel = idx[i0:i1 + 1]
+        pts = np.vstack([lo_e[sel], hi_e[sel]])
+        d = c[idx[i1]] - c[idx[i0]]
+        d = d / np.linalg.norm(d) if np.linalg.norm(d) > 1e-9 else tan[idx[i0]]
+        y = np.array([-d[1], d[0]])
+        u, v = pts @ d, pts @ y
+        return d, y, (u.min(), u.max()), (v.min(), v.max())
+
+    out = []
+    i0 = 0
+    while i0 < len(idx) - 1:
+        i1 = i0 + 1
+        while i1 + 1 < len(idx):
+            *_, (v0, v1) = piece(i0, i1 + 1)
+            if v1 - v0 > width + sag_mm:
+                break
+            i1 += 1
+        d, y, (u0, u1), (v0, v1) = piece(i0, i1)
+        R = np.array([[d[0], y[0], 0.0], [d[1], y[1], 0.0], [0.0, 0.0, 1.0]])
+        centre = np.array([0.5 * (u0 + u1) * d[0] + 0.5 * (v0 + v1) * y[0],
+                           0.5 * (u0 + u1) * d[1] + 0.5 * (v0 + v1) * y[1], zc])
+        out.append((centre, R, np.array([0.5 * (u1 - u0), 0.5 * (v1 - v0), hz])))
+        i0 = i1
+    return out
+
+
 def boxes_from_parts(parts: Sequence[Any], scale: float = 1e-3) -> list[dict[str, Any]]:
     """Mode A's posed parts (mm, `T_world_part`) as scene boxes in metres.
 
-    A slab's frame is its centre, so `dims_mm` is the box. A curved primitive (a tube
-    with its base at local z = 0, a swept band) gets the box of its own mesh in its own
-    frame. That box is conservative: around a pipe its corners stand r(sqrt2 - 1) proud
-    of the wall, so a diagonal tack near a pipe's foot can be refused for clearance
-    (curved_seams_plan.md step 3 decides whether a cylinder primitive is needed)."""
+    A slab's frame is its centre, so `dims_mm` is the box (`part_<id>`). A tube is
+    `TUBE_BOXES` rotated boxes about its axis, from its lowest base point to its top
+    (`part_<id>_<k>`); a swept band (a rounded-rect tube, a stiffener) is a chain of
+    boxes along its spine. Both stay within ~1 mm outside the true surface - one box
+    round a pipe stood 41 % of r proud at its corners and refused 45 deg tacks there.
+    A tube's boxes are solid (its bore counts as obstacle); a band's follow its wall, so
+    a rounded-rect tube's interior stays free.
+    Everything downstream (the C++ planner too) takes the list of boxes unchanged."""
     out = []
     for p in parts:
         T = np.asarray(p.T_world_part, float)
-        if type(p).__name__ in ("Tube", "SweptSlab"):
-            v = (np.asarray(p.mesh().vertices, float) - T[:3, 3]) @ T[:3, :3]
-            lo, hi = v.min(axis=0), v.max(axis=0)
-            c_loc, half = 0.5 * (lo + hi), 0.5 * (hi - lo)
+        kind = type(p).__name__
+        if kind in ("Tube", "SweptSlab"):
+            pieces = _tube_boxes(p) if kind == "Tube" else _band_boxes(p)
+            for k, (c_loc, R_loc, half) in enumerate(pieces):
+                out.append(box(f"part_{p.id}_{k}", (T[:3, :3] @ c_loc + T[:3, 3]) * scale,
+                               T[:3, :3] @ R_loc, half * scale))
         else:
-            c_loc, half = np.zeros(3), np.asarray(p.dims_mm, float) * 0.5
-        centre = T[:3, :3] @ c_loc + T[:3, 3]
-        out.append(box(f"part_{p.id}", centre * scale, T[:3, :3], half * scale))
+            out.append(box(f"part_{p.id}", T[:3, 3] * scale, T[:3, :3],
+                           np.asarray(p.dims_mm, float) * 0.5 * scale))
     return out
 
 

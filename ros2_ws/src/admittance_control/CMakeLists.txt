@@ -100,6 +100,7 @@ install(
     admittance_control/assembly_mesh.py
     admittance_control/weldgen_registry.py
     admittance_control/seam_from_registration.py
+    admittance_control/curved_seams.py
     admittance_control/tool_model.py
     admittance_control/collision.py
     admittance_control/tack_reach.py

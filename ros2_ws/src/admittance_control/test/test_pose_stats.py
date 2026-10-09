@@ -73,3 +73,32 @@ def test_stationary_tail_excludes_the_place_the_part_came_from():
     tail2 = stationary_tail(after[:6] + jump + after[6:])
     assert len(tail2) >= 12
     assert stationary_tail([]) == []
+
+
+def test_remove_twist_keeps_the_axis_tilt_and_drops_the_spin():
+    """A flat-ended pipe (C1, R2): ICP's spin about the axis is arbitrary (R2 gave 30.8
+    deg on the bench); only the tilt of the axis is a correction."""
+    from scipy.spatial.transform import Rotation
+    from admittance_control.pose_stats import remove_twist
+    a = np.array([0.0, 0.0, 1.0])
+    R_ref = Rotation.from_euler("xyz", [10, -25, 40], degrees=True).as_matrix()
+    R_d = (Rotation.from_rotvec(np.radians(30.8) * a)
+           * Rotation.from_rotvec(np.radians(2.0) * np.array([0.6, 0.8, 0.0]))).as_matrix()
+    R_new = R_ref @ R_d
+    R_keep, swing, twist = remove_twist(R_ref, R_new, a)
+    assert swing == pytest.approx(2.0, abs=1e-6) and twist == pytest.approx(30.8, abs=0.05)
+    assert np.allclose(R_keep @ a, R_new @ a, atol=1e-9)          # the axis follows ICP
+    assert np.allclose(R_keep.T @ R_keep, np.eye(3), atol=1e-12)
+    # no spin at all: unchanged
+    R_keep2, _, tw2 = remove_twist(R_ref, R_ref @ Rotation.from_rotvec([0.03, 0, 0]).as_matrix(), a)
+    assert tw2 == pytest.approx(0.0, abs=1e-6)
+
+
+def test_only_an_uncut_tube_has_a_symmetry_axis():
+    from admittance_control.weldgen_registry import symmetry_axis
+    T = np.eye(4).tolist()
+    tube = {"primitive": "tube", "T_cad_prim": T, "params": {"r_outer_mm": 31.0}}
+    assert np.allclose(symmetry_axis(tube), [0, 0, 1])
+    cut = {**tube, "params": {"base_cut": {"kind": "plane"}}}
+    assert symmetry_axis(cut) is None and symmetry_axis({"primitive": "slab"}) is None
+    assert symmetry_axis(None) is None

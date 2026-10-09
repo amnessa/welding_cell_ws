@@ -4,8 +4,8 @@ Claims: a pipe on a plate yields ONE closed weld seam - the plate plane ∩ the 
 wall, a circle of 2πr - with the end-to-plate gap as fit-up, the approach at 45° to the
 plate all round, and the bore kept as a confined negative; it is found on whichever end
 the pipe stands; a mitred pipe sitting on its cut yields the ellipse with the dihedral
-sweeping 65-115°; a pipe hanging off the plate edge is refused, one floating beyond the
-pose tolerance has no seam; a branch on a run pipe yields the saddle with the gap
+sweeping 65-115°; a pipe hanging off the plate edge is refused, one floating just beyond
+the pose tolerance is reported rejected with its fit-up, one far beyond it has no seam; a branch on a run pipe yields the saddle with the gap
 along the branch axis, also for the printed S3 on R2; a rounded-rect tube yields its
 outer outline (weld) and inner one (bore); an open band yields both side fillets, with
 per-point normals that stay matched to their points after the seam is re-oriented;
@@ -135,6 +135,11 @@ def test_pipe_off_the_edge_is_refused_and_a_floating_one_has_no_seam():
     assert not w["weldable"] and w["reject_reason"] == "off_plate_edge"
     _, seams = _seams(PLATE, ("pipe.ply", _pose([0.0, 0.0, 30.0])))
     assert seams == []
+    # past the pose tolerance but within twice it: shown, rejected, with the fit-up
+    _, seams = _seams(PLATE, ("pipe.ply", _pose([0.0, 0.0, 15.0])))
+    w = _by_role(seams, "weld")[0]
+    assert not w["weldable"] and w["reject_reason"].startswith("fitup_beyond_pose_tol")
+    assert w["fitup_mm"]["B"] == pytest.approx([15.0, 15.0], abs=1e-6)
 
 
 def test_branch_on_run_pipe_is_the_saddle_with_the_gap_along_the_branch():
