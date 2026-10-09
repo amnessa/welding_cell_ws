@@ -53,12 +53,24 @@ def box(name: str, centre, R, half, group: str = "scene") -> dict[str, Any]:
 
 
 def boxes_from_parts(parts: Sequence[Any], scale: float = 1e-3) -> list[dict[str, Any]]:
-    """Mode A's posed slabs (mm, `dims_mm`, `T_world_part`) as scene boxes in metres."""
+    """Mode A's posed parts (mm, `T_world_part`) as scene boxes in metres.
+
+    A slab's frame is its centre, so `dims_mm` is the box. A curved primitive (a tube
+    with its base at local z = 0, a swept band) gets the box of its own mesh in its own
+    frame. That box is conservative: around a pipe its corners stand r(sqrt2 - 1) proud
+    of the wall, so a diagonal tack near a pipe's foot can be refused for clearance
+    (curved_seams_plan.md step 3 decides whether a cylinder primitive is needed)."""
     out = []
     for p in parts:
         T = np.asarray(p.T_world_part, float)
-        out.append(box(f"part_{p.id}", T[:3, 3] * scale, T[:3, :3],
-                       np.asarray(p.dims_mm, float) * 0.5 * scale))
+        if type(p).__name__ in ("Tube", "SweptSlab"):
+            v = (np.asarray(p.mesh().vertices, float) - T[:3, 3]) @ T[:3, :3]
+            lo, hi = v.min(axis=0), v.max(axis=0)
+            c_loc, half = 0.5 * (lo + hi), 0.5 * (hi - lo)
+        else:
+            c_loc, half = np.zeros(3), np.asarray(p.dims_mm, float) * 0.5
+        centre = T[:3, :3] @ c_loc + T[:3, 3]
+        out.append(box(f"part_{p.id}", centre * scale, T[:3, :3], half * scale))
     return out
 
 

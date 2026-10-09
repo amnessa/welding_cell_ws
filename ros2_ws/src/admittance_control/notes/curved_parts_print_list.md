@@ -45,7 +45,7 @@ extension" flag the bought pipes needed: their 2 mm walls were below the 3–8 m
 | **RR3** | T/rounded_rect | rounded-rect tube | 150 × 90, R 20, wall 8, height 80 | |
 | **SP1** | T/swept_path | open curved band, stood on edge | arc R 150, span 200, band 6 thick, height 60 | span 120–300, R ≥ span/π … 400; band 4–10, height 50–156 |
 | **SP2** | T/swept_path | curved band | arc R 350, span 220, band 8, height 100 | |
-| **SP3** | T/swept_path | curved band, **S-curve** (B-spline, 5 control points) | span 220, band 5, height 80 | |
+| **SP3** | T/swept_path | curved band, **S-curve** (B-spline, 5 control points) | span 220, band 5, height 80. **The drawn CAD is wrong:** the second side is the curve shifted 5 mm in x, so the wall is 2.4–5 mm. Redraw as a true 5 mm offset and reprint (`curved_seams_plan.md`, status) | |
 | **BA1** | butt arc | plate pair with matching arc edges | R 150, span 150, plate 140 × 100, t 6 | R 100–400, span 100–300, t 3–10 |
 | **BA2** | butt arc | plate pair | R 250, span 200, 200 × 120, t 8 | |
 | **BA3** | butt arc | plate pair | R 400, span 200, 200 × 140, t 4 | |

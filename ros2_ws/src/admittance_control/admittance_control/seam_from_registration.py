@@ -302,16 +302,27 @@ def judge_registered(A, fa: str, B, fb: str, ref: tuple[str, str], solids, acces
     return c, fitup
 
 
+#: Primitives whose faces are planes - the only ones the D4 face-pair rule judges. A
+#: tube or a swept band is registered (step 1 of notes/curved_seams_plan.md) but its
+#: seams come from the curved branch (step 2), not from here.
+FLAT_PRIMITIVES = ("Slab", "Prism", "PreparedSlab", "PreparedPrism")
+
+
+def is_flat(part) -> bool:
+    return type(part).__name__ in FLAT_PRIMITIVES
+
+
 def enumerate_registered(parts, access: dict[str, Any], acc, samples_along: int = 5
                          ) -> list[tuple[Any, Any]]:
-    """`enumerate_candidates` with `judge_registered`, same post-passes and ordering."""
+    """`enumerate_candidates` with `judge_registered`, same post-passes and ordering.
+    Pairs with a curved part are skipped (`compute_seams` reports them)."""
     access = dict({**acc.DEFAULT_ACCESS, **access})
     access["_min_len"] = float(access["min_seam_length_mm"])
     solids = list(parts)
     out: list[tuple[Any, Any]] = []
     for i, A in enumerate(parts):
         for j, B in enumerate(parts):
-            if j <= i:
+            if j <= i or not (is_flat(A) and is_flat(B)):
                 continue
             for fa in A.face_names():
                 for fb in B.face_names():
@@ -366,6 +377,21 @@ def compute_seams(parts, access: dict[str, Any] | None = None,
         if d[int(np.argmax(np.abs(d)))] < 0:
             s["p0_mm"], s["p1_mm"] = s["p1_mm"], s["p0_mm"]
             s["polyline_mm"] = s["polyline_mm"][::-1]
+    # a curved part in the scene: say so instead of returning nothing for it
+    for i, A in enumerate(parts):
+        for B in parts[i + 1:]:
+            if is_flat(A) and is_flat(B):
+                continue
+            seams.append({
+                "id": -1, "face_pair": [A.id, B.id], "seam_class": "curved",
+                "weldable": False,
+                "reject_reason": (f"curved pair ({type(A).__name__}-{type(B).__name__}): "
+                                  "seam not computed yet (curved_seams_plan.md step 2)"),
+                "dihedral_deg": None, "separation_mm": None,
+                "length_mm": 0.0, "fitup_mm": None,
+                "pose_tol_mm": float(access["pose_tol_mm"]),
+                "p0_mm": None, "p1_mm": None, "n_a": [0.0, 0.0, 0.0], "n_b": [0.0, 0.0, 0.0],
+                "approach": None, "polyline_mm": []})
     seams.sort(key=lambda s: (not s["weldable"], -s["length_mm"]))
     for k, s in enumerate(seams):
         s["id"] = k

@@ -4,22 +4,413 @@
   "parts": {
     "270circle": {
       "primitive": null,
-      "reason": "fills only 9% of its envelope (features > 10%) - not a slab",
+      "wall_mm": 5.000000849070802,
+      "reason": "extrusion: constant-wall open band: spine fitting not built yet",
       "source": "270circle.ply"
     },
-    "Power Drill-ply": {
-      "primitive": null,
-      "reason": "vertices deviate 130.769 mm from a box (tol 0.05)",
-      "source": "Power Drill-ply.ply"
+    "C1": {
+      "primitive": "tube",
+      "params": {
+        "r_outer_mm": 31.000001036184717,
+        "wall_mm": 3.0000020038969097,
+        "length_mm": 100.0
+      },
+      "T_cad_prim": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          -2.0608487754919847e-15
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "approx": "fitted",
+      "base_end": "flat",
+      "fit_resid_mm": 1.894676319835753e-06,
+      "source": "C1.ply",
+      "verified": {
+        "cad_to_prim_mm": 0.04816646047018356,
+        "prim_to_cad_mm": 0.009636961477685446,
+        "volume_rel_err": 0.0016853247788284616
+      },
+      "verified_max_dev_mm": 0.04816646047018356
     },
-    "Tblock": {
+    "E2": {
+      "primitive": "tube",
+      "params": {
+        "r_outer_mm": 45.002868105206396,
+        "wall_mm": 5.005737809138729,
+        "length_mm": 109.99998994368764,
+        "base_cut": {
+          "kind": "plane",
+          "n_local": [
+            0.422618046833296,
+            1.0356413074338751e-08,
+            -0.906307887249587
+          ],
+          "d": -19.016611597627943
+        }
+      },
+      "T_cad_prim": [
+        [
+          0.999999999999975,
+          0.0,
+          -2.2347354746335532e-07,
+          -0.002842135182789024
+        ],
+        [
+          2.610209607445441e-15,
+          1.0,
+          1.168017260688714e-08,
+          0.00010154277778816764
+        ],
+        [
+          2.2347354746335532e-07,
+          -1.1680172606887433e-08,
+          0.999999999999975,
+          1.0055673307782402e-05
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "approx": "fitted",
+      "base_end": "plane",
+      "fit_resid_mm": 0.005736558495890165,
+      "source": "E2.ply",
+      "verified": {
+        "cad_to_prim_mm": 0.049453239452205484,
+        "prim_to_cad_mm": 0.01943187963177666,
+        "volume_rel_err": 4.3679033507415924e-05
+      },
+      "verified_max_dev_mm": 0.049453239452205484
+    },
+    "R2": {
+      "primitive": "tube",
+      "params": {
+        "r_outer_mm": 50.00000199806614,
+        "wall_mm": 6.000003523517549,
+        "length_mm": 180.0
+      },
+      "T_cad_prim": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          -1.2165196574152073e-15
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          -3.041299129292056e-16
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "approx": "fitted",
+      "base_end": "flat",
+      "fit_resid_mm": 3.6622742669578656e-06,
+      "source": "R2.ply",
+      "verified": {
+        "cad_to_prim_mm": 0.04893667789083622,
+        "prim_to_cad_mm": 0.015540314234889994,
+        "volume_rel_err": 0.0008908851935325291
+      },
+      "verified_max_dev_mm": 0.04893667789083622
+    },
+    "RR1": {
+      "primitive": "swept_slab",
+      "T_cad_prim": [
+        [
+          1.0,
+          0.0,
+          1.7295683720812667e-25,
+          32.0
+        ],
+        [
+          -1.7295683720812667e-25,
+          2.4472133770074135e-23,
+          1.0,
+          -100.0
+        ],
+        [
+          -4.232622856606211e-48,
+          -1.0,
+          2.4472133770074135e-23,
+          32.00000000000196
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "approx": "fitted",
+      "shape": "rounded_rect",
+      "rect_mm": [
+        64.0,
+        63.999999999996085
+      ],
+      "corner_r_mm": 11.999999804044132,
+      "params": {
+        "spine": {
+          "kind": "composite",
+          "closed": true,
+          "segments": [
+            {
+              "kind": "line",
+              "p0_mm": [
+                -20.00000019595587,
+                -31.999999999998042,
+                0.0
+              ],
+              "p1_mm": [
+                20.00000019595587,
+                -31.999999999998042,
+                0.0
+              ]
+            },
+            {
+              "kind": "arc",
+              "center_mm": [
+                20.00000019595587,
+                -20.00000019595391,
+                0.0
+              ],
+              "u_dir": [
+                1.0,
+                0.0,
+                0.0
+              ],
+              "v_dir": [
+                0.0,
+                1.0,
+                0.0
+              ],
+              "radius_mm": 11.999999804044132,
+              "t0": -1.5707963267948966,
+              "t1": 0.0
+            },
+            {
+              "kind": "line",
+              "p0_mm": [
+                32.0,
+                -20.00000019595391,
+                0.0
+              ],
+              "p1_mm": [
+                32.0,
+                20.00000019595391,
+                0.0
+              ]
+            },
+            {
+              "kind": "arc",
+              "center_mm": [
+                20.00000019595587,
+                20.00000019595391,
+                0.0
+              ],
+              "u_dir": [
+                1.0,
+                0.0,
+                0.0
+              ],
+              "v_dir": [
+                0.0,
+                1.0,
+                0.0
+              ],
+              "radius_mm": 11.999999804044132,
+              "t0": 0.0,
+              "t1": 1.5707963267948966
+            },
+            {
+              "kind": "line",
+              "p0_mm": [
+                20.00000019595587,
+                31.999999999998042,
+                0.0
+              ],
+              "p1_mm": [
+                -20.00000019595587,
+                31.999999999998042,
+                0.0
+              ]
+            },
+            {
+              "kind": "arc",
+              "center_mm": [
+                -20.00000019595587,
+                20.00000019595391,
+                0.0
+              ],
+              "u_dir": [
+                1.0,
+                0.0,
+                0.0
+              ],
+              "v_dir": [
+                0.0,
+                1.0,
+                0.0
+              ],
+              "radius_mm": 11.999999804044132,
+              "t0": 1.5707963267948966,
+              "t1": 3.141592653589793
+            },
+            {
+              "kind": "line",
+              "p0_mm": [
+                -32.0,
+                20.00000019595391,
+                0.0
+              ],
+              "p1_mm": [
+                -32.0,
+                -20.00000019595391,
+                0.0
+              ]
+            },
+            {
+              "kind": "arc",
+              "center_mm": [
+                -20.00000019595587,
+                -20.00000019595391,
+                0.0
+              ],
+              "u_dir": [
+                1.0,
+                0.0,
+                0.0
+              ],
+              "v_dir": [
+                0.0,
+                1.0,
+                0.0
+              ],
+              "radius_mm": 11.999999804044132,
+              "t0": 3.141592653589793,
+              "t1": 4.71238898038469
+            }
+          ]
+        },
+        "offset_lo_mm": 0.0,
+        "offset_hi_mm": 3.0,
+        "z0_mm": 0.0,
+        "z1_mm": 100.00000000000001
+      },
+      "fit_resid_mm": 2.0736846835234246e-06,
+      "source": "RR1.ply",
+      "verified": {
+        "cad_to_prim_mm": 0.036922749165125376,
+        "prim_to_cad_mm": 0.003540310157393635,
+        "volume_rel_err": 0.0010567155756981013
+      },
+      "verified_max_dev_mm": 0.036922749165125376
+    },
+    "S3": {
+      "primitive": "tube",
+      "params": {
+        "r_outer_mm": 25.00920518038311,
+        "wall_mm": 4.0183987218854185,
+        "length_mm": 99.34231237465113,
+        "base_cut": {
+          "kind": "cylinder",
+          "point_local": [
+            0.008572757617657302,
+            -32.89935141819362,
+            -56.467442527910876
+          ],
+          "axis_local": [
+            4.7060786029852966e-08,
+            0.9396943323783965,
+            0.3420154407273417
+          ],
+          "radius_mm": 51.03679926763394
+        }
+      },
+      "T_cad_prim": [
+        [
+          0.9999999999999858,
+          0.0,
+          -1.6858795701621182e-07,
+          -0.008582008698656765
+        ],
+        [
+          -1.5842114790460497e-07,
+          0.34201543764361153,
+          -0.9396943335007527,
+          -40.616883139012174
+        ],
+        [
+          5.765968390034206e-08,
+          0.9396943335007661,
+          0.3420154376436067,
+          50.22807697221267
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "approx": "fitted",
+      "base_end": "cylinder",
+      "fit_resid_mm": 0.018401012620323343,
+      "source": "S3.ply",
+      "verified": {
+        "cad_to_prim_mm": 0.056643152173028434,
+        "prim_to_cad_mm": 0.02590450029053239,
+        "volume_rel_err": 0.002370971012874866
+      },
+      "verified_max_dev_mm": 0.056643152173028434
+    },
+    "SP3": {
       "primitive": null,
-      "reason": "fills only 18% of its envelope (features > 10%) - not a slab",
-      "source": "Tblock.ply"
+      "wall_mm_range": [
+        2.5842657581866613,
+        4.994462371162369
+      ],
+      "reason": "extrusion: open band with a varying wall (2.58-4.99 mm): not an offset of one spine",
+      "source": "SP3.ply"
     },
     "assembly_mesh": {
       "primitive": null,
-      "reason": "vertices deviate 117.061 mm from a box (tol 0.05)",
+      "reason": "box: vertices deviate 117.061 mm from a box (tol 0.05); tube: lateral vertices are 81.752 mm off two radii (12.25/182.75) - not a pipe; extrusion: faces neither along nor across one axis",
       "source": "assembly_mesh.ply"
     },
     "plate": {
@@ -59,7 +450,12 @@
       "max_dev_mm": 3.1308289294429414e-14,
       "volume_rel_err": 2.7891170854369642e-15,
       "source": "plate.ply",
-      "verified_max_dev_mm": 9.325873406851315e-15
+      "verified": {
+        "cad_to_prim_mm": 9.325873406851315e-15,
+        "prim_to_cad_mm": 3.1530333899354446e-14,
+        "volume_rel_err": 2.5465851649641856e-15
+      },
+      "verified_max_dev_mm": 3.1530333899354446e-14
     },
     "smallplate": {
       "primitive": "slab",
@@ -98,95 +494,12 @@
       "max_dev_mm": 7.105427357601002e-15,
       "volume_rel_err": 0.0,
       "source": "smallplate.ply",
+      "verified": {
+        "cad_to_prim_mm": 7.105427357601002e-15,
+        "prim_to_cad_mm": 7.105427357601002e-15,
+        "volume_rel_err": 0.0
+      },
       "verified_max_dev_mm": 7.105427357601002e-15
-    },
-    "test_objectv1": {
-      "primitive": null,
-      "reason": "fills only 12% of its envelope (features > 10%) - not a slab",
-      "source": "test_objectv1.ply"
-    },
-    "test_objv1_base": {
-      "primitive": "slab",
-      "dims_mm": [
-        180.0,
-        100.0,
-        4.000000000000022
-      ],
-      "T_cad_prim": [
-        [
-          -1.0,
-          0.0,
-          -1.2246467991473532e-16,
-          90.0
-        ],
-        [
-          1.2246467991473532e-16,
-          0.0,
-          -1.0,
-          -1.9999999999999891
-        ],
-        [
-          0.0,
-          -1.0,
-          0.0,
-          50.0
-        ],
-        [
-          0.0,
-          0.0,
-          0.0,
-          1.0
-        ]
-      ],
-      "approx": "envelope",
-      "max_dev_mm": 50.0,
-      "envelope_deficit": 0.011111111111113625,
-      "source": "test_objv1_base.ply",
-      "verified_max_dev_mm": 2.7537112142410605e-14
-    },
-    "test_objv1_ear": {
-      "primitive": "slab",
-      "dims_mm": [
-        100.0,
-        54.0,
-        4.000000000000022
-      ],
-      "T_cad_prim": [
-        [
-          0.0,
-          -1.0,
-          1.2246467991473532e-16,
-          23.0
-        ],
-        [
-          0.0,
-          1.2246467991473532e-16,
-          1.0,
-          -1.9999999999999891
-        ],
-        [
-          -1.0,
-          0.0,
-          -0.0,
-          50.0
-        ],
-        [
-          0.0,
-          0.0,
-          0.0,
-          1.0
-        ]
-      ],
-      "approx": "envelope",
-      "max_dev_mm": 10.0,
-      "envelope_deficit": 0.059259259259261676,
-      "source": "test_objv1_ear.ply",
-      "verified_max_dev_mm": 1.8018485975060554e-14
-    },
-    "test_objv2": {
-      "primitive": null,
-      "reason": "fills only 13% of its envelope (features > 10%) - not a slab",
-      "source": "test_objv2.ply"
     },
     "test_objv2_base": {
       "primitive": "slab",
@@ -225,7 +538,12 @@
       "max_dev_mm": 7.238654120556021e-14,
       "volume_rel_err": 3.424302341012507e-15,
       "source": "test_objv2_base.ply",
-      "verified_max_dev_mm": 1.5987211554602254e-14
+      "verified": {
+        "cad_to_prim_mm": 1.5987211554602254e-14,
+        "prim_to_cad_mm": 7.238654120556021e-14,
+        "volume_rel_err": 3.53844575237959e-15
+      },
+      "verified_max_dev_mm": 7.238654120556021e-14
     },
     "test_objv2_ear": {
       "primitive": "slab",
@@ -264,16 +582,17 @@
       "max_dev_mm": 3.6415315207705135e-14,
       "volume_rel_err": 1.322901384396983e-15,
       "source": "test_objv2_ear.ply",
-      "verified_max_dev_mm": 1.5765166949677223e-14
-    },
-    "test_objv3": {
-      "primitive": null,
-      "reason": "vertices deviate 124.000 mm from a box (tol 0.05)",
-      "source": "test_objv3.ply"
+      "verified": {
+        "cad_to_prim_mm": 1.5765166949677223e-14,
+        "prim_to_cad_mm": 3.6415315207705135e-14,
+        "volume_rel_err": 1.4698904271077587e-15
+      },
+      "verified_max_dev_mm": 3.6415315207705135e-14
     },
     "vplate": {
       "primitive": null,
-      "reason": "fills only 8% of its envelope (features > 10%) - not a slab",
+      "wall_mm": 5.656854249492392,
+      "reason": "extrusion: constant-wall open band: spine fitting not built yet",
       "source": "vplate.ply"
     }
   }

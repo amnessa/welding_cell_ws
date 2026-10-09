@@ -12,6 +12,39 @@ the plans under `notes/`; this file keeps the story and the numbers.
 
 ---
 
+## 2026-10-09: Fitting printed parts back to analytic primitives; a CAD that looked right was not
+
+**What happened.** The first six 3D-printed curved parts were fitted back to WeldSet
+primitives from their CAD meshes. Each fit was checked in both directions:
+- CAD vertices onto the primitive;
+- primitive vertices onto the CAD;
+- plus the volume.
+
+Five fitted. One, the S-curve stiffener SP3, was refused. Its second side had been
+drawn as the first curve **shifted 5 mm sideways**, not offset along the normal. The
+model looks right in the CAD view, and the slicer prints it.
+
+**Evidence.**
+- C1, E2, R2, S3 (tubes) and RR1 (rounded-rect tube) verify at 0.004–0.057 mm, with
+  volume errors of 0.0–0.24 %: only mesh chord error is left.
+- SP3's wall ranges from 2.4 to 5.0 mm along the band; the thin parts are where the
+  curve runs about 60° to the shift direction. The best constant band would miss the
+  real part by about 1.3 mm.
+- S3's saddle end is cut at r 51.04 mm, while the run pipe R2 is r 50. The joint
+  therefore has a built-in root gap of about 1 mm.
+
+**What we learned.**
+- Ground truth from CAD is only as exact as the CAD's construction. A
+  translated-copy band is a common drawing shortcut, and it silently breaks "constant
+  thickness".
+- Checking the fit **both ways** matters: CAD→primitive alone accepts an entry that is
+  too long or too thick.
+- Fitting refuses with a measured reason instead of approximating. That is the same rule
+  as the box registry, and it turned a modelling slip into a one-line finding before
+  any bench time was spent.
+
+---
+
 ## 2026-10-06 (evening): A tracker is not a registration; and a planner needs fast collision checks
 
 **What happened (1).** The first end-to-end run with FoundationPose tracking worked
