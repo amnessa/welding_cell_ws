@@ -4,9 +4,10 @@ Claims: a weldgen tube (flat, mitred or saddle-cut base) meshed at an arbitrary 
 fitted back to its own radii, length and cut, and verifies both ways; a rounded-rect
 tube comes back as the closed swept_slab of weldgen config 5; a band whose second side
 is the first shifted sideways (a wall that changes along it) is refused with the range,
-not approximated; the printed library parts C1, E2, R2, S3, RR1 verify to well under
-the D34 budget and SP3 is refused; and a scene with a curved part reports the pair
-instead of crashing the flat-face seam rule.
+not approximated, and a constant-wall spline band is fitted back; the printed library
+parts C1, E2, R2, S3, RR1 verify to well under the D34 budget and the redrawn SP3 comes
+back as its drawn spline; and a tube's collision box wraps the tube.
+(The seams of curved parts: test_curved_seams.py.)
 """
 
 from __future__ import annotations
@@ -158,25 +159,35 @@ def test_printed_library_parts_verify(name):
     assert max(ver["cad_to_prim_mm"], ver["prim_to_cad_mm"]) < 0.1, ver
 
 
-def test_printed_sp3_is_refused():
+def test_printed_sp3_is_its_drawn_spline():
+    """The redrawn SP3 (2026-10-09): a true 5 mm offset of the S-curve. The fit
+    recovers the drawn cubic from the mesh to micrometres."""
     ply = PKG / "models" / "SP3.ply"
     if not ply.exists():
         pytest.skip("library mesh not present")
-    e = derive_entry(trimesh.load(str(ply), force="mesh"))
-    assert e["primitive"] is None and "varying wall" in e["reason"]
+    mesh = trimesh.load(str(ply), force="mesh")
+    e = derive_entry(mesh)
+    assert e["primitive"] == "swept_slab" and e["shape"] == "open_band", e.get("reason")
+    assert e["fit_resid_mm"] < 0.01
+    p = e["params"]
+    assert p["offset_hi_mm"] - p["offset_lo_mm"] == pytest.approx(5.0, abs=0.01)
+    assert p["z1_mm"] - p["z0_mm"] == pytest.approx(80.0, abs=1e-6)
+    ver = verify_both_ways(e, mesh, weldgen)
+    assert max(ver["cad_to_prim_mm"], ver["prim_to_cad_mm"]) < 0.1, ver
 
 
-def test_a_curved_part_is_reported_not_crashed_on():
-    reg = {"parts": {
-        "plate": {"primitive": "slab", "dims_mm": [200.0, 200.0, 8.0], "T_cad_prim": np.eye(4).tolist()},
-        "pipe": {"primitive": "tube", "T_cad_prim": np.eye(4).tolist(),
-                 "params": {"r_outer_mm": 31.0, "wall_mm": 3.0, "length_mm": 100.0}}}}
-    up = np.eye(4); up[2, 3] = 0.004
-    parts = sfr.posed_parts([("plate.ply", np.eye(4)), ("pipe.ply", up)], reg)
-    seams = sfr.compute_seams(parts)
-    assert [s["seam_class"] for s in seams] == ["curved"]
-    assert not seams[0]["weldable"] and "step 2" in seams[0]["reject_reason"]
-    assert sfr.compute_tacks(parts, seams)["tacks"] == []
+def test_a_constant_wall_spline_band_is_fitted_back():
+    # weldgen config 6 style: a cubic spine, band +/- 3 mm, 60 tall, skewed pose
+    from weldgen.curves import BSplineCurve
+    spine = BSplineCurve(np.array([[0.0, -100.0, 0.0], [-120.0, -30.0, 0.0],
+                                   [120.0, 30.0, 0.0], [0.0, 100.0, 0.0]]))
+    mesh = SweptSlab("B", "workpiece", 1, spine, -3.0, 3.0, 0.0, 60.0,
+                     _pose(12.0, -20.0, [4.0, 9.0, -3.0])).mesh()
+    e = derive_entry(mesh)
+    assert e["primitive"] == "swept_slab", e.get("reason")
+    assert e["params"]["offset_hi_mm"] - e["params"]["offset_lo_mm"] == pytest.approx(6.0, abs=0.05)
+    ver = verify_both_ways(e, mesh, weldgen)
+    assert max(ver["cad_to_prim_mm"], ver["prim_to_cad_mm"]) < BUDGET_MM, ver
 
 
 def test_a_tube_collision_box_wraps_the_tube_not_its_base_frame():

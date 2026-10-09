@@ -373,6 +373,92 @@ def _band_thickness(xy: np.ndarray) -> np.ndarray:
     return out
 
 
+def _clamped_knots(m: int, p: int = 3) -> np.ndarray:
+    """weldgen `BSplineCurve`'s knot vector: clamped, uniform inner knots."""
+    return np.concatenate([np.zeros(p), np.linspace(0.0, 1.0, m - p + 1), np.ones(p)])
+
+
+def _fit_bspline(pts: np.ndarray, m: int) -> tuple[np.ndarray, float]:
+    """Cubic with `m` control points through ordered 2D `pts`, ends interpolated:
+    control points AND every point's curve parameter solved together (nonlinear least
+    squares). It is started from linear fits alternated with re-projecting the points
+    onto the curve: from chord-length parameters alone it stalls at 0.06 mm on SP3,
+    whose lobes need the parameter to slow down where the points crowd. Returns (control points, max distance of `pts` to the curve)."""
+    from scipy.interpolate import BSpline
+    from scipy.optimize import least_squares
+    from scipy.spatial import cKDTree
+    p = 3
+    kn = _clamped_knots(m, p)
+    d = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(pts, axis=0), axis=1))])
+    u = d / d[-1]
+    dense_u = np.linspace(0.0, 1.0, 20000)
+    for _ in range(30):            # the start: linear fit <-> re-projection, alternated
+        A = BSpline.design_matrix(np.clip(u, 0.0, 1.0 - 1e-12), kn, p).toarray()
+        rhs = pts - np.outer(A[:, 0], pts[0]) - np.outer(A[:, -1], pts[-1])
+        ci = np.linalg.lstsq(A[:, 1:-1], rhs, rcond=None)[0]
+        u = dense_u[cKDTree(BSpline(kn, np.vstack([pts[0], ci, pts[-1]]), p)(dense_u))
+                    .query(pts)[1]]
+        u[0], u[-1] = 0.0, 1.0
+    k = 2 * (m - 2)
+
+    def resid(x):
+        C = np.vstack([pts[0], x[:k].reshape(-1, 2), pts[-1]])
+        uu = np.concatenate([[0.0], np.clip(x[k:], 0.0, 1.0), [1.0]])
+        return (BSpline(kn, C, p)(uu) - pts).ravel()
+
+    # dense on purpose: ~2n x n is small, and the sparse (lsmr) path is far slower here
+    sol = least_squares(resid, np.concatenate([ci.ravel(), u[1:-1]]), max_nfev=200)
+    ctrl = np.vstack([pts[0], sol.x[:k].reshape(-1, 2), pts[-1]])
+    # at the optimum each residual is the point's distance to the curve (a nearest
+    # dense sample would add up to half the sample spacing, ~0.1 mm on SP3)
+    return ctrl, float(np.linalg.norm(sol.fun.reshape(-1, 2), axis=1).max())
+
+
+def _fit_open_spine(xy: np.ndarray, wall: float, tol_mm: float, max_ctrl: int = 16):
+    """The spine of an open constant-wall band from its cap outline (one loop).
+
+    The outline is two long sides joined by two short ends at four ~90 deg corners.
+    Candidate spines: side A, side B, and the midline (side A moved wall/2 toward B).
+    Control-point counts are tried upward for all three at once; the first fit within
+    `tol_mm / 2` wins (a drawn spline needs few, its offsets many). Returns
+    `(control_xy, (offset_lo, offset_hi), fit_resid_mm, which)` or None."""
+    if _polygon_area(xy) < 0:
+        xy = xy[::-1]
+    e1 = xy - np.roll(xy, 1, axis=0)
+    e2 = np.roll(xy, -1, axis=0) - xy
+    turn = np.degrees(np.arctan2(e1[:, 0] * e2[:, 1] - e1[:, 1] * e2[:, 0],
+                                 (e1 * e2).sum(1)))
+    corners = np.sort(np.argsort(-np.abs(turn))[:4])
+    if np.abs(turn[corners]).min() < 60.0:
+        return None
+    # the two ends are the corner pairs a wall apart; rotate so side A starts at 0
+    n = len(xy)
+    gaps = [(corners[(k + 1) % 4] - corners[k]) % n for k in range(4)]
+    k0 = int(np.argmax([g if np.linalg.norm(xy[corners[(k + 1) % 4]] - xy[corners[k]])
+                        > 2 * wall else -1 for k, g in enumerate(gaps)]))
+    order = [corners[(k0 + j) % 4] for j in range(4)]
+    side_a = xy[np.arange(order[0], order[0] + (order[1] - order[0]) % n + 1) % n]
+    side_b = xy[np.arange(order[2], order[2] + (order[3] - order[2]) % n + 1) % n][::-1]
+    if abs(np.linalg.norm(side_a[0] - side_b[0]) - wall) > 0.5 or \
+            abs(np.linalg.norm(side_a[-1] - side_b[-1]) - wall) > 0.5:
+        return None
+    # side A's normal toward B (the outline is CCW, so B is on A's left)
+    ta = np.gradient(side_a, axis=0)
+    ta /= np.linalg.norm(ta, axis=1, keepdims=True)
+    left = np.column_stack([-ta[:, 1], ta[:, 0]])
+    mid = side_a + 0.5 * wall * left
+    cands = [("side_a", side_a, (0.0, wall)), ("side_b", side_b, (-wall, 0.0)),
+             ("midline", mid, (-0.5 * wall, 0.5 * wall))]
+    for m in range(4, max_ctrl + 1):                 # fewest control points first
+        for which, pts, offs in cands:
+            if m > len(pts) // 2:
+                continue
+            ctrl, err = _fit_bspline(pts, m)
+            if err <= 0.5 * tol_mm:
+                return ctrl, offs, err, f"{which} ({m} control points)"
+    return None
+
+
 def derive_extrusion(mesh, tol_mm: float = 0.05) -> dict[str, Any]:
     """A `swept_slab` entry for a straight extrusion with two flat caps, or
     `{"primitive": None, "reason": ...}`.
@@ -382,8 +468,10 @@ def derive_extrusion(mesh, tol_mm: float = 0.05) -> dict[str, Any]:
     An open band (cap = one loop) is MEASURED: its wall must be constant to `tol_mm`
     (a true offset of its spine); a band whose sides are, for example, the same curve
     shifted sideways has a wall that changes along it, which `swept_slab` cannot hold,
-    and is refused with the range. Fitting an open spine (a B-spline) is left for the
-    first constant-wall band in the library.
+    and is refused with the range. A constant-wall band gets a B-spline spine
+    (`_fit_open_spine`): whichever of its two sides or its midline a cubic fits with
+    the fewest control points (the curve the CAD was drawn from), with the band placed
+    on the right side of it.
     """
     from trimesh.bounds import oriented_bounds_2D
     v = np.asarray(mesh.vertices, float)
@@ -413,8 +501,20 @@ def derive_extrusion(mesh, tol_mm: float = 0.05) -> dict[str, Any]:
             return {"primitive": None, "wall_mm_range": [lo_t, hi_t],
                     "reason": (f"open band with a varying wall ({lo_t:.2f}-{hi_t:.2f} "
                                "mm): not an offset of one spine")}
-        return {"primitive": None, "wall_mm": 0.5 * (lo_t + hi_t),
-                "reason": "constant-wall open band: spine fitting not built yet"}
+        wall = 0.5 * (lo_t + hi_t)
+        fit = _fit_open_spine(xy[0], wall, tol_mm)
+        if fit is None:
+            return {"primitive": None, "wall_mm": wall,
+                    "reason": "constant-wall open band, but no cubic spine fits it"}
+        ctrl, (o_lo, o_hi), resid, which = fit
+        T = _frame(z, B[:, 0], lo * z)                    # B's axes, on the base cap
+        spine = {"kind": "bspline", "degree": 3,
+                 "control_mm": [[float(x), float(y), 0.0] for x, y in ctrl]}
+        return {"primitive": "swept_slab", "T_cad_prim": T.tolist(), "approx": "fitted",
+                "shape": "open_band", "spine_from": which, "wall_mm": wall,
+                "params": {"spine": spine, "offset_lo_mm": o_lo, "offset_hi_mm": o_hi,
+                           "z0_mm": 0.0, "z1_mm": height},
+                "fit_resid_mm": resid}
     if len(loops) != 2:
         return {"primitive": None, "reason": f"{len(loops)} cap loops"}
     outer, inner = sorted(xy, key=lambda p: -abs(_polygon_area(p)))

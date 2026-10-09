@@ -43,6 +43,21 @@ model looks right in the CAD view, and the slicer prints it.
   as the box registry, and it turned a modelling slip into a one-line finding before
   any bench time was spent.
 
+**Follow-up, same day.** SP3 was redrawn as a true offset and reprinted. The fit split
+its cap outline at the four corners and fitted cubic splines to both sides and the
+midline. It recovered **the spline that was drawn**: 4 control points (0, −110),
+(−200, 0), (200, 0), (0, 110), to 3·10⁻⁶ mm, verified at 0.05 mm. Two numerical
+lessons:
+- solving the control points and the points' curve parameters together stalls (0.06 mm)
+  unless it starts from linear fits alternated with re-projection;
+- a "nearest dense sample" error measure adds the sampling gap (≈ 0.1 mm here) to the
+  error it reports, while the solver's residual is the real distance.
+
+With the parts registered, the seams of a pipe on a plate, a mitred pipe, a saddle, a
+rounded-rect tube and a curved stiffener all follow from the registered surfaces
+(`curved_seams.py`). The pose error shows up as fit-up along the curve, for example a
+0.4–3.6 mm gap range for a 3° tilt, never as a different seam.
+
 ---
 
 ## 2026-10-06 (evening): A tracker is not a registration; and a planner needs fast collision checks

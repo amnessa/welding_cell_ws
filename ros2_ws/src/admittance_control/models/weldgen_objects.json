@@ -3,10 +3,97 @@
   "units": "mm",
   "parts": {
     "270circle": {
-      "primitive": null,
+      "primitive": "swept_slab",
+      "T_cad_prim": [
+        [
+          1.0,
+          0.0,
+          8.104399945493444e-17,
+          -4.052199972746722e-15
+        ],
+        [
+          -8.104399945493444e-17,
+          1.1102230246251564e-16,
+          1.0,
+          -50.0
+        ],
+        [
+          -8.997691420257684e-33,
+          -1.0,
+          1.1102230246251564e-16,
+          -5.551115123125782e-15
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "approx": "fitted",
+      "shape": "open_band",
+      "spine_from": "side_a (8 control points)",
       "wall_mm": 5.000000849070802,
-      "reason": "extrusion: constant-wall open band: spine fitting not built yet",
-      "source": "270circle.ply"
+      "params": {
+        "spine": {
+          "kind": "bspline",
+          "degree": 3,
+          "control_mm": [
+            [
+              75.0,
+              1.7163564135485456e-15,
+              0.0
+            ],
+            [
+              74.79219826038029,
+              30.203787987995902,
+              0.0
+            ],
+            [
+              41.264409950453555,
+              75.73550684651393,
+              0.0
+            ],
+            [
+              -30.45470071762971,
+              78.70070393642993,
+              0.0
+            ],
+            [
+              -78.70069865603483,
+              30.454716140055687,
+              0.0
+            ],
+            [
+              -75.73551445856111,
+              -41.26440035556618,
+              0.0
+            ],
+            [
+              -30.203792842357906,
+              -74.79219810195191,
+              0.0
+            ],
+            [
+              8.644625418478194e-15,
+              -75.0,
+              0.0
+            ]
+          ]
+        },
+        "offset_lo_mm": 0.0,
+        "offset_hi_mm": 5.000000849070802,
+        "z0_mm": 0.0,
+        "z1_mm": 50.000000000000036
+      },
+      "fit_resid_mm": 0.02388343503171985,
+      "source": "270circle.ply",
+      "verified": {
+        "cad_to_prim_mm": 0.06683833284903046,
+        "prim_to_cad_mm": 0.04070723593101425,
+        "volume_rel_err": 0.00032075757938116156
+      },
+      "verified_max_dev_mm": 0.06683833284903046
     },
     "C1": {
       "primitive": "tube",
@@ -400,13 +487,77 @@
       "verified_max_dev_mm": 0.056643152173028434
     },
     "SP3": {
-      "primitive": null,
-      "wall_mm_range": [
-        2.5842657581866613,
-        4.994462371162369
+      "primitive": "swept_slab",
+      "T_cad_prim": [
+        [
+          1.0,
+          0.0,
+          2.1615773989478475e-12,
+          -7.201154722484732e-22
+        ],
+        [
+          -2.1615773989478475e-12,
+          3.028355278767565e-12,
+          1.0,
+          -3.3314350557097377e-10
+        ],
+        [
+          -6.546024326568377e-24,
+          -1.0,
+          3.028355278767565e-12,
+          -1.00887689368299e-21
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
       ],
-      "reason": "extrusion: open band with a varying wall (2.58-4.99 mm): not an offset of one spine",
-      "source": "SP3.ply"
+      "approx": "fitted",
+      "shape": "open_band",
+      "spine_from": "side_a (4 control points)",
+      "wall_mm": 5.001293623094394,
+      "params": {
+        "spine": {
+          "kind": "bspline",
+          "degree": 3,
+          "control_mm": [
+            [
+              -7.201154722484735e-22,
+              -110.0,
+              0.0
+            ],
+            [
+              -199.99999986400312,
+              1.3147891500372537e-06,
+              0.0
+            ],
+            [
+              200.00000073979294,
+              -1.2055946943555482e-06,
+              0.0
+            ],
+            [
+              7.201154722484735e-22,
+              110.0,
+              0.0
+            ]
+          ]
+        },
+        "offset_lo_mm": 0.0,
+        "offset_hi_mm": 5.001293623094394,
+        "z0_mm": 0.0,
+        "z1_mm": 80.0000000006743
+      },
+      "fit_resid_mm": 2.924098748855977e-06,
+      "source": "SP3.ply",
+      "verified": {
+        "cad_to_prim_mm": 0.049723553382157414,
+        "prim_to_cad_mm": 0.04658162844334643,
+        "volume_rel_err": 2.3180663928611814e-05
+      },
+      "verified_max_dev_mm": 0.049723553382157414
     },
     "assembly_mesh": {
       "primitive": null,
@@ -592,7 +743,7 @@
     "vplate": {
       "primitive": null,
       "wall_mm": 5.656854249492392,
-      "reason": "extrusion: constant-wall open band: spine fitting not built yet",
+      "reason": "extrusion: constant-wall open band, but no cubic spine fits it",
       "source": "vplate.ply"
     }
   }

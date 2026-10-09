@@ -110,13 +110,17 @@ def runtime_access(parts, pose_tol_mm: float = 10.0,
     """
     if "contact_tol_mm" in legacy and legacy["contact_tol_mm"] is not None:
         pose_tol_mm = float(legacy["contact_tol_mm"])
-    t_min = min(float(p.thickness_mm) for p in parts) if parts else pose_tol_mm
+    flat = [p for p in parts if is_flat(p)]
+    t_min = min(float(p.thickness_mm) for p in flat) if flat else pose_tol_mm
     tol = float(np.clip(pose_tol_mm, 0.5, 30.0))
     return {"contact_tol_mm": tol, "pose_tol_mm": tol,
             # "same plane?" for coplanar (butt / edge) pairs: the pose error, but never
-            # more than half a sheet or two faces of one plate become one plane
+            # more than half a sheet or two faces of one plate become one plane (a
+            # tube's wall is not a sheet: flat parts only)
             "coplanar_tol_mm": float(min(tol, 0.5 * t_min)),
-            "min_seam_length_mm": float(min_seam_length_mm)}
+            "min_seam_length_mm": float(min_seam_length_mm),
+            # curved seams: the pen holder + wrist camera cannot enter a narrower bore
+            "bore_min_diameter_mm": 200.0}
 
 
 def _face_corners(part, face: str) -> np.ndarray:
@@ -343,7 +347,9 @@ def enumerate_registered(parts, access: dict[str, Any], acc, samples_along: int 
 def compute_seams(parts, access: dict[str, Any] | None = None,
                   density_per_mm: float = 1.0, weldgen_path: str | None = None
                   ) -> list[dict[str, Any]]:
-    """Every inter-part face pair, judged by the registration-tolerant D4 rule (mm)."""
+    """Every inter-part face pair, judged by the registration-tolerant D4 rule (mm).
+    Pairs with a tube or a swept band go to `curved_seams.pair_seams`: their seams are
+    curves (often closed), with per-point normals and approach axes."""
     acc, _, sampling = import_weldgen(weldgen_path)
     access = access or runtime_access(parts)
     seams = []
@@ -377,21 +383,23 @@ def compute_seams(parts, access: dict[str, Any] | None = None,
         if d[int(np.argmax(np.abs(d)))] < 0:
             s["p0_mm"], s["p1_mm"] = s["p1_mm"], s["p0_mm"]
             s["polyline_mm"] = s["polyline_mm"][::-1]
-    # a curved part in the scene: say so instead of returning nothing for it
+    # pairs with a curved part: the intersection of the registered surfaces
+    # (curved_seams.py, notes/curved_seams_plan.md step 2); closed seams have no ends
+    # to orient, open ones are oriented as above with their per-point frames
+    from . import curved_seams
     for i, A in enumerate(parts):
         for B in parts[i + 1:]:
             if is_flat(A) and is_flat(B):
                 continue
-            seams.append({
-                "id": -1, "face_pair": [A.id, B.id], "seam_class": "curved",
-                "weldable": False,
-                "reject_reason": (f"curved pair ({type(A).__name__}-{type(B).__name__}): "
-                                  "seam not computed yet (curved_seams_plan.md step 2)"),
-                "dihedral_deg": None, "separation_mm": None,
-                "length_mm": 0.0, "fitup_mm": None,
-                "pose_tol_mm": float(access["pose_tol_mm"]),
-                "p0_mm": None, "p1_mm": None, "n_a": [0.0, 0.0, 0.0], "n_b": [0.0, 0.0, 0.0],
-                "approach": None, "polyline_mm": []})
+            for s in curved_seams.pair_seams(A, B, parts, access, acc, density_per_mm):
+                if not s["closed"] and s["polyline_mm"]:
+                    d = np.asarray(s["p1_mm"]) - np.asarray(s["p0_mm"])
+                    if d[int(np.argmax(np.abs(d)))] < 0:
+                        s["p0_mm"], s["p1_mm"] = s["p1_mm"], s["p0_mm"]
+                        for k_ in ("polyline_mm", "n_a_per_point", "n_b_per_point",
+                                   "approach_per_point"):
+                            s[k_] = s[k_][::-1]
+                seams.append(s)
     seams.sort(key=lambda s: (not s["weldable"], -s["length_mm"]))
     for k, s in enumerate(seams):
         s["id"] = k
@@ -428,7 +436,8 @@ def compute_tacks(parts, seams: Sequence[dict[str, Any]], scene_id: str = "cell"
             continue
         key = f"seam_{s_['id']}"
         scene_seams.append({"id": s_["id"], "weldable": True, "matches_joint_type": True,
-                            "closed": False, "length_mm": s_["length_mm"],
+                            "closed": bool(s_.get("closed", False)),
+                            "length_mm": s_["length_mm"],
                             "seam_class": s_["seam_class"], "sampled": {"array": key}})
         arrays[f"seams.npz:{key}"] = np.asarray(s_["polyline_mm"], dtype=float)
     if not scene_seams:
@@ -440,14 +449,15 @@ def compute_tacks(parts, seams: Sequence[dict[str, Any]], scene_id: str = "cell"
     for k, sid in enumerate(block["seam_id"]):
         seam = by_seam[sid]
         poly = np.asarray(seam["polyline_mm"], dtype=float)
+        closed = bool(seam.get("closed", False))
         s_mid = float(block["arclength_mm"][k]); half = 0.5 * float(block["tack_length_mm"][k])
-        ends = wt._interp(poly, False, np.array([s_mid - half, s_mid + half]))
+        ends = wt._interp(poly, closed, np.array([s_mid - half, s_mid + half]))
         tacks.append({"id": k, "seam_id": int(sid), "seam_class": seam["seam_class"],
                       "order": int(block["order"][k]), "arclength_mm": s_mid,
                       "point_mm": [float(v) for v in block["points_mm"][k]],
                       "p0_mm": [float(v) for v in ends[0]], "p1_mm": [float(v) for v in ends[1]],
                       "tack_length_mm": float(block["tack_length_mm"][k]),
-                      "approach": seam["approach"]})
+                      "approach": _approach_at(seam, s_mid)})
     # 1-based position along each seam, by arclength from the seam's p0
     for sid in set(t["seam_id"] for t in tacks):
         on = sorted((t for t in tacks if t["seam_id"] == sid), key=lambda t: t["arclength_mm"])
@@ -456,6 +466,27 @@ def compute_tacks(parts, seams: Sequence[dict[str, Any]], scene_id: str = "cell"
             t["n_on_seam"] = len(on)
     tacks.sort(key=lambda t: t["order"])
     return {"rule_version": block["rule_version"], "params": block["params"], "tacks": tacks}
+
+
+def _approach_at(seam: dict[str, Any], s_mm: float) -> list[float] | None:
+    """The seam's torch axis at arclength `s_mm`: constant on a plate seam, interpolated
+    between the per-point axes on a curved one (they rotate around a pipe)."""
+    per = seam.get("approach_per_point")
+    if not per:
+        return seam["approach"]
+    a = np.asarray(per, dtype=float)
+    a = _interp_along(np.asarray(seam["polyline_mm"], float), a, bool(seam.get("closed")), s_mm)
+    return [float(x) for x in a / np.linalg.norm(a)]
+
+
+def _interp_along(poly: np.ndarray, values: np.ndarray, closed: bool, s_mm: float) -> np.ndarray:
+    """Linear interpolation of per-vertex `values` at arclength `s_mm` along `poly`."""
+    if closed:
+        poly = np.vstack([poly, poly[:1]])
+        values = np.vstack([values, values[:1]])
+    cum = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(poly, axis=0), axis=1))])
+    s = float(np.mod(s_mm, cum[-1])) if closed else float(np.clip(s_mm, 0.0, cum[-1]))
+    return np.array([np.interp(s, cum, values[:, k]) for k in range(values.shape[1])])
 
 
 def tacks_points_m(tacks: Sequence[dict[str, Any]], step_mm: float = 1.0

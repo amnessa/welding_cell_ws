@@ -54,12 +54,11 @@ The plate strata (T/line, corner, butt square, lap, edge) are MDF cuts. The curv
    - the PPF library rebuilt;
    - a registry entry;
    - one bench cycle.
-5. **Mode A for the curved strata** (`curved_seams_plan.md`): step 1 done on
-   2026-10-09. Registry entries for C1, E2, R2, S3 and RR1 are verified to 0.06 mm.
-   Next is step 2, the curved branch in `compute_seams`.
-6. **SP3: redraw and reprint.** Its second side is a 5 mm x-shift of the S-curve, not an
-   offset, so the wall varies 2.4–5 mm and the registry refuses it. Redraw it with the
-   spline offset by 5 mm (or a swept rectangle).
+5. **Mode A for the curved strata** (`curved_seams_plan.md`): steps 1 and 2 done on
+   2026-10-09. All six printed parts are in the registry (verified to 0.06 mm), and
+   `compute_seams` computes their seams (circle, ellipse, saddle, rounded-rect, band
+   fillets) with fit-up and per-point approach. Closed seams get tacks. Next: step 3
+   (reachability round a loop, cylinder collision), then the bench, C1 first.
 
 ## Benchmarks to run (for the thesis)
 

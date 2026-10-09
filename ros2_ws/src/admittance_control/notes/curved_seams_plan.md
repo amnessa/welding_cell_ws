@@ -83,43 +83,95 @@ scene id).
 | R2 | tube, flat base | r 50.000, wall 6.000, length 180; frame = CAD | 0.049 / 0.016 mm, 0.09 % |
 | S3 | tube, cylinder cut (saddle) | r 25.009, wall 4.018, length 99.34; **cut r 51.04**, its axis at 70.0° to the branch, crossing it | 0.057 / 0.026 mm, 0.24 % |
 | RR1 | swept_slab, closed rounded rect | 64 × 64, corner r 12, band [0, 3], height 100 (along CAD y) | 0.037 / 0.004 mm, 0.11 % |
-| SP3 | **refused** | the wall changes from 2.6 to 5.0 mm along the band | — |
+| SP3 (redrawn) | swept_slab, open band | spine = side A, a cubic with 4 control points (0, −110), (−200, 0), (200, 0), (0, 110), recovered to 3·10⁻⁶ mm; band [0, 5.00], height 80 (along CAD y) | 0.050 / 0.047 mm, 0.00 % |
 
-All five verify far inside the 0.25 mm budget; what is left is the meshes' chord error.
+All six verify far inside the 0.25 mm budget; what is left is the meshes' chord error.
+`270circle` also comes back as a spline band now (0.067 / 0.041 mm); `vplate` (a V with
+a sharp kink) stays refused.
 
 **Findings:**
-- **S3's saddle is cut at r 51.04, not R2's 50.** S3 on R2 therefore leaves a root gap of
-  about 1 mm all round (a print allowance). Step 2 reports it as fit-up, like a plate gap.
-- **SP3 is not a constant-thickness band.** Its second side is the first S-curve
-  **shifted 5 mm along CAD x**, not offset along the normal. Where the curve runs
-  steeply (±60° from z) the wall is only about 2.4 mm. `swept_slab` holds a constant
-  band about one spine, so SP3 is refused with the range rather than approximated
-  (the best constant band would miss by about 1.3 mm).
-  - **Fix in CAD:** draw the second side as a true offset of the spline (FreeCAD:
-    Sketcher Offset, or Part → 2D Offset, of the spline by 5 mm), or sweep a 5 × 80
-    rectangle along it; then reprint.
-  - The open-spine B-spline fit is built when the first constant-wall band arrives
-    (`derive_extrusion` already measures the wall and says "constant-wall open band").
+- **S3's saddle is cut at r 51.04, not R2's 50.** Seated on R2 it touches along the
+  crown, and the gap opens to only about 0.15 mm at the saddle's flanks. Placed coaxially
+  as designed, step 2 reports 1.10–1.27 mm along the branch axis.
+- **The first SP3 was not a constant-thickness band.** Its second side was the S-curve
+  shifted 5 mm along CAD x, so the wall varied from 2.4 to 5 mm and the registry refused
+  it. It was redrawn (FreeCAD would not offset the spline) and reprinted the same day.
+  The new one has a constant 5.00 mm wall.
+- **The spine fit recovers the drawn spline.** The cap outline splits at its four 90°
+  corners into side A, side B and the two ends. Side A, side B and the midline are each
+  fitted with a cubic (weldgen's clamped uniform knots), solving control points and
+  point parameters together. Control-point counts go upward; the first fit within
+  0.025 mm wins. Side A won with 4 control points: the curve that was drawn. (The 5-point
+  sketch spline is the same curve, since its middle three control points are collinear.)
+  - The solver needs a good start (linear fit alternated with re-projection). From
+    chord-length parameters it stalls at 0.06 mm.
+  - The error is the solver's own residual. A nearest-dense-sample measure added up to
+    0.1 mm of sampling error.
 - **Two flat ends:** C1, R2 and RR1 can stand on either end. The entry puts the base at
-  the lower end along the axis (RR1: at CAD y = −100). Step 2 must try both caps
-  against the plate, not assume the base.
+  the lower end along the axis (RR1: at CAD y = −100); step 2 tries both.
 - Side faces of a meshed spline surface are not exactly parallel to the extrusion axis
-  (SP3: up to 2.7°), so the extrusion test trusts the caps, not the sides.
+  (up to 2.7°), so the extrusion test trusts the caps, not the sides.
 
-**A guard until step 2:** `compute_seams` judges flat pairs only (`FLAT_PRIMITIVES`). A
-pair with a tube or a band comes back as one non-weldable seam, class `curved`, with
-the reason "seam not computed yet (curved_seams_plan.md step 2)". It does not crash.
-`collision.boxes_from_parts` now boxes a tube or band around its mesh. Before, a tube
-would have been boxed about its base frame, half its length off. The box is
-conservative (a pipe's box corners stand r(√2 − 1) proud of the wall); step 3 decides
-whether the collision model needs a cylinder.
+**Step 2 done (2026-10-09).** `admittance_control/curved_seams.py`; `compute_seams`
+sends every pair with a tube or a band to `pair_seams`.
 
-**Tests:** `test/test_curved_registry.py`, 12 tests:
-- synthetic weldgen tubes (flat, mitred, saddle-cut) at a skewed pose, fitted back;
-- a rounded-rect swept_slab;
-- a sideways-shifted band, refused;
-- the five printed parts verified, and SP3 refused;
-- the curved-pair guard.
+| pair | seam | done how |
+|---|---|---|
+| tube on a plate (C1, E2, R2, S3 on its flat end) | plate plane ∩ outer wall: circle or ellipse, closed | `ellipse_from_plane_cylinder` |
+| tube on a tube (S3 on R2) | branch ∩ run outer walls: the saddle, closed | `saddle_from_cylinders` |
+| band on a plate (RR1, SP3) | each wall traced along the band's axis onto the plate; closed outline = weld + bore, open band = two fillets | `OffsetCurve` of the spine |
+| anything else (band on a pipe, two bands, ...) | one non-weldable record: "no seam rule for a X-Y pair yet" | |
 
-**Next:** step 2, the curved branch in `compute_seams`, starting with C1 on the 8 mm
-plate.
+- **Which end stands on the other part is found, not assumed.** Both ends and both
+  plate faces are tried. An end counts when its distance to the curve, along the
+  member's axis, stays within `pose_tol_mm` all round, and the member must stand at
+  least 10° off the face.
+- **That distance is the fit-up**: `fitup_mm = {member: [min, max]}`, positive = gap.
+  The curve lies on the surfaces the pose error does not move (the plate plane, the
+  wall), so a 3° tilt shows up as a 0.4–3.6 mm gap range on C1, not as a different
+  seam.
+- **Per-point frames:** `n_a_per_point` (base), `n_b_per_point` (wall),
+  `approach_per_point` (bisector); `dihedral_deg_range`.
+  - C1: 90°;
+  - E2: 65–115°;
+  - the saddle: 90° at the crown, 120° at the flanks.
+- **The verdict is weldgen's `seam_verdict`**: the torch cone at every point, weldable
+  at ≥ 95 % clear.
+  - Bores are negatives unless the tool fits: `bore_min_diameter_mm` = 200 for the pen
+    holder and camera (weldgen's 80 is a torch's).
+  - A curve running off the plate is `off_plate_edge`.
+- **Tacks** (the first part of step 3): `compute_tacks` passes `closed` to `tackrule-0.1`
+  (an even count around a loop, phase from the scene id). Each tack's approach is
+  interpolated from the per-point axes at its arclength; round C1 they rotate at 45°.
+- `runtime_access` takes the sheet-thickness cap from flat parts only (a tube wall is
+  not a sheet).
+- Bench-like scenes run in 0.1–0.8 s (C1, E2, RR1, S3 on R2).
+- `collision.boxes_from_parts` boxes a tube or band around its mesh. Before, a tube
+  would have been boxed about its base frame, half its length off. The box is
+  conservative (a pipe's box corners stand r(√2 − 1) proud of the wall); step 3
+  decides whether the collision model needs a cylinder.
+
+**Tests:**
+- `test/test_curved_registry.py` (13):
+  - synthetic tubes (flat, mitred, saddle-cut), a rounded-rect band and a cubic spline
+    band, each fitted back at a skewed pose;
+  - the sideways-shifted band, refused;
+  - the six printed parts;
+  - the tube collision box.
+- `test/test_curved_seams.py` (11):
+  - C1-like on a plate: circle length, fit-up under a 3° tilt, 45° approach, bore
+    confined;
+  - standing on the top cap;
+  - the mitre ellipse (Ramanujan length, 65–115°);
+  - off the edge, and floating;
+  - the saddle (gap along the branch, points on both walls, 90–120°);
+  - the printed S3 on R2;
+  - RR1-like outline and bore;
+  - the open band's two fillets, with frames still matched after re-orientation;
+  - the printed SP3 on a plate;
+  - closed-seam tacks with their own approach;
+  - an unsupported pair.
+
+**Next:** step 3. Run `tack_reachability` on a closed seam: full loops need large wrist
+rolls, so expect and report unreachable far-side tacks, and decide on the cylinder in
+the collision model. Then step 4, the bench (C1 on the 8 mm plate first).
