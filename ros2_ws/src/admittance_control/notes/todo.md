@@ -226,3 +226,7 @@ estimated, so the thesis can report them. Per stage:
 - **MoveIt planning scene** when fixtures become real.
 - **Thesis:** the validation chapter (fit-up, contact depth, README §14's error budget,
   `thesis_notes.md`).
+
+
+## important
+path finding algorithm fins a path which has sections go through the table in actual robot this causes collision and robot stops.
