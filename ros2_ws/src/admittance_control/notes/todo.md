@@ -94,7 +94,13 @@ The plate strata (T/line, corner, butt square, lap, edge) are MDF cuts. The curv
      `stroke_mode:=dot`.**
    - S3 on R2 marked (2026-10-14): 4/4, 1–7 mm and one 11 mm (lifted off). **Step 4
      done** (the bench table is in `curved_seams_plan.md`).
-   - **Next: step 5, multi-view refinement for curved parts.**
+   - **Step 5 built (2026-10-14):** the refinement and the view planner use each part's
+     true shape (`part_shapes.py`).
+     - Synthetic: C1, E2, S3 on R2 and RR1 all come back to within 0.1 mm, where the old
+       boxes refused E2 and S3 on R2.
+     - C1 needed only `refine_pose`.
+     - **Next: bench it**: `refine_pose` before `welding_points`, marks in
+       `stroke_mode:=dot`, C1 and E2 first.
    - `contact_error.py` reports bands per contact (no fit yet).
 
 ## Benchmarks to run (for the thesis)

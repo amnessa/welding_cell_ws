@@ -140,6 +140,10 @@ class Part:
     # translation error, R_scan d, sits in T_saved too - the online self-calibration takes
     # it out of the prior as well as out of the views
     T_scan: Optional[np.ndarray] = None
+    # the true surface (part_shapes.Shape, from the registry): neighbours are judged against
+    # it instead of the bounding box - a pipe, a band, a cut end (curved_seams_plan.md
+    # step 5); None keeps the box
+    shape: Optional[Any] = None
 
 
 @dataclass
@@ -220,14 +224,42 @@ def pose_delta(Ta: np.ndarray, Tb: np.ndarray, about: Optional[np.ndarray] = Non
 
 
 def box_of(part: Part, T: np.ndarray) -> dict[str, Any]:
+    """A neighbour as the overlap rule sees it: its bounding box, plus - when the part has
+    a registered `shape` - that shape at pose T, which `signed_distance_box` and
+    `neighbour_distance` then use instead of the box."""
     lo, hi = part.verts.min(0), part.verts.max(0)
-    return {"name": part.name, "type": "box", "centre": T[:3, :3] @ ((lo + hi) / 2) + T[:3, 3],
-            "R": T[:3, :3].copy(), "half": (hi - lo) / 2, "group": "scene"}
+    out = {"name": part.name, "type": "box", "centre": T[:3, :3] @ ((lo + hi) / 2) + T[:3, 3],
+           "R": T[:3, :3].copy(), "half": (hi - lo) / 2, "group": "scene"}
+    if part.shape is not None:
+        out["shape"], out["T"] = part.shape, np.asarray(T, float).copy()
+    return out
+
+
+def _shifted(bx: dict[str, Any], c: np.ndarray) -> dict[str, Any]:
+    """The neighbour in coordinates shifted by -c (refine_part works about a part's centre)."""
+    out = {**bx, "centre": bx["centre"] - c}
+    if "T" in bx:
+        T = bx["T"].copy()
+        T[:3, 3] = T[:3, 3] - c
+        out["T"] = T
+    return out
+
+
+def neighbour_distance(p: np.ndarray, bx: dict[str, Any]) -> np.ndarray:
+    """Unsigned distance of points to a neighbour (0 inside): its shape, else its box."""
+    if "shape" in bx:
+        return np.maximum(signed_distance_box(p, bx)[0], 0.0)
+    return _points_box_distance(p, bx)
 
 
 def signed_distance_box(p: np.ndarray, bx: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
-    """Signed distance of points to a box (negative inside) and the outward normal of the
-    face that distance is measured to (the nearest face from inside)."""
+    """Signed distance of points to a neighbour (negative inside) and the outward normal of
+    the surface that distance is measured to: the neighbour's registered shape when it has
+    one (`box_of`), else its box (the nearest face from inside)."""
+    if "shape" in bx:
+        T = bx["T"]
+        sd, n_cad = bx["shape"].sdf((np.asarray(p, float) - T[:3, 3]) @ T[:3, :3])
+        return sd, n_cad @ T[:3, :3].T
     local = (p - bx["centre"]) @ bx["R"]
     q = np.abs(local) - bx["half"]
     outside = np.linalg.norm(np.maximum(q, 0.0), axis=1)
@@ -313,7 +345,7 @@ def contact_samples(part: Part, T: np.ndarray, neighbours: Sequence[dict[str, An
     if not neighbours:
         return np.zeros((0, 6))
     pw, _ = posed(part, T)
-    d = np.min([_points_box_distance(pw, b) for b in neighbours], axis=0)
+    d = np.min([neighbour_distance(pw, b) for b in neighbours], axis=0)
     sel = np.flatnonzero(d < cfg.overlap_band_m)
     if len(sel) > cfg.contact_samples:
         sel = (rng or np.random.default_rng(0)).choice(sel, cfg.contact_samples, replace=False)
@@ -346,7 +378,7 @@ def refine_part(part: Part, T_start: np.ndarray, T_prior: np.ndarray, scene: np.
     w_mean = float(np.mean(scene_w)) if len(scene_w) else 1.0
     prior_L = np.concatenate([np.full(3, cfg.noise_m / np.radians(cfg.prior_sigma_deg)),
                               np.full(3, cfg.noise_m / (cfg.prior_sigma_mm / 1000))])
-    nb_shift = [{**b, "centre": b["centre"] - c} for b in neighbours]
+    nb_shift = [_shifted(b, c) for b in neighbours]
     info: dict[str, Any] = {"fitness": 0.0, "rmse": float("nan"), "H": np.zeros((6, 6)), "penetration": 0.0}
     if len(q_all) < 6:
         return T_start.copy(), info
@@ -471,6 +503,27 @@ def weak_directions(H: np.ndarray, noise_m: float, max_sigma_mm: float) -> tuple
     return out, (np.array([v for _, v in weak]) if weak else np.zeros((0, 6)))
 
 
+def _symmetric_spin(weak: list[str], wv: np.ndarray, part: Part, T: np.ndarray
+                    ) -> tuple[list[str], np.ndarray]:
+    """A pipe with two flat ends looks the same at any spin about its own axis, so no view
+    can measure that spin, and it changes no fit-up either. It is named as such and dropped
+    from the vectors the relative-pose rule (`judge`) checks; the prior holds it."""
+    axis = None if part.shape is None else part.shape.symmetry_axis
+    if axis is None or not len(wv):
+        return weak, wv
+    a = np.asarray(T, float)[:3, :3] @ axis
+    a /= np.linalg.norm(a)
+    names, keep = [], []
+    for k, (name, v) in enumerate(zip(weak, wv)):
+        rot, tr = v[:3], v[3:]
+        if np.linalg.norm(rot) > np.linalg.norm(tr) and abs(rot @ a) > 0.95 * np.linalg.norm(rot):
+            names.append("spin about its own axis (symmetric: needs no measuring)")
+        else:
+            names.append(name)
+            keep.append(k)
+    return names, (wv[keep] if keep else np.zeros((0, 6)))
+
+
 # ---------------------------------------------------------------- the assembly ---------
 def _stack(views: Sequence[View]):
     pts = np.vstack([v.pts for v in views])
@@ -519,6 +572,7 @@ def refine_assembly(parts: Sequence[Part], views: Sequence[View], cfg: Optional[
     for i, p in enumerate(parts):
         info = infos.get(i, {"fitness": 0.0, "rmse": float("nan"), "H": np.zeros((6, 6)), "penetration": 0.0})
         weak, wv = weak_directions(info["H"], cfg.noise_m, cfg.observable_max_sigma_mm)
+        weak, wv = _symmetric_spin(weak, wv, p, poses[i])
         cmm, cdeg = pose_delta(p.T_saved, poses[i], p.pts.mean(0))
         res = PartResult(name=p.name, T_saved=p.T_saved, T=poses[i], n_owned=int((owner == i).sum()),
                          fitness=info["fitness"], rmse_mm=info["rmse"] * 1000, correction_mm=cmm,
@@ -547,7 +601,7 @@ def refine_assembly(parts: Sequence[Part], views: Sequence[View], cfg: Optional[
                     Tp = p.T_saved.copy()
                     if p.T_scan is not None:
                         Tp[:3, 3] -= np.asarray(p.T_scan, float)[:3, :3] @ d_total
-                    prior.append(Part(p.name, p.pts, p.nrm, p.verts, Tp, p.T_scan))
+                    prior.append(dataclasses.replace(p, T_saved=Tp))
                 results2, diag2 = refine_assembly(prior, fixed, cfg, use_ownership, per_view, rng, _inner=True)
                 left = diag2.extrinsic_d_mm
                 if left is None or np.linalg.norm(left) < cfg.online_selfcal_min_mm:

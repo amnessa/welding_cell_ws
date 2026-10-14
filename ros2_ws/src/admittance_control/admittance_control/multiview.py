@@ -106,10 +106,17 @@ def box_from_model(verts_m: np.ndarray, T: np.ndarray, name: str) -> dict[str, A
 
 def surfaces_from_models(objects: Sequence[tuple[str, np.ndarray]], models_dir,
                          n_points: int = 6000, rng: Optional[np.random.Generator] = None):
-    """[(points, outward normals)] in the static frame and the matching boxes, one per
-    saved object (model file name, 4x4 pose_static in metres)."""
+    """[(points, outward normals)] in the static frame and the parts' boxes, for each saved
+    object (model file name, 4x4 pose_static in metres). A part with a registry entry
+    (`<models_dir>/weldgen_objects.json`) gets its near-exact collision boxes
+    (`part_shapes.Shape.boxes`: 6 per pipe, a chain per band) instead of one bounding
+    box: SP3's bounding box covered the plate along the S and hid the seam region from
+    every candidate view. Every box carries `part` (the object's index)."""
     from pathlib import Path
+
+    from .part_shapes import load_shapes
     rng = rng or np.random.default_rng(0)
+    shapes = load_shapes(models_dir, [name for name, _ in objects])
     surfaces, boxes = [], []
     for i, (name, T) in enumerate(objects):
         T = np.asarray(T, float)
@@ -117,7 +124,10 @@ def surfaces_from_models(objects: Sequence[tuple[str, np.ndarray]], models_dir,
         scale = 1e-3 if np.abs(v).max() > 5 else 1.0
         p, n = sample_mesh_surface(v, f, n_points, rng, return_normals=True)
         surfaces.append((p * scale @ T[:3, :3].T + T[:3, 3], n @ T[:3, :3].T))
-        boxes.append(box_from_model(v * scale, T, f"part_{chr(ord('A') + i)}"))
+        label = chr(ord("A") + i)
+        shape = shapes.get(name)
+        own = shape.boxes(T, label) if shape is not None else [box_from_model(v * scale, T, f"part_{label}")]
+        boxes.extend({**b, "part": i} for b in own)
     return surfaces, boxes
 
 
@@ -154,7 +164,8 @@ def seam_targets(surfaces, boxes, cfg: ViewConfig):
     faces (within `contact_gap_m` of another part) are dropped."""
     pts, nrm, w, own = [], [], [], []
     for i, (p, n) in enumerate(surfaces):
-        others = [b for j, b in enumerate(boxes) if j != i]
+        # boxes carry their part's index (several per curved part); else one per part
+        others = [b for j, b in enumerate(boxes) if b.get("part", j) != i]
         d = (np.min([_points_box_distance(p, b) for b in others], axis=0)
              if others else np.full(len(p), np.inf))
         wi = np.where((d > cfg.contact_gap_m) & (d < cfg.seam_band_m), 1.0, cfg.background_weight)

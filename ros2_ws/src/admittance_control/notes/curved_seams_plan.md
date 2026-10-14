@@ -66,9 +66,30 @@ scene id).
    2. E2;
    3. RR1, SP3;
    4. S3 on R2 (two V-blocks).
-5. **Multi-view refinement for curved parts.** The overlap rule and the fit-up gap use
-   part BOXES now, which is wrong for a tube. Turn the overlap term off for curved parts
-   until it uses the signed distance to the tube / band surface (`todo.md`, multi-view).
+5. **Multi-view refinement for curved parts** (started 2026-10-14). The refinement
+   itself is part-agnostic (CAD surface samples, point clouds, ICP). What assumed flat
+   parts is each part as ONE bounding box. The pieces:
+   1. **True shapes.** `part_shapes.py` gives each registered part a signed distance to
+      its real surface, from its registry primitive:
+      - a slab: its box;
+      - a pipe: its cylinder, with the mitre or saddle cut;
+      - a band: its walls, with RR1's interior free.
+      `multiview_refine` uses it for the overlap rule, the contact samples and the fit-up
+      gaps, wherever it used the neighbour's box. Bounding boxes made S3's saddle end
+      (it wraps round R2) read as ~5 mm inside R2's box (the limit is 1 mm), and the plate under E2's
+      mitre read as being inside E2. A part without a registry entry keeps its box.
+   2. **The view planner** takes the near-exact collision boxes (`boxes_from_parts`) for
+      its seam targets, its occlusion test and its collision model. SP3's bounding box hid
+      the plate along the band.
+   3. **Symmetry:** a flat-ended pipe's spin about its own axis is reported as such, not
+      as an unmeasured direction (the prior holds it).
+   4. **Tests**, synthetic as for the T:
+      - a pipe on a plate registered 8 mm off sideways (the bench's C1 / E2 error) is
+        brought back by views from several sides;
+      - S3 on R2 is not "penetrating";
+      - a band (RR1) refines.
+   5. **Bench:** `refine_pose` before `welding_points` on C1 / E2, marks in
+      `stroke_mode:=dot`, compared with step 4's numbers.
 
 ## Status
 
@@ -427,3 +448,35 @@ by hand from the root):
 Seams, tacks, reach and motion work for every curved stratum. The error is the
 single-view registration of round parts. **Step 5, multi-view refinement for curved
 parts, is next.** Mark in `stroke_mode:=dot` when measuring.
+
+**Step 5, multi-view for curved parts: built (2026-10-14), not yet benched.**
+- `part_shapes.py`: each registered part's signed distance to its real surface (a
+  slab's box; a pipe's cylinder with its cut, the bore solid; a band's walls). It checks
+  against every printed CAD: 0 mm on each vertex, normals out, signs as the primitive's
+  own inside test.
+- `multiview_refine` judges neighbours by it (the overlap rule, the contact samples, the
+  fit-up gaps). `parts_from_assembly` attaches it from `models/weldgen_objects.json`; a
+  part without an entry keeps its box.
+- `multiview.surfaces_from_models` gives the view planner the near-exact boxes (6 per
+  pipe, a chain per band) for targets, occlusion and its collision model.
+- A flat-ended pipe's spin is named "spin about its own axis (symmetric)" and kept out
+  of the relative-pose rule (no fit-up depends on it).
+
+Synthetic views as for the T (`test/test_multiview_curved.py`), true shapes vs the old
+bounding boxes:
+
+| case | true shapes | bounding boxes (before) |
+|---|---|---|
+| C1 on the plate, 8 mm off sideways | accepted, 0.08 mm from the truth | the same, 0.08 mm |
+| E2 on its mitre, 5 mm off | accepted, 0.03 mm | plate pushed 49.7 mm, both refused, E2 left 5 mm off |
+| S3 on R2, 1.8 mm off | accepted, 0.08 mm, no penetration | both refused ("overlaps by 1.9 / 2.0 mm"), 1.8 mm off |
+| RR1 on the plate, 3 mm off | accepted, < 1 mm | |
+| view plan round the real C1 (archived 14 Oct) | 4 views at azimuths 60/150/270/330 | |
+
+- **So C1's 8.8 mm needed only `refine_pose`.** The existing multi-view refinement
+  removes it even with boxes, and the curved bench never ran it.
+- E2, S3 on R2 (and SP3 for the planner) need the true shapes.
+
+**Bench (next):** per joint: save the base and the part → `refine_pose` (Fist held 2 s)
+→ `welding_points` (Palm) → `tack_reachability.py` → marking in `stroke_mode:=dot`.
+Compare with step 4's table: C1 and E2 first, then S3 on R2.

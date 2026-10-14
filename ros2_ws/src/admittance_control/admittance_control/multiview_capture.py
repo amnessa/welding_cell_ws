@@ -100,15 +100,19 @@ def latest_capture(results_dir: str | Path) -> Optional[Path]:
 def parts_from_assembly(assembly: dict[str, Any], models_dir: str | Path, n_points: int = 4000,
                         rng: Optional[np.random.Generator] = None) -> list[Part]:
     """The saved objects as refinement Parts: CAD surface samples with outward normals,
-    vertices for the box, and pose_static as the saved pose."""
+    vertices for the box, pose_static as the saved pose, and the registered true shape
+    (`part_shapes`, from `<models_dir>/weldgen_objects.json`) when there is one."""
     rng = rng or np.random.default_rng(0)
+    from .part_shapes import load_shapes
+    shapes = load_shapes(models_dir, [o["model"] for o in assembly["objects"]])
     parts = []
     for o in assembly["objects"]:
         v, f = load_ply_mesh(Path(models_dir) / o["model"])
         scale = 1e-3 if np.abs(v).max() > 5 else 1.0
         p, n = sample_mesh_surface(v, f, n_points, rng, return_normals=True)
         T_scan = np.asarray(o["T_static_camera"], float) if o.get("T_static_camera") is not None else None
-        parts.append(Part(o["model"], p * scale, n, v * scale, np.asarray(o["pose_static"], float), T_scan))
+        parts.append(Part(o["model"], p * scale, n, v * scale, np.asarray(o["pose_static"], float), T_scan,
+                          shapes.get(o["model"])))
     return parts
 
 

@@ -12,6 +12,31 @@ the plans under `notes/`; this file keeps the story and the numbers.
 
 ---
 
+## 2026-10-14 (night): Multi-view for curved parts: the views were enough, the neighbours were the problem
+
+**What happened.** Before changing the multi-view refinement for curved parts, its
+synthetic test case was run both ways: with the old neighbour model (each part as its
+bounding box) and with each part's true shape (a signed distance built from its
+registered primitive).
+
+**Evidence** (synthetic views, 4 cameras, 0.5 mm noise):
+- C1, registered 8 mm off sideways: back to within 0.08 mm both ways.
+- E2 on its 25° mitre: with boxes, the plate's top cut through E2's tilted box; the
+  plate was pushed 49.7 mm, both parts were refused, and E2 stayed 5 mm off. True
+  shapes: 0.03 mm.
+- S3 on R2: with boxes, S3's saddle flanks sit ~5 mm inside R2's box, and both parts
+  were refused for overlap. True shapes: 0.08 mm.
+
+**What we learned.** The 8–9 mm sideways error of the round parts on the bench is not a
+limit of the method: views from several sides determine a pipe's position, and C1 only
+needed `refine_pose`. What did not carry over from the plates was the
+NEIGHBOUR model. A bounding box is exact for a plate and wrong for a pipe standing on a
+cut or wrapped round another pipe. Making each part's own surface the neighbour model,
+the same primitives the seams come from, is what lets the refinement accept curved
+joints.
+
+---
+
 ## 2026-10-14 (evening): The curved bench without multi-view: flat sides are what pins a pose
 
 **What happened.** All five curved joints were registered, seamed, planned and marked end
