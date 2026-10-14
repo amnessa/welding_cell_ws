@@ -7,6 +7,7 @@ Panels:
         - /Global Options1
         - /Status1
         - /PointCloud21
+        - /PointCloud25
         - /MarkerArray3
         - /PointCloud27
         - /Marker2
@@ -335,7 +336,7 @@ Visualization Manager:
       Use Fixed Frame: true
       Use rainbow: true
       Value: true
-    - Alpha: 1
+    - Alpha: 0.10000000149011612
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
         Max Value: 10
@@ -488,7 +489,7 @@ Visualization Manager:
       Enabled: true
       Name: MarkerArray
       Namespaces:
-        views: true
+        {}
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -500,7 +501,7 @@ Visualization Manager:
       Enabled: true
       Name: Marker
       Namespaces:
-        tip_path: true
+        {}
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -580,25 +581,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 1.3754119873046875
+      Distance: 0.6998425722122192
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: -0.48016729950904846
-        Y: 0.0696147009730339
-        Z: 0.05566352978348732
+        X: -0.5143613219261169
+        Y: 0.06627412140369415
+        Z: -0.05299430340528488
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.3654002547264099
+      Pitch: 0.11540041118860245
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
-      Yaw: 1.7704284191131592
+      Yaw: 2.805428981781006
     Saved: ~
 Window Geometry:
   Displays:
