@@ -371,4 +371,59 @@ E2's tack 2 → 3 transit, measured on the plan: 102 mm of tip chord, 1,977 mm o
   The contacts of the last run are 3 of 4 on E2's wall (4.9, 8.3, 17.7 mm up), one at
   the root. That is not a sideways shift (the best one leaves 2 mm rms): this
   registration was also tilted or spun. `contact_error.py` now flags such a fit.
-- **Next on the bench:** RR1, SP3, S3 on R2. Then step 5.
+- **RR1 on the plate (2026-10-14, the new transits).**
+  - All four transits were Cartesian lines or straight edges, the planned paths joined
+    and driven; "the path is amazing".
+  - Marks: two close to the root but not touching it, one on the plate ~3 mm from the
+    root, one on RR1's wall ~2 mm up.
+  - Contact depths along the pen: +10.3, −0.6, −3.1, −2.0 mm.
+  - That is clearly better than C1 / E2 (12–14 mm outliers): a rounded-rect tube's flat
+    sides pin its pose, a round pipe's side does not.
+  - Strokes still stop on registration error: twice "pen lifted off", once over 8 N.
+    The stroke follows the registered seam.
+  - `contact_error.py` fits tubes only. RR1's run is in `marks_history/` for when bands
+    are added.
+- **Conclusion of the curved bench so far:** without multi-view, a curved part's mark
+  error is set by how well one view pins its pose: ~3 mm with flat sides (RR1), 8–14 mm
+  round (C1, E2). **Step 5 (multi-view for curved parts) is needed.**
+- **SP3 on the plate (2026-10-14).**
+  - Reach 4/6: the two concave-side tacks have the holder body 0.3 / 0.9 mm from the
+    band, refused as step 3 predicted.
+  - Marked:
+    - one tack had no contact within the overshoot (the real surface is farther than
+      registered);
+    - three are 9.5–12.7 mm up SP3's wall (by hand).
+  - The contacts (`contact_error.py`, bands now per contact): 3.7, 0.2 and 7.7 mm above
+    the registered plate top, and 2.6, 0.2, 5.3 mm outside the registered walls.
+  - Marks up the wall on **both** sides of the band are not a sideways shift (that puts
+    one side on the plate): a rotation or shape error of the registered S.
+  - The hand numbers exceed the contacts' because a `tack` stroke runs 20 mm along the
+    REGISTERED seam after the contact. Round SP3's 23 mm bends, a slightly rotated
+    registered seam climbs the real wall over those 20 mm (one stroke "lifted off").
+  - **For accuracy numbers, mark in `stroke_mode:=dot`:** the mark is then the contact
+    point, and the ruler and `contact_error.py` measure the same thing. `tack` strokes
+    are the demonstration.
+- **S3 on R2 (2026-10-14).**
+  - Reach 4/4 (min clearance 10.3 mm); all marked, all on S3.
+  - By hand (stroke start → end): 7.2 → 5.8, 1 → 1.5, 2.6 → 2.6 and 11 mm (lost contact
+    during the stroke).
+  - Contacts: tacks 1–2 within ~1 mm of the registered root, tacks 3–4 3.4–5.3 mm off
+    it, on S3's wall (`contact_error.py`, saddle per contact).
+  - A contact at the registered root only means a real surface passes there, so the
+    ruler is the number here.
+
+**Step 4 done: the curved bench without multi-view** (2026-10-14, `stroke_mode:=tack`,
+by hand from the root):
+
+| joint | reached | marks | note |
+|---|---|---|---|
+| plate T (reference, 6 Oct) | all | 2.3–2.7 mm | flat faces |
+| RR1 on the plate | 4/4 | within ~3 mm | flat sides pin the pose |
+| S3 on R2 | 4/4 | 1–7 mm, one 11 mm (lifted off) | saddle found as computed |
+| C1 on the plate | 4/4 | 14 / 1.2, 6.5 / 3.7 mm | contacts: 8.8 mm sideways |
+| E2 on the plate | 4/4 | 14.4 / 1.2, 11.7 / ~0 mm; a 2nd registration: pairs near perfect, one 8.7 mm | contacts: 8.1 mm sideways; the 2nd also tilted/spun |
+| SP3 on the plate | 4/6 | 9.5–12.7 mm, one no contact | 2 concave-side tacks refused (holder); stroke climbs |
+
+Seams, tacks, reach and motion work for every curved stratum. The error is the
+single-view registration of round parts. **Step 5, multi-view refinement for curved
+parts, is next.** Mark in `stroke_mode:=dot` when measuring.

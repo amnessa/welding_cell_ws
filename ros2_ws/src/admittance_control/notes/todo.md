@@ -83,7 +83,19 @@ The plate strata (T/line, corner, butt square, lap, edge) are MDF cuts. The curv
      - the planned path driven instead of re-planned;
      - APS 3 s.
      - E2 tip paths are now 135–211 mm tack to tack, the same every run.
-   - RR1, S3 on R2 and SP3 are still to mark (the user's next bench), then step 5.
+   - RR1 marked (2026-10-14): all within ~3 mm (two close but not touching the root,
+     one 3 mm out on the plate, one 2 mm up the wall), clearly better than the round
+     pipes' 8–14 mm.
+   - **Multi-view (step 5) is needed for curved parts**: one view pins a round part's
+     pose poorly.
+   - SP3 marked (2026-10-14): reach 4/6 (the concave sides, as predicted); one no
+     contact, three 9.5–12.7 mm up the band. Its contacts are 0–8 mm off: a rotated S,
+     and the 20 mm stroke climbing the real wall. **Measure accuracy in
+     `stroke_mode:=dot`.**
+   - S3 on R2 marked (2026-10-14): 4/4, 1–7 mm and one 11 mm (lifted off). **Step 4
+     done** (the bench table is in `curved_seams_plan.md`).
+   - **Next: step 5, multi-view refinement for curved parts.**
+   - `contact_error.py` reports bands per contact (no fit yet).
 
 ## Benchmarks to run (for the thesis)
 

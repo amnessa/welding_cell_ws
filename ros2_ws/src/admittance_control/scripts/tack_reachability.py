@@ -55,7 +55,8 @@ def main() -> int:
     ap.add_argument("--tilt", type=float, default=None, help="force this work angle (deg) off the bisector")
     ap.add_argument("--kinematics", default=str(PKG / "config" / "ur5e_calibration.yaml"),
                     help="UR kinematics file the robot really uses ('' = nominal chain)")
-    ap.add_argument("--out", default=None, help="report JSON (default: <save-dir>/tack_reach.json)")
+    ap.add_argument("--out", default=None,
+                    help="report JSON (default: <save-dir>/tack_reach.json; a relative path is in the save dir)")
     args = ap.parse_args()
     print("kinematics:", use_kinematics(args.kinematics or None))
 
@@ -82,7 +83,10 @@ def main() -> int:
           f"clearance {cfg.clearance_m * 1000:g} mm, standoff {cfg.standoff_m * 1000:g} mm")
     report = plan_tacks(tacks, tool, model, cfg)
     print(format_report(report))
-    out = Path(args.out) if args.out else save_dir / "tack_reach.json"
+    # a relative --out is in the save dir, where the marking node reads it (it used to be
+    # the shell's directory: the docstring's own example wrote ros2_ws/tack_reach.json)
+    out = save_dir / "tack_reach.json" if not args.out else (
+        Path(args.out) if Path(args.out).is_absolute() else save_dir / args.out)
     report["kinematics"] = active_kinematics()
     report["source"] = {"tacks": str(save_dir / "welding_tacks.json"),
                         "assembly": str(save_dir / "assembly.json"), "frame": assembly.get("static_frame", "base_link")}

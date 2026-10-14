@@ -12,6 +12,33 @@ the plans under `notes/`; this file keeps the story and the numbers.
 
 ---
 
+## 2026-10-14 (evening): The curved bench without multi-view: flat sides are what pins a pose
+
+**What happened.** All five curved joints were registered, seamed, planned and marked end
+to end with the pen: C1, E2, RR1 and SP3 on a plate, and S3 on R2. The seams, tacks,
+reachability and motion worked for every stratum. The mark error did not behave the same
+on every part.
+
+**Evidence** (by hand from the root, `tack` strokes):
+- plate T 2.3–2.7 mm (the 6 Oct reference); RR1 within ~3 mm;
+- S3 on R2 1–7 mm, one 11 mm;
+- C1 up to 14 mm and E2 up to 14.4 mm, with one side of each pipe near the root and the
+  opposite side up its wall;
+- SP3 9.5–12.7 mm, with 2 of 6 tacks refused because the pen holder does not fit the
+  S-curve's concave side.
+- The pen's contacts put C1 and E2 8–9 mm sideways of their registered poses.
+
+**What we learned.**
+- The single-view registration of a part is as good as the flat faces it shows. A
+  rounded-rect tube's sides pin it to ~3 mm; a round pipe's side leaves its position
+  along the view loose by ~8 mm. That is the motivation for multi-view refinement of
+  curved parts.
+- A 20 mm stroke along the registered seam reports more error than the touch itself on
+  tight curves (it climbs the real wall). Measure accuracy with dots, demonstrate with
+  strokes.
+
+---
+
 ## 2026-10-14 (afternoon): Joint-space shortest is not what a cell should drive round a pipe
 
 **What happened.** With the planner fixed, the transits between the tacks round a pipe

@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Registration error of a tube-on-plate joint, measured by the pen's own contacts.
+"""Registration error of a tube-on-plate joint, measured by the pen's own contacts
+(for a swept band on a plate - RR1, SP3 - each contact against the registered
+surfaces, without a fit).
 
     python scripts/contact_error.py                                  # the save dir's last run
     python scripts/contact_error.py --marks <save_dir>/marks_history/tack_marks_<stamp>.json
@@ -84,6 +86,69 @@ def _root_distance(c: np.ndarray, seam_pts: np.ndarray) -> float:
     return float(np.linalg.norm(seam_pts - c, axis=1).min())
 
 
+def band_wall_offset(band, c: np.ndarray) -> tuple[float, str]:
+    """(mm outside the band's nearest wall, which wall '-w' / '+w'), for a point `c` (mm,
+    world): positive = outside the band, negative = inside it. The wall is the offset
+    surface at offset_lo ('-w') or offset_hi ('+w') of the spine, extruded along z."""
+    T = np.asarray(band.T_world_part, float)
+    loc = (np.asarray(c, float) - T[:3, 3]) @ T[:3, :3]
+    sp = band.spine
+    ts = np.linspace(0.0, sp.t_period, 4000, endpoint=not sp.closed)
+    P = sp.point(ts)[:, :2]
+    k = int(np.argmin(np.linalg.norm(P - loc[:2], axis=1)))
+    tan = sp.tangent(ts[k:k + 1])[0, :2]
+    nrm = np.array([-tan[1], tan[0]]) / np.linalg.norm(tan)
+    off = float((loc[:2] - P[k]) @ nrm)
+    lo, hi = float(band.offset_lo_mm), float(band.offset_hi_mm)
+    if off >= 0.5 * (lo + hi):
+        return off - hi, "+w"
+    return lo - off, "-w"
+
+
+def _report_band(marks_doc, objects, parts, slab, band) -> int:
+    """A swept band on a plate (RR1, SP3): no fit - its error is not one shift - only each
+    contact against the registered surfaces."""
+    T = np.asarray(band.T_world_part, float)
+    centre = T[:3, 3] + 0.5 * (band.z0_mm + band.z1_mm) * T[:3, 2]
+    face = max(("+w", "-w"), key=lambda f: slab.face_plane(f).n @ centre + slab.face_plane(f).d)
+    pl = slab.face_plane(face)
+    print(f"{objects[parts.index(band)][0]} (swept band) on {objects[parts.index(slab)][0]}: "
+          "each contact against the registered surfaces (no fit for bands)")
+    print(f"  {'tack':>5} {'depth':>7} {'above reg. plate':>17} {'outside reg. wall':>18}")
+    for m in marks_doc["marks"]:
+        if not (m.get("contact") and m.get("tip_contact_m")):
+            print(f"  {m['seam_id']}.{m['tack_no']:<3}  no contact")
+            continue
+        c = np.asarray(m["tip_contact_m"], float) * 1000.0
+        out, wall = band_wall_offset(band, c)
+        print(f"  {m['seam_id']}.{m['tack_no']:<3} {m['contact_depth_m'] * 1000:+6.1f} "
+              f"{pl.n @ c + pl.d:+13.1f} mm {out:+12.1f} mm ({wall})")
+    return 0
+
+
+def _tube_wall_mm(tube, c: np.ndarray) -> float:
+    """mm outside a tube's outer wall (negative = inside its outer radius)."""
+    T = np.asarray(tube.T_world_part, float)
+    loc = (np.asarray(c, float) - T[:3, 3]) @ T[:3, :3]
+    return float(np.hypot(loc[0], loc[1]) - tube.r_outer_mm)
+
+
+def _report_saddle(marks_doc, objects, parts, tubes) -> int:
+    """A branch on a run pipe (S3 on R2): each contact against both registered walls."""
+    main, branch = sorted(tubes, key=lambda t: -t.r_outer_mm)
+    print(f"{objects[parts.index(branch)][0]} (branch) on {objects[parts.index(main)][0]} (run): "
+          "each contact against the registered walls (no fit for a saddle)")
+    print(f"  {'tack':>5} {'depth':>7} {'outside reg. run wall':>22} {'outside reg. branch wall':>25}")
+    for m in marks_doc["marks"]:
+        if not (m.get("contact") and m.get("tip_contact_m")):
+            print(f"  {m['seam_id']}.{m['tack_no']:<3}  no contact")
+            continue
+        c = np.asarray(m["tip_contact_m"], float) * 1000.0
+        print(f"  {m['seam_id']}.{m['tack_no']:<3} {m['contact_depth_m'] * 1000:+6.1f} "
+              f"{_tube_wall_mm(main, c):+18.1f} mm {_tube_wall_mm(branch, c):+21.1f} mm")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--save-dir", default=str(PKG / "scripts" / "foundationpose_results"))
@@ -106,8 +171,14 @@ def main() -> int:
     parts = sfr.posed_parts(objects, load_registry(args.registry))
     slab = next((p for p in parts if type(p).__name__ == "Slab"), None)
     tube = next((p for p in parts if type(p).__name__ == "Tube"), None)
+    band = next((p for p in parts if type(p).__name__ == "SweptSlab"), None)
+    if slab is not None and tube is None and band is not None:
+        return _report_band(marks_doc, objects, parts, slab, band)
+    tubes = [p for p in parts if type(p).__name__ == "Tube"]
+    if slab is None and len(tubes) == 2:
+        return _report_saddle(marks_doc, objects, parts, tubes)
     if slab is None or tube is None:
-        print("needs a tube standing on a slab (the curved bench); found "
+        print("needs a tube or a swept band standing on a slab (the curved bench); found "
               + ", ".join(type(p).__name__ for p in parts))
         return 1
     T = np.asarray(tube.T_world_part, float)
