@@ -231,9 +231,11 @@ Bench-like scenes (8 mm plate top at z 20 mm, the part centred at (0.55, 0.10) m
 | RR1 | 4 | 4 | 9.6 mm | | 21 s |
 | SP3 (two fillets) | 6 | 4 | 9.1 mm | at the lobes' concave sides the holder is 1.7–1.8 mm from the band | 24 s |
 | S3 on R2 (R2 along x, axis 80 mm up) | 4 | 3 | 10.0 mm | the far-side tack has no IK on the elbow-up branch | 77 s |
+| ↳ **invalid** (found 2026-10-14): that scene had S3 hanging UNDER R2 (S3's body lies along its CAD −y, and the rotation sent +y up). The real bench reached 4/4. | | | | | |
 
-- The unreachable tacks are the expected kinds: the far side of a saddle, and a
-  concave fillet tighter than the pen holder. They are reported, not forced.
+- The unreachable tacks are the expected kinds: a concave fillet tighter than the pen
+  holder (SP3, confirmed on the bench). The "far side of a saddle" came from the invalid
+  S3 scene above. They are reported, not forced.
   Turning the part by hand, or a slimmer holder, would reach them.
 - Planning is 14–77 s per part, offline (`scripts/tack_reachability.py`); the marking
   node reads the result.
