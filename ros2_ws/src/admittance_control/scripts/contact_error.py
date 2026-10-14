@@ -19,6 +19,9 @@ smaller of the two surface residuals, with the side conditions (a plate contact 
 outside the real tube, a wall contact above the real plate) and a small pull to zero
 when the contacts leave a direction free. Then every mark's distance from the REAL seam
 root, the number a ruler measures, is reported next to the registration's own prediction.
+A fit that leaves more than 1 mm rms (or sits on the search bound) is flagged: the error
+was not a translation (a tilt or a spin of the registered part), and only the raw
+per-contact heights mean anything then.
 Vision-only stays the method: this is evaluation, never fed back.
 """
 
@@ -38,7 +41,7 @@ sys.path.insert(0, str(PKG))
 
 def fit_offsets(contacts: np.ndarray, plate_n: np.ndarray, plate_d: float, axis_p: np.ndarray,
                 axis_u: np.ndarray, r: float, e1: np.ndarray, e2: np.ndarray,
-                span: float = 15.0, step: float = 0.25, dz_span: float = 10.0,
+                span: float = 25.0, step: float = 0.25, dz_span: float = 10.0,
                 tol: float = 0.5, pull: float = 1e-3) -> dict:
     """(lateral offset (2), plate offset) that put every contact on the real plate or
     the real wall; mm in, mm out. See the module docstring."""
@@ -69,8 +72,11 @@ def fit_offsets(contacts: np.ndarray, plate_n: np.ndarray, plate_d: float, axis_
         out.append({"surface": "wall" if abs(rw) <= abs(rp) else "plate",
                     "residual_mm": float(min(abs(rw), abs(rp))),
                     "height_above_real_plate_mm": float(rp), "outside_real_wall_mm": float(rw)})
+    rms = float(np.sqrt(np.mean([o["residual_mm"] ** 2 for o in out])))
+    at_bound = bool(np.abs(d).max() >= span - 1e-9 or abs(dz) >= dz_span - 1e-9)
     return {"lateral_mm": d.tolist(), "lateral_norm_mm": float(np.linalg.norm(d)),
-            "plate_mm": dz, "rms_mm": float(np.sqrt(np.mean([o["residual_mm"] ** 2 for o in out]))),
+            "explained": bool(rms <= 1.0 and not at_bound),
+            "plate_mm": dz, "rms_mm": rms,
             "contacts": out}
 
 
@@ -134,6 +140,10 @@ def main() -> int:
           f"({fit['lateral_mm'][0]:+.1f}, {fit['lateral_mm'][1]:+.1f} along e1, e2 = "
           f"{np.round(e1, 2).tolist()}, {np.round(e2, 2).tolist()})")
     print(f"  real plate top vs registered: {fit['plate_mm']:+.1f} mm   (fit rms {fit['rms_mm']:.2f} mm)")
+    if not fit["explained"]:
+        print("  NOT EXPLAINED by a sideways shift + a plate offset (rms > 1 mm or the search bound):"
+              " the registration is also tilted / spun - read the per-contact heights, not these"
+              " offsets (2026-10-14 15:07, E2: 3 of 4 contacts 5-18 mm up the wall, 1 at the root)")
     print(f"  {'tack':>5} {'surface':>8} {'depth':>7} {'mark->real root':>16} {'mark->reg. seam':>16}")
     for m, c, o in zip(marks, C, fit["contacts"]):
         print(f"  {m['seam_id']}.{m['tack_no']:<3} {o['surface']:>8} {m['contact_depth_m'] * 1000:+6.1f}  "

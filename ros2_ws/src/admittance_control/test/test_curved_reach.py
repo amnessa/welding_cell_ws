@@ -148,3 +148,73 @@ def test_a_curved_stroke_follows_the_seam(pipe_in_front):
     assert set(stroke_modes("seam", rep, seams).values()) == {"tack"}
     chord = np.linalg.norm(np.subtract(t["p1_mm"], t["p0_mm"]))
     assert chord < t["tack_length_mm"]                                        # it is an arc
+
+
+def _tip_path_mm(tool, path):
+    from admittance_control.kinematics import ur5e_fk
+    tips = np.array([tool.tip_in(ur5e_fk(np.asarray(q, float))) for q in path])
+    return float(np.linalg.norm(np.diff(tips, axis=0), axis=1).sum() * 1000.0), tips
+
+
+def test_marking_round_a_pipe_departs_out_along_the_pen_and_slides_tack_to_tack(pipe_in_front):
+    """2026-10-14: transits round E2 swung the pen up to 0.9 m off. Now each transit ends
+    `departure_m` out along the pen and, tack to tack on the loop, is the tool's straight
+    Cartesian line (or a straight joint edge) - a few hundred mm, the same every time."""
+    from admittance_control import marking as mk
+    tool, cfg, model, seams, tacks = pipe_in_front
+    report = tr.plan_tacks(tacks, tool, model, cfg)
+    plan = mk.build_marking_plan(report, tool, model, cfg, cfg.home_q, smooth_transits=True,
+                                 transit_opts=dict(planner="aps", budget_s=1.0))
+    assert plan.ok, [s.reason for s in plan.steps]
+    for k, s in enumerate(plan.steps):
+        out = -float((tool.tip_in(__import__("admittance_control.kinematics", fromlist=["x"]).ur5e_fk(s.q_app))
+                      - s.point_m) @ s.axis_m)
+        assert out == pytest.approx(cfg.departure_m, abs=1e-3) and s.descent_from_m == cfg.departure_m
+        assert min(np.abs(np.asarray(q) - s.q_approach).max() for q in s.descent) < 1e-6
+        if k:
+            assert s.transit_how.startswith(("Cartesian", "straight")), s.transit_how
+            L, tips = _tip_path_mm(tool, s.transit)
+            chord = float(np.linalg.norm(tips[-1] - tips[0]) * 1000.0)
+            assert L < 1.6 * chord + 30.0, (s.transit_how, L, chord)
+
+
+def test_the_descent_is_fast_out_to_the_approach_point_then_slow(pipe_in_front):
+    from admittance_control import marking as mk
+    tool, cfg, model, seams, tacks = pipe_in_front
+    report = tr.plan_tacks(tacks, tool, model, cfg)
+    plan = mk.build_marking_plan(report, tool, model, cfg, cfg.home_q)
+    s = plan.steps[0]
+    timed = mk.time_descent(s.descent, tool, 0.02, v_slow=0.002, slow_zone_m=0.006,
+                            point=s.point_m, axis=s.axis_m, v_fast=0.05,
+                            fast_beyond_m=cfg.standoff_m)
+    from admittance_control.kinematics import ur5e_fk
+    tips = np.array([tool.tip_in(ur5e_fk(q)) for q, _ in timed])
+    before = -(tips - s.point_m) @ (s.axis_m / np.linalg.norm(s.axis_m))
+    v = np.linalg.norm(np.diff(tips, axis=0), axis=1) / np.diff([t for _, t in timed])
+    mid = before[1:]
+    assert np.median(v[mid > cfg.standoff_m + 0.005]) == pytest.approx(0.05, rel=0.1)
+    assert np.median(v[(mid < cfg.standoff_m - 0.005) & (mid > 0.01)]) == pytest.approx(0.02, rel=0.1)
+    assert np.median(v[(mid < 0.004) & (mid > -0.002)]) == pytest.approx(0.002, rel=0.2)
+
+
+def test_the_rolls_of_a_loop_are_chosen_together(monkeypatch):
+    """The (tilt, roll) of all tacks minimise the joint travel between consecutive
+    approach poses plus a cost for clearance under 10 mm - not tack by tack for
+    clearance (which put approach poses 65-90 deg apart on three joints round E2)."""
+    from admittance_control.tack_reach import TackPlan
+    q0 = np.zeros(6)
+    near, far = np.array([0.1, 0, 0, 0, 0, 0]), np.array([1.5, 0, 0, 0, 0, 0])
+
+    def fake(tack, roll, tilt, seeds, *_):
+        n = int(tack["tack_no"])
+        q = {(1, 0): near, (1, 1): far, (2, 0): far + 0.1, (2, 1): near + 0.1}[(n, int(round(np.degrees(roll))))]
+        clr = 0.012 if (n, int(round(np.degrees(roll)))) in ((1, 1), (2, 0)) else 0.009
+        p = TackPlan(tack_id=n, seam_id=0, tack_no=n, ok=True, roll_deg=float(np.degrees(roll)), q_app=q)
+        p.clearance_app_m = p.clearance_tack_m = p.lin_min_clearance_m = clr
+        return p
+    monkeypatch.setattr(tr, "_try_tack", fake)
+    cfg = tr.load_marking_config()
+    tacks = [{"id": n, "seam_id": 0, "tack_no": n} for n in (1, 2)]
+    plans = tr._plan_per_tack(tacks, [0.0], np.radians([0.0, 1.0]), q0, None, None, cfg, None)
+    # near -> near+0.1 (9 mm each, 1 mm short) beats far -> far+0.1 (12 mm, 1.4 rad away)
+    assert [p.roll_deg for p in plans] == pytest.approx([0.0, 1.0])

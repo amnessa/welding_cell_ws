@@ -110,7 +110,7 @@ class TackMarkingNode(Node):
         # shorter than one RRT-Connect), 'rrt_connect' = the first RRT-Connect path
         # (before 2026-10-06; also APS's fallback)
         p('transit_planner', 'aps')
-        p('transit_budget_s', 2.0)         # per transit that is not a straight edge (1.0
+        p('transit_budget_s', 3.0)         # per transit that is not a straight edge (1.0
                                            # before 2026-10-14); APS shortens for this long
         p('transit_max_budget_s', 10.0)    # ... and past it waits for a first path up to this
         p('aps_num_planners', 4)
@@ -119,7 +119,8 @@ class TackMarkingNode(Node):
         p('smooth_transits', True)         # round the transit corners (spline) and time them
                                            # with TOTG, as the drawing server does; false = the
                                            # straight shortcut segments (before 2026-10-05)
-        p('v_tip_m_s', 0.02)               # descent tip speed
+        p('v_tip_m_s', 0.02)               # descent tip speed from the approach point (standoff_m)
+        p('v_approach_m_s', 0.05)          # ... from the departure point (departure_m) to it
         p('v_slow_m_s', 0.002)             # ... in the last slow_zone_m before the tack
         p('slow_zone_m', 0.006)            # (rigid parts: keeps the contact near 1.5 N)
         p('overshoot_m', 0.005)
@@ -200,6 +201,24 @@ class TackMarkingNode(Node):
                   f'{timed[-1][1]:.1f} s, timed by {src}')
         return timed
 
+    def _join_planned(self, q_now, path, max_rad: float = 0.35):
+        """The planned transit, entered from where the arm is: after a stroke and its
+        retract the arm stands near, not at, the planned start. Re-planning there replaced
+        a path APS had shortened at `~/plan` with a fresh random one (2026-10-14: every
+        transit). When the arm is within `max_rad` of the start on every joint and the
+        straight edge to it is clear in the planned path's own transit model, prepend it;
+        else None (re-plan)."""
+        if q_now is None or not path:
+            return None
+        q_now = np.asarray(q_now, float)
+        if np.abs(q_now - path[0]).max() > max_rad:
+            return None
+        from admittance_control.kinematics import _edge_valid
+        valid = fast_is_valid(transit_model(self._model, self._cfg, path[0], path[-1]))
+        if not (valid(q_now) and _edge_valid(q_now, path[0], resolution=0.01, is_valid=valid)):
+            return None
+        return [q_now] + list(path)
+
     def _replan_transit(self, target: np.ndarray, label: str, unwrap: bool = True):
         """The plan froze the transit at the joints of `~/plan`; if the arm has been jogged
         since (a TCP calibration, freedrive), re-plan from where it is now instead of
@@ -214,7 +233,7 @@ class TackMarkingNode(Node):
         how: dict = {}
         path = transit_path(q_now, target, transit_model(self._model, self._cfg, q_now, target),
                             unwrap=unwrap, smooth=bool(self.get_parameter('smooth_transits').value),
-                            info=how, **self._transit_opts())
+                            info=how, cartesian_cfg=self._cfg, **self._transit_opts())
         if path is None:
             return None, f'{label}: no collision-free transit from the current joints'
         self._say(f"{label}: re-planned from the current joints ({how.get('how', '')})")
@@ -347,20 +366,32 @@ class TackMarkingNode(Node):
         q_now = self._where()
         transit = step.transit
         if q_now is None or np.abs(q_now - transit[0]).max() > 1e-3:
-            transit, err = self._replan_transit(step.q_app, f'{tag} transit')
-            if transit is None:
-                return False, err
+            joined = self._join_planned(q_now, transit)
+            if joined is not None:
+                transit = joined
+                self._say(f'{tag} transit: the planned path, joined from the current joints')
+            else:
+                transit, err = self._replan_transit(step.q_app, f'{tag} transit')
+                if transit is None:
+                    return False, err
         ok, msg = self._execute(self._time_transit(transit, f'{tag} transit'),
                                 f'{tag} transit', watch_touch=False, rebias=True)
         if not ok:
             return False, msg
         # 2. descent, force-gated
         self._measure_bias()
+        # departure -> approach point fast (v_approach_m_s), then v_tip, the last slow_zone_m slow
         timed = time_descent(step.descent, self._tool, float(self.get_parameter('v_tip_m_s').value),
                              v_slow=float(self.get_parameter('v_slow_m_s').value),
                              slow_zone_m=float(self.get_parameter('slow_zone_m').value),
-                             point=step.point_m, axis=step.axis_m)
-        ok, msg, contact = self._execute(timed, f'{tag} descent', watch_touch=True, want_contact=True)
+                             point=step.point_m, axis=step.axis_m,
+                             v_fast=float(self.get_parameter('v_approach_m_s').value),
+                             fast_beyond_m=self._cfg.standoff_m)
+        # a dry run pretends the contact at the registered point: the chain sample nearest it
+        tips = [self._tool.tip_in(ur5e_fk(q)) for q, _ in timed]
+        k_pt = int(np.argmin([np.linalg.norm(t - step.point_m) for t in tips]))
+        ok, msg, contact = self._execute(timed, f'{tag} descent', watch_touch=True, want_contact=True,
+                                         sim_fraction=k_pt / max(1, len(timed) - 1))
         if not ok and contact is None:
             return False, msg
         record = {'tack_id': step.tack_id, 'seam_id': step.seam_id, 'tack_no': step.tack_no,
@@ -393,13 +424,20 @@ class TackMarkingNode(Node):
         # 4. retract: straight back along the pen axis from wherever the pen is
         q_now = self._where()
         tip_now = self._tool.tip_in(ur5e_fk(q_now))
-        lift = np.linspace(0.0, 1.0, 8)[1:, None] * (-self._cfg.standoff_m * step.axis_m)[None, :] + tip_now
+        # out to the departure point (where the planned transit to the next tack starts):
+        # the first standoff at the descent speed, the rest at v_approach_m_s
+        out_m = max(float(step.descent_from_m or self._cfg.standoff_m), self._cfg.standoff_m)
+        n_out = max(8, int(np.ceil(out_m / 0.005)))
+        lift = np.linspace(0.0, 1.0, n_out + 1)[1:, None] * (-out_m * step.axis_m)[None, :] + tip_now
         back = line_chain(self._tool, lift, step.axis_m, np.deg2rad(step.roll_deg), q_now, self._cfg)
         if back is None:                                     # fall back to the descent chain reversed
             k_stop = int(np.argmin([np.abs(q - q_now).max() for q in step.descent]))
             back = step.descent[:k_stop][::-1]
         ok, msg = self._execute(time_descent([q_now] + list(back), self._tool,
-                                             float(self.get_parameter('v_tip_m_s').value)),
+                                             float(self.get_parameter('v_tip_m_s').value),
+                                             point=tip_now, axis=step.axis_m,
+                                             v_fast=float(self.get_parameter('v_approach_m_s').value),
+                                             fast_beyond_m=self._cfg.standoff_m),
                                 f'{tag} retract', watch_touch=False, away=True)
         self._marks.append(record)
         self._write_marks()
@@ -501,16 +539,17 @@ class TackMarkingNode(Node):
             self.get_logger().warn(f'could not archive the marks: {exc}')
 
     def _execute(self, timed, label: str, watch_touch: bool, want_contact: bool = False,
-                 away: bool = False, rebias: bool = False):
+                 away: bool = False, rebias: bool = False, sim_fraction: float | None = None):
         """One trajectory goal through the shared executor (admittance_control/motion.py);
         with `watch_touch` cancelled at the touch force. Returns (ok, msg) or, with
         `want_contact`, (ok, msg, contact|None). In a dry run the pretended contact is where
-        the model puts the surface: the tack point, standoff/(standoff+overshoot) of the
-        way down the descent."""
+        the model puts the surface: `sim_fraction` of the way along `timed` (the descent
+        passes the chain sample nearest the tack point), else
+        standoff/(standoff+overshoot)."""
         cfg, over = self._cfg, float(self.get_parameter('overshoot_m').value)
+        frac = cfg.standoff_m / (cfg.standoff_m + over) if sim_fraction is None else float(sim_fraction)
         return self._exec.execute(timed, label, watch_touch=watch_touch, want_contact=want_contact,
-                                  away=away, sim_contact_fraction=cfg.standoff_m / (cfg.standoff_m + over),
-                                  rebias=rebias)
+                                  away=away, sim_contact_fraction=frac, rebias=rebias)
 
     # ---------------------------------------------------------------- RViz ----------
     def _publish_tip_path(self) -> None:

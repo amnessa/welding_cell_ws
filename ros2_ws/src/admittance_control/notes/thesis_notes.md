@@ -12,6 +12,36 @@ the plans under `notes/`; this file keeps the story and the numbers.
 
 ---
 
+## 2026-10-14 (afternoon): Joint-space shortest is not what a cell should drive round a pipe
+
+**What happened.** With the planner fixed, the transits between the tacks round a pipe
+still swung the pen through big loops, up to 0.9 m off, and the arm hit things in the
+cell 75 cm away. Giving APS more time made the bad ones rarer, not gone.
+
+**Evidence** (offline, E2, the same transit):
+- APS minimises weighted joint travel. Paths of nearly equal joint cost (3.5 vs 3.9 rad)
+  had tip paths of 257 vs 772 mm.
+- Over repeated runs:
+  - 2 s gave 497–1,873 mm of tip travel;
+  - 5 s gave 353–595 mm;
+  - more threads, or parallel runs, were worse (they share 8 cores).
+- Starting each transit 100 mm out along the pen instead of 35 mm made most transits
+  consistent, but not all.
+- The move a welder would program, the tool sliding in a straight Cartesian line from
+  one departure point to the next while it turns, came out at 141–211 mm, at the
+  minimum joint cost, identically on every run. A sampling planner only needs to step
+  in when that line is blocked.
+
+**What we learned.**
+- **Optimise the quantity you care about.** For the cell that is how far the tool sweeps
+  through space (what it can hit), not joint-space length.
+- **Structure first, then search.** Departure points plus the Cartesian line are the
+  common case; APS is the fallback for the hard ones.
+- **Re-planning on every small deviation threw the good plan away.** Joining the planned
+  path from where the arm actually stands kept it.
+
+---
+
 ## 2026-10-14: The pen's contacts measure the registration; the planner was failing on its own margin
 
 **What happened.** The first marks on curved parts (C1, a pipe on a plate; E2, a mitred

@@ -332,3 +332,43 @@ so its tip is a point on the real part).
     become a box standing on the table.
 - Every marking run is now kept in `marks_history/` with its assembly. C1's contacts
   were overwritten by E2's run.
+
+**Transits round a pipe (2026-10-14 afternoon).** With the table in and APS fixed, the
+pen still swung in big loops between tacks: up to 0.9 m off, hitting things ~75 cm out.
+E2's tack 2 → 3 transit, measured on the plan: 102 mm of tip chord, 1,977 mm of tip path,
+637 mm off the chord, the base joint 170° for a 68° change.
+
+| what was tried (offline, E2, the same transit) | joint cost | tip path | max off the chord |
+|---|---|---|---|
+| APS 2 s, from the 35 mm approach points | 3.7–11.0 | 497–1,873 mm | 234–879 mm |
+| APS 3 s | 3.0–5.2 | 340–743 mm | 134–368 mm |
+| APS 5 s | 3.0–3.2 | 353–595 mm | 149–254 mm |
+| APS 3 s, 8 threads instead of 4 | 3.7–6.0 | 410–1,036 mm | worse |
+| 3 parallel APS runs, the shortest tip path kept | 3.6–8.6 each | 263–942 mm kept | the runs compete for the cores |
+| APS 3 s from 100 mm departure points | 3.02–3.06 | 194–206 mm | 39–55 mm (but 1→2: 432–1,623 mm) |
+| rolls chosen together (DP) | endpoints within a few degrees of before | | the gaps are geometric |
+| **straight Cartesian move between departure points** | **3.35 / 3.02 / 1.14** | **211 / 191 / 141 mm** | **the same every run** |
+
+- **What changed:**
+  - **Departure points.** Every transit now ends `departure_m` = 100 mm out along the
+    pen (`marking.json`). The descent runs from there: fast (`v_approach_m_s` 0.05) to
+    the 35 mm approach point, then 20 mm/s, the last 6 mm at 2 mm/s. The retract goes
+    back out to it. A step whose departure segment is not clear keeps the 35 mm point
+    (`departure_note`).
+  - **The tool's own straight line** (`marking.cartesian_transit`) is tried after the
+    straight joint edge and before APS. It is an IK chain on the locked branch, every
+    pose and edge checked; when the chord passes too near the pipe it is bowed outward
+    by 30, 60 or 100 mm.
+  - **The planned transit is driven.** After a stroke and its retract the arm stands near
+    the planned start; the node joins the planned path from there (`_join_planned`)
+    instead of re-planning a fresh random one.
+  - APS: `transit_budget_s` 3 s (only for transits the first two cannot do).
+  - The rolls of a curved seam are chosen together: an exact DP minimising the weighted
+    joint travel plus 0.15 rad per mm of clearance under 10 mm.
+  - E2's whole plan, replayed: 7 s, tip paths 400 (from home, straight), 211, 191 and
+    135 mm. Before the fixes it took 478 s.
+- **Marks that afternoon** (a new E2 registration): pairs near perfect, one 8.7 mm on E2.
+  The contacts of the last run are 3 of 4 on E2's wall (4.9, 8.3, 17.7 mm up), one at
+  the root. That is not a sideways shift (the best one leaves 2 mm rms): this
+  registration was also tilted or spun. `contact_error.py` now flags such a fit.
+- **Next on the bench:** RR1, SP3, S3 on R2. Then step 5.

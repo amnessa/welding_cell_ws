@@ -63,6 +63,9 @@ class MarkingConfig:
     home_q: np.ndarray
     branch_joints: tuple[int, ...] = (1, 2, 4)
     standoff_m: float = 0.035
+    #: where transits start and end, along the pen axis (marking.build_marking_plan):
+    #: farther out than the approach point, so the planner starts in open space
+    departure_m: float = 0.10
     clearance_m: float = 0.01
     transit_clearance_m: float = 0.02      # free moves between tacks / home (see marking.json)
     roll_step_deg: float = 15.0
@@ -124,6 +127,7 @@ def load_marking_config(path: str | Path | None = None) -> MarkingConfig:
     return MarkingConfig(home_q=np.asarray(cfg["home_q"], float),
                          branch_joints=tuple(cfg.get("branch_joints", (1, 2, 4))),
                          standoff_m=float(cfg.get("standoff_m", 0.035)),
+                         departure_m=float(cfg.get("departure_m", 0.10)),
                          clearance_m=float(cfg.get("clearance_m", 0.01)),
                          transit_clearance_m=float(cfg.get("transit_clearance_m", 0.02)),
                          roll_step_deg=float(cfg.get("roll_step_deg", 15.0)),
@@ -344,46 +348,85 @@ def _score(plans: Sequence[TackPlan], q_from: np.ndarray, cfg: MarkingConfig) ->
     return travel + 3.0 * sing
 
 
-#: On a curved seam each tack picks its own (tilt, roll): past this clearance (m) more
-#: room is not worth a bigger wrist move, so the smaller joint step from the previous
-#: tack wins.
+#: On a curved seam the (tilt, roll) of all tacks is chosen together: past this
+#: clearance (m) more room buys nothing ...
 PER_TACK_ENOUGH_CLEARANCE_M = 0.010
+#: ... below it, each mm missing costs this much weighted joint travel (rad): 1 mm of
+#: clearance is worth ~9 deg of base-joint motion between two tacks
+CLEARANCE_COST_RAD_PER_MM = 0.15
+#: the transit planner's joint weights (marking.aps_path / src/transit_cpp.cpp): the
+#: travel between two approach poses is measured the way APS measures its paths
+TRANSIT_WEIGHTS = np.array([2.0, 2.0, 1.5, 1.0, 1.0, 0.5])
+
+
+def _joint_cost(qa: np.ndarray, qb: np.ndarray) -> float:
+    """Weighted joint distance, each joint the short way round (transits unwrap)."""
+    d = (np.asarray(qb, float) - np.asarray(qa, float) + np.pi) % (2.0 * np.pi) - np.pi
+    return float(np.linalg.norm(TRANSIT_WEIGHTS * d))
+
+
+def _clearance_cost(p: TackPlan) -> float:
+    clr = min(p.clearance_app_m, p.clearance_tack_m, p.lin_min_clearance_m)
+    return CLEARANCE_COST_RAD_PER_MM * max(0.0, PER_TACK_ENOUGH_CLEARANCE_M - clr) * 1000.0
 
 
 def _plan_per_tack(seam_tacks: Sequence[dict[str, Any]], tilts, rolls, q_from: np.ndarray,
                    tool, model: CollisionModel, cfg: MarkingConfig, rng) -> list[TackPlan]:
     """A curved seam (round a pipe, along an S-band): the approach axis rotates with the
     seam, so one roll for the whole seam would put the camera arm into the pipe on the
-    far side. Every tack is solved on its own - the best (tilt, roll) by clearance up to
-    `PER_TACK_ENOUGH_CLEARANCE_M`, then by the smallest joint step from the previous
-    reachable tack - and an unreachable tack is reported with the reason of its best
-    attempt without stopping the others. The joint-step limit between tacks does not
-    apply: each tack is reached by its own planned transit (APS), not by a wrist turn."""
-    plans: list[TackPlan] = []
-    q_prev = np.asarray(q_from, float)
-    seeds = [q_prev, cfg.home_q]
+    far side, and each tack needs its own (tilt, roll).
+
+    Which ones: every admissible (tilt, roll) of every tack is solved first; then the
+    sequence is chosen TOGETHER, exactly (dynamic programming over the tacks in order),
+    minimising the weighted joint travel between consecutive approach poses (from
+    `q_from` to the first) plus `CLEARANCE_COST_RAD_PER_MM` per mm of clearance below
+    `PER_TACK_ENOUGH_CLEARANCE_M`. Choosing tack by tack for clearance alone (before
+    2026-10-14) put consecutive approach poses 65-90 deg apart on three joints round E2,
+    and the transits between them swung the pen up to 0.9 m off. An unreachable tack is
+    reported with the reason of its best attempt and skipped by the chain. The joint-step
+    limit between tacks does not apply: each tack is reached by its own planned transit."""
+    cands: list[list[TackPlan]] = []
+    fails: list[TackPlan | None] = []
+    seeds = [np.asarray(q_from, float), cfg.home_q]
     for t_ in seam_tacks:
-        best, best_key, fail = None, None, None
+        ok, fail = [], None
         for tilt in tilts:
             for roll in rolls:
                 p = _try_tack(t_, roll, tilt, seeds, tool, model, cfg, rng)
                 if p.ok:
-                    clr = min(p.clearance_app_m, p.clearance_tack_m, p.lin_min_clearance_m)
-                    step = float(np.abs(_unwrap_to(p.q_app, q_prev) - q_prev).max())
-                    key = (-min(round(clr, 3), PER_TACK_ENOUGH_CLEARANCE_M), step)
-                    if best_key is None or key < best_key:
-                        best, best_key = p, key
+                    ok.append(p)
                 elif fail is None or (np.isfinite(p.clearance_tack_m)
                                       and p.clearance_tack_m > fail.clearance_tack_m):
                     fail = p
-        chosen = best or fail
-        if chosen.q_app is not None:
-            chosen.joint_step_from_prev_rad = float(
-                np.abs(_unwrap_to(chosen.q_app, q_prev) - q_prev).max())
-        plans.append(chosen)
-        if chosen.ok:
-            q_prev = chosen.q_app
-            seeds = [q_prev, cfg.home_q]
+        cands.append(ok)
+        fails.append(fail)
+    # Viterbi over the reachable tacks: cost to reach each candidate, and its predecessor
+    reach = [i for i, c in enumerate(cands) if c]
+    prev_q, prev_cost, backs = [np.asarray(q_from, float)], [0.0], []
+    for i in reach:
+        new_cost, back = [], []
+        for p in cands[i]:
+            c = [pc + _joint_cost(pq, p.q_app) for pq, pc in zip(prev_q, prev_cost)]
+            j = int(np.argmin(c))
+            new_cost.append(c[j] + _clearance_cost(p))
+            back.append(j)
+        backs.append(back)
+        prev_q, prev_cost = [p.q_app for p in cands[i]], new_cost
+    chosen_by_tack: dict[int, TackPlan] = {}
+    if reach:
+        k = int(np.argmin(prev_cost))
+        for n in range(len(reach) - 1, -1, -1):
+            chosen_by_tack[reach[n]] = cands[reach[n]][k]
+            k = backs[n][k]
+    plans: list[TackPlan] = []
+    q_prev = np.asarray(q_from, float)
+    for i in range(len(seam_tacks)):
+        p = chosen_by_tack.get(i) or fails[i]
+        if p.q_app is not None:
+            p.joint_step_from_prev_rad = float(np.abs(_unwrap_to(p.q_app, q_prev) - q_prev).max())
+        plans.append(p)
+        if p.ok:
+            q_prev = p.q_app
     return plans
 
 

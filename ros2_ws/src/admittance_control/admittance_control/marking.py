@@ -110,6 +110,75 @@ def fast_is_valid(model: CollisionModel) -> Callable[[np.ndarray], bool]:
     return lambda q: bool(cm.is_valid(np.asarray(q, float)))
 
 
+def cartesian_transit(q_from: np.ndarray, q_to: np.ndarray, model: CollisionModel,
+                      cfg: MarkingConfig, info: dict | None = None, step_m: float = 0.005,
+                      step_deg: float = 3.0, edge_resolution: float = 0.01,
+                      max_step_rad: float = 0.3, unwrap: bool = True,
+                      bulge_m: Sequence[float] = (0.0, 0.03, 0.06, 0.10)) -> list[np.ndarray] | None:
+    """The tool moved along a straight - or gently bowed - CARTESIAN path from the pose at
+    `q_from` to the pose at `q_to` (orientation slerped), as an IK chain on the locked
+    branch, every pose and edge checked against `model`. None (and `info['why']`) when
+    every try breaks (a singularity, a joint jump) or collides.
+
+    Round a pipe, tack to tack, this is how the move should look: the tool slides from
+    one departure point to the next while it turns. APS's joint-space paths between the
+    same two poses varied from 0.26 to 1.6 m of tip travel (2026-10-14, E2); this one is
+    0.14-0.21 m and the same every time. The straight chord between two departure points
+    a quarter-turn apart round a pipe passes nearer the pipe than either end, so the path
+    is tried straight, then bowed outward - away from the joint, along minus the two pen
+    axes - by each of `bulge_m` at its middle (a quadratic Bezier), and the first clear
+    one is kept."""
+    from scipy.spatial.transform import Rotation, Slerp
+    info = info if info is not None else {}
+    q_from = np.asarray(q_from, float); q_to = np.asarray(q_to, float)
+    Ta, Tb = ur5e_fk(q_from), ur5e_fk(q_to)
+    out = -(Ta[:3, 2] + Tb[:3, 2])                       # tool0 z = the pen axis, into the joint
+    out = out / np.linalg.norm(out) if np.linalg.norm(out) > 1e-6 else np.zeros(3)
+    ang = float(np.degrees((Rotation.from_matrix(Ta[:3, :3]).inv()
+                            * Rotation.from_matrix(Tb[:3, :3])).magnitude()))
+    slerp = Slerp([0.0, 1.0], Rotation.from_matrix(np.stack([Ta[:3, :3], Tb[:3, :3]])))
+    valid = fast_is_valid(model)
+    whys = []
+    for bulge in bulge_m:
+        if bulge > 0.0 and not out.any():
+            continue
+        pc = 0.5 * (Ta[:3, 3] + Tb[:3, 3]) + 2.0 * float(bulge) * out   # Bezier control point
+        length = float(np.linalg.norm(Tb[:3, 3] - Ta[:3, 3])) + 2.0 * float(bulge)
+        n = max(2, int(np.ceil(length / step_m)), int(np.ceil(ang / step_deg)))
+        chain, why = [q_from], ""
+        for k in range(1, n):
+            f = k / n
+            T = np.eye(4)
+            T[:3, :3] = slerp(f).as_matrix()
+            T[:3, 3] = (1 - f) ** 2 * Ta[:3, 3] + 2 * f * (1 - f) * pc + f ** 2 * Tb[:3, 3]
+            q = solve_on_branch(T, [chain[-1]], cfg, n_random=0)
+            if q is None:
+                why = f"no IK at {f:.0%}"
+                break
+            q = _unwrap_to(q, chain[-1])
+            if np.abs(q - chain[-1]).max() > max_step_rad:
+                why = f"joint jump at {f:.0%} (singularity)"
+                break
+            chain.append(q)
+        if not why:
+            end = _unwrap_to(q_to, chain[-1]) if unwrap else q_to
+            if np.abs(end - chain[-1]).max() > max_step_rad:
+                why = "arrives at another 2*pi turn of the goal"
+            else:
+                chain.append(end)
+                for a, b in zip(chain[:-1], chain[1:]):
+                    if not _edge_valid(a, b, resolution=edge_resolution, is_valid=valid):
+                        d, pa, pb = model.min_distance(b)
+                        why = f"collides ({pa} x {pb})"
+                        break
+        if not why:
+            info["bulge_mm"] = float(bulge) * 1000.0
+            return chain
+        whys.append(f"{bulge * 1000:.0f} mm: {why}")
+    info["why"] = "Cartesian move: " + "; ".join(whys)
+    return None
+
+
 def aps_path(q_from: np.ndarray, q_to: np.ndarray, model: CollisionModel,
              edge_resolution: float = 0.01, budget_s: float = 2.0, num_planners: int = 4,
              max_paths: int = 8, info: dict | None = None,
@@ -168,8 +237,10 @@ def transit_path(q_from: np.ndarray, q_to: np.ndarray, model: CollisionModel,
                  unwrap: bool = True, smooth: bool = False, planner: str = "rrt_connect",
                  budget_s: float = 2.0, num_planners: int = 4, max_paths: int = 8,
                  info: dict | None = None, margin_m: float = 0.002,
-                 max_budget_s: float = 10.0) -> list[np.ndarray] | None:
-    """Collision-free joint path: the straight edge when it is clear, else
+                 max_budget_s: float = 10.0,
+                 cartesian_cfg: MarkingConfig | None = None) -> list[np.ndarray] | None:
+    """Collision-free joint path: the straight edge when it is clear, else (with
+    ``cartesian_cfg``) the tool's straight Cartesian line (`cartesian_transit`), else
     ``planner='aps'``: OMPL's AnytimePathShortening (`aps_path`; RRT-Connect + shortcut as
     the fallback, the reason in ``info['why']``), or ``'rrt_connect'``: RRT + shortcut.
     With ``smooth`` the path's corners are rounded (`smooth_transit`; kept as it is when
@@ -190,6 +261,16 @@ def transit_path(q_from: np.ndarray, q_to: np.ndarray, model: CollisionModel,
     if _edge_valid(q_from, q_to, resolution=edge_resolution, is_valid=valid):
         info["how"] = "straight"
         return [q_from, q_to]
+    if cartesian_cfg is not None:
+        cinfo: dict = {}
+        path = cartesian_transit(q_from, q_to, model, cartesian_cfg, cinfo,
+                                 edge_resolution=edge_resolution, unwrap=unwrap)
+        if path is not None:
+            bow = cinfo.get("bulge_mm", 0.0)
+            info["how"] = (f"Cartesian line ({len(path)} poses)" if bow == 0.0 else
+                           f"Cartesian curve, bowed {bow:.0f} mm out ({len(path)} poses)")
+            return path
+        info["cartesian_why"] = cinfo.get("why", "")
     if planner == "aps":
         path = aps_path(q_from, q_to, model, edge_resolution, budget_s, num_planners,
                         max_paths, info, margin_m, max_budget_s)
@@ -313,10 +394,13 @@ def descent_chain(tool, point: np.ndarray, axis: np.ndarray, roll_rad: float,
 
 def time_descent(chain: Sequence[np.ndarray], tool, v_tip: float = 0.02,
                  v_slow: float | None = None, slow_zone_m: float = 0.0,
-                 point: np.ndarray | None = None, axis: np.ndarray | None = None
+                 point: np.ndarray | None = None, axis: np.ndarray | None = None,
+                 v_fast: float | None = None, fast_beyond_m: float = np.inf
                  ) -> list[tuple[np.ndarray, float]]:
     """(q, t) along a descent chain at a constant TIP speed - or two speeds: `v_tip`
-    until the tip is within `slow_zone_m` of `point` along `axis`, then `v_slow`.
+    until the tip is within `slow_zone_m` of `point` along `axis`, then `v_slow` - and,
+    with `v_fast`, a third: `v_fast` while the tip is more than `fast_beyond_m` before
+    the point (the leg from the departure point to the approach point).
 
     Why two: the pen is not sprung, and on a rigid part the force past the 1.5 N
     threshold grows as speed x stopping time x stiffness (the table read ~10 N at
@@ -324,7 +408,8 @@ def time_descent(chain: Sequence[np.ndarray], tool, v_tip: float = 0.02,
     the recorded contact point accurate, at a few seconds per tack.
     """
     two = v_slow is not None and slow_zone_m > 0.0 and point is not None and axis is not None
-    if two:
+    fast = v_fast is not None and np.isfinite(fast_beyond_m) and point is not None and axis is not None
+    if two or fast:
         point = np.asarray(point, float); axis = np.asarray(axis, float) / np.linalg.norm(axis)
     out = [(np.asarray(chain[0], float), 0.0)]
     t = 0.0
@@ -332,7 +417,10 @@ def time_descent(chain: Sequence[np.ndarray], tool, v_tip: float = 0.02,
     for q in chain[1:]:
         tip = tool.tip_in(ur5e_fk(q))
         v = v_tip
-        if two and float((tip - point) @ axis) > -slow_zone_m:
+        before = -float((tip - point) @ axis) if (two or fast) else 0.0   # m before the point
+        if fast and before > fast_beyond_m:
+            v = v_fast
+        if two and before < slow_zone_m:
             v = v_slow
         t += max(float(np.linalg.norm(tip - tip_prev)) / v, 0.02)
         out.append((np.asarray(q, float), t))
@@ -408,6 +496,11 @@ class TackStep:
     tack_point_m: np.ndarray | None = None
     transit_how: str = ""            # what produced the transit (straight / APS / RRT-Connect)
     roll_note: str = ""              # the roll was changed from the report's (and why)
+    #: the descent starts this far before the point along the pen: `cfg.departure_m` (the
+    #: transit ends out there), or `cfg.standoff_m` when the departure is not clear
+    descent_from_m: float = 0.0
+    q_approach: np.ndarray | None = None   # the approach pose (standoff_m) on the descent
+    departure_note: str = ""
 
 
 @dataclass
@@ -538,6 +631,29 @@ def descent_check(tool, model: CollisionModel, cfg: MarkingConfig, point: np.nda
     return chain, ""
 
 
+def departure_chain(tool, model: CollisionModel, cfg: MarkingConfig, point: np.ndarray,
+                    axis: np.ndarray, roll_deg: float, q_app: np.ndarray,
+                    step_m: float = 0.005) -> tuple[list[np.ndarray] | None, str]:
+    """(IK chain from the approach pose OUT along the pen axis to `cfg.departure_m` before
+    the point, "") or (None, why). Every pose of it keeps the tack clearance with the
+    whole tool, pen included: out here nothing may touch."""
+    dep, sto = float(cfg.departure_m), float(cfg.standoff_m)
+    if dep <= sto + 1e-6:
+        return None, "departure_m <= standoff_m"
+    axis = np.asarray(axis, float) / np.linalg.norm(axis)
+    n = max(1, int(np.ceil((dep - sto) / step_m)))
+    tips = np.asarray(point, float)[None, :] - (sto + (dep - sto) * np.arange(1, n + 1) / n)[:, None] * axis
+    chain = line_chain(tool, tips, axis, np.deg2rad(roll_deg), np.asarray(q_app, float), cfg)
+    if chain is None:
+        return None, "no IK along the departure"
+    valid = fast_is_valid(model)
+    for q in chain:
+        if not valid(q):
+            d, a, b = model.min_distance(q)
+            return None, f"departure in collision ({a} x {b}, {d * 1000:.1f} mm)"
+    return [np.asarray(q_app, float)] + chain, ""
+
+
 def build_marking_plan(report: dict[str, Any], tool, model: CollisionModel,
                        cfg: MarkingConfig, q_now: np.ndarray, overshoot_m: float = 0.003,
                        edge_resolution: float = 0.01, strokes: dict[int, np.ndarray] | None = None,
@@ -604,11 +720,27 @@ def build_marking_plan(report: dict[str, Any], tool, model: CollisionModel,
         if abs((roll - step.roll_deg + 180.0) % 360.0 - 180.0) > 1e-6:
             step.roll_note = f"roll {step.roll_deg:g} -> {roll:g} deg ({first_why} at {step.roll_deg:g})"
             step.roll_deg = roll
+        # the transit ends at the departure point, `departure_m` out along the pen: from the
+        # approach point (35 mm) the planner first had to squeeze out from beside the plate,
+        # and its paths round a pipe swung up to 0.9 m off (2026-10-14). The descent then
+        # runs departure -> approach -> point along the pen.
+        step.q_approach = np.asarray(q_app, float)
+        step.descent_from_m = float(cfg.standoff_m)
+        dep, why = departure_chain(tool, model, cfg, step.point_m, step.axis_m, roll, q_app)
+        if dep is not None:
+            chain = dep[::-1] + list(chain[1:])
+            q_app = dep[-1]
+            step.descent_from_m = float(cfg.departure_m)
+        else:
+            step.departure_note = f"transit to the approach point: {why}"
         step.q_app = q_app
         how: dict = {}
         path = transit_path(q_prev, step.q_app, transit_model(model, cfg, q_prev, step.q_app),
-                            edge_resolution, smooth=smooth_transits, info=how, **opts)
+                            edge_resolution, smooth=smooth_transits, info=how, cartesian_cfg=cfg,
+                            **opts)
         step.transit_how = how.get("how", how.get("why", ""))
+        if how.get("cartesian_why") and not step.transit_how.startswith("straight"):
+            step.transit_how += f" [{how['cartesian_why']}]"
         if path is None:
             step.reason = "no collision-free transit"
             all_ok = False
@@ -620,6 +752,7 @@ def build_marking_plan(report: dict[str, Any], tool, model: CollisionModel,
             if all(_in_limits(q) for q in chain):
                 step.transit, step.transit_ok = path, True
                 step.q_app = path[-1]
+                step.q_approach = step.q_approach + shift
                 step.descent, step.descent_ok = chain, True
             else:
                 step.reason = "the descent leaves the joint limits after the transit's wrist unwrap"

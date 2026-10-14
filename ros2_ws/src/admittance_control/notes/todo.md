@@ -77,7 +77,13 @@ The plate strata (T/line, corner, butt square, lap, edge) are MDF cuts. The curv
        fixtures in `marking.json`, runs archived in `marks_history/`.
    - **Fill `marking.json` `fixtures`** (V-blocks, holders): 3–4 pen-tip points on each
      fixture's top, read off the pendant.
-   - RR1, S3 on R2 and SP3 are still to mark.
+   - Transits round a pipe swung up to 0.9 m off (hitting things ~75 cm out). Fixed:
+     - 100 mm departure points;
+     - the tool's straight (or bowed) Cartesian line tack to tack;
+     - the planned path driven instead of re-planned;
+     - APS 3 s.
+     - E2 tip paths are now 135–211 mm tack to tack, the same every run.
+   - RR1, S3 on R2 and SP3 are still to mark (the user's next bench), then step 5.
 
 ## Benchmarks to run (for the thesis)
 
@@ -185,8 +191,8 @@ estimated, so the thesis can report them. Per stage:
   holder. Strokes still stop with "pen lifted off" on some tacks.
 - **Marking overshoot:** `overshoot_m` 5–6 mm until the camera offset is anchored.
 - Stroke `seam` mode: first full-seam run on the bench.
-- Collision model: the tilted table plane (now `table_z` only); fixture boxes when clamps
-  replace magnets.
+- Collision model: the tilted table plane and `fixtures` are in (2026-10-14); enter the
+  bench's V-blocks and holders in `marking.json` `fixtures`.
 - Twin: an adapter from the trajectory action to the Isaac joint-command topic.
 
 ## OPEN — perception (`seam_two_modes_plan.md`, `realtime_fp.md`)
@@ -218,6 +224,54 @@ estimated, so the thesis can report them. Per stage:
   why the edges attract (a proof).
 - **Laser pointer** next to the pen, to show a tack before touching it (the 1 Oct
   meeting).
+
+## OPEN — human–robot interaction
+
+- **Finger-pointing camera aim, before the first capture** (asked 2026-10-14).
+  - **What.** When the gesture node starts, with the robot at home, `Pointing_Up` is a
+    live AIM mode: the robot turns the wrist camera to follow the fingertip. The
+    operator points the camera at a part in real time. The first `ILoveYou` (capture)
+    freezes the frame and hands over to what exists: the FoundationPose bridge, and the
+    dwell cursor on the frozen frame.
+    - Once a frame is frozen, `Pointing_Up` means the cursor again, so no new gesture is
+      needed: the mode follows whether a frame is frozen.
+  - **Motion: orientation only.** The camera turns about its own optical centre and its
+    position is held.
+    - Aiming the optical axis takes 2 rotations (pan, tilt). The third, roll about the
+      optical axis, is the over-actuated one: hold it at the home value, so the image
+      stays upright.
+  - **Control: image-based visual servoing, a filtered P loop, not a full PID.**
+    - Error = the index fingertip's pixel (MediaPipe landmark) minus the image centre.
+      That error gives an angular velocity about the camera's x and y axes.
+    - A gain, a deadband (~5 % of the image, so it stops when roughly centred), a speed
+      cap (~15°/s), and acceleration/jerk limits.
+    - No integral term: the camera-to-command latency (~70–100 ms) makes it wind up and
+      overshoot. No derivative: the landmark is noisy.
+    - Smooth the landmark itself: a One-Euro filter at the 30 Hz frame rate (low lag
+      when it moves, steady when it is still).
+  - **Execution: a streaming interface, not the trajectory action.** Either:
+    - MoveIt Servo (twist in, joint commands out, with its own singularity and collision
+      slowdown and Ruckig/Butterworth smoothing) on the UR driver's
+      `forward_position_controller`; or
+    - the driver's `forward_velocity_controller` with our own Jacobian solve (6×6, the
+      calibrated kinematics).
+    - Switch controllers on entering and leaving AIM. `scaled_joint_trajectory_controller`
+      must be active again before `refine_pose` and marking.
+  - **Safety.**
+    - Deadman: no fingertip for 0.3 s → decelerate to a stop. Any other gesture stops it
+      too.
+    - Excursion limits from home, e.g. ±35° pan and ±25° tilt.
+    - Every commanded pose checked with the C++ collision model (µs) and the branch lock.
+    - The pendant's speed slider still scales everything.
+  - **After it.**
+    - The capture happens from the aimed pose: `T_base_cam` comes from TF at the image
+      stamp, as now.
+    - Decide whether `refine_pose` and marking start from there or from `home_q`. Both
+      already plan from the current joints.
+  - **Later, option B:** aim where the finger POINTS (a 3D ray from the hand landmarks,
+    with depth, onto the table), not where the fingertip is.
+  - **Thesis:** a short HRI section. Measure time-to-aim, overshoot, and the hand-lost
+    stops.
 
 ## OPEN — parts, data, paper
 

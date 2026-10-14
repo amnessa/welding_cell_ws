@@ -246,7 +246,8 @@ def test_full_marking_plan_with_aps(scene):  # noqa: F811
                                  transit_opts={"planner": "aps", "budget_s": 0.5})
     assert plan.ok, plan.summary()
     hows = [s.transit_how for s in plan.steps] + [plan.home_how]
-    assert all(h == "straight" or h.startswith("APS") for h in hows), hows
+    # straight edge, the tool's Cartesian line (2026-10-14), or APS - never the fallbacks
+    assert all(h == "straight" or h.startswith(("APS", "Cartesian")) for h in hows), hows
     for s in plan.steps:
         assert np.allclose(s.transit[-1], s.q_app) and np.allclose(s.descent[0], s.q_app)
     print("\n" + plan.summary())
