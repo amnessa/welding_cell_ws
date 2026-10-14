@@ -141,6 +141,50 @@ def test_collision_equivalent_on_a_real_session_with_table(calibrated):
     _assert_equivalent(model, Q)
 
 
+def test_collision_equivalent_with_the_tilted_table_and_curved_parts(calibrated):
+    """The touched table is a tilted plane (1.7 deg, notebooks/table_plane.json) and the
+    curved parts are many boxes (a pipe's 6, a mitre's sectors): both must agree too."""
+    from admittance_control import seam_from_registration as sfr
+    from admittance_control.collision import fixture_boxes, load_table_plane
+    I4 = np.eye(4).tolist()
+    reg = {"parts": {
+        "plate": {"primitive": "slab", "dims_mm": [256.0, 249.0, 8.0], "T_cad_prim": I4},
+        "pipe": {"primitive": "tube", "T_cad_prim": I4,
+                 "params": {"r_outer_mm": 31.0, "wall_mm": 3.0, "length_mm": 100.0}}}}
+    T_plate = np.eye(4); T_plate[:3, 3] = [-0.50, 0.08, -0.087]
+    T_pipe = np.eye(4); T_pipe[:3, 3] = [-0.49, 0.06, -0.083]
+    parts = sfr.posed_parts([("plate.ply", T_plate), ("pipe.ply", T_pipe)], reg)
+    n = np.array([0.0151, -0.0255, 1.0]); n /= np.linalg.norm(n)
+    table = load_table_plane(PKG / "notebooks" / "table_plane.json") or (n, 0.109)
+    fixtures = fixture_boxes([{"name": "vblock", "points_m": [[-0.40, 0.15, -0.06],
+                                                              [-0.36, 0.15, -0.06],
+                                                              [-0.36, 0.25, -0.06]]}], table)
+    model = CollisionModel(tool=load_tool_model(), scene_boxes=boxes_from_parts(parts) + fixtures,
+                           table_plane=(table[0].tolist(), table[1]), clearance=0.003)
+    assert model.export_spec()["table_plane"] is not None
+    rng = np.random.default_rng(11)
+    Q = np.vstack([_random_q(3000, rng), _near_contact(model, 400, rng)])
+    _assert_equivalent(model, Q)
+
+
+def test_aps_starts_beside_a_part_with_the_margin_capped(scene):  # noqa: F811
+    """transit_model puts the clearance at 90 % of an approach pose's own; the full 2 mm
+    APS margin then made that pose invalid ("Invalid start", 2026-10-14). Capped, APS
+    plans from it."""
+    tool, cfg, model, report = scene
+    q_a, q_b, tm = _front_back(scene)
+    room = min(tm.min_distance(q_a)[0], tm.min_distance(q_b)[0]) - tm.clearance
+    info = {}
+    path = mk.aps_path(q_a, q_b, tm, budget_s=0.3, max_budget_s=5.0, info=info)
+    assert path is not None, info
+    assert info["margin_mm"] == pytest.approx(min(2.0, 0.5 * room * 1000.0), abs=1e-6)
+    # the old rule, a full 2 mm, would have made an end pose invalid whenever room < 2 mm
+    if room < 0.002:
+        spec = tm.export_spec(); spec["clearance"] += 0.002
+        m = tc.Model(spec)
+        assert not (m.is_valid(q_a) and m.is_valid(mk._unwrap_to(q_b, q_a)))
+
+
 def test_cpp_checks_are_much_faster(scene):  # noqa: F811
     tool, cfg, model, report = scene
     m = tc.Model(model.export_spec())

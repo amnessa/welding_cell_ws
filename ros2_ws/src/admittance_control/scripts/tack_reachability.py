@@ -43,7 +43,9 @@ def main() -> int:
     ap.add_argument("--tool", default=None, help="pen_tool.json (default: config/)")
     ap.add_argument("--marking", default=None, help="marking.json (default: config/)")
     ap.add_argument("--extrinsic", default=None, help="T_tcp_to_cam.npy for the camera reference")
-    ap.add_argument("--table-z", type=float, default=None, help="table plane (m); overrides marking.json")
+    ap.add_argument("--table-z", type=float, default=None,
+                    help="a horizontal table at this z (m), instead of the touched plane "
+                         "(notebooks/table_plane.json, marking.json table_plane_file)")
     ap.add_argument("--clearance", type=float, default=None,
                     help="required gap (m); overrides marking.json - e.g. 0.003 when the envelope is known conservative")
     ap.add_argument("--roll", type=float, default=None,
@@ -74,9 +76,9 @@ def main() -> int:
     if args.tilt is not None:
         cfg.work_angles_deg = (float(args.tilt),)
     tool = load_tool_model(args.tool, args.extrinsic)
-    model = CollisionModel(tool=tool, scene_boxes=boxes_from_parts(parts),
-                           table_z=cfg.table_z_m, clearance=cfg.clearance_m)
-    print(f"{len(tacks)} tacks, {len(parts)} parts, table_z={cfg.table_z_m}, "
+    model = CollisionModel(tool=tool, scene_boxes=boxes_from_parts(parts) + cfg.fixture_boxes(),
+                           clearance=cfg.clearance_m, **cfg.collision_kwargs())
+    print(f"{len(tacks)} tacks, {len(parts)} parts, {cfg.describe_table()}, "
           f"clearance {cfg.clearance_m * 1000:g} mm, standoff {cfg.standoff_m * 1000:g} mm")
     report = plan_tacks(tacks, tool, model, cfg)
     print(format_report(report))

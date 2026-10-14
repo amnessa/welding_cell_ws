@@ -2019,7 +2019,12 @@ class IcpPoseRefinerNode(Node):
                 return False, got
             T_static_obj, pose_stats = got
             if bool(self.get_parameter('fp_save_icp').value):
+                T_tracker = T_static_obj.copy()
                 T_static_obj, icp_info = self._fp_icp_refine(T_static_obj)
+                # the tracker's pose before ICP, kept so a bench can tell whether the save
+                # ICP helped (2026-10-14: C1 moved 13.1 mm at rmse 3.6 mm, and the pen's
+                # contacts put the real part ~5.5 mm off - from which pose was unknowable)
+                icp_info['pose_static_tracker'] = T_tracker.tolist()
                 pose_stats = dict(pose_stats or {}, icp_refine=icp_info)
             T = np.linalg.inv(T_sc) @ T_static_obj     # so pose_static below == T_static_obj
             tail = None

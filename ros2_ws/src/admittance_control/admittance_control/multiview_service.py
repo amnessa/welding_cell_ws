@@ -259,7 +259,8 @@ class MultiviewRefiner:
             return self._finish([raw], assembly, models, rcfg, pcfg, "capture_here: one view, no motion")
         objects = [(o["model"], np.asarray(o["pose_static"], float)) for o in node._saved]
         surfaces, boxes = mv.surfaces_from_models(objects, models)
-        model = CollisionModel(tool=tool, scene_boxes=boxes, table_z=mcfg.table_z_m, clearance=mcfg.clearance_m)
+        model = CollisionModel(tool=tool, scene_boxes=list(boxes) + mcfg.fixture_boxes(),
+                               clearance=mcfg.clearance_m, **mcfg.collision_kwargs())
         self.exec.set_sim(q0)
         plan = mv.plan_views(surfaces, boxes, tool, model, mcfg, q0, vcfg)
         self._publish_views(plan)

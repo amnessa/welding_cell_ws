@@ -74,7 +74,8 @@ sys.path.insert(0, str(PKG.parents[2] / "weld_generator"))
 from admittance_control import seam_from_registration as sfr  # noqa: E402
 from admittance_control.collision import CollisionModel, boxes_from_parts  # noqa: E402
 from admittance_control.kinematics import active_kinematics, ur5e_fk, use_kinematics  # noqa: E402
-from admittance_control.marking import (build_marking_plan, contact_depth_m, line_chain,  # noqa: E402
+from admittance_control.marking import (build_marking_plan, contact_depth_m, fast_is_valid,  # noqa: E402
+                                        line_chain,
                                         plan_to_dict, stroke_chain, stroke_modes,
                                         stroke_targets,
                                         time_descent, transit_model)
@@ -109,7 +110,9 @@ class TackMarkingNode(Node):
         # shorter than one RRT-Connect), 'rrt_connect' = the first RRT-Connect path
         # (before 2026-10-06; also APS's fallback)
         p('transit_planner', 'aps')
-        p('transit_budget_s', 1.0)         # per transit that is not a straight edge
+        p('transit_budget_s', 2.0)         # per transit that is not a straight edge (1.0
+                                           # before 2026-10-14); APS shortens for this long
+        p('transit_max_budget_s', 10.0)    # ... and past it waits for a first path up to this
         p('aps_num_planners', 4)
         p('aps_max_paths', 8)
         p('aps_clearance_margin_m', 0.002)   # APS plans this much wider than the Python re-check
@@ -183,7 +186,8 @@ class TackMarkingNode(Node):
         g = lambda n: self.get_parameter(n).value  # noqa: E731
         return {'planner': str(g('transit_planner')), 'budget_s': float(g('transit_budget_s')),
                 'num_planners': int(g('aps_num_planners')), 'max_paths': int(g('aps_max_paths')),
-                'margin_m': float(g('aps_clearance_margin_m'))}
+                'margin_m': float(g('aps_clearance_margin_m')),
+                'max_budget_s': float(g('transit_max_budget_s'))}
 
     def _time_transit(self, path, label: str):
         """Time a free move with TOTG (velocity and acceleration caps, blended corners),
@@ -191,7 +195,7 @@ class TackMarkingNode(Node):
         model = transit_model(self._model, self._cfg, path[0], path[-1])
         timed, src = self._exec.time_path(path, float(self.get_parameter('v_joint_rad_s').value),
                                           float(self.get_parameter('a_joint_rad_s2').value),
-                                          is_valid=model.is_valid)
+                                          is_valid=fast_is_valid(model))
         self._say(f'{label}: {len(path)} path points -> {len(timed)} samples, '
                   f'{timed[-1][1]:.1f} s, timed by {src}')
         return timed
@@ -237,8 +241,13 @@ class TackMarkingNode(Node):
         self._cfg.clearance_m = float(rep_cfg.get('clearance_m', self._cfg.clearance_m))
         if rep_cfg.get('table_z_m') is not None:
             self._cfg.table_z_m = float(rep_cfg['table_z_m'])
-        self._model = CollisionModel(tool=self._tool, scene_boxes=boxes_from_parts(parts),
-                                     table_z=self._cfg.table_z_m, clearance=self._cfg.clearance_m)
+        # the table (the touched, tilted plane unless table_z_m is set) and the fixtures
+        # of marking.json: before 2026-10-14 there was no table at all (table_z_m null)
+        # and transits ran through it
+        self._model = CollisionModel(tool=self._tool,
+                                     scene_boxes=boxes_from_parts(parts) + self._cfg.fixture_boxes(),
+                                     clearance=self._cfg.clearance_m, **self._cfg.collision_kwargs())
+        self.get_logger().info(f'collision model: {len(parts)} part(s), {self._cfg.describe_table()}')
         # the report's joint solutions are only valid for the kinematics they were solved with
         rep_kin = report.get('kinematics', 'nominal')
         if rep_kin != active_kinematics():
@@ -286,6 +295,7 @@ class TackMarkingNode(Node):
         self._exec.set_sim(q)
         self._next_step = 0
         self._marks = []
+        self._run_stamp = time.strftime('%Y%m%d-%H%M%S')
         (self._save_dir / 'tack_marking_plan.json').write_text(json.dumps(plan_to_dict(self._plan), indent=1))
         self._publish_tip_path()
         response.success = self._plan.ok
@@ -473,9 +483,22 @@ class TackMarkingNode(Node):
         return self._execute(self._time_transit(path, 'home'), 'home', watch_touch=False, rebias=True)
 
     def _write_marks(self) -> None:
-        (self._save_dir / 'tack_marks.json').write_text(json.dumps({
-            'touch_force_n': self._touch_force, 'overshoot_m': float(self.get_parameter('overshoot_m').value),
-            'sequence': 'seam by seam, tack_no ascending', 'marks': self._marks}, indent=1))
+        doc = {'touch_force_n': self._touch_force, 'overshoot_m': float(self.get_parameter('overshoot_m').value),
+               'sequence': 'seam by seam, tack_no ascending', 'marks': self._marks}
+        (self._save_dir / 'tack_marks.json').write_text(json.dumps(doc, indent=1))
+        # every run kept, with the assembly it was planned on: the contacts are a measurement
+        # of the registration (scripts/contact_error.py), and the next run used to overwrite
+        # them (2026-10-14: C1's were lost to E2's)
+        try:
+            assembly = json.loads((self._save_dir / 'assembly.json').read_text())
+            hist = self._save_dir / 'marks_history'
+            hist.mkdir(exist_ok=True)
+            (hist / f"tack_marks_{getattr(self, '_run_stamp', 'run')}.json").write_text(json.dumps(
+                {**doc, 'assembly': {'objects': [{'model': o['model'], 'pose_static': o['pose_static'],
+                                                  'pose_stats': o.get('pose_stats')}
+                                                 for o in assembly['objects']]}}, indent=1))
+        except (OSError, ValueError, KeyError) as exc:
+            self.get_logger().warn(f'could not archive the marks: {exc}')
 
     def _execute(self, timed, label: str, watch_touch: bool, want_contact: bool = False,
                  away: bool = False, rebias: bool = False):

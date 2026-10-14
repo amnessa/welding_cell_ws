@@ -48,6 +48,7 @@ To run FoundationPose on another machine:
       launch_foundationpose:=true \
       foundationpose_server_url:=http://ip_to_that_pc:5000/predict_pose \
       launch_rviz:=true \
+      launch_robot_state:=false \
       detection_min_score:=0.1
 
   -------------------

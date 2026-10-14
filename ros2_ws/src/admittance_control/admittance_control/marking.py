@@ -96,10 +96,25 @@ def smooth_transit(path: Sequence[np.ndarray], is_valid: Callable[[np.ndarray], 
     return dense
 
 
+def fast_is_valid(model: CollisionModel) -> Callable[[np.ndarray], bool]:
+    """`model.is_valid`, evaluated by the C++ port when it is built (`_transit_cpp.Model`,
+    the same model - tests/test_transit_cpp.py proves the two agree, near contact too - at
+    ~590x the speed), else the Python model. The edge re-checks of APS paths, their
+    spline smoothing and the TOTG samples ran in Python: 2644 checks at 78 ms against
+    E2's 34 boxes, 3 of a plan's 3.5 minutes (2026-10-14)."""
+    try:
+        from . import _transit_cpp
+    except ImportError:
+        return model.is_valid
+    cm = _transit_cpp.Model(model.export_spec())
+    return lambda q: bool(cm.is_valid(np.asarray(q, float)))
+
+
 def aps_path(q_from: np.ndarray, q_to: np.ndarray, model: CollisionModel,
-             edge_resolution: float = 0.01, budget_s: float = 1.0, num_planners: int = 4,
+             edge_resolution: float = 0.01, budget_s: float = 2.0, num_planners: int = 4,
              max_paths: int = 8, info: dict | None = None,
-             margin_m: float = 0.002) -> list[np.ndarray] | None:
+             margin_m: float = 0.002, max_budget_s: float = 10.0,
+             planner: str = "aps") -> list[np.ndarray] | None:
     """OMPL's official AnytimePathShortening (C++, `_transit_cpp`; notes/aps_transit_plan.md):
     `num_planners` RRT-Connect threads, their paths hybridized and shortcut until
     `budget_s`, on the C++ port of this collision model. Every edge of the answer is
@@ -109,27 +124,40 @@ def aps_path(q_from: np.ndarray, q_to: np.ndarray, model: CollisionModel,
     APS plans with the clearance + `margin_m`: an optimised path runs ALONG the clearance
     boundary, so the Python re-check, sampling elsewhere on the same edges, landed a hair
     inside it (2026-10-06, "failed the Python collision re-check"). The margin gives the
-    re-check, at the nominal clearance, room to agree."""
+    re-check, at the nominal clearance, room to agree. The margin never exceeds what the
+    two END poses have above the clearance: `transit_model` sets the clearance to 90 % of
+    an approach pose's own, so a full 2 mm made that pose itself invalid and APS refused
+    to start ("Invalid start" / "Invalid goal" on most transits, 2026-10-14), falling back
+    to the slow Python RRT-Connect.
+
+    Past `budget_s` the threads stop at the first exact solution, at the latest at
+    `max_budget_s`: a hard transit gets the time it needs. `planner="rrt_connect"`: one
+    C++ RRT-Connect on the same model (the fallback before the Python one)."""
     info = info if info is not None else {}
     try:
         from . import _transit_cpp
     except ImportError as exc:
         info["why"] = f"_transit_cpp not built ({exc})"
         return None
+    room = min(model.min_distance(np.asarray(q_from, float))[0],
+               model.min_distance(np.asarray(q_to, float))[0]) - float(model.clearance)
+    margin = float(np.clip(min(float(margin_m), 0.5 * room), 0.0, None))
     spec = model.export_spec()
-    spec["clearance"] = float(spec["clearance"]) + float(margin_m)
+    spec["clearance"] = float(spec["clearance"]) + margin
     res = _transit_cpp.plan(_transit_cpp.Model(spec), np.asarray(q_from, float),
-                            np.asarray(q_to, float), planner="aps", budget_s=float(budget_s),
+                            np.asarray(q_to, float), planner=planner, budget_s=float(budget_s),
                             resolution=float(edge_resolution), num_planners=int(num_planners),
-                            max_paths=int(max_paths))
+                            max_paths=int(max_paths), max_budget_s=float(max_budget_s))
     info.update(time_s=res["time_s"], cost=res["cost"], solutions=res["solutions"],
-                validity_calls=res["validity_calls"])
+                validity_calls=res["validity_calls"], margin_mm=margin * 1000.0)
     if not res["solved"]:
-        info["why"] = f"APS found no path ({res['status']})"
+        name = "APS" if planner == "aps" else "C++ RRT-Connect"
+        info["why"] = f"{name} found no path ({res['status']})"
         return None
     path = [np.asarray(q, float) for q in res["path"]]
+    valid = fast_is_valid(model)                 # at the NOMINAL clearance, Python's sampling
     for a, b in zip(path[:-1], path[1:]):
-        if not _edge_valid(a, b, resolution=edge_resolution, is_valid=model.is_valid):
+        if not _edge_valid(a, b, resolution=edge_resolution, is_valid=valid):
             info["why"] = "APS path failed the Python collision re-check"
             return None
     return path
@@ -138,8 +166,9 @@ def aps_path(q_from: np.ndarray, q_to: np.ndarray, model: CollisionModel,
 def transit_path(q_from: np.ndarray, q_to: np.ndarray, model: CollisionModel,
                  edge_resolution: float = 0.01, max_iter: int = 8000, seed: int = 0,
                  unwrap: bool = True, smooth: bool = False, planner: str = "rrt_connect",
-                 budget_s: float = 1.0, num_planners: int = 4, max_paths: int = 8,
-                 info: dict | None = None, margin_m: float = 0.002) -> list[np.ndarray] | None:
+                 budget_s: float = 2.0, num_planners: int = 4, max_paths: int = 8,
+                 info: dict | None = None, margin_m: float = 0.002,
+                 max_budget_s: float = 10.0) -> list[np.ndarray] | None:
     """Collision-free joint path: the straight edge when it is clear, else
     ``planner='aps'``: OMPL's AnytimePathShortening (`aps_path`; RRT-Connect + shortcut as
     the fallback, the reason in ``info['why']``), or ``'rrt_connect'``: RRT + shortcut.
@@ -157,17 +186,31 @@ def transit_path(q_from: np.ndarray, q_to: np.ndarray, model: CollisionModel,
     if unwrap:
         q_to = _unwrap_to(q_to, q_from)
     info = info if info is not None else {}
-    if _edge_valid(q_from, q_to, resolution=edge_resolution, is_valid=model.is_valid):
+    valid = fast_is_valid(model)
+    if _edge_valid(q_from, q_to, resolution=edge_resolution, is_valid=valid):
         info["how"] = "straight"
         return [q_from, q_to]
     if planner == "aps":
         path = aps_path(q_from, q_to, model, edge_resolution, budget_s, num_planners,
-                        max_paths, info, margin_m)
+                        max_paths, info, margin_m, max_budget_s)
         if path is not None:
             info["how"] = (f"APS {info['time_s']:.2f} s, {info['solutions']} solutions, "
                            f"cost {info['cost']:.2f}")
+        else:
+            # the C++ RRT-Connect next: the Python one is ~590x slower per check and took
+            # minutes per transit round E2's 33 boxes (2026-10-14)
+            why = info.get("why", "")
+            path = aps_path(q_from, q_to, model, edge_resolution, budget_s, 1, 2, info,
+                            margin_m, max_budget_s, planner="rrt_connect")
+            if path is not None:
+                short = shortcut_path(path, valid, edge_resolution, seed=seed)
+                path = short
+                info["how"] = f"C++ RRT-Connect (APS: {why})"
+            else:
+                info["why"] = f"{why}; {info.get('why', '')}"
+        if path is not None:
             if smooth:
-                dense = smooth_transit(path, model.is_valid, edge_resolution)
+                dense = smooth_transit(path, valid, edge_resolution)
                 if dense is not None:
                     return dense
             return path
@@ -176,13 +219,13 @@ def transit_path(q_from: np.ndarray, q_to: np.ndarray, model: CollisionModel,
     for attempt in range(3):
         random.seed(seed + attempt)
         raw = rrt_connect(q_from, q_to, step_size=0.15, max_iter=max_iter,
-                          is_valid=model.is_valid, edge_resolution=edge_resolution)
+                          is_valid=valid, edge_resolution=edge_resolution)
         if raw is not None:
             info["how"] = ("RRT-Connect" + (f" (APS fallback: {info['why']})"
                                              if planner == "aps" else ""))
-            short = shortcut_path(raw, model.is_valid, edge_resolution, seed=seed + attempt)
+            short = shortcut_path(raw, valid, edge_resolution, seed=seed + attempt)
             if smooth:
-                dense = smooth_transit(short, model.is_valid, edge_resolution)
+                dense = smooth_transit(short, valid, edge_resolution)
                 if dense is not None:
                     return dense
             return short

@@ -71,6 +71,11 @@ class MarkingConfig:
     wrist_singularity_margin_rad: float = 0.35
     work_angles_deg: tuple[float, ...] = (0.0, -10.0, 10.0, -20.0, 20.0)
     table_z_m: float | None = None
+    #: the touched table plane (scripts/table_touchoff.py), relative to the package; used
+    #: when `table_z_m` is not set; None disables it
+    table_plane_file: str | None = "notebooks/table_plane.json"
+    #: unregistered obstacles (V-blocks, holders, clamps): `collision.fixture_boxes`
+    fixtures: tuple = ()
     source: str = ""
     #: when set, ONLY these rolls (deg) are tried - the attribution experiment: the same
     #: tack at rolls 90 deg apart moves a TOOL error with the wrist and leaves a WORLD
@@ -80,6 +85,37 @@ class MarkingConfig:
     @property
     def branch_signature(self) -> tuple[int, ...]:
         return branch_signature(self.home_q, self.branch_joints)
+
+    def table(self) -> tuple[np.ndarray, float] | None:
+        """(n, d) of the table for the collision model: `table_z_m` when set (a
+        horizontal plane), else the touched plane from `table_plane_file`, else None."""
+        if self.table_z_m is not None:
+            return np.array([0.0, 0.0, 1.0]), -float(self.table_z_m)
+        if self.table_plane_file:
+            from .collision import load_table_plane
+            path = Path(self.table_plane_file)
+            return load_table_plane(path if path.is_absolute() else PACKAGE_ROOT / path)
+        return None
+
+    def collision_kwargs(self) -> dict[str, Any]:
+        """`CollisionModel(..., **cfg.collision_kwargs())`: the table plane."""
+        t = self.table()
+        return {"table_plane": None if t is None else (t[0].tolist(), t[1])}
+
+    def fixture_boxes(self) -> list[dict[str, Any]]:
+        """The configured fixtures as scene boxes (append to the parts' boxes)."""
+        from .collision import fixture_boxes
+        return fixture_boxes(self.fixtures, self.table())
+
+    def describe_table(self) -> str:
+        t = self.table()
+        if t is None:
+            return "no table plane"
+        n, d = t
+        tilt = float(np.degrees(np.arccos(np.clip(n[2], -1.0, 1.0))))
+        return (f"table plane {-d / n[2] * 1000:.1f} mm under the base origin, tilt {tilt:.2f} deg"
+                + ("" if self.table_z_m is None else " (table_z_m)")
+                + (f", {len(self.fixtures)} fixture(s)" if self.fixtures else ""))
 
 
 def load_marking_config(path: str | Path | None = None) -> MarkingConfig:
@@ -95,7 +131,9 @@ def load_marking_config(path: str | Path | None = None) -> MarkingConfig:
                          max_joint_step_rad=float(cfg.get("max_joint_step_rad", 1.2)),
                          wrist_singularity_margin_rad=float(cfg.get("wrist_singularity_margin_rad", 0.35)),
                          work_angles_deg=tuple(cfg.get("work_angles_deg", (0.0, -10.0, 10.0, -20.0, 20.0))),
-                         table_z_m=cfg.get("table_z_m"), source=str(p))
+                         table_z_m=cfg.get("table_z_m"),
+                         table_plane_file=cfg.get("table_plane_file", "notebooks/table_plane.json"),
+                         fixtures=tuple(cfg.get("fixtures", ())), source=str(p))
 
 
 def joint_state_to_ur_order(names: Sequence[str], positions: Sequence[float]) -> np.ndarray:
@@ -198,7 +236,7 @@ def tool_only_clearance(model: CollisionModel, T_tool0: np.ndarray, exclude_pen:
                         ) -> tuple[float, str]:
     """Clearance of the TOOL envelope alone at a tool0 pose - no IK needed, so a pose
     that cannot work is dropped before any solve."""
-    from .collision import lowest_point_z, primitive_distance
+    from .collision import primitive_distance
     best = (np.inf, "")
     for prim in model.tool.primitives_in(T_tool0):
         if exclude_pen and prim["name"] == "pen":
@@ -207,8 +245,9 @@ def tool_only_clearance(model: CollisionModel, T_tool0: np.ndarray, exclude_pen:
             d = primitive_distance(prim, s)
             if d < best[0]:
                 best = (d, f"{prim['name']} x {s['name']}")
-        if model.table_z is not None:
-            d = max(0.0, lowest_point_z(prim) - model.table_z)
+        h = model.table_height(prim)
+        if h is not None:
+            d = max(0.0, h)
             if d < best[0]:
                 best = (d, f"{prim['name']} x table")
     return best

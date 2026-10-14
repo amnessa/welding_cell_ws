@@ -146,3 +146,33 @@ def test_boxes_from_mode_a_parts_are_in_metres():
     bx = col.boxes_from_parts([P()])[0]
     assert bx["name"] == "part_A" and np.allclose(bx["centre"], [-0.5, 0.15, -0.03])
     assert np.allclose(bx["half"], [0.128, 0.1245, 0.004])
+
+
+def test_the_touched_table_plane_loads_tilted_and_blocks_what_is_below_it(tmp_path):
+    """notebooks/table_plane.json (z = a x + b y + c) -> (n, d): the plane the collision
+    model keeps everything above (before 2026-10-14 there was no table: table_z_m null)."""
+    import json
+    (tmp_path / "t.json").write_text(json.dumps({"plane": {"a": -0.015, "b": 0.025, "c": -0.109}}))
+    n, d = col.load_table_plane(tmp_path / "t.json")
+    assert np.linalg.norm(n) == pytest.approx(1.0) and n[2] > 0.99
+    for x, y in [(-0.5, 0.08), (0.2, -0.3)]:
+        z = -0.015 * x + 0.025 * y - 0.109
+        assert n @ [x, y, z] + d == pytest.approx(0.0, abs=1e-12)
+    assert col.load_table_plane(tmp_path / "missing.json") is None
+    cap = col.capsule("c", [0.0, 0.0, -0.10], [0.0, 0.0, 0.0], 0.005)
+    assert col.height_above_plane(cap, n, d) == pytest.approx((n @ [0, 0, -0.10] + d) - 0.005)
+
+
+def test_fixture_points_become_a_box_standing_on_the_table():
+    n, d = np.array([0.0, 0.0, 1.0]), 0.10                       # table at z = -0.10
+    # three corners of a 40 x 100 mm V-block top, 50 mm above the table, yawed 30 deg
+    a = np.radians(30.0)
+    R2 = np.array([[np.cos(a), -np.sin(a)], [np.sin(a), np.cos(a)]])
+    pts = [[*(R2 @ [x, y] + [-0.4, 0.2]), -0.05] for x, y in [(-0.02, -0.05), (0.02, -0.05), (0.02, 0.05)]]
+    (b,) = col.fixture_boxes([{"name": "vblock", "points_m": pts}], (n, d))
+    assert b["name"] == "fixture_vblock"
+    assert sorted(2 * b["half"][:2]) == pytest.approx([0.04, 0.10], abs=1e-3)
+    assert b["centre"][2] - b["half"][2] == pytest.approx(-0.10, abs=1e-9)    # on the table
+    assert b["centre"][2] + b["half"][2] == pytest.approx(-0.05, abs=1e-9)    # its top
+    (e,) = col.fixture_boxes([{"centre_m": [0, 0, 0], "half_m": [0.1, 0.2, 0.3], "yaw_deg": 90}], None)
+    assert e["half"] == pytest.approx([0.1, 0.2, 0.3])

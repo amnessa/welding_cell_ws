@@ -231,6 +231,17 @@ double lowest_point_z(const Prim &p)
   return z;
 }
 
+// collision.height_above_plane: the lowest point of a primitive above n.x + d = 0
+double height_above_plane(const Prim &p, const Vec3 &n, double d)
+{
+  if (!p.is_box) return std::min(n.dot(p.p0), n.dot(p.p1)) + d - p.radius;
+  double h = kInf;
+  for (int sx = -1; sx <= 1; sx += 2)
+    for (int sy = -1; sy <= 1; sy += 2)
+      for (int sz = -1; sz <= 1; sz += 2) h = std::min(h, n.dot(bx_corner(p, sx, sy, sz)) + d);
+  return h;
+}
+
 Prim transform(const Prim &p, const Mat4 &T)          // tool_model.transform_primitive
 {
   Prim o = p;
@@ -301,8 +312,18 @@ public:
     elbow_offset_ = spec["elbow_offset"].cast<double>();
     for (auto h : spec["tool"].cast<py::list>()) tool_.push_back(prim_from(h.cast<py::dict>()));
     for (auto h : spec["scene"].cast<py::list>()) scene_.push_back(prim_from(h.cast<py::dict>()));
-    has_table_ = !spec["table_z"].is_none();
-    table_z_ = has_table_ ? spec["table_z"].cast<double>() : 0.0;
+    // the table: a plane n.x + d = 0 (the touched, tilted one), else a height
+    if (spec.contains("table_plane") && !spec["table_plane"].is_none()) {
+      auto tp = spec["table_plane"].cast<std::vector<double>>();
+      if (tp.size() != 4) throw std::invalid_argument("table_plane: [nx, ny, nz, d]");
+      table_n_ = Vec3(tp[0], tp[1], tp[2]);
+      table_d_ = tp[3];
+      has_table_ = true;
+    } else if (!spec["table_z"].is_none()) {
+      table_n_ = Vec3(0.0, 0.0, 1.0);
+      table_d_ = -spec["table_z"].cast<double>();
+      has_table_ = true;
+    }
     for (auto h : spec["table_exempt"].cast<py::list>()) table_exempt_.push_back(h.cast<std::string>());
     for (auto h : spec["self_pairs"].cast<py::list>()) self_pairs_.push_back(h.cast<std::string>());
     clearance_ = spec["clearance"].cast<double>();
@@ -360,7 +381,7 @@ public:
       for (const auto &s : scene_) consider(primitive_distance(a, s), a, s.name);
       if (has_table_ &&
           std::find(table_exempt_.begin(), table_exempt_.end(), a.name) == table_exempt_.end())
-        consider(std::max(0.0, lowest_point_z(a) - table_z_), a, "table");
+        consider(std::max(0.0, height_above_plane(a, table_n_, table_d_)), a, "table");
     };
     for (const auto &a : arm) visit(a);
     for (const auto &t : tool) visit(t);
@@ -393,7 +414,8 @@ private:
   double shoulder_offset_ = 0, elbow_offset_ = 0;
   std::vector<Prim> tool_, scene_;
   bool has_table_ = false;
-  double table_z_ = 0;
+  Vec3 table_n_ = Vec3(0.0, 0.0, 1.0);
+  double table_d_ = 0;
   std::vector<std::string> table_exempt_, self_pairs_;
   double clearance_ = 0.01;
   double lo_[6] = {}, hi_[6] = {};
@@ -434,7 +456,8 @@ private:
 py::dict plan(const Model &model, const py::array_t<double, py::array::c_style | py::array::forcecast> &q_from,
               const py::array_t<double, py::array::c_style | py::array::forcecast> &q_to,
               const std::string &planner_name, double budget_s, std::vector<double> weights,
-              double resolution, double range, int num_planners, int max_paths)
+              double resolution, double range, int num_planners, int max_paths,
+              double max_budget_s)
 {
   const auto q0 = as_q(q_from), q1 = as_q(q_to);
   if (weights.size() != 6) throw std::invalid_argument("weights: 6 numbers");
@@ -492,7 +515,14 @@ py::dict plan(const Model &model, const py::array_t<double, py::array::c_style |
   ob::PlannerStatus status;
   {
     py::gil_scoped_release release;            // APS threads run in parallel
-    status = planner->solve(ob::timedPlannerTerminationCondition(budget_s));
+    // at least `budget_s` (APS keeps shortening); past it, stop at the first exact
+    // solution, but never later than `max_budget_s` - a hard transit gets the time it
+    // needs, an easy one is not cut off before it is shortened
+    const double cap = std::max(budget_s, max_budget_s);
+    status = planner->solve(ob::plannerOrTerminationCondition(
+      ob::timedPlannerTerminationCondition(cap),
+      ob::plannerAndTerminationCondition(ob::timedPlannerTerminationCondition(budget_s),
+                                         ob::exactSolnPlannerTerminationCondition(pdef))));
   }
   const double elapsed =
     std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
@@ -566,10 +596,12 @@ PYBIND11_MODULE(_transit_cpp, m)
         py::arg("planner") = "aps", py::arg("budget_s") = 1.0,
         py::arg("weights") = std::vector<double>{2.0, 2.0, 1.5, 1.0, 1.0, 0.5},
         py::arg("resolution") = 0.01, py::arg("range") = 0.0, py::arg("num_planners") = 4,
-        py::arg("max_paths") = 8,
+        py::arg("max_paths") = 8, py::arg("max_budget_s") = 0.0,
         "Plan a collision-free joint path q_from -> q_to with OMPL (planner 'aps' = "
         "AnytimePathShortening over num_planners RRT-Connect threads, hybridized and "
         "shortcut until budget_s; 'rrt_connect' = the first RRT-Connect solution). "
+        "Past budget_s it stops at the first exact solution, at the latest at "
+        "max_budget_s (<= budget_s: a plain time limit). "
         "Returns {'solved', 'status', 'path' (list of q), 'cost' (weighted joint travel), "
         "'time_s', 'validity_calls', 'solutions'}.");
 }

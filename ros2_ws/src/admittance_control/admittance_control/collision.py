@@ -8,8 +8,10 @@ and needs nothing beyond numpy:
             the upper-arm and forearm tubes displaced off the joint line by the URDF's
             shoulder/elbow offsets (0.138 / 0.007 m), radii with margin
     tool    the primitives of `tool_model.ToolModel` (capsules and boxes) placed by FK
-    scene   the registered parts as boxes (mode A's slabs at their poses, mm -> m) and
-            the table as a horizontal plane below which nothing may go
+    scene   the registered parts as boxes (mode A's slabs at their poses, mm -> m), the
+            fixtures as boxes (`fixture_boxes`, from marking.json), and the table as a
+            plane below which nothing may go - the touched, tilted plane of
+            notebooks/table_plane.json (`load_table_plane`), or a horizontal height
     query   `in_collision(q)`, `min_distance(q)` (with the pair that sets it),
             `is_valid(q)` for the RRT (joint limits AND clearance)
 
@@ -22,7 +24,8 @@ the clearance; an intersection test, not a distance, so `min_distance` reports 0
 What it does NOT do, stated: full self-collision. The branch lock keeps the arm
 elbow-up, and the tool primitives are checked against the base column and the upper
 arm, which is where a wrist-mounted pen can meet the robot itself. Fixtures are
-absent (magnets); add a box to `scene_boxes` the day one appears.
+whatever `fixture_boxes` lists (marking.json `fixtures`): unregistered, so measured
+once with the pen tip.
 """
 
 from __future__ import annotations
@@ -274,6 +277,73 @@ def lowest_point_z(prim: dict[str, Any]) -> float:
     return float(_box_corners(prim)[:, 2].min())
 
 
+def height_above_plane(prim: dict[str, Any], n: np.ndarray, d: float) -> float:
+    """The lowest point of a primitive above the plane n.x + d = 0 (n unit, up)."""
+    n = np.asarray(n, float)
+    if prim["type"] == "capsule":
+        return float(min(n @ np.asarray(prim["p0"], float), n @ np.asarray(prim["p1"], float))
+                     + d - prim["radius"])
+    return float((_box_corners(prim) @ n).min() + d)
+
+
+def load_table_plane(path) -> tuple[np.ndarray, float] | None:
+    """(n, d) of the touched table (scripts/table_touchoff.py -> notebooks/table_plane.json:
+    z = a x + b y + c in base_link), n unit and up; None when the file is absent."""
+    import json
+    from pathlib import Path
+    p = Path(path)
+    if not p.is_file():
+        return None
+    pl = json.loads(p.read_text())["plane"]
+    n = np.array([-pl["a"], -pl["b"], 1.0])
+    k = float(np.linalg.norm(n))
+    return n / k, float(-pl["c"] / k)
+
+
+def fixture_boxes(fixtures: Sequence[dict[str, Any]] | None,
+                  table: tuple[np.ndarray, float] | None) -> list[dict[str, Any]]:
+    """marking.json `fixtures` -> scene boxes (metres, base_link). Each fixture is either
+    `{"name", "points_m": [[x, y, z], ...]}` - pen-tip points on its top outline, read off
+    the pendant: the box is their smallest rectangle in plan, from the table (or the
+    lowest point) up to the highest point - or an explicit
+    `{"name", "centre_m", "half_m", "yaw_deg"}`."""
+    out = []
+    for k, f in enumerate(fixtures or []):
+        name = f"fixture_{f.get('name', k)}"
+        if "points_m" in f:
+            P = np.asarray(f["points_m"], float)
+            if len(P) < 2:
+                raise ValueError(f"{name}: at least 2 points")
+            xy = P[:, :2]
+            best = None
+            for a in np.radians(np.arange(0.0, 90.0, 1.0)):        # min-area rectangle
+                R2 = np.array([[np.cos(a), -np.sin(a)], [np.sin(a), np.cos(a)]])
+                loc = xy @ R2
+                lo, hi = loc.min(axis=0), loc.max(axis=0)
+                area = float(np.prod(np.maximum(hi - lo, 1e-3)))
+                if best is None or area < best[0]:
+                    best = (area, a, lo, hi)
+            _, a, lo, hi = best
+            top = float(P[:, 2].max())
+            c_xy = np.array([[np.cos(a), -np.sin(a)], [np.sin(a), np.cos(a)]]) @ (0.5 * (lo + hi))
+            if table is not None:
+                n, d = table
+                bottom = float(-(n[0] * c_xy[0] + n[1] * c_xy[1] + d) / n[2])   # table z there
+            else:
+                bottom = float(P[:, 2].min()) - 0.05
+            half = np.array([*(0.5 * (hi - lo)), 0.5 * (top - bottom)])
+            centre = np.array([c_xy[0], c_xy[1], 0.5 * (top + bottom)])
+            yaw = a
+        else:
+            centre = np.asarray(f["centre_m"], float)
+            half = np.asarray(f["half_m"], float)
+            yaw = np.radians(float(f.get("yaw_deg", 0.0)))
+        R = np.array([[np.cos(yaw), -np.sin(yaw), 0.0], [np.sin(yaw), np.cos(yaw), 0.0],
+                      [0.0, 0.0, 1.0]])
+        out.append(box(name, centre, R, half))
+    return out
+
+
 # ---------------------------------------------------------------- the model -----------
 def ur5e_capsules(q: np.ndarray, radii: dict[str, float] | None = None) -> list[dict[str, Any]]:
     """The arm as capsules in base_link at configuration `q`."""
@@ -299,9 +369,11 @@ class CollisionModel:
     """Arm + tool against the scene, with a clearance margin.
 
     `tool` is a `tool_model.ToolModel` (or None for the bare arm); `scene_boxes` are
-    boxes in base_link (metres); `table_z` is the plane below which nothing may go
-    (None to skip); `clearance` is the required gap in metres. `self_pairs` lists the
-    robot capsules the tool is checked against.
+    boxes in base_link (metres); the table is `table_plane` = (n, d), the plane
+    n.x + d = 0 below which nothing may go (the touched, tilted table:
+    `load_table_plane`), else the horizontal `table_z` (None for both: no table);
+    `clearance` is the required gap in metres. `self_pairs` lists the robot capsules the
+    tool is checked against.
     """
     tool: Any = None
     scene_boxes: list[dict[str, Any]] = field(default_factory=list)
@@ -310,6 +382,20 @@ class CollisionModel:
     radii: dict[str, float] | None = None
     self_pairs: tuple[str, ...] = ("base", "shoulder", "upper_arm")
     table_exempt: tuple[str, ...] = ("base", "shoulder")      # they stand on it
+    table_plane: tuple[Any, float] | None = None
+
+    def table(self) -> tuple[np.ndarray, float] | None:
+        """(n, d) of the table plane, from `table_plane` or `table_z`; None: no table."""
+        if self.table_plane is not None:
+            return np.asarray(self.table_plane[0], float), float(self.table_plane[1])
+        if self.table_z is not None:
+            return np.array([0.0, 0.0, 1.0]), -float(self.table_z)
+        return None
+
+    def table_height(self, prim: dict[str, Any]) -> float | None:
+        """The primitive's height above the table (m), None without a table."""
+        t = self.table()
+        return None if t is None else height_above_plane(prim, *t)
 
     def bodies(self, q: np.ndarray) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         arm = ur5e_capsules(q, self.radii)
@@ -327,8 +413,10 @@ class CollisionModel:
         for a in arm + tool:
             for s in self.scene_boxes:
                 out.append((primitive_distance(a, s), a["name"], s["name"]))
-            if self.table_z is not None and a["name"] not in self.table_exempt:
-                out.append((max(0.0, lowest_point_z(a) - self.table_z), a["name"], "table"))
+            if a["name"] not in self.table_exempt:
+                h = self.table_height(a)
+                if h is not None:
+                    out.append((max(0.0, h), a["name"], "table"))
         arm_by_name = {a["name"]: a for a in arm}
         for t in tool:
             for n in self.self_pairs:
@@ -378,6 +466,9 @@ class CollisionModel:
             "tool": [prim(p) for p in (self.tool.primitives if self.tool is not None else [])],
             "scene": [prim(b) for b in self.scene_boxes],
             "table_z": None if self.table_z is None else float(self.table_z),
+            "table_plane": (None if self.table_plane is None else
+                            [*map(float, np.asarray(self.table_plane[0], float)),
+                             float(self.table_plane[1])]),
             "table_exempt": list(self.table_exempt),
             "self_pairs": list(self.self_pairs),
             "clearance": float(self.clearance),

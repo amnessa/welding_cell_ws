@@ -282,3 +282,53 @@ Order: C1, E2, RR1, S3 on R2 (two V-blocks), SP3 when printed. Restart the launc
 
 **Then step 5,** multi-view refinement for curved parts. The S3/R2 replay already shows
 why: a 7 mm sideways registration error is too much for a saddle.
+
+**Step 4, first marks (2026-10-14): C1 and E2 on the 8 mm plate**, `stroke_mode:=tack`,
+4 tacks each, all reached and marked.
+
+| part | marks, measured by hand from the root (opposite pairs) | where the far-off marks are |
+|---|---|---|
+| C1 | 14 / 1.2 mm, 6.5 / 3.7 mm | up C1's wall, not on the plate |
+| E2 | 14.4 / 1.2 mm, 11.7 / ~0 mm | up E2's wall |
+
+**The contacts say why** (`scripts/contact_error.py`: every descent stops at the touch,
+so its tip is a point on the real part).
+- E2: two contacts sit 5.0–7.0 mm above the registered plate top and 5.1–5.5 mm outside
+  the registered wall, so they are on the real wall. The opposite two sit 2.3–3.6 mm
+  below the registered plate top, on the real plate.
+- The fit that puts all four on a real surface (rms 0.48 mm): **the real E2 axis is
+  8.1 mm from the registered one, sideways, and the real plate top 3.0 mm lower.** C1
+  (contacts rebuilt from the log's depths): 8.8 mm sideways, plate 1.2 mm low.
+- With a ~45° pen, a sideways error lands one side's tack up the wall and the other's
+  near the root, which is the pattern measured. The fit puts the marks at 10.2 / 8.7 mm
+  (wall side) and 4.0 / 3.3 mm (plate side). The pair sums match the ruler (14.2 vs
+  15.6, 12.0 vs 11.7); the split differs by ~3 mm. The fit has no tilt error, and the
+  20 mm stroke drifts after the contact.
+- The direction is not the camera's line of sight every time (C1: mostly along it, E2:
+  across it), so it is not a plain depth offset. A small curved part seen from one side
+  is the limit: **step 5 is the remedy** (views from several sides).
+- Save-time ICP moved C1 13.1 mm (rmse 3.6 mm) and E2 7.6 mm (rmse 4.1 mm). Whether it
+  helped is not knowable from these runs. `assembly.json` now keeps the tracker's pose
+  before ICP (`icp_refine.pose_static_tracker`).
+
+**Motion, from the same runs:**
+- **"Invalid start / goal" on most transits.** It was not the time budget.
+  `transit_model` sets the clearance to 90 % of an approach pose's own, and APS's 2 mm
+  margin on top made that pose invalid, so OMPL's RRT-Connect threads never started.
+  The Python RRT-Connect fallback took 1.5–3 min per transit round E2's 34 boxes, and
+  the re-checks of APS paths, their smoothing and the TOTG samples ran in Python too.
+  - **Fixed:** the margin is capped at half of the end poses' room.
+  - Past `transit_budget_s` (now **2 s**, as asked) APS waits for a first path up to
+    `transit_max_budget_s` 10 s.
+  - The C++ RRT-Connect comes before the Python one.
+  - The re-checks run on the C++ model (`marking.fast_is_valid`; same model, ~590×).
+  - E2's plan, replayed offline: **478 s → 17.6 s**, every transit by APS.
+- **No table in the model.** `marking.json` had `table_z_m: null`, so transits could run
+  through the table.
+  - **Fixed:** the collision model (Python and C++) now takes the touched, tilted plane
+    of `notebooks/table_plane.json` by default: −96.1 mm at its centroid, 1.70°, about
+    −99.8 mm under the bench parts.
+  - Fixtures go in `marking.json` `fixtures`: 3–4 pen-tip points on a fixture's top
+    become a box standing on the table.
+- Every marking run is now kept in `marks_history/` with its assembly. C1's contacts
+  were overwritten by E2's run.

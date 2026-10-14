@@ -67,8 +67,17 @@ The plate strata (T/line, corner, butt square, lap, edge) are MDF cuts. The curv
      spin, silent near misses.
    - **Deploy the updated `scripts_in_foundationpose/fp_server.py` to the desktop**
      (`object_name` on re-registration).
-   - Next: bench C1, E2, RR1, S3 on R2 end to end (seams → reach → marks → measured
-     offsets), each joint left as saved. Then step 5.
+   - 2026-10-14, C1 and E2 marked:
+     - the far marks are 12–14 mm up the part's wall;
+     - the contacts say the registered tube is 8–9 mm off sideways and the plate
+       1–3 mm high (`scripts/contact_error.py`);
+     - **next: step 5** (multi-view refinement for curved parts).
+     - Also fixed: APS "Invalid start/goal" (margin), the Python fallbacks (E2 plan
+       478 s → 18 s), no table in the collision model (the touched plane is now used),
+       fixtures in `marking.json`, runs archived in `marks_history/`.
+   - **Fill `marking.json` `fixtures`** (V-blocks, holders): 3–4 pen-tip points on each
+     fixture's top, read off the pendant.
+   - RR1, S3 on R2 and SP3 are still to mark.
 
 ## Benchmarks to run (for the thesis)
 

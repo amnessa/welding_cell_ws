@@ -12,6 +12,43 @@ the plans under `notes/`; this file keeps the story and the numbers.
 
 ---
 
+## 2026-10-14: The pen's contacts measure the registration; the planner was failing on its own margin
+
+**What happened.** The first marks on curved parts (C1, a pipe on a plate; E2, a mitred
+pipe) were off by up to 14 mm. On every part one side's tacks were near the root and the
+opposite side's were up the pipe's wall, never out on the plate. Separately, planning
+took minutes: most transits logged "Invalid start" or "Invalid goal" and fell back to a
+slow planner.
+
+**Evidence.**
+- Hand-measured, opposite pairs: C1 14 / 1.2 and 6.5 / 3.7 mm; E2 14.4 / 1.2 and
+  11.7 / ~0 mm.
+- Every descent stops at a 1.5 N touch, so its tip is a point on the real part. Fitting
+  "real tube = registered tube moved sideways, real plate = registered plate moved up or
+  down" to the four contacts (rms 0.48 mm on E2):
+  - E2: 8.1 mm sideways, plate 3.0 mm lower;
+  - C1: 8.8 mm sideways, plate 1.2 mm lower.
+- A ~45° descent turns a sideways error into one side up the wall and the other near the
+  root, which is the measured pattern. The pair sums agree with the ruler (14.2 vs 15.6,
+  12.0 vs 11.7 mm).
+- The planner: the transit clearance is set to 90 % of an approach pose's own, and the
+  2 mm safety margin on top of it made that pose itself invalid. Each fallback transit
+  took 1.5–3 min; with the margin capped and the path checks on the C++ model, the same
+  plan takes 17.6 s instead of 478 s.
+
+**What we learned.**
+- **The force-gated pen is also a probe.** Its contacts measure the registration error
+  per joint, with no extra hardware. That is evaluation only; the cell stays
+  vision-only.
+- **For a small curved part seen from one side, the dominant error is sideways, ~8 mm.**
+  That is much larger than the 2.3–2.7 mm of the plate T. Plates have flat faces that
+  pin the pose; a pipe's round side does not. This is what multi-view refinement is for.
+- **Safety margins compose.** Two individually sensible margins (90 % of the end
+  clearance, +2 mm in the optimiser) together made the start of every hard transit
+  infeasible, and the planner said so in its first line of output.
+
+---
+
 ## 2026-10-09 (night): The first curved-parts bench, and three silent failures
 
 **What happened.** The printed parts went through the live pipeline. Perception worked:
