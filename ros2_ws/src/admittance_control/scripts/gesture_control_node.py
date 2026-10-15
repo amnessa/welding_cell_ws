@@ -720,6 +720,12 @@ def main(args: Optional[List[str]] = None) -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        # closed here, not left to its __del__ at interpreter exit: by then MediaPipe's
+        # C helpers are gone and it prints a TypeError traceback on every Ctrl-C
+        try:
+            node._recognizer.close()
+        except Exception:  # noqa: BLE001 - shutting down anyway
+            pass
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()

@@ -288,19 +288,18 @@ estimated, so the thesis can report them. Per stage:
 ## OPEN — human–robot interaction
 
 - **Finger-pointing camera aim, before the first capture** (asked 2026-10-14; BUILT
-  2026-10-15, bench pending).
+  2026-10-15, works on the robot; measurements pending).
   - **Built:** `admittance_control/camera_aim.py` (the control law, 14 tests including a
     closed loop on the UR kinematics), `scripts/camera_aim_node.py`, and `/gesture/aim` in
     the gesture node. It was tested against a fake controller manager and arm: 240 px
     (21°) → 10 px in ~3.5 s, centre drift ≤ 4 mm, the joints handed back 0.6 s after the
     hand drops, and Ctrl-C mid-turn stops it. README §E has the details.
   - **On the bench:**
-    1. the dry run first: `ros2 run admittance_control camera_aim_node.py` logs where
-       the camera would turn;
-    2. then `... camera_aim_node.py --ros-args -p dry_run:=false` (without `--ros-args`
-       the `-p` is ignored and it stays in the dry run) with the pendant slider low;
-    3. measure time-to-aim, overshoot and the hand-lost stop (thesis);
-    4. check the image's stamp and `/joint_states` share a clock. If they don't, the node
+    1. ~~dry run, then live~~: works on the robot (2026-10-15). Everyday start, both nodes
+       in one terminal: `ros2 launch admittance_control gestures.launch.py`
+       (`aim_dry_run:=true` to only log, `aim:=false` for gestures without the aim);
+    2. measure time-to-aim, overshoot and the hand-lost stop (thesis);
+    3. check the image's stamp and `/joint_states` share a clock. If they don't, the node
        says so once ("latency not compensated") and still works, with a little
        overshoot.
   - **What.** When the gesture node starts, with the robot at home, `Pointing_Up` is a

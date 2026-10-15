@@ -1343,6 +1343,7 @@ above differ. This is why the sim is a true digital twin.
 | File | Brings up |
 |---|---|
 | `admittance_control.launch.py` | The **drawing stack**: robot_state_publisher + drawing_action_server + TOTG + drawing_dispatcher. Args: `real_robot`, `use_sim_time`, `trajectory_key`, `continuous`, `plane_json`, `approach_height`, `surface_z_offset`, `orthogonal_tool_length_m`, `max_joint_speed_deg`, `max_joint_accel_deg`. |
+| `gestures.launch.py` | **The hands‑free operator console**: `gesture_control_node` + `camera_aim_node` in one terminal; closing the gesture window shuts both down. Args: `model_path` (default `notebooks/gesture_recognizer.task`), `tracking_source` (fp/icp), `aim` (true), `aim_dry_run` (false: the aim moves the arm), `display_scale`. |
 | `pointcloud.launch.py` | **Full real‑hardware perception stack**: robot_state_publisher (`/joint_states`) + camera extrinsic TF + `realsense_camera_node` + pointcloud + detection markers + (optional) FoundationPose bridge + ICP refiner + (optional) RViz. Everything runs on the wall clock (`use_sim_time:=false`). Args: as the twin below, plus `launch_camera`, `camera_serial_no`, `camera_width`, `camera_height`, `camera_fps`. |
 | `digital_twin_pointcloud.launch.py` | **Full sim perception stack**: robot_state_publisher (`/isaac_joint_states`) + camera extrinsic TF + sim camera relay + pointcloud + detection markers + (optional) FoundationPose bridge + ICP refiner + (optional) RViz, all with `use_sim_time:=true`. Args: `launch_robot_state`, `launch_rviz`, `extrinsic_parent`, `extrinsic_path`, `launch_foundationpose`, `foundationpose_server_url`, `detection_min_score`, `bbox_model_path`, `bbox_model_units`, `launch_icp`, `icp_model_path`, `icp_scene_from`, `icp_anderson_depth`, `icp_use_open3d`, `icp_crop_margin_m`, `icp_tracking_rate_hz`, `icp_auto_track`, `icp_ground_removal`, `icp_ground_z_m`. |
 
@@ -1546,19 +1547,19 @@ wget -O notebooks/gesture_recognizer.task \
 pip install mediapipe
 ```
 
-With the perception stack already up:
+With the perception stack and the UR driver already up, one launch starts the gesture
+node and the camera aim together (closing the gesture window, `q`, ends both):
 
 ```bash
-ros2 run admittance_control gesture_control_node.py --ros-args \
-  -p model_path:=<ws>/src/admittance_control/notebooks/gesture_recognizer.task
+ros2 launch admittance_control gestures.launch.py                     # the aim is LIVE
+ros2 launch admittance_control gestures.launch.py aim_dry_run:=true   # aim logged only
+ros2 launch admittance_control gestures.launch.py aim:=false          # gestures, no aim
 ```
 
-For the camera aim, also (the UR driver up; dry run first, then live):
-
-```bash
-ros2 run admittance_control camera_aim_node.py                          # dry run: logs only
-ros2 run admittance_control camera_aim_node.py --ros-args -p dry_run:=false
-```
+The nodes on their own: `ros2 run admittance_control gesture_control_node.py --ros-args -p
+model_path:=<...>/gesture_recognizer.task`, and `ros2 run admittance_control
+camera_aim_node.py`, which is a dry run unless you add `--ros-args -p dry_run:=false`.
+Without `--ros-args` the `-p` is ignored.
 
 A window opens on the RealSense stream. Then, entirely by hand:
 
