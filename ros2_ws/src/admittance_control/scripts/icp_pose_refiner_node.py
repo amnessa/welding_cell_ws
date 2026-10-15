@@ -1175,6 +1175,7 @@ class IcpPoseRefinerNode(Node):
         parts = sfr.posed_parts(objects, registry, pose_units='m', weldgen_path=wg)
         access = sfr.runtime_access(
             parts, pose_tol_mm=float(self.get_parameter('weld_pose_tol_mm').value))
+        settle_note = self._settle_cut_spins(parts, access, objects, registry)
         seams = sfr.compute_seams(
             parts, access, density_per_mm=float(self.get_parameter('weld_seam_density_per_mm').value),
             weldgen_path=wg)
@@ -1192,7 +1193,7 @@ class IcpPoseRefinerNode(Node):
                 'seams': seams}, indent=1))
         except Exception as exc:  # noqa: BLE001 - persistence is best-effort
             note += f' (warning: could not write welding_seams.json: {exc})'
-        summary = sfr.summarize(seams)
+        summary = sfr.summarize(seams) + settle_note
         if bool(self.get_parameter('weld_tacks').value):
             tacks = sfr.compute_tacks(parts, seams, scene_id=str(self._save_dir), weldgen_path=wg)
             txyz, trgb, _ = sfr.tacks_points_m(tacks['tacks'])
@@ -1207,6 +1208,44 @@ class IcpPoseRefinerNode(Node):
             summary += '; ' + sfr.summarize_tacks(tacks['tacks'])
         self.get_logger().info(f'mode A seams: {summary}. {note}')
         return True, f'mode A: {summary}'
+
+    def _settle_cut_spins(self, parts, access, objects, registry) -> str:
+        """A pipe standing on its cut (mitre, saddle) gets the spin that rests the cut on
+        its base (`curved_seams.settle_cut_spins`): registration cannot see the cut and got
+        E2 36 deg wrong (2026-10-15), which refused its seam. The settled pose is saved -
+        assembly.json and the part's SEPC points - so reachability and marking (their
+        collision boxes at the foot) use it too. Returns a note for the summary."""
+        from admittance_control import curved_seams
+        settled = curved_seams.settle_cut_spins(parts, access)
+        if not settled:
+            return ''
+        counts = [int(o.get('n_points', 0)) for o in self._saved]
+        starts = np.concatenate([[0], np.cumsum(counts)]).astype(int)
+        notes = []
+        for st in settled:
+            i = st['part']
+            name, T_old = objects[i]
+            T_cad_prim = np.asarray(registry['parts'][Path(name).stem]['T_cad_prim'], float)
+            T_mm = np.asarray(parts[i].T_world_part, float) @ np.linalg.inv(T_cad_prim)  # CAD -> world, mm
+            T_new = T_mm.copy()
+            T_new[:3, 3] /= 1000.0
+            S = T_new @ np.linalg.inv(np.asarray(T_old, float))          # the turn, world, m
+            self._saved[i]['pose_static'] = T_new.tolist()
+            self._saved[i].setdefault('pose_stats', {})['spin_settled'] = {
+                k: (float(v) if isinstance(v, (int, float, np.floating)) else v) for k, v in st.items()}
+            objects[i] = (name, T_new)
+            if self._sepc is not None and sum(counts) == len(self._sepc):
+                sl = slice(starts[i], starts[i + 1])
+                self._sepc[sl] = self._sepc[sl] @ S[:3, :3].T + S[:3, 3]
+            notes.append(f"{name} turned {st['spin_deg']:+.1f} deg about its axis to rest its cut on "
+                         f"{objects[st['base']][0]} (gap range {st['gap_range_before_mm']:.1f} -> "
+                         f"{st['gap_range_after_mm']:.1f} mm)")
+        if self._sepc is not None:
+            self._sepc_tree = _cKDTree(self._sepc) if _cKDTree is not None else None
+        persist = self._persist_sepc()
+        msg = '; spin settled: ' + '; '.join(notes)
+        self.get_logger().info(msg[2:] + ' ' + persist)
+        return msg
 
     def _tack_labels(self, tacks, header):
         """One text marker per tack: "<seam>.<tack_no> (w<order+1>)" above the tack."""

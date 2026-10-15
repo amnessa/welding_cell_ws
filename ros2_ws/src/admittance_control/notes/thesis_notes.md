@@ -12,6 +12,37 @@ the plans under `notes/`; this file keeps the story and the numbers.
 
 ---
 
+## 2026-10-15: Multi-view on the bench, and the one degree of freedom no camera sees
+
+**What happened.** On the bench, multi-view refinement was first refused for curved
+parts, then accepted once its acceptance rules were made consistent. Then a mitred pipe
+yielded no seam at all: its spin about its own axis was registered ~36° wrong.
+
+**Evidence.**
+- SP3 (S-band): fit-up −0.9..10.4 → 0.0..0.3 mm after `refine_pose`. Marks: 2 on the
+  root, one 4.4 mm (was 9.5–12.7 mm).
+- E2 (25° mitre): marks 3.7–6 mm from single-view poses; 2–3.2 mm (3–4 mm on the tilted
+  side) after `refine_pose`.
+- The acceptance rules changed to the user's principle, "apply a correction within the
+  limits":
+  - the overlap may not be worse than the saved assembly's (the better refinement had
+    been refused, the worse saved pose kept);
+  - a pipe's spin is not judged (it does not move the seam);
+  - a pipe's bore is hollow.
+- E2's spin: its axis was right (25.2°), its cut 15.4° off the plate, the seam's gap
+  range 26 mm. The spin that rests the cut on the plate (+36.2°) brought it to 0.4 mm.
+
+**What we learned.**
+- **A symmetric part's hidden feature is a blind spot.** A cut pipe is symmetric about
+  its axis except for its cut, and the cut is exactly where it touches the part it stands
+  on, out of sight. Neither single-view nor multi-view registration can measure that
+  spin, but physics can: a part standing on its cut rests with the cut on its base.
+- **The seam did not depend on the wrong number; the checks did.** The intersection
+  curve is spin-free, while the fit-up check that guarded it was not. Knowing which
+  quantity a pipeline actually depends on decides which errors matter.
+
+---
+
 ## 2026-10-14 (night): Multi-view for curved parts: the views were enough, the neighbours were the problem
 
 **What happened.** Before changing the multi-view refinement for curved parts, its

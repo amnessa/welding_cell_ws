@@ -229,3 +229,33 @@ def test_a_pair_without_a_rule_is_reported():
     _, seams = _seams(("pipe.ply", _pose([0.0, 0.0, 0.0])), ("band.ply", _pose([0.0, 0.0, 0.0])))
     assert [s["seam_class"] for s in seams] == ["curved"]
     assert "no seam rule" in seams[0]["reject_reason"]
+
+
+def test_a_mitred_pipe_registered_with_the_wrong_spin_is_settled_on_its_cut():
+    """2026-10-15: E2 was registered 36 deg off in spin about its own axis (a cut pipe
+    looks the same at any spin but for its hidden cut). Its mitre stood 15 deg off the
+    plate, the gap ran -14.8..+11.5 mm and the seam was refused. Settling turns it until
+    the cut rests on the plate; the seam itself does not move."""
+    from admittance_control import curved_seams as cs
+
+    def spun(deg):
+        a = np.radians(deg)
+        Rz = np.array([[np.cos(a), -np.sin(a), 0], [np.sin(a), np.cos(a), 0], [0, 0, 1]])
+        return _pose([0.0, 0.0, 1.0], _ry(25.0) @ Rz)
+    parts = sfr.posed_parts([PLATE, ("mitre.ply", spun(36.0))], REG)
+    acc = sfr.runtime_access(parts)
+    before = sfr.compute_seams(parts, acc)
+    assert not any(s["weldable"] for s in before if s.get("role") == "weld")
+    seam0 = np.asarray(_by_role(before, "weld")[0]["polyline_mm"])
+    settled = cs.settle_cut_spins(parts, acc)
+    assert len(settled) == 1 and settled[0]["spin_deg"] == pytest.approx(-36.0, abs=0.3)
+    assert settled[0]["gap_range_after_mm"] < 0.5 < 5.0 < settled[0]["gap_range_before_mm"]
+    (w,) = _by_role(sfr.compute_seams(parts, acc), "weld")
+    assert w["weldable"] and w["fitup_mm"]["B"] == pytest.approx([1.0 / CS, 1.0 / CS], abs=0.05)
+    from scipy.spatial import cKDTree
+    assert cKDTree(np.asarray(w["polyline_mm"])).query(seam0)[0].max() < 1.5   # the same curve
+    # a correctly spun mitre and a flat-ended pipe are left as they are
+    ok = sfr.posed_parts([PLATE, ("mitre.ply", spun(0.0))], REG)
+    assert cs.settle_cut_spins(ok, acc) == []
+    flat = sfr.posed_parts([PLATE, ("pipe.ply", _pose([0.0, 0.0, 1.0]))], REG)
+    assert cs.settle_cut_spins(flat, acc) == []

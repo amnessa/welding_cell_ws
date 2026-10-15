@@ -117,6 +117,11 @@ The plate strata (T/line, corner, butt square, lap, edge) are MDF cuts. The curv
        Replayed, it is accepted and lowers E2's seam 4.5–5.3 mm onto the table-flush plate,
        which the contacts support if the plate lies on the table. **Re-run E2 with
        `refine_pose`, then mark in `stroke_mode:=dot`.**
+     - A cut pipe's spin is unobservable to single-view registration (E2 36° off,
+       2026-10-15). `welding_points` now settles it on the cut (`settle_cut_spins`).
+       E2 with `refine_pose` + the settled spin: marks 2–3.2 mm, 3–4 mm on the tilted
+       side (single view: 3.7–6 mm; step 4: up to 14.4 mm). Maybe
+       later: the same inside `refine_pose`.
      - The camera error the views estimate is consistent run to run: d ≈ (0–2, 3,
        −3.3..−4.4) mm (SP3, E2), ~5 mm. Applying it to the extrinsic file
        (`scripts/selfcal_extrinsic.py`; first mark or remove the bad 2026-10-06 15:36

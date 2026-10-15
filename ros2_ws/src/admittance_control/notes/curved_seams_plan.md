@@ -447,6 +447,8 @@ by hand from the root):
 | E2 on the plate | 4/4 | 14.4 / 1.2, 11.7 / ~0 mm; a 2nd registration: pairs near perfect, one 8.7 mm | contacts: 8.1 mm sideways; the 2nd also tilted/spun |
 | SP3 on the plate | 4/6 | 9.5–12.7 mm, one no contact | 2 concave-side tacks refused (holder); stroke climbs |
 | SP3, **with `refine_pose`** (15 Oct) | 4/6 | 2 on the root, one 4.4 mm (one on a fixture) | fit-up 0.0–0.3 mm, was −0.9..10.4 |
+| E2, single view (15 Oct, the new plate) | 4/4 | 3.7, 6, 4.9, 5.1 mm | refine refused (overlap) |
+| E2, **`refine_pose` + spin settled** (15 Oct) | 4/4 | 3.2, 2.1, 2 mm; 3–4 mm on the tilted side | spin +36.2°, gap range 26.2 → 0.4 mm |
 
 Seams, tacks, reach and motion work for every curved stratum. The error is the
 single-view registration of round parts. **Step 5, multi-view refinement for curved
@@ -559,6 +561,30 @@ bounding boxes:
     collision. Re-run: 4/4 reachable, min clearance 6.9 mm;
   - **tack 0.3, holder 2.5 mm from E2** at the stroke START (10 mm from the tack centre).
     With the new reach it plans in both `tack` and `dot` mode.
+
+**E2, another placement (2026-10-15): no seam after multi-view.** The cause was
+neither overlap nor the tolerance: **E2's spin about its own axis was ~36° wrong**.
+- Its axis stood at 25.2° to the plate (right for a part on its 25° mitre), but its cut
+  plane was 15.4° off the plate. Along the seam the gap ran −14.8..+11.5 mm, a 26 mm
+  range, refused at any sensible tolerance.
+- A cut pipe looks the same at every spin but for its cut, and the cut is hidden against
+  the plate: single-view registration got it wrong, and multi-view only added 3°.
+- **Fix: `curved_seams.settle_cut_spins`, run by `welding_points` before the seams.** A
+  pipe with a cut end standing on a part is turned about its own axis until the cut
+  fits the base best (a 1-D search; the seam curve does not depend on the spin).
+  - Accepted when the gap range is then ≤ 1.5 mm (or a quarter of before) and at least
+    1 mm better.
+  - The settled pose goes into `assembly.json` and the part's SEPC points, so
+    reachability and marking (the collision boxes at the foot) use it.
+  - On that assembly: +36.25°, gap range 26.2 → 0.36 mm, one weldable seam (E2 1.5–1.8 mm
+    into the plate, evenly).
+- Not done: settling inside `refine_pose`. Its fit-up and overlap warnings for E2 come
+  from the wrong spin; the next refine starts from the settled pose.
+
+- **Result** (the user's marks, `tack` strokes): 3.2, 2.1 and 2 mm, and 3–4 mm on the
+  tilted side, against 3.7–6 mm from the single-view poses and up to 14.4 mm in step 4.
+  All four tacks were reached and marked; every transit was a Cartesian line or a
+  straight edge, and the planned paths were driven.
 
 **Bench (next):** per joint: save the base and the part → `refine_pose` (Fist held 2 s)
 → `welding_points` (Palm) → `tack_reachability.py` → marking in `stroke_mode:=dot`.

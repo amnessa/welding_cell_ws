@@ -31,7 +31,7 @@ bore (the member's inner wall meeting the base) is a negative unless a tool fits
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from typing import Any, Optional, Sequence
 
 import numpy as np
 
@@ -309,6 +309,98 @@ def _band_on_slab(band, slab, parts, access, density, acc) -> list[dict[str, Any
                            np.tile(pl.n, (len(pts), 1)), nB, gap, band.id, parts, access,
                            acc, cavity=cavity, member_end=cap,
                            reject=miss or ("off_plate_edge" if off_edge else None)))
+    return out
+
+
+# --- a cut pipe's spin, settled on what it stands on ------------------------------------
+
+#: Accept a settled spin only when the cut then fits the base this well (gap range, mm),
+#: or at least 4x better than the registered spin, and by at least `SETTLE_MIN_GAIN_MM`.
+SETTLE_FIT_MM = 1.5
+SETTLE_MIN_GAIN_MM = 1.0
+
+
+def _rz(psi: float) -> np.ndarray:
+    c, s_ = np.cos(psi), np.sin(psi)
+    T = np.eye(4)
+    T[:2, :2] = [[c, -s_], [s_, c]]
+    return T
+
+
+def _cut_gap_vs_spin(tube, base, access) -> Optional[tuple[np.ndarray, np.ndarray]]:
+    """(spins rad, gap-range mm per spin) for `tube`'s CUT end on `base`, or None when
+    that end does not stand on it. The seam curve does not depend on the tube's spin
+    (plate plane x outer wall, run pipe x branch wall), only the cut end's heights do:
+    turning the tube by psi about its axis makes a curve point at local angle phi meet
+    the cut at phi - psi."""
+    from weldgen.curves import ellipse_from_plane_cylinder, saddle_from_cylinders
+    T = np.asarray(tube.T_world_part, float)
+    z = T[:3, 2]
+    curves = []
+    if _kind(base) == "Slab":
+        for face in ("+w", "-w"):
+            pl = base.face_plane(face)
+            if float(pl.n @ z) >= np.sin(np.radians(MIN_AXIS_TO_FACE_DEG)):   # base end down on it
+                curves.append(ellipse_from_plane_cylinder(-pl.d * pl.n, pl.n, T[:3, 3], z,
+                                                          tube.r_outer_mm))
+    elif _kind(base) == "Tube" and tube.r_outer_mm < base.r_outer_mm:
+        Tb = np.asarray(base.T_world_part, float)
+        try:
+            curves.append(saddle_from_cylinders(T[:3, 3], -z, tube.r_outer_mm, Tb[:3, 3], Tb[:3, 2],
+                                                base.r_outer_mm))
+        except ValueError:
+            pass
+    best = None
+    for curve in curves:
+        pts = curve.point(np.linspace(0.0, curve.t_period, 240, endpoint=False))
+        loc = _local(tube, pts)
+        phi, zc = np.arctan2(loc[:, 1], loc[:, 0]), loc[:, 2]
+        psis = np.radians(np.arange(-180.0, 180.0, 1.0))
+        ranges = np.array([np.ptp(tube.base_height(phi - p, tube.r_outer_mm) - zc) for p in psis])
+        k = int(np.argmin(ranges))                                   # refine round the best degree
+        fine = psis[k] + np.radians(np.arange(-1.0, 1.0001, 0.05))
+        fr = np.array([np.ptp(tube.base_height(phi - p, tube.r_outer_mm) - zc) for p in fine])
+        worst = [float(np.abs(tube.base_height(phi - p, tube.r_outer_mm) - zc).max()) for p in fine]
+        cand = (float(fr.min()), float(fine[int(np.argmin(fr))]),
+                float(np.ptp(tube.base_height(phi, tube.r_outer_mm) - zc)), worst[int(np.argmin(fr))])
+        if cand[3] <= NEAR_MISS * float(access["pose_tol_mm"]) and \
+                (best is None or cand[0] < best[0]):            # the end ON the base
+            best = cand
+    return best
+
+
+def settle_cut_spins(parts: Sequence[Any], access: dict[str, Any]) -> list[dict[str, Any]]:
+    """Turn each pipe with a CUT end (a mitre, a saddle) about its own axis so the cut
+    fits what it stands on, when that clearly fits; the parts are changed in place.
+
+    A cut pipe looks the same at any spin except for its cut, which sits against the part
+    it stands on and is hidden: registration gets the spin wrong (2026-10-15: E2 36 deg
+    off, the mitre 15 deg off the plate, a 26 mm gap range, and its seam refused). Standing
+    on its cut means the cut lies on the base; the spin that makes the end's gap most even
+    is the physical one. Accepted only when the gap range then is at most
+    `SETTLE_FIT_MM` (or a quarter of before) and at least `SETTLE_MIN_GAIN_MM` better.
+    The seam does not move (it does not depend on the spin); the fit-up, the collision
+    boxes at the foot and the saved pose do. Returns what was changed."""
+    out = []
+    for i, tube in enumerate(parts):
+        if _kind(tube) != "Tube" or tube.base_cut is None:
+            continue
+        best = None
+        for j, base in enumerate(parts):
+            if j == i:
+                continue
+            r = _cut_gap_vs_spin(tube, base, access)
+            if r is not None and (best is None or r[0] < best[1][0]):
+                best = (j, r)
+        if best is None:
+            continue
+        j, (rng_after, psi, rng_before, _) = best
+        if rng_before - rng_after < SETTLE_MIN_GAIN_MM or \
+                rng_after > max(SETTLE_FIT_MM, 0.25 * rng_before):
+            continue
+        tube.T_world_part = np.asarray(tube.T_world_part, float) @ _rz(psi)
+        out.append({"part": i, "base": j, "spin_deg": float(np.degrees(psi)),
+                    "gap_range_before_mm": rng_before, "gap_range_after_mm": rng_after})
     return out
 
 
