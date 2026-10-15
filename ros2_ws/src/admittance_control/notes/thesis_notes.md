@@ -12,6 +12,44 @@ the plans under `notes/`; this file keeps the story and the numbers.
 
 ---
 
+## 2026-10-15: Finger-pointing camera aim, where rotation-only motion makes latency compensation exact
+
+**What happened.** For human–robot interaction we added an aim mode: before the
+capture, the operator points and the wrist camera turns until the fingertip is centred.
+The camera's image is ~0.1 s old when the gesture is recognised, and a visual servo
+that acts on old images overshoots. Because the camera only rotates about its own
+optical centre (its position is held), the ray to a still fingertip, expressed in the
+robot base frame, does not depend on how far away the fingertip is. So the ray from an
+old image, turned with the camera pose at that image's stamp (from the joint history),
+gives the exact error in the current camera frame. The latency is compensated exactly
+instead of being predicted.
+
+**Evidence** (simulation on the UR5e kinematics: 30 Hz camera, 1.5 px landmark noise,
+an arm lagging 30 ms; then the node against a fake controller manager):
+- A 21° turn (240 px) is centred to ~10 px in ~3.5 s at the 15°/s cap, with no
+  overshoot. The roll is held within 0.02° and the optical centre within ~4–6 mm.
+- With 0.2 s of image latency: compensated, the camera stops at 20.5° with no
+  overshoot; uncompensated, it runs to 21.2° (past the target, then inside the
+  deadband).
+- The gain could go from 1.2 /s (sized for uncompensated latency) to 2.5 /s: the time
+  for 20° fell from ~4.1 s to ~2.9 s to within 32 px.
+- The deadband needed hysteresis that ends *inside* the inner radius. Measured from that
+  radius itself, the camera crept towards it for ever and never let go of the
+  controller.
+- Node-level bugs found against the fake cell:
+  - one logging line used both info and warn severity, and rclpy raises on that;
+  - two aim nodes fought over the velocity controller. A node now refuses when the
+    controller is already active.
+
+**What we learned.** Choose the motion so that the measurement becomes easy: restricting
+the aim to rotation about the optical centre removes depth from the problem, and the
+latency compensation then costs only a joint-state history. Stream rates, not
+trajectories, for a human in the loop. Hand the joints back to the trajectory controller
+as soon as the arm is still, so the rest of the pipeline never sees the difference.
+Bench numbers (time-to-aim, overshoot, the hand-lost stop) are still to be measured.
+
+---
+
 ## 2026-10-15: Multi-view on the bench, and the one degree of freedom no camera sees
 
 **What happened.** On the bench, multi-view refinement was first refused for curved

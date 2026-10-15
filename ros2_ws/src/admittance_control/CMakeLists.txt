@@ -102,6 +102,7 @@ install(
     admittance_control/seam_from_registration.py
     admittance_control/curved_seams.py
     admittance_control/part_shapes.py
+    admittance_control/camera_aim.py
     admittance_control/tool_model.py
     admittance_control/collision.py
     admittance_control/tack_reach.py
@@ -129,6 +130,7 @@ install(PROGRAMS
   scripts/foundationpose_bridge_node.py
   scripts/fp_tracker_node.py
   scripts/gesture_control_node.py
+  scripts/camera_aim_node.py
   scripts/sam6d_bridge_node.py
   scripts/detection_marker_node.py
   scripts/icp_pose_refiner_node.py

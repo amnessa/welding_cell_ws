@@ -48,6 +48,7 @@
 
   <!-- Control -->
   <depend>controller_manager</depend>
+  <exec_depend>controller_manager_msgs</exec_depend>  <!-- camera_aim_node: switch_controller -->
   <depend>joint_trajectory_controller</depend>
 
   <!-- MoveIt (for Jacobian calculator) -->

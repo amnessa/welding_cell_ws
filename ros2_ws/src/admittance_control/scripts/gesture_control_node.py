@@ -16,6 +16,14 @@ means the operator's hand is genuinely in the scene, which is the cost: see
 
 Flow
 ----
+Before the capture (no frame frozen):
+
+    Pointing_Up   AIM: the fingertip's pixel goes out on `aim_topic` and
+                  camera_aim_node.py turns the wrist camera until it sits in the
+                  middle of the image (about the camera's optical centre, roll held).
+                  Lower the hand, or show any other gesture, and the camera stops.
+                  Not while a refine_pose call is in flight: that one moves the arm.
+
 The click and the image it refers to have to be the same frame, so segmentation
 is three steps, not one:
 
@@ -87,6 +95,7 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile
+from geometry_msgs.msg import PointStamped
 from sensor_msgs.msg import Image
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
@@ -306,10 +315,19 @@ class GestureControlNode(Node):
         # camera pixels, so scaling it down cannot move a click.
         self.declare_parameter('display_scale', 1.0)
         self.declare_parameter('show_window', True)
+        # Pointing_Up with no frame frozen aims the camera (camera_aim_node.py)
+        self.declare_parameter('aim_enabled', True)
+        self.declare_parameter('aim_topic', '/gesture/aim')
+        # consecutive Pointing_Up frames before aiming starts: one misread frame must
+        # not switch the arm's controller
+        self.declare_parameter('aim_frames', 3)
 
         self._model_path = str(self.get_parameter('model_path').value)
         self._display_scale = float(self.get_parameter('display_scale').value)
         self._show_window = bool(self.get_parameter('show_window').value)
+        self._aim_enabled = bool(self.get_parameter('aim_enabled').value)
+        self._aim_frames = int(self.get_parameter('aim_frames').value)
+        self._aim_run = 0                                # consecutive aiming frames
         bridge_ns = str(self.get_parameter('bridge_ns').value).rstrip('/')
         icp_ns = str(self.get_parameter('icp_ns').value).rstrip('/')
         self._fp = str(self.get_parameter('tracking_source').value).strip().lower() == 'fp'
@@ -326,6 +344,7 @@ class GestureControlNode(Node):
         self._picked = PickedPoints()
 
         self._live_bgr: Optional[np.ndarray] = None
+        self._live_header = None                         # stamp + frame of _live_bgr
         self._frozen_bgr: Optional[np.ndarray] = None
         self._frozen_stamp_ns: int = 0
         self._status = 'waiting for the camera'
@@ -341,6 +360,8 @@ class GestureControlNode(Node):
             self._on_frozen, latched)
         self._click_pub = self.create_publisher(
             String, str(self.get_parameter('click_topic').value), 10)
+        self._aim_pub = self.create_publisher(
+            PointStamped, str(self.get_parameter('aim_topic').value), 10)
 
         # NOT `self._clients`: rclpy.Node keeps its own list of service clients
         # under that exact name and its executor iterates it every spin, so
@@ -360,7 +381,9 @@ class GestureControlNode(Node):
         self._t0 = time.monotonic()
         self.get_logger().info(
             f'gesture control ready (model={self._model_path}); '
-            f'ILoveYou=capture  Pointing_Up=cursor  Thumb_Down=negative/cancel  '
+            f'ILoveYou=capture  Pointing_Up=' + ('aim the camera (before the capture) / '
+                                                 if self._aim_enabled else '')
+            + 'cursor  Thumb_Down=negative/cancel  '
             + (f'Thumb_Up=segment  Fist(hold {self.get_parameter("motion_hold_sec").value:g} s)'
                f'=refine_pose (ROBOT MOVES)  Palm=welding_points  Victory=save'
                if self._fp else 'Thumb_Up=segment  Fist=run ICP  Palm=stop  Victory=save'))
@@ -404,6 +427,7 @@ class GestureControlNode(Node):
     def _on_rgb(self, msg: Image) -> None:
         try:
             self._live_bgr = normalize_color_image(image_msg_to_numpy(msg), msg.encoding)
+            self._live_header = msg.header
         except ValueError as exc:
             self.get_logger().warn(f'cannot read the colour image: {exc}',
                                    throttle_duration_sec=10.0)
@@ -469,6 +493,22 @@ class GestureControlNode(Node):
         self._picked = PickedPoints()
         self._cursor.clear()
 
+    def _robot_busy(self) -> bool:
+        """A call that moves the arm is in flight: no aiming over it."""
+        fut = self._pending_calls.get('REFINE_POSE')
+        return fut is not None and not fut.done()
+
+    def _aiming(self, gesture: Optional[str]) -> bool:
+        return (self._aim_enabled and gesture == 'Pointing_Up' and not self._segmenting
+                and not self._robot_busy())
+
+    def _publish_aim(self, tip: Tuple[int, int], score: float, header) -> None:
+        msg = PointStamped()
+        msg.header = header                 # the image's stamp: the aim node compensates
+        msg.point.x, msg.point.y = float(tip[0]), float(tip[1])
+        msg.point.z = float(score)
+        self._aim_pub.publish(msg)
+
     @property
     def _segmenting(self) -> bool:
         """True once a frame is frozen: the mode where Thumb_Down means 'not this'."""
@@ -495,7 +535,10 @@ class GestureControlNode(Node):
         elif action == 'SAVE_OBJECT':
             self._call('SAVE_OBJECT')
         elif action == 'INDICATE':
-            self._say('cursor mode -- hold still to latch a point', 2.0)
+            if self._segmenting:
+                self._say('cursor mode -- hold still to latch a point', 2.0)
+            elif self._aiming('Pointing_Up'):
+                self._say('aim -- the camera follows the fingertip; lower the hand to stop', 2.0)
         elif action == 'NEGATIVE_OR_CANCEL':
             self._on_thumb_down()
         elif action == 'SEGMENT':
@@ -558,7 +601,8 @@ class GestureControlNode(Node):
 
     # ── Drawing ──────────────────────────────────────────────────────────
     def _render(self, gesture: Optional[str], score: float,
-                tip: Optional[Tuple[int, int]], indicating: bool) -> np.ndarray:
+                tip: Optional[Tuple[int, int]], indicating: bool,
+                aiming: bool = False) -> np.ndarray:
         # Draw on the frozen frame while segmenting: the operator has to see the
         # exact pixels the server will see, hand and all.
         base = self._frozen_bgr if self._segmenting else self._live_bgr
@@ -582,8 +626,18 @@ class GestureControlNode(Node):
                                          self._cursor.pending[1] - 10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 2)
 
-        mode = 'SEGMENTING (Thumb_Down = not-this, Palm = undo)' if self._segmenting \
-            else 'IDLE (ILoveYou = capture)'
+        if aiming and tip is not None:
+            centre = (width // 2, height // 2)
+            cv2.drawMarker(vis, centre, (255, 255, 0), cv2.MARKER_CROSS, 30, 2)
+            cv2.line(vis, centre, tip, (255, 255, 0), 1)
+            cv2.circle(vis, tip, 12, (255, 255, 0), 2)
+
+        if self._segmenting:
+            mode = 'SEGMENTING (Thumb_Down = not-this, Palm = undo)'
+        elif aiming:
+            mode = 'AIM: the camera follows the fingertip (lower the hand to stop)'
+        else:
+            mode = 'IDLE (ILoveYou = capture' + (', Pointing_Up = aim)' if self._aim_enabled else ')')
         cv2.rectangle(vis, (0, 0), (width, 34), (0, 0, 0), -1)
         cv2.putText(vis, mode, (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
                     (255, 255, 255), 2)
@@ -615,6 +669,7 @@ class GestureControlNode(Node):
                 if self._live_bgr is None:
                     continue
 
+                header = self._live_header
                 gesture, score, tip = self._recognize(self._live_bgr)
 
                 if self._segmenting and self._frozen_bgr.shape[:2] != self._live_bgr.shape[:2]:
@@ -629,6 +684,10 @@ class GestureControlNode(Node):
                     tip = None
 
                 indicating = (gesture == 'Pointing_Up') and self._segmenting
+                aiming = self._aiming(gesture) and tip is not None and header is not None
+                self._aim_run = self._aim_run + 1 if aiming else 0
+                if aiming and self._aim_run >= self._aim_frames:
+                    self._publish_aim(tip, score, header)
                 kept = self._cursor.update(tip, indicating)
                 if kept is not None:
                     self._keep(kept)
@@ -644,7 +703,7 @@ class GestureControlNode(Node):
                     self._call('TRIGGER')
 
                 if self._show_window:
-                    cv2.imshow(window, self._render(gesture, score, tip, indicating))
+                    cv2.imshow(window, self._render(gesture, score, tip, indicating, aiming))
                     if cv2.waitKey(1) & 0xFF == ord('q'):
                         break
         finally:

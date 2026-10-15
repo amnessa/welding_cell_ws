@@ -150,6 +150,19 @@ The plate strata (T/line, corner, butt square, lap, edge) are MDF cuts. The curv
   delay, drift.
 - **PPF pose vs FoundationPose pose** on 3–5 scenes: accuracy and time (perception side,
   the 1 Oct meeting).
+- **Single view vs multi-view, per stratum** (the curved bench): marks by hand in
+  `stroke_mode:=dot`, plus the pen's contacts (`scripts/contact_error.py`, `marks_history/`)
+  for each joint. 2026-10-15 so far: E2 3.7–6 → 2–3.2 mm, SP3 9.5–12.7 → 0–4.4 mm. Also the
+  multi-view's own numbers: the correction, the camera error d, the view spread.
+- **For the thesis, collect the comparisons the project already made** (the user,
+  2026-10-15, "not now"):
+  - FoundationPose vs ICP tracking;
+  - APS vs RRT-Connect (time, path length);
+  - single vs multi-view;
+  - box vs true-shape neighbours (synthetic: E2 refused → 0.03 mm);
+  - the C++ vs Python collision model (590×, E2's plan 478 → 18 s);
+  - the Cartesian transit vs APS (tip path 0.14–0.21 vs 0.26–1.6 m).
+  `thesis_notes.md` holds most of the numbers.
 
 ## LATER, but important: measure everything on this side of the pipeline
 
@@ -258,6 +271,8 @@ estimated, so the thesis can report them. Per stage:
   - symmetric parts (tubes) need `SYMMETRY_INFO` on the server, or the pose may spin about
     the axis.
 - **Mode B** (no CAD): PPF no-match, SAM2 per-part masks, region growing + lit-quadric.
+  **Probably dropped** (the user, 2026-10-15: "too much hassle and not much improvement
+  for a robotics-oriented thesis"; not yet decided).
 - **Mode A+:** per-part sensor points kept at save, labelled by CAD face, lit-quadric
   refinement, fit-up diagnostic.
 - Quality field and DP tack selection (thesis stages 1–3).
@@ -272,7 +287,22 @@ estimated, so the thesis can report them. Per stage:
 
 ## OPEN — human–robot interaction
 
-- **Finger-pointing camera aim, before the first capture** (asked 2026-10-14).
+- **Finger-pointing camera aim, before the first capture** (asked 2026-10-14; BUILT
+  2026-10-15, bench pending).
+  - **Built:** `admittance_control/camera_aim.py` (the control law, 14 tests including a
+    closed loop on the UR kinematics), `scripts/camera_aim_node.py`, and `/gesture/aim` in
+    the gesture node. It was tested against a fake controller manager and arm: 240 px
+    (21°) → 10 px in ~3.5 s, centre drift ≤ 4 mm, the joints handed back 0.6 s after the
+    hand drops, and Ctrl-C mid-turn stops it. README §E has the details.
+  - **On the bench:**
+    1. the dry run first: `ros2 run admittance_control camera_aim_node.py` logs where
+       the camera would turn;
+    2. then `... camera_aim_node.py --ros-args -p dry_run:=false` (without `--ros-args`
+       the `-p` is ignored and it stays in the dry run) with the pendant slider low;
+    3. measure time-to-aim, overshoot and the hand-lost stop (thesis);
+    4. check the image's stamp and `/joint_states` share a clock. If they don't, the node
+       says so once ("latency not compensated") and still works, with a little
+       overshoot.
   - **What.** When the gesture node starts, with the robot at home, `Pointing_Up` is a
     live AIM mode: the robot turns the wrist camera to follow the fingertip. The
     operator points the camera at a part in real time. The first `ILoveYou` (capture)
@@ -294,7 +324,9 @@ estimated, so the thesis can report them. Per stage:
       overshoot. No derivative: the landmark is noisy.
     - Smooth the landmark itself: a One-Euro filter at the 30 Hz frame rate (low lag
       when it moves, steady when it is still).
-  - **Execution: a streaming interface, not the trajectory action.** Either:
+  - **Execution: a streaming interface, not the trajectory action.** Chosen: the velocity
+    controller with our own Jacobian. It needs no MoveIt Servo config, and our collision
+    model and branch lock run on every cycle anyway. The options were:
     - MoveIt Servo (twist in, joint commands out, with its own singularity and collision
       slowdown and Ruckig/Butterworth smoothing) on the UR driver's
       `forward_position_controller`; or

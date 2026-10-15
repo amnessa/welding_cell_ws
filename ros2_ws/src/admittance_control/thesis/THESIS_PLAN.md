@@ -163,3 +163,17 @@ photo; **planned** = needs an experiment that is not done yet.
    decide the deadlines (draft to the institute ≥ 1 month before).
 6. The advisor's **title and surname**, the head of the programme, the FBE director: all
    placeholders in `thesis.tex`.
+7. **Mode B** (seams without CAD): probably dropped from the thesis (the user, 2026-10-15:
+   too much effort for little gain in a robotics thesis). Not yet decided.
+
+## Comparisons to dig out for Chapter 7 (later; the user, 2026-10-15)
+
+Most numbers are already in `notes/thesis_notes.md`; each needs a repeatable measurement
+(`todo.md`, "Benchmarks to run"):
+- FoundationPose vs ICP tracking (noise, delay, drift);
+- APS vs RRT-Connect (planning time, joint travel, tip path length);
+- the tool's Cartesian transit vs APS round a pipe (tip path 0.14–0.21 m vs 0.26–1.6 m);
+- single vs multi-view per stratum (marks; the pen's contacts);
+- bounding-box vs true-shape neighbours in the refinement (synthetic);
+- the C++ vs Python collision model (590× per check; one plan 478 s → 18 s);
+- a cut pipe's spin settled on its base (E2: gap range 26.2 → 0.4 mm).
