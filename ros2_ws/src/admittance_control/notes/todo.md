@@ -101,6 +101,28 @@ The plate strata (T/line, corner, butt square, lap, edge) are MDF cuts. The curv
      - C1 needed only `refine_pose`.
      - **Next: bench it**: `refine_pose` before `welding_points`, marks in
        `stroke_mode:=dot`, C1 and E2 first.
+     - 2026-10-15 (SP3): first try found no seam because the plate CAD was replaced
+       after the registry was built. Rebuilt; a stale entry is now refused loudly.
+       `mv_max_correction_deg` raised to 5.
+     - SP3 with `refine_pose` (2026-10-15): fit-up −0.9..10.4 → 0.0..0.3 mm. Marks: 2 on
+       the root, one 4.4 mm (was 9.5–12.7 mm without multi-view); contacts 2.8–4.2 mm
+       early along the pen (was 0–9.4 mm). The first tack hit a fixture: enter
+       the fixtures in `marking.json`. The user is testing multi-view further before
+       the other todos.
+     - E2 (2026-10-15): `refine_pose` refused for overlap; the acceptance rules changed
+       (the user's rule, "apply a correction within the limits"):
+       - the overlap must not get worse than the saved assembly's;
+       - a pipe's spin is not judged;
+       - the bore is hollow.
+       Replayed, it is accepted and lowers E2's seam 4.5–5.3 mm onto the table-flush plate,
+       which the contacts support if the plate lies on the table. **Re-run E2 with
+       `refine_pose`, then mark in `stroke_mode:=dot`.**
+     - The camera error the views estimate is consistent run to run: d ≈ (0–2, 3,
+       −3.3..−4.4) mm (SP3, E2), ~5 mm. Applying it to the extrinsic file
+       (`scripts/selfcal_extrinsic.py`; first mark or remove the bad 2026-10-06 15:36
+       history entry) would take it out of every single-view registration too.
+     - **After replacing any CAD in `models/`: `python3
+       scripts/build_weldgen_registry.py --verify`** (and the desktop's PPF library).
    - `contact_error.py` reports bands per contact (no fit yet).
 
 ## Benchmarks to run (for the thesis)

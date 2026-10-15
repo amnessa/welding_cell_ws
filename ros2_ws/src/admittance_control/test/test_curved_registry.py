@@ -200,3 +200,26 @@ def test_a_tube_collision_box_wraps_the_tube_not_its_base_frame():
     for b in boxes:                                   # metres; about the axis, not the base
         assert b["centre"] == pytest.approx([0.0, 0.0, 0.05], abs=1e-6)
         assert b["half"] == pytest.approx([0.031, 0.031 * np.sin(np.pi / 12), 0.05], abs=1e-6)
+
+
+def test_a_cad_replaced_after_the_registry_is_caught(tmp_path):
+    """2026-10-15: a new plate CAD (220 x 220 x 5.5) kept the old plate's entry (256 x 249
+    x 8, thickness along another axis); mode A put the old shape at the new pose, turned
+    90 deg, and found no seam - silently. Now the entry is checked against its CAD."""
+    import json
+    import shutil
+    from admittance_control.part_shapes import load_shapes, stale_entries
+    ply = PKG / "models" / "plate.ply"
+    if not ply.exists():
+        pytest.skip("library mesh not present")
+    shutil.copy(ply, tmp_path / "plate.ply")
+    good = derive_entry(trimesh.load(str(ply), force="mesh"))
+    wrong = {**good, "dims_mm": [256.0, 249.0, 8.0]}
+    for entry, expect_stale in ((good, False), (wrong, True)):
+        (tmp_path / "weldgen_objects.json").write_text(json.dumps({"parts": {"plate": entry}}))
+        stale = stale_entries(tmp_path, ["plate.ply"])
+        assert ("plate.ply" in stale) == expect_stale, stale
+        notes = {}
+        shapes = load_shapes(tmp_path, ["plate.ply"], notes=notes)
+        assert (shapes["plate.ply"] is None) == expect_stale
+        assert ("plate.ply" in notes) == expect_stale

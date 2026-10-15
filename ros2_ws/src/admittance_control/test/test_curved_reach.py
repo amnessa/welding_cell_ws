@@ -218,3 +218,25 @@ def test_the_rolls_of_a_loop_are_chosen_together(monkeypatch):
     plans = tr._plan_per_tack(tacks, [0.0], np.radians([0.0, 1.0]), q0, None, None, cfg, None)
     # near -> near+0.1 (9 mm each, 1 mm short) beats far -> far+0.1 (12 mm, 1.4 rad away)
     assert [p.roll_deg for p in plans] == pytest.approx([0.0, 1.0])
+
+
+def test_a_pipe_on_a_thin_plate_on_the_table_is_reachable():
+    """2026-10-15: a 5.5 mm plate lying on the table put the pen, touching the plate, 2.5 mm
+    from the table - under the 3 mm clearance, and the tack was refused. The pen may be that
+    close (it cannot reach the table without going through the plate), never at the table."""
+    tool, cfg = load_tool_model(), tr.load_marking_config()
+    cfg.table_z_m, cfg.table_plane_file = None, None
+    reg = {"parts": {**REG["parts"],
+                     "thin": {"primitive": "slab", "dims_mm": [220.0, 220.0, 5.5], "T_cad_prim": I4}}}
+    cx, cy, ztop = 550.0, 100.0, 20.0
+    objs = [("thin.ply", _pose([cx, cy, ztop - 2.75])), ("pipe.ply", _pose([cx, cy, ztop + 0.5]))]
+    parts = sfr.posed_parts(objs, reg)
+    tacks = sfr.compute_tacks(parts, sfr.compute_seams(parts))["tacks"]
+    table = (np.array([0.0, 0.0, 1.0]), -(ztop - 5.5) / 1000.0)            # under the plate
+    model = CollisionModel(tool=tool, scene_boxes=boxes_from_parts(parts), clearance=cfg.clearance_m,
+                           table_plane=(table[0].tolist(), table[1]))
+    report = tr.plan_tacks(tacks, tool, model, cfg)
+    assert report["all_ok"], tr.format_report(report)
+    # ... and the pen at or below the table plane is still a collision
+    assert tr.pen_below_table([(0.0, "pen", "table")]) and not tr.pen_below_table([(0.001, "pen", "table")])
+    assert tr.pen_contact_pair((0.002, "pen", "table")) and not tr.pen_contact_pair((0.002, "holder_body", "table"))

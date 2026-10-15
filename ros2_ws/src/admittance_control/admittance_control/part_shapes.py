@@ -14,8 +14,8 @@ CAD frame:
   * `sdf(points)`: the signed distance to the real surface (metres, negative inside)
     and the outward normal of the nearest piece of surface;
     * a slab: its box;
-    * a pipe: its cylinder from the base cut (flat, mitre, saddle) to the top cap, with
-      the bore counted as solid (no camera point and no neighbour is ever inside it);
+    * a pipe: its wall, from the base cut (flat, mitre, saddle) to the top cap; the bore
+      is hollow (a plate under it touches nothing);
     * a band: its walls (offsets about the spine) between its caps, so a rounded-rect
       tube's interior is free;
   * `boxes(T)`: the near-exact collision boxes of `collision.boxes_from_parts`
@@ -138,8 +138,11 @@ class Shape:
             n_base = -u / np.clip(np.linalg.norm(u, axis=1, keepdims=True), 1e-9, None)
         # the distance to the cut along its normal ~ the axial gap x the normal's axial part
         d_base = (base - z) * np.clip(np.abs(n_base[:, 2]), 0.2, 1.0)
-        terms = [rho - t.r_outer_mm, z - float(t.length_mm), d_base]
-        normals = [radial, np.tile([0.0, 0.0, 1.0], (len(loc), 1)), n_base]
+        # the bore is HOLLOW: a plate under a pipe's bore touches nothing (with the bore
+        # solid, E2 tilted 2.6 deg on its plate made the plate read 4.3 mm "inside" E2 and
+        # refine_pose refused it, 2026-10-15). The planner's boxes stay solid.
+        terms = [rho - t.r_outer_mm, t.r_inner_mm - rho, z - float(t.length_mm), d_base]
+        normals = [radial, -radial, np.tile([0.0, 0.0, 1.0], (len(loc), 1)), n_base]
         return self._combine(terms, normals)
 
     def _sdf_band(self, loc: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -178,11 +181,42 @@ class Shape:
         return boxes_from_parts([prim])
 
 
-def load_shapes(models_dir, names, weldgen_path: Optional[str] = None
-                ) -> dict[str, Optional[Shape]]:
+#: A registry entry describes its CAD when every CAD vertex lies this close to the
+#: primitive (they verify at 0.00-0.07 mm). A CAD replaced after the registry was built
+#: does not: 2026-10-15 the new 220 x 220 x 5.5 mm plate kept the old 256 x 249 x 8 mm
+#: entry, turned 90 deg, and mode A found no seam at all, silently.
+STALE_TOL_MM = 0.5
+
+
+def mesh_deviation_mm(shape: "Shape", mesh_path) -> float:
+    """How far the CAD file's vertices lie from the registered primitive (mm)."""
+    from .icp import load_ply_mesh
+    v, _ = load_ply_mesh(Path(mesh_path))
+    scale = 1e-3 if np.abs(v).max() > 5 else 1.0
+    sd, _ = shape.sdf(np.asarray(v, float) * scale)
+    return float(np.abs(sd).max() * 1000.0)
+
+
+def stale_entries(models_dir, names, weldgen_path: Optional[str] = None,
+                  tol_mm: float = STALE_TOL_MM) -> dict[str, float]:
+    """{model name: deviation mm} for the parts whose registry entry no longer describes
+    their CAD file (the CAD changed after `build_weldgen_registry.py`)."""
+    out = {}
+    for n, shape in load_shapes(models_dir, names, weldgen_path, check=False).items():
+        if shape is None:
+            continue
+        dev = mesh_deviation_mm(shape, Path(models_dir) / n)
+        if dev > tol_mm:
+            out[n] = dev
+    return out
+
+
+def load_shapes(models_dir, names, weldgen_path: Optional[str] = None, check: bool = True,
+                notes: Optional[dict[str, str]] = None) -> dict[str, Optional[Shape]]:
     """{model name: Shape or None} from `<models_dir>/weldgen_objects.json`. None for a part
     without a usable entry (or no registry, or weld_generator not importable): it keeps its
-    bounding box."""
+    bounding box. With `check`, an entry that no longer describes its CAD file (a vertex
+    more than `STALE_TOL_MM` off) is not used either; `notes` collects why."""
     out: dict[str, Optional[Shape]] = {n: None for n in names}
     path = Path(models_dir) / REGISTRY_NAME
     if not path.is_file():
@@ -197,7 +231,15 @@ def load_shapes(models_dir, names, weldgen_path: Optional[str] = None
         if not entry or not entry.get("primitive"):
             continue
         try:
-            out[n] = Shape(n, entry, weldgen_path)
+            shape = Shape(n, entry, weldgen_path)
         except Exception:  # noqa: BLE001 - a broken entry or no weldgen: the box stays
-            out[n] = None
+            continue
+        if check and (Path(models_dir) / n).is_file():
+            dev = mesh_deviation_mm(shape, Path(models_dir) / n)
+            if dev > STALE_TOL_MM:
+                if notes is not None:
+                    notes[n] = (f"registry entry stale (the CAD is {dev:.0f} mm off it): judged by its "
+                                "bounding box - run scripts/build_weldgen_registry.py --verify")
+                continue
+        out[n] = shape
     return out

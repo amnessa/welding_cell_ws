@@ -40,7 +40,7 @@ import numpy as np
 
 from .collision import CollisionModel
 from .kinematics import _edge_valid, _in_limits, bezier_smooth_path, rrt_connect, ur5e_fk
-from .tack_reach import MarkingConfig, _unwrap_to, solve_on_branch
+from .tack_reach import MarkingConfig, _unwrap_to, pen_below_table, pen_contact_pair, solve_on_branch
 
 
 # ---------------------------------------------------------------- paths ---------------
@@ -619,7 +619,10 @@ def descent_check(tool, model: CollisionModel, cfg: MarkingConfig, point: np.nda
     for q in chain:
         tip = tool.tip_in(ur5e_fk(q))
         past = float((tip - point) @ axis)
-        pairs = [p for p in model.pair_distances(q) if not (p[1] == "pen" and p[2].startswith("part_"))]
+        allp = model.pair_distances(q)
+        if pen_below_table(allp):
+            return None, "descent: the pen reaches the table"
+        pairs = [p for p in allp if not pen_contact_pair(p)]
         d, a, b = min(pairs, key=lambda p: p[0]) if pairs else (np.inf, "", "")
         if past <= 1e-4:
             need, d_ref, past_ref = cfg.clearance_m, d, past

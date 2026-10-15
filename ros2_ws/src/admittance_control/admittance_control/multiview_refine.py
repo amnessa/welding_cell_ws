@@ -122,7 +122,7 @@ class RefineConfig:
     converge_deg: float = 0.05
     # acceptance (plan D7)
     max_correction_mm: float = 10.0
-    max_correction_deg: float = 4.0       # 3 until 2026-10-02 (the user raised it: an ear correction of 3.07 deg was refused)
+    max_correction_deg: float = 5.0       # 3 until 2026-10-02 (an ear correction of 3.07 deg was refused), 4 until 2026-10-15 (SP3's 4.5 deg refused; the user raised it)
     min_fitness: float = 0.2
     max_penetration_mm: float = 1.0
     max_relative_mm: float = 2.0
@@ -144,6 +144,7 @@ class Part:
     # it instead of the bounding box - a pipe, a band, a cut end (curved_seams_plan.md
     # step 5); None keeps the box
     shape: Optional[Any] = None
+    shape_note: str = ""                  # why it has no shape (e.g. a stale registry entry)
 
 
 @dataclass
@@ -857,19 +858,70 @@ def fitup_warnings(results: Sequence[PartResult], parts: Sequence[Part], cfg: Re
                                   f"{min(_thickness_mm(p), _thickness_mm(other)):.0f} mm, a = 0.7 t)")
 
 
+def penetration_mm(parts: Sequence[Part], poses: Sequence[np.ndarray], i: int, cfg: RefineConfig,
+                   rng: Optional[np.random.Generator] = None) -> float:
+    """How deep part i's surface sinks into its neighbours at these poses (mm, >= 0)."""
+    nbrs = [box_of(parts[j], poses[j]) for j in range(len(parts)) if j != i]
+    if not nbrs:
+        return 0.0
+    c = contact_samples(parts[i], poses[i], nbrs, cfg, rng)
+    if not len(c):
+        return 0.0
+    s = c[:, :3] @ poses[i][:3, :3].T + poses[i][:3, 3]
+    return max(0.0, max(float(-signed_distance_box(s, b)[0].min()) for b in nbrs)) * 1000.0
+
+
+def _tube_spin_deg(part: Part, T0: np.ndarray, T1: np.ndarray) -> Optional[tuple[float, float]]:
+    """(axis tilt deg, spin about the axis deg) of a pipe's correction T0 -> T1, or None for
+    a part that is not a pipe."""
+    if part.shape is None or getattr(part.shape, "kind", "") != "Tube":
+        return None
+    from .pose_stats import remove_twist
+    axis = np.asarray(part.shape.prim.T_world_part, float)[:3, 2]       # CAD frame
+    _, swing, twist = remove_twist(np.asarray(T0, float)[:3, :3], np.asarray(T1, float)[:3, :3], axis)
+    return swing, twist
+
+
 def judge(results: Sequence[PartResult], parts: Sequence[Part], cfg: RefineConfig) -> None:
     """D7: reject a part's refinement (keep its saved pose) when the correction is too
-    large, the fit too thin, it overlaps a neighbour, or the pose between two touching
-    parts changed beyond `max_relative_*` along a direction the views did not measure."""
-    for r in results:
+    large, the fit too thin, it overlaps a neighbour MORE than the saved assembly did, or
+    the pose between two touching parts changed beyond `max_relative_*` along a direction
+    the views did not measure.
+
+    2026-10-15, the user's rule: a correction within the limits is applied. So:
+      * the overlap rule compares with the saved poses. E2's saved pose overlapped its
+        plate as much or more, and the refinement was refused for exceeding
+        `max_penetration_mm`, keeping the worse assembly. An overlap over the limit now
+        refuses only a pose that makes it WORSE; otherwise it is applied with a warning;
+      * for a pipe the rotation limit judges the tilt of its axis, not its spin about it
+        (`_tube_spin_deg`): the spin does not move the seam."""
+    saved_poses = [np.asarray(r.T_saved, float) for r in results]
+    saved_pen = [penetration_mm(parts, saved_poses, i, cfg) for i in range(len(parts))]
+    for i, r in enumerate(results):
         why = []
-        if r.correction_mm > cfg.max_correction_mm or r.correction_deg > cfg.max_correction_deg:
-            why.append(f"correction {r.correction_mm:.1f} mm / {r.correction_deg:.2f} deg over "
+        deg = r.correction_deg
+        spin = _tube_spin_deg(parts[i], r.T_saved, r.T)
+        if spin is not None:
+            # a pipe's turn about its own axis does not move its seam (plate plane x outer
+            # wall, saddle x run pipe); the limit judges the axis tilt (2026-10-15: E2's
+            # 5.13 deg was 5.08 spin + 0.71 tilt, and the 5 deg limit refused it)
+            deg, spin_deg = spin
+            if spin_deg > 0.5:
+                r.warnings.append(f"spin about its own axis {spin_deg:.1f} deg (not judged: it does "
+                                  "not move the seam; it turns a cut end's low side)")
+        if r.correction_mm > cfg.max_correction_mm or deg > cfg.max_correction_deg:
+            why.append(f"correction {r.correction_mm:.1f} mm / {deg:.2f} deg over "
                        f"{cfg.max_correction_mm:g} / {cfg.max_correction_deg:g}")
         if r.fitness < cfg.min_fitness:
             why.append(f"fitness {r.fitness:.2f} < {cfg.min_fitness:g}")
         if r.max_penetration_mm > cfg.max_penetration_mm:
-            why.append(f"overlaps a neighbour by {r.max_penetration_mm:.1f} mm")
+            if r.max_penetration_mm > saved_pen[i] + 0.2:
+                why.append(f"overlaps a neighbour by {r.max_penetration_mm:.1f} mm, more than the "
+                           f"saved {saved_pen[i]:.1f} mm")
+            else:
+                r.warnings.append(f"overlaps a neighbour by {r.max_penetration_mm:.1f} mm (over "
+                                  f"{cfg.max_penetration_mm:g} mm, but no worse than the saved "
+                                  f"{saved_pen[i]:.1f} mm): applied")
         if why:
             r.accepted, r.reason = False, "; ".join(why)
     # relative pose of touching parts: only measured directions may change it beyond the limit

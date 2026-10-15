@@ -257,10 +257,27 @@ def tool_only_clearance(model: CollisionModel, T_tool0: np.ndarray, exclude_pen:
     return best
 
 
+def pen_contact_pair(pair: tuple[float, str, str]) -> bool:
+    """A pair the pen is ALLOWED to be close to at a tack: the part it touches, and the
+    table under a thin plate (2026-10-15: a 5.5 mm plate on the table put the touching
+    pen 2.5 mm from the table, under the 3 mm clearance - and it cannot reach the table
+    without going through the plate). The table still may not be touched: see
+    `pen_below_table`."""
+    return pair[1] == "pen" and (pair[2].startswith("part_") or pair[2] == "table")
+
+
+def pen_below_table(pairs) -> bool:
+    """The pen at or below the table plane (its distance is clipped at 0 there)."""
+    return any(p[1] == "pen" and p[2] == "table" and p[0] <= 0.0 for p in pairs)
+
+
 def _clearance_excluding_pen(model: CollisionModel, q: np.ndarray) -> tuple[float, str, float]:
-    """(min distance over pairs that are not pen-vs-part, its pair, the pen-vs-part gap)."""
+    """(min distance over pairs that are not the pen's allowed contacts, its pair, the
+    pen-vs-part gap). The pen at the table counts as a collision (distance 0)."""
     pairs = model.pair_distances(q)
-    others = [p for p in pairs if not (p[1] == "pen" and p[2].startswith("part_"))]
+    if pen_below_table(pairs):
+        return 0.0, "pen x table", np.inf
+    others = [p for p in pairs if not pen_contact_pair(p)]
     pen = [p for p in pairs if p[1] == "pen" and p[2].startswith("part_")]
     d, a, b = min(others, key=lambda x: x[0]) if others else (np.inf, "", "")
     return d, f"{a} x {b}", (min(p[0] for p in pen) if pen else np.inf)

@@ -1,0 +1,8 @@
+{
+ "method": "registration",
+ "frame": "base_link",
+ "units": "mm",
+ "rule_version": "tackrule-0.1",
+ "params": null,
+ "tacks": []
+}

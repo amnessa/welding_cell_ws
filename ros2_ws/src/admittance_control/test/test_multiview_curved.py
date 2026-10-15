@@ -35,20 +35,22 @@ from admittance_control import multiview_refine as mr  # noqa: E402
 from admittance_control.icp import load_ply_mesh, sample_mesh_surface  # noqa: E402
 from admittance_control.part_shapes import load_shapes  # noqa: E402
 
-MODELS = PKG / "models"
+MODELS = PKG / "models"                         # the live library (the CAD check)
+# the scenes: the frozen bench CADs (the plate pose below is for the old 256 x 249 x 8 plate)
+BENCH = PKG / "test" / "data" / "bench_models"
 VIEWS4 = [(0, 45, 0), (90, 60, 0), (180, 45, 0), (270, 60, 0)]
 
 
-def _need(*names):
+def _need(*names, where=None):
     for n in names:
-        if not (MODELS / n).exists():
-            pytest.skip(f"{n} not in models/")
+        if not ((where or BENCH) / n).exists():
+            pytest.skip(f"{n} not in {(where or BENCH).name}/")
 
 
 def _part(name, T, n=4000, seed=0, shapes=None):
-    v, f = load_ply_mesh(MODELS / name)
+    v, f = load_ply_mesh(BENCH / name)
     p, nn = sample_mesh_surface(v, f, n, np.random.default_rng(seed), return_normals=True)
-    shape = (shapes or load_shapes(MODELS, [name]))[name]
+    shape = (shapes or load_shapes(BENCH, [name]))[name]
     return mr.Part(name, p * 1e-3, nn, v * 1e-3, np.asarray(T, float), None, shape)
 
 
@@ -114,7 +116,7 @@ def _on_plate(t_xy_mm, z_up_mm=0.0, R=None):
 
 
 def test_shapes_match_their_cad():
-    _need("C1.ply", "E2.ply", "S3.ply", "RR1.ply", "test_objv2_base.ply")
+    _need("C1.ply", "E2.ply", "S3.ply", "RR1.ply", "test_objv2_base.ply", where=MODELS)
     import trimesh
     names = ["C1.ply", "E2.ply", "S3.ply", "RR1.ply", "test_objv2_base.ply"]
     shapes = load_shapes(MODELS, names)
@@ -141,7 +143,7 @@ def test_shapes_match_their_cad():
 
 def test_c1_registered_8_mm_off_sideways_is_brought_back():
     _need("C1.ply", "test_objv2_base.ply")
-    shapes = load_shapes(MODELS, ["C1.ply", "test_objv2_base.ply"])
+    shapes = load_shapes(BENCH, ["C1.ply", "test_objv2_base.ply"])
     truth = [PLATE, _on_plate((-500.0, 80.0))]
     plate = _part("test_objv2_base.ply", _shifted(truth[0], (0.0, 0.0, 0.5)), shapes=shapes)
     c1 = _part("C1.ply", _shifted(truth[1], (6.0, -5.3, 0.0)), seed=1, shapes=shapes)   # 8.0 mm
@@ -169,7 +171,7 @@ def _s3_on_r2():
 
 def test_s3_on_r2_does_not_penetrate_with_the_true_shapes():
     _need("S3.ply", "R2.ply")
-    shapes = load_shapes(MODELS, ["R2.ply", "S3.ply"])
+    shapes = load_shapes(BENCH, ["R2.ply", "S3.ply"])
     truth = _s3_on_r2()
     r2 = _part("R2.ply", truth[0], shapes=shapes)
     s3 = _part("S3.ply", _shifted(truth[1], (0.0, 1.5, -1.0)), seed=1, shapes=shapes)
@@ -193,7 +195,7 @@ def test_s3_on_r2_does_not_penetrate_with_the_true_shapes():
 
 def test_rr1_registered_3_mm_off_is_brought_back():
     _need("RR1.ply", "test_objv2_base.ply")
-    shapes = load_shapes(MODELS, ["RR1.ply", "test_objv2_base.ply"])
+    shapes = load_shapes(BENCH, ["RR1.ply", "test_objv2_base.ply"])
     # RR1 stands along CAD y (0..100, base at y = -100): turn +y up, base on the plate
     truth = [PLATE, _on_plate((-532.0, 48.0), 100.0, _rx(90.0))]
     plate = _part("test_objv2_base.ply", truth[0], shapes=shapes)
@@ -210,10 +212,10 @@ def test_e2_standing_on_its_mitre_refines_and_its_box_did_not():
     refused, E2 left 5 mm off. With the true shapes E2 comes back."""
     _need("E2.ply", "test_objv2_base.ply")
     import json
-    d = json.loads((MODELS / "weldgen_objects.json").read_text())["parts"]["E2"]["params"]["base_cut"]["d"]
+    d = json.loads((BENCH / "weldgen_objects.json").read_text())["parts"]["E2"]["params"]["base_cut"]["d"]
     a = np.radians(25.0)
     Ry = np.array([[np.cos(a), 0, np.sin(a)], [0, 1, 0], [-np.sin(a), 0, np.cos(a)]])
-    shapes = load_shapes(MODELS, ["E2.ply", "test_objv2_base.ply"])
+    shapes = load_shapes(BENCH, ["E2.ply", "test_objv2_base.ply"])
     truth = [PLATE, _pose(Ry, (-500.0, 80.0, -90.0 + d))]          # the cut on the plate top
     plate = _part("test_objv2_base.ply", truth[0], shapes=shapes)
     e2 = _part("E2.ply", _shifted(truth[1], (4.0, -3.0, 0.0)), seed=1, shapes=shapes)  # 5 mm off
@@ -239,7 +241,7 @@ def test_views_are_planned_round_the_bench_c1():
     from admittance_control.tool_model import load_tool_model
     a = json.loads((arch / "assembly.json").read_text())
     objects = [(o["model"], np.asarray(o["pose_static"], float)) for o in a["objects"]]
-    surfaces, boxes = mv.surfaces_from_models(objects, MODELS)
+    surfaces, boxes = mv.surfaces_from_models(objects, BENCH)
     assert sum(1 for b in boxes if b["part"] == 1) == 6                    # C1: 6 boxes
     cfg = load_marking_config(None)
     tool = load_tool_model(None, None)
@@ -253,3 +255,47 @@ def test_views_are_planned_round_the_bench_c1():
     gaps = np.diff(az + [az[0] + 360.0])
     assert len(plan.views) >= 3 and gaps.max() <= 180.0, plan.summary()  # no side unseen
     print("\n" + plan.summary())
+
+
+def test_the_judge_applies_corrections_within_the_limits():
+    """2026-10-15, the user's rule: a correction within the limits is applied.
+      * an overlap over the 1 mm limit refuses a refined pose only when it is WORSE than
+        the saved assembly's (E2's saved pose sat in its plate; the better refinement was
+        refused and the worse saved pose kept);
+      * a pipe's spin about its own axis is not judged by the rotation limit (it does not
+        move the seam; E2's 5.13 deg was 5.08 spin + 0.71 tilt)."""
+    _need("E2.ply", "test_objv2_base.ply")
+    import json
+    d = json.loads((BENCH / "weldgen_objects.json").read_text())["parts"]["E2"]["params"]["base_cut"]["d"]
+    a = np.radians(25.0)
+    Ry = np.array([[np.cos(a), 0, np.sin(a)], [0, 1, 0], [-np.sin(a), 0, np.cos(a)]])
+    shapes = load_shapes(BENCH, ["E2.ply", "test_objv2_base.ply"])
+    T_plate = PLATE
+    T_e2 = _pose(Ry, (-500.0, 80.0, -90.0 + d))
+    plate = _part("test_objv2_base.ply", T_plate, shapes=shapes)
+    sunk = lambda mm: _shifted(T_e2, (0.0, 0.0, -mm))                       # noqa: E731
+    e2 = _part("E2.ply", sunk(3.0), seed=1, shapes=shapes)                  # saved: 3 mm in
+    cfg = mr.RefineConfig()
+
+    def judged(T_e2_refined):
+        res = [mr.PartResult("test_objv2_base.ply", T_plate, T_plate.copy(), fitness=0.5),
+               mr.PartResult("E2.ply", e2.T_saved, T_e2_refined, fitness=0.5)]
+        poses = [T_plate, T_e2_refined]
+        for i, r in enumerate(res):
+            r.max_penetration_mm = mr.penetration_mm([plate, e2], poses, i, cfg)
+            r.correction_mm, r.correction_deg = mr.pose_delta(r.T_saved, r.T, [plate, e2][i].pts.mean(0))
+        mr.judge(res, [plate, e2], cfg)
+        return res[1]
+
+    better = judged(sunk(2.0))
+    assert better.accepted and any("no worse than the saved" in w for w in better.warnings)
+    worse = judged(sunk(4.5))
+    assert not worse.accepted and "more than the saved" in worse.reason
+    # a 6 deg spin about E2's own axis (through its base centre) plus a tiny tilt: applied
+    axis_w = T_e2[:3, :3] @ shapes["E2.ply"].prim.T_world_part[:3, 2]
+    c = T_e2[:3, :3] @ e2.pts.mean(0) + T_e2[:3, 3]
+    R = mr._rodrigues(np.radians(6.0) * axis_w)
+    spun = mr._T(R, c - R @ c) @ sunk(3.0)
+    r = judged(spun)
+    assert r.correction_deg > 5.0 and "over" not in r.reason.split("overlaps")[0], r.reason
+    assert any("spin about its own axis" in w for w in r.warnings)

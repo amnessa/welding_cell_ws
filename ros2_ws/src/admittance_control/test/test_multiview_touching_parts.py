@@ -34,6 +34,8 @@ import numpy as np
 import pytest
 
 PKG = pathlib.Path(__file__).resolve().parents[1]
+# the bench CADs the recorded poses and captures were made with (not the live models/)
+BENCH = PKG / "test" / "data" / "bench_models"
 sys.path.insert(0, str(PKG))
 
 from admittance_control import multiview as mv  # noqa: E402
@@ -57,7 +59,7 @@ def _ortho(T):
 
 
 def _part_from_ply(name, T, n=4000, seed=0):
-    v, f = load_ply_mesh(PKG / "models" / name)
+    v, f = load_ply_mesh(BENCH / name)
     p, nn = sample_mesh_surface(v, f, n, np.random.default_rng(seed), return_normals=True)
     return mr.Part(name, p * 1e-3, nn, v * 1e-3, _ortho(T))
 

@@ -75,7 +75,7 @@ def fit_offsets(contacts: np.ndarray, plate_n: np.ndarray, plate_d: float, axis_
                     "residual_mm": float(min(abs(rw), abs(rp))),
                     "height_above_real_plate_mm": float(rp), "outside_real_wall_mm": float(rw)})
     rms = float(np.sqrt(np.mean([o["residual_mm"] ** 2 for o in out])))
-    at_bound = bool(np.abs(d).max() >= span - 1e-9 or abs(dz) >= dz_span - 1e-9)
+    at_bound = bool(np.abs(d).max() >= span - 1e-9 or (dz_span > 0 and abs(dz) >= dz_span - 1e-9))
     return {"lateral_mm": d.tolist(), "lateral_norm_mm": float(np.linalg.norm(d)),
             "explained": bool(rms <= 1.0 and not at_bound),
             "plate_mm": dz, "rms_mm": rms,
@@ -156,6 +156,11 @@ def main() -> int:
     ap.add_argument("--registry", default=str(PKG / "models" / "weldgen_objects.json"))
     ap.add_argument("--weldgen-path", default="/workspaces/welding_cell_ws/weld_generator")
     ap.add_argument("--json", default=None, help="also write the result here")
+    ap.add_argument("--plate-on-table", action="store_true",
+                    help="the plate lies on the touched table (notebooks/table_plane.json): its top "
+                         "is the table + its thickness, and only the tube's sideways offset is "
+                         "fitted. Round a tilted tube (E2) the plate height and the sideways "
+                         "offset trade off; four contacts alone cannot tell them apart")
     args = ap.parse_args()
     sys.path.insert(0, args.weldgen_path)
     from weldgen.curves import ellipse_from_plane_cylinder
@@ -194,11 +199,21 @@ def main() -> int:
         print(f"{len(marks)} contacts: at least 3 are needed")
         return 1
     C = np.array([m["tip_contact_m"] for m in marks]) * 1000.0
-    fit = fit_offsets(C, n, float(pl.d), T[:3, 3], T[:3, 2], float(tube.r_outer_mm), e1, e2)
+    plate_d = float(pl.d)
+    if args.plate_on_table:
+        tp = json.loads((PKG / "notebooks" / "table_plane.json").read_text())["plane"]
+        k = float(np.linalg.norm([-tp["a"], -tp["b"], 1.0]))
+        n = np.array([-tp["a"], -tp["b"], 1.0]) / k
+        e1 = np.cross(n, [1.0, 0.0, 0.0]); e1 /= np.linalg.norm(e1); e2 = np.cross(n, e1)
+        thick = float(min(slab.dims_mm))
+        plate_d = -tp["c"] * 1000.0 / k - thick                  # the plate top: table + thickness
+        print(f"  the plate on the table: its top is the touched table + {thick:.1f} mm")
+    fit = fit_offsets(C, n, plate_d, T[:3, 3], T[:3, 2], float(tube.r_outer_mm), e1, e2,
+                      dz_span=0.0 if args.plate_on_table else 10.0)
 
     # the seam the registration computed, and the real one (registered moved by the fit)
     def seam(shift, dz):
-        curve = ellipse_from_plane_cylinder(-pl.d * n + dz * n, n, T[:3, 3] + shift, T[:3, 2],
+        curve = ellipse_from_plane_cylinder(-plate_d * n + dz * n, n, T[:3, 3] + shift, T[:3, 2],
                                             tube.r_outer_mm)
         return curve.point(np.linspace(0.0, curve.t_period, 2000, endpoint=False))
     reg_seam = seam(np.zeros(3), 0.0)

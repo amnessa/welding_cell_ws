@@ -104,7 +104,8 @@ def parts_from_assembly(assembly: dict[str, Any], models_dir: str | Path, n_poin
     (`part_shapes`, from `<models_dir>/weldgen_objects.json`) when there is one."""
     rng = rng or np.random.default_rng(0)
     from .part_shapes import load_shapes
-    shapes = load_shapes(models_dir, [o["model"] for o in assembly["objects"]])
+    notes: dict[str, str] = {}
+    shapes = load_shapes(models_dir, [o["model"] for o in assembly["objects"]], notes=notes)
     parts = []
     for o in assembly["objects"]:
         v, f = load_ply_mesh(Path(models_dir) / o["model"])
@@ -112,7 +113,7 @@ def parts_from_assembly(assembly: dict[str, Any], models_dir: str | Path, n_poin
         p, n = sample_mesh_surface(v, f, n_points, rng, return_normals=True)
         T_scan = np.asarray(o["T_static_camera"], float) if o.get("T_static_camera") is not None else None
         parts.append(Part(o["model"], p * scale, n, v * scale, np.asarray(o["pose_static"], float), T_scan,
-                          shapes.get(o["model"])))
+                          shapes.get(o["model"]), notes.get(o["model"], "")))
     return parts
 
 
@@ -255,13 +256,16 @@ def format_replay(rp: Replay) -> str:
     d = rp.diag
     lines.append(f"  rounds {d.rounds_run}, matching distance {d.max_corr_m * 1000:.0f} mm, "
                  f"smallest parallel-face gap {d.parallel_gap_m * 1000:.1f} mm")
+    notes = {p.name: p.shape_note for p in rp.parts if p.shape_note}
     for r in rp.results:
         lines.append(f"  {r.name}: {'ACCEPTED' if r.accepted else 'KEPT AS SAVED'}"
                      f"{'' if r.accepted else ' - ' + r.reason}")
+        if r.name in notes:
+            lines.append(f"     WARNING: {notes[r.name]}")
         if getattr(r, "prior_shift_mm", 0.0):
             lines.append(f"     of the correction below, {r.prior_shift_mm:.2f} mm is the camera error at its scan pose "
                          f"(R_scan d, taken out of the saved pose first); beyond it {r.beyond_mm:.2f} mm / "
-                         f"{r.beyond_deg:.2f} deg (this is what the limits judge)")
+                         f"{r.beyond_deg:.2f} deg (this is what the limits judge; a pipe: its axis tilt, not its spin)")
         lines.append(f"     {'correction' if r.accepted else 'attempted correction (not applied)'} "
                      f"{r.correction_mm:.2f} mm / {r.correction_deg:.2f} deg; fitness {r.fitness:.2f}, "
                      f"rmse {r.rmse_mm:.2f} mm; {r.n_owned} points owned; overlap {r.max_penetration_mm:.2f} mm; "

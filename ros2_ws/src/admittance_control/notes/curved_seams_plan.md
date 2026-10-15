@@ -446,6 +446,7 @@ by hand from the root):
 | C1 on the plate | 4/4 | 14 / 1.2, 6.5 / 3.7 mm | contacts: 8.8 mm sideways |
 | E2 on the plate | 4/4 | 14.4 / 1.2, 11.7 / ~0 mm; a 2nd registration: pairs near perfect, one 8.7 mm | contacts: 8.1 mm sideways; the 2nd also tilted/spun |
 | SP3 on the plate | 4/6 | 9.5–12.7 mm, one no contact | 2 concave-side tacks refused (holder); stroke climbs |
+| SP3, **with `refine_pose`** (15 Oct) | 4/6 | 2 on the root, one 4.4 mm (one on a fixture) | fit-up 0.0–0.3 mm, was −0.9..10.4 |
 
 Seams, tacks, reach and motion work for every curved stratum. The error is the
 single-view registration of round parts. **Step 5, multi-view refinement for curved
@@ -478,6 +479,86 @@ bounding boxes:
 - **So C1's 8.8 mm needed only `refine_pose`.** The existing multi-view refinement
   removes it even with boxes, and the curved bench never ran it.
 - E2, S3 on R2 (and SP3 for the planner) need the true shapes.
+
+**First try, SP3 (2026-10-15): no seam at all, because the registry was stale.**
+- The plate CAD had been replaced that day: `test_objv2_base.ply`, now 220 × 220 ×
+  5.5 mm with its thickness along CAD z. The registry still held the old 256 × 249 × 8
+  plate (thickness along y).
+- Mode A put the old shape at the new pose, turned 90°: its face stood vertical, so no
+  cap of SP3 lay on it and no seam record existed, not even a rejected one.
+- `refine_pose` judged SP3 against that wrong plate too. It kept both as saved: SP3's
+  4.5° was over the 4° limit, and the plate is held with it.
+- **Fixes:**
+  - the registry rebuilt; only that entry changed;
+  - **a stale entry is now caught.** A registered CAD's vertices must lie within 0.5 mm
+    of its primitive (they do at 0.00–0.07 mm). If not, `welding_points` refuses and
+    names `build_weldgen_registry.py --verify`, and `refine_pose` judges that part by
+    its real mesh's box, with a WARNING line;
+  - `mv_max_correction_deg` 4 → **5** (the user: multi-view is the more accurate
+    estimate).
+  - With the right plate, SP3's two fillets come out at a fit-up of −0.9..10.4 mm: SP3
+    registered tilted, one end ~10 mm up. That is a near miss at 10 mm, weldable at
+    15 mm; `refine_pose` is what should level it.
+- The tests that replay recorded bench poses and captures now use a frozen copy of the
+  bench CADs (`test/data/bench_models/`: the old plate from git and its registry). A part
+  swapped in `models/` no longer breaks them.
+
+**SP3 with multi-view (2026-10-15, the first curved part refined on the bench).**
+- `refine_pose` (4 views) brought SP3's registered tilt out. Its fit-up along the two
+  fillets went from −0.9..10.4 mm (one end ~10 mm up, a near miss) to **0.0..0.3 mm**,
+  both weldable at the default 10 mm.
+- Reach 4/6, the two concave-side tacks again. The clearances are lower (4.1–4.5 mm,
+  from ~9) because SP3 now sits flush on the plate.
+- Marked (`tack` strokes), by hand:
+  - **tacks 0.2 and 1.3 on the root**, where the two parts meet;
+  - **tack 1.2: 4.4 mm**.
+  - In step 4, without multi-view: 9.5–12.7 mm and one no-contact.
+  - The first tack (0.1) touched an unmodelled fixture, 20 mm early.
+- Contacts: the three tacks on SP3 touched 2.8–4.2 mm early along the pen (2.2–3.5 mm
+  above the registered plate); in step 4, 0–9.4 mm.
+- Still to do: marks in `stroke_mode:=dot`, and the fixtures entered in `marking.json`.
+
+**E2 with multi-view (2026-10-15): refused, then the acceptance rules changed.**
+- Marks on the saved poses: 3.7, 6, 4.9 and 5.1 mm. `refine_pose` refused both parts for
+  "overlap" (plate 4.3 mm, E2 2.6 mm), although both corrections were within 10 mm / 5°.
+- **The user's rule: a correction within the limits is applied.** Replaying the capture
+  (`multiview_refine_offline.py`) showed three faults in the acceptance, all fixed:
+  1. **A pipe's bore counted as solid** in the true-shape distance. The plate under E2's
+     bore read as 4.3 mm inside E2. The bore is hollow now (the planner's boxes stay
+     solid).
+  2. **The overlap rule ignored the saved assembly.** The saved E2 sat as deep in the
+     plate, or deeper, and was kept. Now an overlap over 1 mm refuses only a refinement
+     that makes it WORSE than the saved poses; otherwise it is applied with a warning.
+  3. **A pipe's spin counted against the rotation limit.** E2's 5.13° was 5.08° of spin
+     about its own axis plus 0.71° of tilt. The spin does not move the seam, so the limit
+     now judges the axis tilt and the spin is reported.
+- Replayed: both parts accepted. The seam moves 4.5–5.3 mm, mostly downwards: the
+  refinement puts the plate flush on the touched table, where the saved plate floated
+  2.7–6.4 mm above it, tilted.
+- **Is that the right way?** The pen's four contacts are all on E2's wall, 5.8–7.9 mm
+  above a plate lying on the table: the saved seam was too high, and the refinement
+  lowers it.
+  - That reading holds **if the plate rests directly on the table** (to be confirmed).
+  - Round a tube tilted 25°, the plate height and the tube's sideways offset trade off,
+    and four contacts alone cannot separate them. The free fit had chosen "plate +1.5 mm,
+    E2 4.5 mm sideways", the opposite.
+  - `contact_error.py --plate-on-table` fixes the plate height from the touched table.
+
+**E2 re-run with the new rules (2026-10-15).** The plate lies directly on the table
+(confirmed).
+- `refine_pose` accepted both parts (E2: 1.95 mm / 3.41° of tilt+spin beyond the camera
+  error, 3.4° of it spin). `welding_points`: fit-up −7.6..3.4 mm. A wrong spin turns the
+  mitre's low side, so a pipe's fit-up is the least reliable number; its seam is not
+  moved by it.
+- Contacts above the table-flush plate top, saved → refined: tack 4 6.4 → 2.4 mm, tack 1
+  5.8 → 5.4 mm. Only 2 tacks were marked, so the hand marks will decide.
+- Two tacks were refused:
+  - **tack 0.2, "pen × table 2.5 mm":** a pen touching a 5.5 mm plate lying on the table
+    comes that close to the table. The pen's allowed contacts at a tack are now the part
+    AND the table (`tack_reach.pen_contact_pair`); at or below the table it is still a
+    collision. Re-run: 4/4 reachable, min clearance 6.9 mm;
+  - **tack 0.3, holder 2.5 mm from E2** at the stroke START (10 mm from the tack centre).
+    With the new reach it plans in both `tack` and `dot` mode.
 
 **Bench (next):** per joint: save the base and the part → `refine_pose` (Fist held 2 s)
 → `welding_points` (Palm) → `tack_reachability.py` → marking in `stroke_mode:=dot`.

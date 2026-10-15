@@ -21,6 +21,8 @@ import numpy as np
 import pytest
 
 PKG = pathlib.Path(__file__).resolve().parents[1]
+# the bench CADs the recorded poses and captures were made with (not the live models/)
+BENCH = PKG / "test" / "data" / "bench_models"
 sys.path.insert(0, str(PKG))
 sys.path.insert(0, str(PKG / "scripts"))
 
@@ -80,7 +82,7 @@ def test_renderer_is_exact():
 
 def test_preprocess_crops_cuts_and_faces_the_camera(caps):
     cap = mc.load_capture(caps[0])
-    parts = mc.parts_from_assembly(cap.assembly, PKG / "models")
+    parts = mc.parts_from_assembly(cap.assembly, BENCH)
     raw = cap.views[0]
     v = mc.preprocess_view(raw, parts)
     cam = raw.T_base_cam[:3, 3]
@@ -96,7 +98,7 @@ def test_preprocess_crops_cuts_and_faces_the_camera(caps):
 
 
 def test_replay_without_camera_error_lands_on_truth(caps):
-    rp = mc.refine_capture(mc.load_capture(caps[0]), PKG / "models")
+    rp = mc.refine_capture(mc.load_capture(caps[0]), BENCH)
     assert all(r.accepted for r in rp.results), [r.reason for r in rp.results]
     for mm, deg in _truth_err(rp):
         assert mm < 0.5 and deg < 0.2
@@ -106,7 +108,7 @@ def test_replay_without_camera_error_lands_on_truth(caps):
 
 
 def test_replay_with_camera_error_self_calibrates_online(caps):
-    rp = mc.refine_capture(mc.load_capture(caps[1]), PKG / "models")
+    rp = mc.refine_capture(mc.load_capture(caps[1]), BENCH)
     assert np.allclose(rp.diag.extrinsic_d_mm, D_CAM_MM, atol=0.3)
     assert np.allclose(rp.diag.applied_d_mm, D_CAM_MM, atol=0.3)
     assert np.linalg.norm(rp.diag.residual_d_mm) < 0.3
@@ -114,7 +116,7 @@ def test_replay_with_camera_error_self_calibrates_online(caps):
     for mm, deg in _truth_err(rp):
         assert mm < 0.5 and deg < 0.2
     # without the online correction the disagreeing views reject the refinement
-    off = mc.refine_capture(mc.load_capture(caps[1]), PKG / "models", mr.RefineConfig(online_selfcal=False))
+    off = mc.refine_capture(mc.load_capture(caps[1]), BENCH, mr.RefineConfig(online_selfcal=False))
     assert not any(r.accepted for r in off.results)
     assert all("disagree" in r.reason for r in off.results)
     assert all(np.allclose(r.T, r.T_saved) for r in off.results)
@@ -123,7 +125,8 @@ def test_replay_with_camera_error_self_calibrates_online(caps):
 def test_offline_script(caps, tmp_path):
     hist = tmp_path / "hist.json"
     out = subprocess.run([sys.executable, str(PKG / "scripts" / "multiview_refine_offline.py"), str(caps[1]),
-                          "--write", "--record", "--history", str(hist)], capture_output=True, text=True, timeout=300)
+                          "--models", str(BENCH), "--write", "--record", "--history", str(hist)],
+                         capture_output=True, text=True, timeout=300)
     assert out.returncode == 0, out.stdout + out.stderr
     assert "online self-calibration" in out.stdout
     refined = json.loads((caps[1] / "assembly_refined.json").read_text())
@@ -144,7 +147,7 @@ def test_saved_poses_carrying_the_scan_views_error(tmp_path):
     corrected too, both are accepted and land on the truth, the slide included."""
     import multiview_refine_offline as off
     d = np.array(D_CAM_MM)
-    models = PKG / "models"
+    models = BENCH
     assembly = {"objects": [{"model": "test_objv2_base.ply", "pose_static": off._ortho(off.BASE).tolist()},
                             {"model": "test_objv2_ear.ply", "pose_static": off._ortho(off.EAR).tolist()}]}
     parts = mc.parts_from_assembly(assembly, models)

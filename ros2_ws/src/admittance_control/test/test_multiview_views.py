@@ -20,6 +20,8 @@ import numpy as np
 import pytest
 
 PKG = pathlib.Path(__file__).resolve().parents[1]
+# the bench CADs the recorded poses and captures were made with (not the live models/)
+BENCH = PKG / "test" / "data" / "bench_models"
 sys.path.insert(0, str(PKG))
 
 from admittance_control import multiview as mv  # noqa: E402
@@ -37,7 +39,7 @@ OBJECTS = [("test_objv2_base.ply", BASE), ("test_objv2_ear.ply", EAR)]
 
 @pytest.fixture(scope="module")
 def scene():
-    surfaces, boxes = mv.surfaces_from_models(OBJECTS, PKG / "models")
+    surfaces, boxes = mv.surfaces_from_models(OBJECTS, BENCH)
     cfg = load_marking_config(None)
     tool = load_tool_model(None, None)
     if tool.T_tool0_cam is None:

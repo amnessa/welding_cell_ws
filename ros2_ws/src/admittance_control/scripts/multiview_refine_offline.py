@@ -53,10 +53,13 @@ def _ortho(T):
     return T
 
 
-def make_synthetic(out: Path, d_cam_mm, seed: int = 0) -> Path:
+def make_synthetic(out: Path, d_cam_mm, seed: int = 0, models: Path | None = None) -> Path:
     """The bench T at its true pose, saved 1-2 mm / 0.3 deg off, seen from the 4 planned
-    views at 0.4 m, with an optional extrinsic translation error d (camera frame)."""
-    models = PKG / "models"
+    views at 0.4 m, with an optional extrinsic translation error d (camera frame).
+    `models`: where the T's CADs are; the default is the frozen bench fixture
+    (test/data/bench_models), because BASE / EAR are poses of the OLD plate - the live
+    models/ got a new plate on 2026-10-15."""
+    models = Path(models) if models is not None else PKG / "test" / "data" / "bench_models"
     assembly = {"objects": [{"model": "test_objv2_base.ply", "pose_static": _ortho(BASE).tolist()},
                             {"model": "test_objv2_ear.ply", "pose_static": _ortho(EAR).tolist()}]}
     parts = mc.parts_from_assembly(assembly, models)
@@ -95,7 +98,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("capture", nargs="?", help="capture dir (default: the newest in <results>/multiview)")
     ap.add_argument("--results", default=str(RESULTS))
-    ap.add_argument("--models", default=str(PKG / "models"))
+    ap.add_argument("--models", default=None,
+                    help="the CADs (default: models/; with --make-synthetic the frozen "
+                         "test/data/bench_models, whose plate the synthetic T is posed for)")
     ap.add_argument("--plane", default=None, help="table_plane.json (default: the one recorded in the capture)")
     ap.add_argument("--set", action="append", help="override a RefineConfig/PreprocessConfig field: name=value")
     ap.add_argument("--write", action="store_true", help="write <capture>/assembly_refined.json")
@@ -105,8 +110,11 @@ def main() -> int:
     ap.add_argument("--d", type=float, nargs=3, default=(0.0, 0.0, 0.0), help="synthetic: extrinsic error d (camera frame, mm)")
     args = ap.parse_args()
 
+    if args.models is None:
+        args.models = str(PKG / "test" / "data" / "bench_models" if args.make_synthetic
+                          else PKG / "models")
     if args.make_synthetic:
-        path = make_synthetic(Path(args.make_synthetic), args.d)
+        path = make_synthetic(Path(args.make_synthetic), args.d, models=Path(args.models))
         print(f"wrote synthetic capture {path}")
     else:
         path = Path(args.capture) if args.capture else mc.latest_capture(args.results)

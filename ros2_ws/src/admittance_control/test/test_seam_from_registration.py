@@ -155,7 +155,8 @@ def test_lap_on_sheet_thinner_than_the_pose_tolerance_is_undecidable_not_guessed
 ])
 def test_bench_assemblies_yield_their_t_fillets(assembly):
     path = PKG / assembly
-    reg_path = PKG / "models" / "weldgen_objects.json"
+    # the bench assemblies were saved with the plate of their day: the frozen fixture
+    reg_path = PKG / "test" / "data" / "bench_models" / "weldgen_objects.json"
     if not path.exists() or not reg_path.exists():
         pytest.skip("bench assembly not present")
     from admittance_control.weldgen_registry import load_registry

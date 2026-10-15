@@ -302,6 +302,7 @@ def launch_setup(context, *args, **kwargs):
                                       or _default_table_plane_path(pkg_share)),
                 "ground_plane_offset_m": float(LaunchConfiguration("icp_ground_plane_offset_m").perform(context)),
                 "tracking_source": tracking_source,
+                "weld_pose_tol_mm": float(LaunchConfiguration("weld_pose_tol_mm").perform(context)),
                 "use_sim_time": False,
             }],
         ))
@@ -368,6 +369,13 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "fp_track_url", default_value="ws://127.0.0.1:5001",
             description="fp_track_server.py's WebSocket (tracking_source:=fp)."),
+        DeclareLaunchArgument(
+            "weld_pose_tol_mm", default_value="10.0",
+            description="welding_points (mode A): how far two registered parts may miss "
+                        "each other and still be one joint, mm (clipped to 0.5-30). Larger "
+                        "accepts worse registrations; a curved pair within twice it is "
+                        "reported as fitup_beyond_pose_tol. At run time: ros2 param set "
+                        "/icp_pose_refiner weld_pose_tol_mm <mm>."),
         DeclareLaunchArgument(
             "launch_totg", default_value="true",
             description="Start totg_service_node (/compute_totg): time-optimal timing of "

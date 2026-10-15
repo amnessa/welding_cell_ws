@@ -1162,6 +1162,15 @@ class IcpPoseRefinerNode(Node):
         registry = load_registry(reg_path)
         objects = [(o['model'], np.asarray(o['pose_static'], dtype=np.float64).reshape(4, 4))
                    for o in self._saved]
+        # a CAD replaced after the registry was built: its entry describes another part
+        # (2026-10-15: the new plate kept the old plate's entry, turned 90 deg, no seam)
+        from admittance_control.part_shapes import stale_entries
+        stale = stale_entries(Path(reg_path).parent, [n for n, _ in objects],
+                              str(self.get_parameter('weldgen_path').value) or None)
+        if stale:
+            return False, ('mode A: the registry no longer describes ' + ', '.join(
+                f'{n} (its CAD is {d:.0f} mm off the entry)' for n, d in stale.items())
+                + ' - the CAD changed: python3 scripts/build_weldgen_registry.py --verify')
         wg = str(self.get_parameter('weldgen_path').value) or None
         parts = sfr.posed_parts(objects, registry, pose_units='m', weldgen_path=wg)
         access = sfr.runtime_access(

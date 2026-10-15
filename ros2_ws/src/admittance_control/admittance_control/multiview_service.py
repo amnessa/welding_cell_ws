@@ -78,7 +78,7 @@ PARAMS: dict[str, Any] = {
     "selfcal_history": str(PKG / "notebooks" / "selfcal_history.json"),
     "online_selfcal": True,
     "max_correction_mm": 10.0,
-    "max_correction_deg": 4.0,
+    "max_correction_deg": 5.0,     # 4 until 2026-10-15 (the user: SP3's 4.5 deg refused)
     # the pull toward the saved pose (multiview_refine.RefineConfig.prior_sigma_*). A
     # looser prior trusts the views more - but on the 2026-10-06 capture 3 / 8 / 15 mm
     # changed the result by < 0.5 mm: the four close views already dominate.
