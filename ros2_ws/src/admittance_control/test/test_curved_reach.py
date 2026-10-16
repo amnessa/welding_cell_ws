@@ -240,3 +240,42 @@ def test_a_pipe_on_a_thin_plate_on_the_table_is_reachable():
     # ... and the pen at or below the table plane is still a collision
     assert tr.pen_below_table([(0.0, "pen", "table")]) and not tr.pen_below_table([(0.001, "pen", "table")])
     assert tr.pen_contact_pair((0.002, "pen", "table")) and not tr.pen_contact_pair((0.002, "holder_body", "table"))
+
+
+def test_the_overshoot_ends_at_the_table():
+    """2026-10-16, SP3: a root tack on a 5.5 mm plate sat 4.9 mm over the table, and the
+    5 mm overshoot along a tilted pen reached the table - the descent check refused the
+    tack the reachability check had passed. No surface lies beyond the measured table: the
+    descent now ends there. Reaching the table BEFORE the tack point is still a refusal."""
+    from admittance_control import marking as mk
+    from admittance_control.kinematics import ur5e_fk
+    tool, cfg = load_tool_model(), tr.load_marking_config()
+    cfg.table_z_m, cfg.table_plane_file = None, None
+    reg = {"parts": {**REG["parts"],
+                     "thin": {"primitive": "slab", "dims_mm": [220.0, 220.0, 5.5], "T_cad_prim": I4}}}
+    cx, cy, ztop = 550.0, 100.0, 20.0
+    objs = [("thin.ply", _pose([cx, cy, ztop - 2.75])), ("pipe.ply", _pose([cx, cy, ztop + 0.5]))]
+    parts = sfr.posed_parts(objs, reg)
+    tacks = sfr.compute_tacks(parts, sfr.compute_seams(parts))["tacks"]
+
+    def model_with_table(z_mm):
+        return CollisionModel(tool=tool, scene_boxes=boxes_from_parts(parts), clearance=cfg.clearance_m,
+                              table_plane=([0.0, 0.0, 1.0], -z_mm / 1000.0))
+
+    model = model_with_table(ztop - 5.5)                   # under the plate
+    report = tr.plan_tacks(tacks, tool, model, cfg)
+    t = next(t for t in report["tacks"] if t["ok"])
+    args = (tool, model, cfg, np.asarray(t["point_m"]), np.asarray(t["axis_m"]), t["roll_deg"],
+            np.asarray(t["q_app"]))
+    over = 0.02                                            # far past the table
+    chain, why = mk.descent_check(*args, overshoot_m=over)
+    assert chain is not None, why
+    full = mk.descent_chain(tool, np.asarray(t["point_m"]), np.asarray(t["axis_m"]),
+                            np.deg2rad(t["roll_deg"]), np.asarray(t["q_app"]), cfg, over)
+    assert len(chain) < len(full)                          # cut ...
+    assert not tr.pen_below_table(model.pair_distances(chain[-1]))   # ... before the table
+    tip = tool.tip_in(ur5e_fk(chain[-1]))
+    assert float((tip - np.asarray(t["point_m"])) @ np.asarray(t["axis_m"])) > 0.0   # past the point
+    # a table above the tack point: the pen meets it on the way in - refused
+    chain, why = mk.descent_check(tool, model_with_table(ztop + 3.0), cfg, *args[3:], overshoot_m=over)
+    assert chain is None and "table" in why

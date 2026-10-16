@@ -253,14 +253,20 @@ def _reject(rejected: dict[str, int], why: str) -> None:
     rejected[why] = rejected.get(why, 0) + 1
 
 
-def nearest_in_limits(q: np.ndarray, ref: np.ndarray, margin: float = 0.1) -> np.ndarray:
+def nearest_in_limits(q: np.ndarray, ref: np.ndarray, margin: float = 0.1,
+                      mcfg: Optional[MarkingConfig] = None) -> np.ndarray:
     """Per joint, the 2*pi-equivalent of `q` nearest `ref` that is inside the joint
     limits (with `margin`): continuity without winding past them - a plain unwrap to the
-    previous view put wrist_3 at -7.97 rad, beyond the UR's +-2*pi (2026-10-01)."""
+    previous view put wrist_3 at -7.97 rad, beyond the UR's +-2*pi (2026-10-01). With
+    `mcfg`, wrist_3 also within `wrist3_window_deg` of home (the camera cable,
+    `tack_reach.to_cable_window`)."""
     q = np.asarray(q, float).copy()
     for k, (lo, hi) in enumerate(JOINT_LIMITS):
         opts = [q[k] + 2 * np.pi * n for n in range(-3, 4)]
         opts = [x for x in opts if lo + margin <= x <= hi - margin]
+        if k == 5 and mcfg is not None:
+            w = np.deg2rad(mcfg.wrist3_window_deg) + 1e-9
+            opts = [x for x in opts if abs(x - mcfg.home_q[5]) <= w] or opts
         if opts:
             q[k] = min(opts, key=lambda x: abs(x - ref[k]))
     return q
@@ -347,7 +353,7 @@ def plan_views(surfaces, boxes, tool, model: CollisionModel, mcfg: MarkingConfig
         c = cands[chosen[1]]
         sibs = [(g, k) for g, k in gains if k != chosen[1] and g >= 0.98 * chosen[0]
                 and cands[k].azimuth_deg == c.azimuth_deg and cands[k].elevation_deg == c.elevation_deg]
-        travel = lambda k: float(np.abs(nearest_in_limits(cands[k].q, mcfg.home_q) - mcfg.home_q).sum())
+        travel = lambda k: float(np.abs(nearest_in_limits(cands[k].q, mcfg.home_q, mcfg=mcfg) - mcfg.home_q).sum())
         best = min([chosen] + [sk for sk in sibs if feasible(sk[1])], key=lambda gk: travel(gk[1]))
         chosen = best
         cands[chosen[1]].gain = chosen[0]
@@ -379,9 +385,9 @@ def plan_views(surfaces, boxes, tool, model: CollisionModel, mcfg: MarkingConfig
     q_prev = q_start
     left = list(picked)
     while left:
-        k = int(np.argmin([np.abs(nearest_in_limits(v.q, q_prev) - q_prev).sum() for v in left]))
+        k = int(np.argmin([np.abs(nearest_in_limits(v.q, q_prev, mcfg=mcfg) - q_prev).sum() for v in left]))
         v = left.pop(k)
-        v.q = nearest_in_limits(v.q, q_prev)
+        v.q = nearest_in_limits(v.q, q_prev, mcfg=mcfg)
         order.append(v)
         q_prev = v.q
 

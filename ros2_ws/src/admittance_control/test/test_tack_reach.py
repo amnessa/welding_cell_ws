@@ -112,3 +112,38 @@ def test_solutions_on_the_other_branch_are_rejected(setup):
     elbow_down = np.array([0.0, -1.0, 1.6, -2.2, -1.57, 0.0])
     q = tr.solve_on_branch(T, [elbow_down], cfg, n_random=0)
     assert q is None or tr.same_branch(q, cfg.branch_signature)
+
+
+def test_wrist_3_stays_in_its_cable_window():
+    """2026-10-16, SP3: tack-to-tack continuity wound wrist_3 to -202 and -287 deg from
+    home, and the camera cable's pull read as a 1.5 N contact 84 mm above the part. Every
+    pose has a 2*pi-equivalent within +-180 deg of home - the same tool pose."""
+    cfg = tr.load_marking_config()
+    home = cfg.home_q
+    rng = np.random.default_rng(0)
+    for _ in range(200):
+        q = home + rng.uniform(-2.5, 2.5, 6)
+        q[5] = rng.uniform(-2 * np.pi, 2 * np.pi)
+        ref = home + rng.uniform(-2.5, 2.5, 6)
+        ref[5] = home[5] + rng.uniform(-np.pi, np.pi)
+        out = tr.to_cable_window(q, ref, cfg)
+        assert tr.in_cable_window(out, cfg)
+        assert np.allclose(ur5e_fk(out), ur5e_fk(q), atol=1e-9)
+    # the SP3 case: from -160 deg, plain continuity took tack 4 to -287; inside: +73
+    q4, ref = home.copy(), home.copy()
+    q4[5], ref[5] = home[5] + np.deg2rad(-287.0), home[5] + np.deg2rad(-160.0)
+    assert np.degrees(tr.to_cable_window(q4, ref, cfg)[5] - home[5]) == pytest.approx(73.0)
+    # a window over 180 deg keeps continuity where it can: -200 is inside +-210
+    cfg.wrist3_window_deg = 210.0
+    q4[5] = home[5] + np.deg2rad(-200.0)
+    assert np.degrees(tr.to_cable_window(q4, ref, cfg)[5] - home[5]) == pytest.approx(-200.0)
+
+
+def test_the_roll_choice_counts_wrist_3_as_the_transit_turns_it():
+    """Wrist_3 stays in its window, so a transit turns it the long way inside rather than
+    the short way across the window's edge: the cost has to say so."""
+    a, b = np.zeros(6), np.zeros(6)
+    a[5], b[5] = -3.0, 3.0                         # 6 rad apart, 0.28 the short way round
+    assert tr._joint_cost(a, b) == pytest.approx(0.5 * 6.0)
+    a[0], b[0], a[5], b[5] = -3.0, 3.0, 0.0, 0.0   # the other joints still go the short way
+    assert tr._joint_cost(a, b) == pytest.approx(2.0 * (2 * np.pi - 6.0))

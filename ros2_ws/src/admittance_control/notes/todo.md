@@ -245,6 +245,11 @@ estimated, so the thesis can report them. Per stage:
   green.
 - **The 29 Sep tack-0 refusal** ("descent clearance 0.0 mm (overshoot)") is probably the same
   box–box case; check that it plans now with the roll fallback.
+- **Re-test SP3** with the wrist_3 cable window and the overshoot cut at the table
+  (2026-10-16). Offline the same scene now plans all four reachable tacks, with wrist_3
+  within −174°..0 (it was −202° and −287°). Confirm that tacks 3 and 4 now touch the
+  part, and that tack 2 marks. If a false contact comes back inside the window, log the
+  force vector during a descent in the air (only |F| is recorded now).
 - **Holding 1.5 N on metal:** UR's `force_mode_controller` (loaded, inactive), or a sprung
   holder. Strokes still stop with "pen lifted off" on some tacks.
 - **Marking overshoot:** `overshoot_m` 5–6 mm until the camera offset is anchored.
@@ -255,18 +260,11 @@ estimated, so the thesis can report them. Per stage:
 
 ## OPEN — perception (`seam_two_modes_plan.md`, `realtime_fp.md`)
 
-- **Mode A covers only the 5 plate strata.** The curved ones need:
-  - registry `tube` / `swept_slab` entries;
-  - pipe-on-plate and pipe-on-pipe from the registered poses
-    (`curves.ellipse_from_plane_cylinder` / `saddle_from_cylinders`, the cone test of
-    `verify_curved`);
-  - new code for a box tube and a curved strip on a plate;
-  - motion: full loops around pipes need large wrist rolls.
-
-  Needed for the printed parts above.
+- ~~**Mode A covers only the 5 plate strata.**~~ Done: curved seams from the registered
+  poses, steps 1–5 of `curved_seams_plan.md` (2026-10-09 .. 10-15).
 - **FoundationPose tracking, small items:**
-  - does RViz load our PLY meshes for `/perception/fp/marker`? The green model cloud
-    works either way;
+  - ~~does RViz load our PLY meshes for `/perception/fp/marker`?~~ Yes (the user,
+    2026-10-16);
   - `use_roi` (off): does the crop raise the rate?
   - symmetric parts (tubes) need `SYMMETRY_INFO` on the server, or the pose may spin about
     the axis.
@@ -284,6 +282,45 @@ estimated, so the thesis can report them. Per stage:
   why the edges attract (a proof).
 - **Laser pointer** next to the pen, to show a tack before touching it (the 1 Oct
   meeting).
+
+## OPEN — tack ordering by a rough heat simulation (asked 2026-10-16)
+
+- **What.** Choose the order of the tacks by simulating, roughly, the heat each tack puts
+  into the parts. That replaces the fixed rule of the weld generator's `tackrule-0.1`
+  (D38): both ends of a seam first, then bisection, same-class seams interleaved
+  round-robin "so heat alternates". `compute_tacks` writes that as each tack's `order`,
+  and the marking node visits the tacks in it.
+- **Why.** A tack laid next to one that is still hot adds heat where it already is. The
+  region grows and shrinks unevenly, and the gap opens or the part pulls out of line. The
+  rule's heuristics spread the heat for straight seams on plates. A simulation does it
+  for any assembly (pipes, saddles, several seams close together) and gives a number to
+  compare orders by.
+- **Rough model, to start.**
+  - Each tack = a heat source of energy Q (∝ tack length × heat input per mm; nominal
+    values, since the cell's pen puts in none) at its `point_mm`.
+  - Temperature anywhere = the sum over the tacks laid so far of an analytic cooling
+    kernel. For a thin plate: 2-D diffusion
+    T(r, t) = Q / (4π k d t) · exp(−r² / 4αt), times a loss term for cooling to air.
+    r is the distance over the part, not through the air. Along the seam, and the 3-D
+    distance between seams, will do at first.
+  - The clock: each tack's weld time, plus the transit between tacks (the marking plan
+    already times them).
+- **Choosing the order.**
+  - Greedy first: next = the tack whose spot is coolest when the torch would get there.
+  - Then a cost to compare with: the highest temperature at a tack when it is laid; a
+    heat imbalance about the part (a distortion proxy); and travel time.
+  - Then search (beam search) if greedy is clearly beaten.
+  - Option to keep the rule's must-have: both ends of a seam before its middle, to fix
+    the gap.
+- **Output.** An `order_heat` beside `order`, and a switch for which one the marking node
+  follows.
+- **Compare** with `tackrule-0.1` on the bench assemblies (plate T, E2, S3/R2, RR1),
+  using the cost above.
+- **Check the kernel** once against a small transient FE run on one plate (e.g.
+  scikit-fem), so "rough" has a stated error.
+- **If it is adopted, it may become `tackrule-0.2` for both projects** (see Tack length
+  under perception). The dataset's `order` must stay reproducible.
+- **Thesis:** a weld-sequence section (heat-aware ordering vs the rule).
 
 ## OPEN — human–robot interaction
 
@@ -334,14 +371,16 @@ estimated, so the thesis can report them. Per stage:
            mid-turn: the relay ramps the arm to zero within ~0.1 s (it used to keep the
            last rate). `gestures.launch.py` starts it; the aim node refuses to start
            without it.
-         - **Next: confirm on the robot.** Record a bag with
-           `ros2 bag record /joint_states /forward_velocity_controller/commands
-           /camera_aim/joint_rates /camera_aim/status`, then compare it with the first one
-           using `/usr/bin/python3 scripts/aim_bag_report.py
-           ../../rosbag2_2026_10_16-13_49_03 <new bag>`. The first bag: commands 50 Hz,
-           buzz index 3.4× idle, peak 50.8 Hz. Success = 500 Hz, an index near 1, and no
-           50 Hz peak.
-      2. **Soften the engagement.** Start the target from zero at the deadband edge and
+         - **CONFIRMED on the robot** (bag `rosbag2_2026_10_16-14_09_33`, compared with
+           `scripts/aim_bag_report.py`):
+           - commands 50 → 500 Hz;
+           - the median jump between commands 0.00104 → 0.00018 rad/s, and the p95
+             0.0089 → 0.0009;
+           - the buzz index 3.4 → 1.7× idle;
+           - the 50.8 Hz line (9× its neighbours) gone, with no new line.
+
+           The 1.7× left is broadband: the motion itself.
+      2. **Soften the engagement** (still open; may matter less now). Start the target from zero at the deadband edge and
          let it grow, instead of jumping to ~8°/s. Add a minimum stop time (~0.5 s) so
          tremor cannot restart it at once. Maybe a smaller deadband in degrees for the
          1280-px image.
@@ -406,8 +445,8 @@ estimated, so the thesis can report them. Per stage:
 
 ## LATER
 
-- **Torch instead of pen:** force-controlled seam following, the distortion-aware tack
-  `order` (already computed).
+- **Torch instead of pen:** force-controlled seam following, and real heat for the tack
+  order (the rule's `order` today; heat-simulated: OPEN above).
 - **MoveIt planning scene** when fixtures become real.
 - **Thesis:** the validation chapter (fit-up, contact depth, README §14's error budget,
   `thesis_notes.md`).

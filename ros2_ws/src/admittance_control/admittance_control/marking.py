@@ -40,7 +40,8 @@ import numpy as np
 
 from .collision import CollisionModel
 from .kinematics import _edge_valid, _in_limits, bezier_smooth_path, rrt_connect, ur5e_fk
-from .tack_reach import MarkingConfig, _unwrap_to, pen_below_table, pen_contact_pair, solve_on_branch
+from .tack_reach import (MarkingConfig, _unwrap_to, pen_below_table, pen_contact_pair, solve_on_branch,
+                         to_cable_window)
 
 
 # ---------------------------------------------------------------- paths ---------------
@@ -611,16 +612,25 @@ def descent_check(tool, model: CollisionModel, cfg: MarkingConfig, point: np.nda
     the clearance the tack pose had minus the distance travelled past it (moving `s` along
     the pen changes any distance by at most `s`), never a fixed number: what the model
     shows as an overlap there is the registration's, not the motion's. (A box-box pair -
-    the camera body against a part - is an intersection test: 0 = overlapping.)"""
+    the camera body against a part - is an intersection test: 0 = overlapping.)
+
+    The table is the exception the other way: it is measured, and no surface can lie
+    beyond it, so an overshoot that reaches it ENDS there - the chain is cut before the
+    first pose with the pen at the table. Before 2026-10-16 that refused the tack: on SP3
+    the root tack sat 4.9 mm over the table (5.5 mm plate), and 5 mm of overshoot along a
+    pen 35 deg off vertical reached it. A pen at the table before the tack point is still
+    a refusal."""
     chain = descent_chain(tool, point, axis, np.deg2rad(roll_deg), q_app, cfg, overshoot_m)
     if chain is None:
         return None, "descent IK chain broke"
     d_ref, past_ref = np.inf, 0.0            # clearance at the last point before the tack
-    for q in chain:
+    for i, q in enumerate(chain):
         tip = tool.tip_in(ur5e_fk(q))
         past = float((tip - point) @ axis)
         allp = model.pair_distances(q)
         if pen_below_table(allp):
+            if past > 1e-4 and i > 1:
+                return chain[:i], ""                 # the overshoot ends at the table
             return None, "descent: the pen reaches the table"
         pairs = [p for p in allp if not pen_contact_pair(p)]
         d, a, b = min(pairs, key=lambda p: p[0]) if pairs else (np.inf, "", "")
@@ -738,9 +748,12 @@ def build_marking_plan(report: dict[str, Any], tool, model: CollisionModel,
             step.departure_note = f"transit to the approach point: {why}"
         step.q_app = q_app
         how: dict = {}
-        path = transit_path(q_prev, step.q_app, transit_model(model, cfg, q_prev, step.q_app),
-                            edge_resolution, smooth=smooth_transits, info=how, cartesian_cfg=cfg,
-                            **opts)
+        # to the 2*pi-equivalent nearest the previous pose, wrist_3 inside its cable window:
+        # plain continuity wound it to -287 deg over SP3's tacks (2026-10-16)
+        target = to_cable_window(step.q_app, q_prev, cfg)
+        path = transit_path(q_prev, target, transit_model(model, cfg, q_prev, target),
+                            edge_resolution, unwrap=False, smooth=smooth_transits, info=how,
+                            cartesian_cfg=cfg, **opts)
         step.transit_how = how.get("how", how.get("why", ""))
         if how.get("cartesian_why") and not step.transit_how.startswith("straight"):
             step.transit_how += f" [{how['cartesian_why']}]"
@@ -748,8 +761,8 @@ def build_marking_plan(report: dict[str, Any], tool, model: CollisionModel,
             step.reason = "no collision-free transit"
             all_ok = False
         else:
-            # the transit arrives at the 2*pi-equivalent of q_app nearest the previous pose;
-            # the descent is the same motion shifted by those whole turns
+            # the transit arrives at the 2*pi-equivalent of q_app chosen above; the descent
+            # is the same motion shifted by those whole turns
             shift = path[-1] - step.q_app
             chain = [q + shift for q in chain]
             if all(_in_limits(q) for q in chain):

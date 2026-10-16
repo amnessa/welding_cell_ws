@@ -80,6 +80,12 @@ class MarkingConfig:
     #: unregistered obstacles (V-blocks, holders, clamps): `collision.fixture_boxes`
     fixtures: tuple = ()
     source: str = ""
+    #: wrist_3 stays within this of home_q, as the 2*pi-equivalent of each pose (the
+    #: same tool pose: at 180 no tack is lost). The camera's cable wraps round the wrist.
+    #: 2026-10-16, SP3: continuity from tack to tack wound wrist_3 to -202 and -287 deg,
+    #: and the cable's pull read as a 1.5 N "contact" 84 mm above the part, twice; every
+    #: good contact on E2 the day before was within +-151 deg (`to_cable_window`)
+    wrist3_window_deg: float = 180.0
     #: when set, ONLY these rolls (deg) are tried - the attribution experiment: the same
     #: tack at rolls 90 deg apart moves a TOOL error with the wrist and leaves a WORLD
     #: error (camera, registration) where it is
@@ -137,7 +143,9 @@ def load_marking_config(path: str | Path | None = None) -> MarkingConfig:
                          work_angles_deg=tuple(cfg.get("work_angles_deg", (0.0, -10.0, 10.0, -20.0, 20.0))),
                          table_z_m=cfg.get("table_z_m"),
                          table_plane_file=cfg.get("table_plane_file", "notebooks/table_plane.json"),
-                         fixtures=tuple(cfg.get("fixtures", ())), source=str(p))
+                         fixtures=tuple(cfg.get("fixtures", ())),
+                         wrist3_window_deg=float(cfg.get("wrist3_window_deg", 180.0)),
+                         source=str(p))
 
 
 def joint_state_to_ur_order(names: Sequence[str], positions: Sequence[float]) -> np.ndarray:
@@ -169,7 +177,7 @@ def solve_on_branch(T_tool0: np.ndarray, seeds: Sequence[np.ndarray], cfg: Marki
         q = ik_solve(T_tool0, np.asarray(s, float))
         if q is None:
             continue
-        q = _unwrap_to(q, tried[0])
+        q = to_cable_window(q, tried[0], cfg)
         if same_branch(q, sig, cfg.branch_joints):
             return q
     return None
@@ -185,6 +193,24 @@ def _unwrap_to(q: np.ndarray, ref: np.ndarray) -> np.ndarray:
         while q[i] - ref[i] < -np.pi:
             q[i] += 2 * np.pi
     return q
+
+
+def to_cable_window(q: np.ndarray, ref: np.ndarray, cfg: MarkingConfig) -> np.ndarray:
+    """`q` as the joints a move from `ref` should arrive at: each joint the 2*pi-equivalent
+    nearest `ref` (continuity, `_unwrap_to`), except wrist_3 - the equivalent nearest `ref`
+    among those within `cfg.wrist3_window_deg` of home_q (the cable), or the one nearest
+    home when none is (a window under 180 deg). The tool pose is the same either way."""
+    q = _unwrap_to(q, ref)
+    home, w = float(cfg.home_q[5]), np.deg2rad(cfg.wrist3_window_deg)
+    opts = [q[5] + 2.0 * np.pi * n for n in range(-2, 3)]
+    inside = [x for x in opts if abs(x - home) <= w + 1e-9]
+    q[5] = (min(inside, key=lambda x: abs(x - float(ref[5]))) if inside
+            else min(opts, key=lambda x: abs(x - home)))
+    return q
+
+
+def in_cable_window(q: np.ndarray, cfg: MarkingConfig, slack_deg: float = 0.0) -> bool:
+    return abs(float(q[5]) - float(cfg.home_q[5])) <= np.deg2rad(cfg.wrist3_window_deg + slack_deg) + 1e-9
 
 
 # ---------------------------------------------------------------- the plan ------------
@@ -377,8 +403,12 @@ TRANSIT_WEIGHTS = np.array([2.0, 2.0, 1.5, 1.0, 1.0, 0.5])
 
 
 def _joint_cost(qa: np.ndarray, qb: np.ndarray) -> float:
-    """Weighted joint distance, each joint the short way round (transits unwrap)."""
-    d = (np.asarray(qb, float) - np.asarray(qa, float) + np.pi) % (2.0 * np.pi) - np.pi
+    """Weighted joint distance as the transit moves: each joint the short way round
+    (transits unwrap), except wrist_3, which stays in its cable window
+    (`to_cable_window`: the poses come windowed) and so turns the plain difference."""
+    qa = np.asarray(qa, float); qb = np.asarray(qb, float)
+    d = (qb - qa + np.pi) % (2.0 * np.pi) - np.pi
+    d[5] = qb[5] - qa[5]
     return float(np.linalg.norm(TRANSIT_WEIGHTS * d))
 
 
@@ -440,7 +470,7 @@ def _plan_per_tack(seam_tacks: Sequence[dict[str, Any]], tilts, rolls, q_from: n
     for i in range(len(seam_tacks)):
         p = chosen_by_tack.get(i) or fails[i]
         if p.q_app is not None:
-            p.joint_step_from_prev_rad = float(np.abs(_unwrap_to(p.q_app, q_prev) - q_prev).max())
+            p.joint_step_from_prev_rad = float(np.abs(to_cable_window(p.q_app, q_prev, cfg) - q_prev).max())
         plans.append(p)
         if p.ok:
             q_prev = p.q_app

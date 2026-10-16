@@ -219,11 +219,14 @@ class TackMarkingNode(Node):
             return None
         return [q_now] + list(path)
 
-    def _replan_transit(self, target: np.ndarray, label: str, unwrap: bool = True):
+    def _replan_transit(self, target: np.ndarray, label: str, unwrap: bool = False):
         """The plan froze the transit at the joints of `~/plan`; if the arm has been jogged
         since (a TCP calibration, freedrive), re-plan from where it is now instead of
-        refusing. Returns (path or None, message). `unwrap=False` for home: arrive at the
-        home joints exactly, unwinding the wrist, not at a 2*pi-equivalent of them."""
+        refusing. Returns (path or None, message). It arrives at `target` exactly: the
+        plan chose each tack's 2*pi-equivalent (wrist_3 in its cable window,
+        `to_cable_window`) and planned the descent from it; unwrapping to the current
+        joints could arrive a turn away from where that descent starts. Home likewise:
+        the home joints themselves, unwinding the wrist."""
         from admittance_control.marking import transit_path
         q_now = self._where()
         if q_now is None:

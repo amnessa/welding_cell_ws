@@ -10,7 +10,10 @@ stream of them at 50 Hz is the buzz heard on 2026-10-15 (notes/thesis_notes.md,
   * the buzz: the 20-250 Hz part of the wrist efforts while aiming, against the same
     measure while the trajectory controller holds the arm (idle) - the ratio is the
     buzz index, 1 = as quiet as standing still;
-  * where the vibration sits: the strongest peak of the wrist_1 velocity above 20 Hz.
+  * a vibration LINE: the wrist_1 velocity frequency above 30 Hz that stands out most
+    from its NEIGHBOURS (x the median of the bins 8-24 Hz either side); below 3x it is
+    reported as no line. Against the whole spectrum the slope at the high-pass edge
+    (~20-30 Hz) looked like a peak.
 
     source /opt/ros/jazzy/setup.bash
     /usr/bin/python3 scripts/aim_bag_report.py <bag_dir> [<bag_dir> ...]
@@ -104,7 +107,16 @@ def report(d: dict) -> dict:
         if len(x) >= 128:
             segs.append(np.abs(np.fft.rfft(x[:128] * np.hanning(128))) ** 2)
     f = np.fft.rfftfreq(128, 1 / FS)
-    peak_hz = float(f[f > 20][np.argmax(np.mean(segs, 0)[f > 20])]) if segs else float('nan')
+    peak_hz, peak_x = float('nan'), float('nan')
+    if segs:
+        P = np.mean(segs, 0)
+        best = (float('nan'), 0.0)
+        for k in np.nonzero(f > 30)[0]:
+            near = [i for i in range(k - 6, k + 7) if 0 <= i < len(P) and abs(i - k) > 1]
+            x = float(P[k] / np.median(P[near]))
+            if x > best[1]:
+                best = (float(f[k]), x)
+        peak_hz, peak_x = best
     return {
         'aiming_s': len(aim_w) * WINDOW_S, 'idle_s': len(idle_w) * WINDOW_S,
         'cmd_hz': 1.0 / float(np.median(np.diff(ct))),
@@ -112,7 +124,7 @@ def report(d: dict) -> dict:
         'step_median': float(np.median(steps[moving])) if moving.any() else 0.0,
         'step_p95': float(np.percentile(steps[moving], 95)) if moving.any() else 0.0,
         'buzz_aim': buzz_aim, 'buzz_idle': buzz_idle, 'buzz_index': buzz_aim / buzz_idle,
-        'peak_hz': peak_hz,
+        'peak_hz': peak_hz, 'peak_x': peak_x,
     }
 
 
@@ -122,18 +134,20 @@ def main() -> None:
     ap.add_argument('--npz', help='save the arrays of the (first) bag for plotting')
     args = ap.parse_args()
     print(f"{'bag':<34} {'aim s':>6} {'cmd Hz':>7} {'in Hz':>6} {'step med':>9} {'step p95':>9} "
-          f"{'effort HF aim':>13} {'idle':>8} {'BUZZ x':>7} {'peak Hz':>8}")
+          f"{'effort HF aim':>13} {'idle':>8} {'BUZZ x':>7} {'line':>14}")
     for i, bag in enumerate(args.bags):
         d = read_bag(bag)
         r = report(d)
         print(f"{Path(bag).name:<34} {r['aiming_s']:6.1f} {r['cmd_hz']:7.0f} {r['in_hz']:6.0f} "
               f"{r['step_median']:9.5f} {r['step_p95']:9.5f} {r['buzz_aim']:13.4f} "
-              f"{r['buzz_idle']:8.4f} {r['buzz_index']:7.1f} {r['peak_hz']:8.1f}")
+              f"{r['buzz_idle']:8.4f} {r['buzz_index']:7.1f} "
+              + (f"{r['peak_hz']:6.1f} Hz x{r['peak_x']:<4.0f}" if r['peak_x'] >= 3 else f"{'none':>14}"))
         if args.npz and i == 0:
             np.savez(args.npz, **d)
             print(f'  arrays -> {args.npz}')
     print("step: |jump| between consecutive wrist_1 commands (rad/s); effort HF: the 20-250 Hz "
-          "wrist effort RMS; BUZZ x: aiming / idle (1 = as quiet as standing still)")
+          "wrist effort RMS; BUZZ x: aiming / idle (1 = as quiet as standing still); line: the "
+          "wrist_1 velocity line above 30 Hz, x its neighbours (none below 3x)")
 
 
 if __name__ == '__main__':

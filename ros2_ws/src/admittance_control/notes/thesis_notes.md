@@ -12,6 +12,45 @@ the plans under `notes/`; this file keeps the story and the numbers.
 
 ---
 
+## 2026-10-16: A wound-up cable read as a contact, 84 mm above the part
+
+**What happened.** On SP3, two of four reachable tacks stopped their descent in the air:
+"contact" at 1.5 N with the pen 66–68 mm above the part, in both runs. A third tack,
+which the reachability check had passed, was refused by the marking node: "the pen
+reaches the table".
+
+**Evidence.**
+- The false contacts were at the same place both runs, 82–84 mm before the registered
+  point (16–18 mm into the descent). The planned descent had no kink there: waypoints
+  5 mm apart, joint-speed changes ≤ 0.004 rad/s in the fast leg. So the force grew
+  slowly, not as an inertial kick. A stroke after one of them read −1 N in the air: the
+  reading drifted as the arm moved.
+- The marks history separated the cause:
+  - every good contact (14 on E2 the day before, one on SP3) had wrist_3 within ±151°
+    of home;
+  - the two false ones were the only tacks beyond ±180°: −202° and −287°;
+  - wrist_1 (to +139° on E2) and the elbow did not separate them.
+- The cause in the plan: each transit went to the 2π-equivalent of the next pose
+  nearest the previous one (continuity), so the wrist kept winding from tack to tack.
+  The same tool pose was available at +73° instead of −287°.
+- The table refusal: the root tack sat 4.9 mm above the table (5.5 mm plate), the pen
+  was 3.5 mm above it at the tack point, and 5 mm of overshoot along a pen 35° off
+  vertical reached it. The reachability check does not look at the overshoot.
+
+**What we learned.**
+- A force-gated descent senses everything that pulls on the tool, and the camera cable
+  is part of the tool. Joint "continuity" is not free: on a wrist with ±360° of travel
+  it can wind a cable without limit. A window of ±180° about home loses no pose (every
+  pose has an equivalent inside it) and keeps the cable slack. After the fix the same
+  scene plans all four tacks with wrist_3 within −174°..0.
+- Rules about measured things should use what is known about them: no surface can lie
+  beyond the measured table, so an overshoot that reaches it ends there instead of
+  refusing the tack.
+- The control group mattered. The user's objection ("yesterday E2 worked with the same
+  setup") was answered by E2's own records: it never wound the wrist past 151°.
+
+---
+
 ## 2026-10-16: The aim buzz was the command staircase, not the controller
 
 **What happened.** On the robot, the camera aim made the wrist buzz when the fingertip
@@ -60,7 +99,24 @@ Its `--npz` writes the arrays for plotting. Planned figures:
 - the wrist_1 effort spectrum, 50 Hz direct vs the relay;
 - an 80 ms zoom of commanded vs measured velocity, showing the kick after each step.
 
-A bag of the relay on the robot is still to be recorded.
+**Confirmed on the robot** (the second bag, `rosbag2_2026_10_16-14_09_33`, 38 s of
+aiming; also not in git):
+
+| | 50 Hz direct | relay |
+|---|---|---|
+| commands | 50 Hz | 500 Hz (input 125 Hz) |
+| jump between commands, median / p95 (rad/s) | 0.00104 / 0.0089 | 0.00018 / 0.0009 |
+| wrist effort 20–250 Hz, aiming / idle | 3.4× | 1.7× |
+| vibration line | 50.8 Hz, 9× its neighbours | none |
+
+At 50 and 100 Hz the second bag is level with the neighbouring frequencies. The
+remaining 1.7× is broadband (the aim's own accelerations), with a faint trace at the
+125 Hz input rate.
+
+**A trap in the measure.** The first version of the report named the highest bin above
+20 Hz as "the peak", and on the relay bag it said "23.4 Hz". That bin was the sloped edge
+of the 20 Hz high-pass, not a tone. A line has to stand out from its neighbours, not
+from the whole spectrum.
 
 ---
 
