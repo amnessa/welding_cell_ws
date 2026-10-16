@@ -86,6 +86,7 @@ Run
 from __future__ import annotations
 
 import json
+import signal
 import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
@@ -720,6 +721,9 @@ def main(args: Optional[List[str]] = None) -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        # ros2 launch delivers Ctrl-C twice (the terminal's, then its own): do not let the
+        # second one interrupt the clean-up
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
         # closed here, not left to its __del__ at interpreter exit: by then MediaPipe's
         # C helpers are gone and it prints a TypeError traceback on every Ctrl-C
         try:

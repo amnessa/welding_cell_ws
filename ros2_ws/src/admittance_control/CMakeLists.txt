@@ -54,10 +54,16 @@ target_link_libraries(totg_service_node Eigen3::Eigen)
 rosidl_get_typesupport_target(totg_typesupport ${PROJECT_NAME} rosidl_typesupport_cpp)
 target_link_libraries(totg_service_node ${totg_typesupport})
 
+# Camera aim: the Python node's 125 Hz joint rates, ramped and streamed at the UR's 500 Hz
+add_executable(aim_rate_relay src/aim_rate_relay.cpp)
+ament_target_dependencies(aim_rate_relay rclcpp std_msgs)
+target_compile_options(aim_rate_relay PRIVATE -O2)
+
 # Install C++ executables
 install(TARGETS
   admittance_control_jacobian_node
   totg_service_node
+  aim_rate_relay
   DESTINATION lib/${PROJECT_NAME}
 )
 

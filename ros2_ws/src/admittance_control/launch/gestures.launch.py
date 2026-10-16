@@ -4,7 +4,11 @@
                            bridge / ICP services; the fingertip -> SAM2 clicks, and
                            before the capture -> /gesture/aim
     camera_aim_node        /gesture/aim -> the wrist camera turns to centre the
-                           fingertip (forward_velocity_controller, switched by itself)
+                           fingertip: joint rates at 125 Hz on /camera_aim/joint_rates
+                           (forward_velocity_controller, switched by itself)
+    aim_rate_relay         (C++) ramps those rates to the UR's 500 Hz; sent at 125 Hz
+                           the steps buzz the wrist. Stops the arm if the aim node goes
+                           silent for 0.1 s
 
 Start it next to pointcloud.launch.py (the camera, the bridge, the ICP node) and the
 UR driver. Closing the gesture window ('q') shuts both down.
@@ -70,6 +74,14 @@ def generate_launch_description() -> LaunchDescription:
         }],
     )
 
+    relay = Node(
+        package="admittance_control",
+        executable="aim_rate_relay",
+        name="aim_rate_relay",
+        output="screen",
+        condition=IfCondition(LaunchConfiguration("aim")),
+    )
+
     return LaunchDescription([
         DeclareLaunchArgument("model_path", default_value=_default_model_path(pkg_share),
                               description="MediaPipe gesture_recognizer.task"),
@@ -83,6 +95,7 @@ def generate_launch_description() -> LaunchDescription:
                               description="gesture window scale (picking is in full-res pixels)"),
         gesture,
         aim,
+        relay,
         # 'q' in the gesture window ends the console: no aim node left behind
         RegisterEventHandler(OnProcessExit(target_action=gesture,
                                            on_exit=[EmitEvent(event=Shutdown(reason="gesture window closed"))])),

@@ -12,6 +12,58 @@ the plans under `notes/`; this file keeps the story and the numbers.
 
 ---
 
+## 2026-10-16: The aim buzz was the command staircase, not the controller
+
+**What happened.** On the robot, the camera aim made the wrist buzz when the fingertip
+was near the centre of the image. The first guess was that a P-only controller was
+not enough. A 45 s bag of the joint states (500 Hz, with effort) and the velocity
+commands (50 Hz) showed that the control law was not the problem.
+
+**Evidence.**
+- The wrist joint velocities have a sharp peak at 49–51 Hz, 30–50× the noise floor, and
+  the efforts (motor current) at 50 and 100 Hz.
+- ~8 ms after every 20 ms command step the effort spikes (−0.4 against a ±0.05
+  background) and the velocity overshoots its new value by ~25 %. The UR applies each
+  velocity step as a kick.
+- The 100 Hz effort tracks the size of the step between commands (correlation 0.84),
+  not the commanded speed (0.13). It is 11× the level seen while the trajectory
+  controller holds the arm.
+- Steady turns at the 15°/s cap are quiet. Starts, stops and reversals are loud.
+- Near the centre the aim starts and stops most: a 64-px (≈ 4°) deadband on the
+  1280-px image, an engagement that jumps the target rate to ~8°/s, and hand tremor at
+  the edge.
+
+**What we learned.** Velocity streaming to a 500 Hz controller at 50 Hz is a staircase.
+Each step's size is acceleration × command period, and the arm turns every step into a
+torque kick that is audible. That is a problem of signal timing, not of the control
+law: adding I or D would not have changed it. The camera rate is no limit on the
+command rate here, because between images the error is recomputed from the joint
+states. The cure is to interpolate the command to the controller's rate (and to start
+gently near the centre). Measure first: the bag took minutes to record, and it pointed
+away from the obvious suspect.
+
+**The fix, in two steps** (same day):
+1. `rate_hz` 50 → 125: each step is 2.5× smaller. On the robot this "definitely
+   improved" the sound (by ear; no bag of it).
+2. A C++ relay (`aim_rate_relay`) between the Python node and the controller. It ramps
+   linearly between the 125 Hz rates and publishes at the UR's 500 Hz: no steps at all,
+   for 8 ms of delay. Against a fake cell the largest jump between commands fell to
+   0.0017 rad/s (the 50 Hz bag: p95 0.009). As a by-product it closed a safety gap: a
+   `kill -9` of the aim node mid-turn used to leave its last rate on the velocity
+   controller, and now the relay ramps the arm to zero within ~0.1 s.
+
+**For a figure later.** The 50 Hz bag is `ros2_ws/rosbag2_2026_10_16-13_49_03` (8.6 MB,
+not in git: keep a copy). `scripts/aim_bag_report.py <bags...>` gives the numbers per
+bag: command rate, step size, the buzz index (20–250 Hz wrist effort, aiming / idle)
+and the strongest vibration line. The first bag: 50 Hz, index 3.4×, a line at 50.8 Hz.
+Its `--npz` writes the arrays for plotting. Planned figures:
+- the wrist_1 effort spectrum, 50 Hz direct vs the relay;
+- an 80 ms zoom of commanded vs measured velocity, showing the kick after each step.
+
+A bag of the relay on the robot is still to be recorded.
+
+---
+
 ## 2026-10-15: Finger-pointing camera aim, where rotation-only motion makes latency compensation exact
 
 **What happened.** For human–robot interaction we added an aim mode: before the

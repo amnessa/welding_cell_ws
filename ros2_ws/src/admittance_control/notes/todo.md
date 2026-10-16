@@ -302,40 +302,52 @@ estimated, so the thesis can report them. Per stage:
     3. check the image's stamp and `/joint_states` share a clock. If they don't, the node
        says so once ("latency not compensated") and still works, with a little
        overshoot.
-  - **To fix: the wrist buzzes when the error is small** (seen on the robot 2026-10-15).
+  - **To fix: the wrist buzzes when the error is small** (seen on the robot 2026-10-15,
+    diagnosed 2026-10-16).
     Large turns are smooth; near the centre the wrist makes a buzzing sound.
-    - **Probably not the missing I or D term.** A buzz is a high-frequency excitation.
-      A D term would amplify the landmark noise, and an I term winds up over the
-      latency. A loop that is oscillating would show as a visible wobble at a few Hz,
-      not a buzz. Suspects, most likely first:
-      1. **50 Hz steps.** The node sends a new velocity every 20 ms and the UR holds
-         each one for 10 of its 2 ms cycles. The arm gets a staircase, not a smooth
-         curve.
-      2. **Tiny velocities.** Near the centre the commands are tiny: the creep at the
-         edge of the deadband, and the optical-centre hold pulling back a few mm (a
-         2 /s gain on mm of drift). The wrist joints may stick and slip at such speeds.
-      3. **Start/stop at the deadband edge.** Hand tremor around the 5 % edge
-         starts and stops the motion again and again.
-    - **Diagnose first.** Record `ros2 bag record /forward_velocity_controller/commands
-      /joint_states /camera_aim/status` during a buzz. Then look at the commands: a
-      staircase (1), a stream of near-zero values (2), or on/off toggling (3).
-    - **Fixes to try, cheapest first:**
-      - once centred, ramp to zero and then send exact zeros: no creep, and the centre
-        hold only beyond ~2 mm;
-      - below ~0.003 rad/s, command 0;
-      - a minimum stop time (e.g. 0.5 s) so tremor at the edge cannot restart it;
-      - a lower gain for small errors (gain scheduling);
-      - if (1) (the user's verdict on the robot, 2026-10-15: it is): smooth commands at
-        the controller's rate. The camera's 30/60 Hz is NOT a limit here: between images
-        the node re-expresses the fixed base-frame fingertip ray with the latest joint
-        state (500 Hz), and the smoother turns the 30 Hz target steps into a continuous
-        rate. The limit is Python: one step (law + collision check) is 2.5 ms, so at
-        most ~400 Hz and realistically 125 Hz. Quick test first: `rate_hz:=125.0` on the
-        aim node (a parameter already). Options for 500 Hz:
-        - a 250–500 Hz interpolating stream (a C++ node or a dedicated thread);
-        - short spline segments streamed to `scaled_joint_trajectory_controller`'s
-          topic, which interpolates at 500 Hz, with no controller switching either;
-        - MoveIt Servo (500 Hz, with its own smoothing filters).
+    - **Diagnosed 2026-10-16** from a bag (`ros2_ws/rosbag2_2026_10_16-13_49_03`: 45 s,
+      32 s of aiming; `/joint_states` 500 Hz with effort, the commands at 50 Hz):
+      - **It is the 50 Hz staircase.** The wrist joint velocities peak at 49–51 Hz (30–50×
+        the noise floor), and the efforts (motor current) at 50 and 100 Hz. ~8 ms after
+        every command step the effort spikes (−0.4 against a ±0.05 background) and the
+        velocity overshoots its new value by ~25 %: one kick every 20 ms.
+      - **Loudness follows the size of the jump between commands, not the speed.** The
+        correlation of the 100 Hz effort with the command step is 0.84, with the
+        commanded speed 0.13. During aiming it is 11× the idle level (trajectory
+        controller). Cruising at the 15°/s cap is quiet: small steps. Starts, stops and
+        reversals are loud: acceleration × 20 ms = big steps.
+      - **Why near the centre.** That is where it starts and stops. With the 1280-px
+        image the 5 % deadband is 64 px ≈ 4°, and engaging jumps the target from 0 to
+        ~8°/s (2.5 /s × 0.8 × 4°). Hand tremor at the edge restarts it, and each restart
+        is a full-acceleration burst.
+      - **Ruled out:** the I/D question (this is not the loop oscillating); tiny
+        commands (the hold-still windows, |cmd| < 0.002 rad/s, are as quiet as idle).
+    - **Fixes, in order:**
+      1. ~~**Smooth the stream to 500 Hz.**~~ Steps:
+         - 2026-10-16: `rate_hz` 50 → 125 (2.5× smaller steps), "definitely improved" by
+           ear.
+         - Then BUILT: the C++ `aim_rate_relay`. It takes the aim node's 125 Hz rates on
+           `/camera_aim/joint_rates`, ramps linearly between them over the measured input
+           period (8 ms of delay) and streams to `forward_velocity_controller` at 500 Hz.
+           Against the fake cell: 500 Hz (median 1.99 ms), the largest step between
+           commands 0.0017 rad/s (the 50 Hz bag: p95 0.009). A `kill -9` of the aim node
+           mid-turn: the relay ramps the arm to zero within ~0.1 s (it used to keep the
+           last rate). `gestures.launch.py` starts it; the aim node refuses to start
+           without it.
+         - **Next: confirm on the robot.** Record a bag with
+           `ros2 bag record /joint_states /forward_velocity_controller/commands
+           /camera_aim/joint_rates /camera_aim/status`, then compare it with the first one
+           using `/usr/bin/python3 scripts/aim_bag_report.py
+           ../../rosbag2_2026_10_16-13_49_03 <new bag>`. The first bag: commands 50 Hz,
+           buzz index 3.4× idle, peak 50.8 Hz. Success = 500 Hz, an index near 1, and no
+           50 Hz peak.
+      2. **Soften the engagement.** Start the target from zero at the deadband edge and
+         let it grow, instead of jumping to ~8°/s. Add a minimum stop time (~0.5 s) so
+         tremor cannot restart it at once. Maybe a smaller deadband in degrees for the
+         1280-px image.
+      3. Alternatives to (1) if the relay disappoints: short spline segments streamed
+         to `scaled_joint_trajectory_controller` (interpolated at 500 Hz, no controller
+         switching), or MoveIt Servo.
   - **What.** When the gesture node starts, with the robot at home, `Pointing_Up` is a
     live AIM mode: the robot turns the wrist camera to follow the fingertip. The
     operator points the camera at a part in real time. The first `ILoveYou` (capture)

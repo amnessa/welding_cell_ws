@@ -8,7 +8,13 @@ middle of the image; the next ILoveYou captures from the aimed pose. The control
 admittance_control/camera_aim.py (a filtered P loop with exact latency compensation).
 
 Execution: the UR driver's forward_velocity_controller (loaded inactive by
-ur_control.launch.py), joint rates at `rate_hz`. On the first aim message - the arm
+ur_control.launch.py). This node computes joint rates at `rate_hz` (125 Hz: one Python
+step costs 2.5 ms) and publishes them on `command_topic`, /camera_aim/joint_rates. The
+C++ aim_rate_relay ramps between them at the UR's 500 Hz and forwards them to the
+controller: sent directly, every new rate was a velocity step the arm applied as a
+torque kick, and the wrist buzzed (notes/thesis_notes.md, 2026-10-16). Without the relay
+the node refuses to start; `command_topic:=/forward_velocity_controller/commands`
+streams directly (buzzes). On the first aim message - the arm
 still, the camera within `home_tol_m` of where it is at home_q (config/marking.json) -
 it switches scaled_joint_trajectory_controller (whatever holds the joints) to the
 velocity controller. When the fingertip has been gone `deadman_s` the rate ramps to
@@ -24,14 +30,16 @@ Safety, every cycle:
   * the pendant's speed slider scales all of it.
 A refusal stops the arm at once, hands the joints back to the trajectory controller and
 stays latched until the hand has been away a second. Ctrl-C, SIGTERM and an exception in
-the loop stop it too; only a hard kill (SIGKILL) would leave the last rate on the
-velocity controller, which is what the pendant's stop is for.
+the loop stop it too. A hard kill (SIGKILL) mid-turn is caught by the relay: no input for
+0.1 s and it ramps the arm to zero itself.
 
 The dry run (default) switches nothing and publishes nothing: it integrates the rates on
 a simulated arm, from the real one, and logs where the camera would turn. The fingertip
 ray is held in the base frame, so the simulated camera centres it as the real one would.
 
-Run (the UR driver and the gesture node running):
+Run (the UR driver up): `ros2 launch admittance_control gestures.launch.py` starts the
+gesture node, this node and the relay. On their own:
+    ros2 run admittance_control aim_rate_relay
     ros2 run admittance_control camera_aim_node.py                         # dry run
     ros2 run admittance_control camera_aim_node.py --ros-args -p dry_run:=false
 """
@@ -88,13 +96,13 @@ class CameraAimNode(Node):
         self.declare_parameter('camera_info_topic', '/camera/color/camera_info')
         self.declare_parameter('joint_states_topic', '/joint_states')
         self.declare_parameter('wrench_topic', '/force_torque_sensor_broadcaster/wrench')
-        self.declare_parameter('command_topic', '/forward_velocity_controller/commands')
+        self.declare_parameter('command_topic', '/camera_aim/joint_rates')   # -> aim_rate_relay
         self.declare_parameter('controller_manager', '/controller_manager')
         self.declare_parameter('velocity_controller', 'forward_velocity_controller')
         self.declare_parameter('marking_config', '')            # '' = config/marking.json
         self.declare_parameter('extrinsic_path', '')            # '' = the tool config's
         self.declare_parameter('kinematics_file', str(PKG / 'config' / 'ur5e_calibration.yaml'))
-        self.declare_parameter('rate_hz', 50.0)
+        self.declare_parameter('rate_hz', 125.0)
         self.declare_parameter('deadman_s', 0.3)
         self.declare_parameter('idle_s', 0.3)                   # still this long -> hand back
         self.declare_parameter('home_tol_m', 0.05)
@@ -270,7 +278,10 @@ class CameraAimNode(Node):
             if vel[0].state == 'active':
                 # someone else streams to it (a second aim node, MoveIt Servo): two
                 # writers on one velocity controller is not something to join
-                self._latch(f'{self._vel} is already active - another aim node or Servo?')
+                self._latch(f'{self._vel} is already active - another aim node or Servo? '
+                            f'After a crash of this node, hand the joints back by hand: '
+                            f'ros2 control switch_controllers --activate '
+                            f'scaled_joint_trajectory_controller --deactivate {self._vel}')
                 return
             self._handed_from = [
                 c.name for c in ctrls if c.state == 'active' and c.name != self._vel
@@ -434,6 +445,12 @@ class CameraAimNode(Node):
             self._state = self.ACTIVE
             self._say('DRY AIM: simulating from the current pose (nothing moves)')
             return
+        topic = str(self.get_parameter('command_topic').value)
+        if self._cmd_pub.get_subscription_count() == 0:
+            self._latch(f'nothing listens on {topic}: start aim_rate_relay (gestures.launch.py '
+                        f'does), or command_topic:=/forward_velocity_controller/commands to '
+                        f'stream directly (the wrist buzzes)')
+            return
         self._state = self.STARTING
         self._take_joints()
 
@@ -482,6 +499,11 @@ def main(args: Optional[List[str]] = None) -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        # Ctrl-C reaches every node twice under ros2 launch (the terminal signals the
+        # whole process group, then launch forwards its own): a second interrupt here
+        # would abort the zero command and the hand-back half-way. Ignore it.
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
         try:
             node.shutdown_stop()
         finally:
