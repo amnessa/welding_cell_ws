@@ -1,0 +1,598 @@
+% =====================================================================================
+\chapter{METHODOLOGY: PERCEPTION-GUIDED ROBOTIC TACK PLACEMENT}
+\label{chp:method_cell}
+% First shape 2026-10-16 (from the 2026-10-08 skeleton chapters 4-6 + the work since).
+% Shape follows the lab examples (Oydu, Kurt, Agus): overview -> problem formulation ->
+% one section per component, its mathematics in place -> implementation details.
+% Material: README (Big picture, How the pieces connect, Algorithms §1-8, §14-16, node
+% table); notes/perception_aciklama.md, realtime_fp.md, multiview_refine_plan.md,
+% curved_seams_plan.md, seam_two_modes_plan.md, pen_marking_plan.md, aps_transit_plan.md,
+% thesis_notes.md; module docstrings (named in each \SRC).
+% Results do NOT go here: every number measured on the bench belongs to Chapter 6.
+% =====================================================================================
+
+This chapter describes the robotic cell that turns a hand-placed assembly of known parts
+into marked tack positions, using one wrist-mounted RGB-D camera and no touch sensing
+for localisation. Section~\ref{sec:mc_overview} gives the pipeline as a whole and
+Section~\ref{sec:mc_problem} states the problem. The sections after them follow the
+pipeline: calibration (\S\ref{sec:mc_calibration}), the operator interface
+(\S\ref{sec:mc_hri}), perception and registration (\S\ref{sec:mc_perception}),
+multi-view refinement (\S\ref{sec:mc_multiview}), seams (\S\ref{sec:mc_seams}), tacks
+(\S\ref{sec:mc_tacks}) and motion (\S\ref{sec:mc_motion}). Implementation details close
+the chapter (\S\ref{sec:mc_impl}).
+
+% -------------------------------------------------------------------------------------
+\section{Overview of the Proposed System}
+\label{sec:mc_overview}
+The cell works on assemblies of parts whose CAD models are known: plates, tubes and
+curved strips placed by hand on a table, in weld position, one after the other. It
+finds where they are, computes where they meet, places tacks on the weldable seams and
+marks each tack with a pen held by a UR5e. The pen stands in for a welding torch: the
+geometry, the reach and the accuracy requirements are the same, the heat is not.
+
+The pipeline has four stages (Figure~\ref{fig:mc_pipeline}):
+\begin{enumerate}
+\item \textbf{Perceive.} The operator aims the camera by pointing, freezes a frame and
+  clicks the part with gestures; the part is segmented, classified against the CAD
+  library and registered in 6D, then tracked while it is placed and saved when it rests.
+\item \textbf{Refine.} With every part saved, the robot moves the camera to a few
+  close-range views around the joints and refines all poses jointly.
+\item \textbf{Compute.} Each registered part is represented as an exact geometric
+  primitive; seams follow from where the primitives meet, and tacks from a placement
+  rule on the seams.
+\item \textbf{Act.} Reachability, collision-free transits and a force-gated descent
+  bring the pen to every tack.
+\end{enumerate}
+
+\figplaceholder{fig:mc_pipeline}{The pipeline: aim, capture, segment + classify,
+register, track, save (per part) -> multi-view refinement -> seams -> tacks ->
+reachability -> transits -> force-gated marking; which machine runs what}{Overview of the
+proposed perception-guided tack placement pipeline.}
+\SRC{notes/pipeline\_map.dot (redraw in English); README ``Big picture''.}
+
+% -------------------------------------------------------------------------------------
+\section{Problem Formulation}
+\label{sec:mc_problem}
+\textbf{Given} a library of CAD models $\{\mathcal{M}_m\}$, a manipulator with joints
+$\vect{q}\in\mathbb{R}^6$ and forward kinematics $\Tf{B}{E}(\vect{q})$, an RGB-D camera
+on the wrist, and an assembly of parts $k=1,\dots,K$ placed by hand, \textbf{find} for
+every part its model $m_k$ and pose $\Tf{B}{O_k}$; from them the set of weldable seams
+$\{\mathcal{S}_j\}$; on them a set of tacks, each a point $\vect{p}_i$ on a seam with a
+pen axis $\vect{a}_i$; and for every tack a collision-free joint trajectory that brings
+the pen tip to $\vect{p}_i$ along $\vect{a}_i$.
+
+The quantity that matters is the mark error: the distance between where the pen marks
+and the true weld root. It is the sum of the errors of every link in the chain
+\begin{equation}
+\Tf{B}{O}(t) = \Tf{B}{E}\big(\vect{q}(t)\big)\;\Tf{E}{C}\;\Tf{C}{O}(t),
+\label{eq:frame_chain}
+\end{equation}
+which is why calibration, registration and refinement each get a section below.
+
+\textbf{Assumptions.} The parts are rigid and match their CAD models; they rest on the
+table or on each other (they do not float); the table is a plane; the operator places
+the parts one at a time; nothing moves while the robot marks.
+
+\TODO{Notation table (frames B, E, C, O; $\vect{q}$; seam $\mathcal{S}$, tack
+$(\vect{p},\vect{a},\varphi)$ with roll $\varphi$; tolerances). One table, used by every
+chapter.}
+
+% -------------------------------------------------------------------------------------
+\section{Coordinate Frames and Calibration}
+\label{sec:mc_calibration}
+The principle of the calibration is to measure each link of Equation~\ref{eq:frame_chain}
+against a reference that does not depend on it. The robot is that reference: its
+factory-calibrated kinematics and the pen tip, touched onto surfaces, measure better
+than any camera-based estimate. The order matters too, because a step calibrated on top
+of an uncorrected earlier one learns that error.
+
+\begin{table}[htbp]
+\caption{The calibration chain: each link, its method and its reference.}
+\label{tab:calib_chain}
+\centering\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Link & Method & Reference \\
+\midrule
+Kinematics & factory calibration used in every tool & the controller \\
+Pen tip (TCP) & 4-point TCP; roll and tilt touches & table plane \\
+Table plane & pen touches, plane fit & the robot \\
+Camera depth & Tare with a robot-computed distance & table plane \\
+Extrinsic rotation & camera tilt separated from table tilt at four wrist yaws & table plane \\
+Extrinsic translation & online, from multi-view disagreement (\S\ref{sec:mv_selfcal}) & views \\
+\bottomrule
+\end{tabular}
+\end{table}
+\TODO{Residual column moves to Chapter 6 (it is a result).}
+
+\figplaceholder{fig:frames}{TF tree base\_link -- tool0 -- camera\_color\_optical\_frame
+-- object, drawn on the robot}{Coordinate frames of the cell.}
+
+\subsection{Kinematics, Tool Centre Point and Table}
+\label{sec:mc_kin_tcp_table}
+\TODO{Why the factory-calibrated chain (nominal vs.\ calibrated differ by millimetres at
+the tip); the pen TCP from four orientations; the table as a plane
+$\vect{n}^{\top}\vect{x}+d=0$ fitted to pen touches, tilted (it is not level), used as the
+height reference everywhere (ground cut, depth check, collision model).}
+\SRC{README \S14; scripts/table\_touchoff.py, tcp\_offset\_probe.py; notebooks/table\_plane.json.}
+
+\subsection{Hand-Eye Calibration}
+\label{sec:mc_handeye}
+The camera's pose on the flange, $\mathbf{X}=\Tf{E}{C}$, solves
+\begin{equation}
+\mathbf{A}_i\,\mathbf{X} = \mathbf{X}\,\mathbf{B}_i,
+\label{eq:handeye}
+\end{equation}
+with $\mathbf{A}_i$ the relative flange motions and $\mathbf{B}_i$ the relative motions of
+a calibration board seen by the camera \cite{tsai1989handeye,park1994handeye}.
+\TODO{The ChArUco board, the sample poses, the residual judge; the TCP-frame pitfall
+(a solve in the wrong frame that looked plausible); separating the camera's tilt from
+the table's by viewing the table at four wrist yaws.}
+\SRC{README \S14 (24 and 28 Sep); helper/calibration/; thesis\_notes.md.}
+
+\subsection{Depth Calibration Against the Robot}
+\label{sec:mc_depth}
+A disparity offset $\delta$ (pixels) in a stereo camera with focal length $f$ and baseline
+$b$ gives a depth error that grows with the square of the range:
+\begin{equation}
+\Delta z = \frac{z^{2}\,\delta}{f\,b}.
+\label{eq:depth_error}
+\end{equation}
+The camera's own calibration (the Tare) needs a ground-truth distance; here it is
+computed from the robot (the camera pose by Equation~\ref{eq:frame_chain} and the touched
+table plane) instead of measured by hand.
+\TODO{Measurement at three heights; the $a + k z^2$ fit; why a hand-measured distance
+left a scale error.}
+\SRC{README \S16; scripts/tare\_distance.py, extrinsic\_check.py.}
+\figplaceholder{fig:depth_law}{Camera-vs-pen table offset at three ranges, before and after
+the Tare, with the $a+kz^2$ fit}{Depth error against range, before and after calibration.}
+
+% -------------------------------------------------------------------------------------
+\section{Operator Interaction}
+\label{sec:mc_hri}
+The operator never touches a keyboard: hand gestures seen by the same RealSense drive
+the pipeline, and pointing aims the camera before a frame is captured.
+
+\subsection{Gesture Interface}
+\label{sec:mc_gestures}
+MediaPipe's gesture recogniser \cite{lugaresi2019mediapipe} classifies seven static
+gestures per frame. A gesture acts only after it has been stable for a number of frames
+(a latch), and a gesture that moves the robot must be held for two seconds. Because the
+hand and the parts are in one image, the index fingertip is a pixel of the very frame
+that is segmented: no second camera, no calibration between cameras.
+\begin{table}[htbp]
+\caption{Gestures and their actions.}
+\label{tab:gestures}
+\centering\small
+\begin{tabular}{@{}p{0.24\textwidth}p{0.34\textwidth}p{0.34\textwidth}@{}}
+\toprule
+Gesture & No frame frozen & A frame frozen (segmenting) \\
+\midrule
+Pointing\_Up & aim the camera (\S\ref{sec:mc_aim}) & cursor: dwell to pick a point \\
+ILoveYou & capture: freeze an RGB-D frame & re-capture \\
+Thumb\_Up & --- & commit the point, segment and register \\
+Thumb\_Down & clear the frame & mark the point ``not this part'' \\
+Open\_Palm & compute the seams & undo the last point \\
+Closed\_Fist (held 2 s) & multi-view refinement (the robot moves) & same \\
+Victory & save the part & save the part \\
+\bottomrule
+\end{tabular}
+\end{table}
+\SRC{scripts/gesture\_control\_node.py docstring; README Data flow \S E.}
+
+\subsection{Finger-Pointing Camera Aim}
+\label{sec:mc_aim}
+While the operator points and nothing is frozen, the camera turns until the fingertip is
+in the middle of the image. The motion is restricted to a rotation about the camera's
+own optical centre: the camera's position is held, so the operator steers only where it
+looks. This restriction is what makes the controller simple, because the ray from the
+optical centre to a still fingertip does not change in the base frame however the
+camera turns, whatever the fingertip's depth.
+
+\paragraph{Error with exact latency compensation.} The fingertip pixel
+$(u,v)$, measured on an image taken at time $t_k$ and delivered about 0.1~s later, is
+turned into a ray in the base frame with the camera orientation at $t_k$ (from the
+joint-state history), filtered there by a One-Euro filter \cite{casiez2012oneeuro}, and
+expressed in the camera frame of the current control cycle:
+\begin{equation}
+\vect{r}_B = \Rf{B}{C}(t_k)\,\frac{\mathbf{K}^{-1}[u\ v\ 1]^{\top}}{\norm{\mathbf{K}^{-1}[u\ v\ 1]^{\top}}},
+\qquad
+\vect{d} = \Rf{B}{C}(t)^{\top}\,\vect{r}_B,
+\qquad
+\vect{e} = \big(d_x/d_z,\ d_y/d_z\big).
+\label{eq:aim_error}
+\end{equation}
+
+\paragraph{Control law.} An image-based visual servo \cite{chaumette2006vs} in its
+simplest form, a proportional loop on the angular error, with a deadband and a rate cap:
+\begin{equation}
+\boldsymbol{\omega}_C = \big(-K e_y,\ K e_x,\ -k_r\,\psi\big),
+\qquad
+\psi = \operatorname{twist}_z\!\big(\Rf{B}{C_0}^{\top}\Rf{B}{C}\big),
+\label{eq:aim_law}
+\end{equation}
+where $\psi$ is the roll of the camera about its optical axis relative to the home view,
+taken from a swing--twist split. Two rotations aim the optical axis; the third, the
+roll, is redundant and is held at home so that the image keeps its orientation.
+No integral term (it winds up over the latency) and no derivative term (the landmark
+is noisy).
+\TODO{Deadband with hysteresis; the rate and acceleration limits and the two-lag
+smoother; the excursion limits looked ahead by the stopping distance.}
+
+\paragraph{From the camera rate to joint rates.} The tool flange moves so that the optical
+centre stays still, with a small proportional pull back to its anchor $\vect{p}_{C,0}$;
+damped least squares \cite{wampler1986dls} gives the joint rates:
+\begin{equation}
+\begin{aligned}
+\vect{v}_E &= k_p\,(\vect{p}_{C,0}-\vect{p}_C) + \boldsymbol{\omega}\times(\vect{p}_E-\vect{p}_C),
+\qquad \boldsymbol{\omega} = \Rf{B}{C}\,\boldsymbol{\omega}_C,\\
+\dot{\vect{q}} &= \mathbf{J}^{\top}\big(\mathbf{J}\mathbf{J}^{\top}+\lambda^2\mathbf{I}\big)^{-1}
+\begin{bmatrix}\vect{v}_E\\ \boldsymbol{\omega}\end{bmatrix}.
+\end{aligned}
+\label{eq:aim_dls}
+\end{equation}
+
+\paragraph{Execution and safety.} The joint rates stream to the UR driver's velocity
+controller, which the aim switches in and out by itself. Every cycle, the pose 0.3~s
+ahead is checked against the collision model, the branch lock and the wrist singularity;
+a fingertip lost for 0.3~s ramps the rate to zero.
+
+\paragraph{Command interpolation.} The control law runs at 125~Hz (one cycle costs
+2.5~ms in Python); the controller runs at 500~Hz. A velocity held for several controller
+cycles and then changed is a step that the arm applies as a torque kick; a stream of
+them is audible. A relay between the two ramps linearly from one command to the next
+over the measured command period $T$,
+\begin{equation}
+\dot{\vect{q}}_{\mathrm{cmd}}(t) = \dot{\vect{q}}_{k-1} + \frac{t-t_k}{T}\,\big(\dot{\vect{q}}_k-\dot{\vect{q}}_{k-1}\big),
+\qquad t_k \le t < t_k+T,
+\label{eq:relay}
+\end{equation}
+and stops the arm by itself when the commands stop.
+\figplaceholder{fig:mc_aim_loop}{Block diagram of the aim loop: image (30 Hz, 0.1 s late)
+-> fingertip -> base-frame ray (pose at the image stamp) -> One-Euro -> error in the
+current camera frame -> P law + roll hold -> smoother -> DLS -> 125 Hz -> relay 500 Hz ->
+velocity controller}{The finger-pointing camera aim loop.}
+\SRC{admittance\_control/camera\_aim.py, scripts/camera\_aim\_node.py,
+src/aim\_rate\_relay.cpp; thesis\_notes.md 2026-10-15/16.}
+
+% -------------------------------------------------------------------------------------
+\section{Perception and Registration}
+\label{sec:mc_perception}
+
+\subsection{Segmentation and Part Classification}
+\label{sec:per_classify}
+The clicked points (positive and negative) and the frozen colour image go to SAM2
+\cite{ravi2024sam2}, which returns one mask per part; the masked depth becomes the part's
+point cloud. Which CAD model it is follows from point-pair features
+\cite{drost2010ppf,birdal2015ppf},
+\begin{equation}
+\mathbf{F}(\vect{m}_1,\vect{m}_2) = \big(\norm{\vect{d}},\ \angle(\vect{n}_1,\vect{d}),\
+\angle(\vect{n}_2,\vect{d}),\ \angle(\vect{n}_1,\vect{n}_2)\big),\quad
+\vect{d}=\vect{m}_2-\vect{m}_1,
+\label{eq:ppf}
+\end{equation}
+voted against every model of the library; the best hypotheses are verified by how much
+of the cloud they explain and how much of the model they cover.
+\TODO{The verification score (coverage $\times$ explanation); 12 hypotheses; forcing the
+model name on a re-registration.}
+\SRC{notes/perception\_aciklama.md \S6--8; scripts\_in\_foundationpose/ppf\_classifier.py, fp\_server.py.}
+
+\subsection{6D Pose Registration and Live Tracking}
+\label{sec:per_register}
+FoundationPose \cite{wen2024foundationpose} registers the CAD model to the masked RGB-D
+frame (pose hypotheses, render-and-compare refinement, scoring) and then tracks it frame
+to frame while the operator positions the part. Registration runs on the desktop GPU,
+tracking on the laptop's; the camera's own motion is cancelled by looking up
+Equation~\ref{eq:frame_chain} at each image's time stamp.
+\TODO{Lost-track detection and re-registration locked to the tracked model's name; why
+FoundationPose tracking replaced the ICP tracker (moving parts, CPU load).}
+\SRC{notes/realtime\_fp.md; thesis\_notes.md 2026-10-02, 10-06.}
+\figplaceholder{fig:tracking_split}{Desktop registers, laptop tracks: data flow, rates and
+latencies}{The registration and tracking split between two GPUs.}
+
+\subsection{Stationary Refinement and Saving}
+\label{sec:per_stationary}
+When a part comes to rest, its pose is averaged over the still frames (median
+translation, chordal mean of the rotations) and refined by point-to-plane ICP against
+the scene, minimising
+\begin{equation}
+E(\mathbf{R},\vect{t}) = \sum_i w_i\,\Big(\big(\mathbf{R}\vect{p}_i+\vect{t}-\vect{q}_i\big)^{\!\top}\vect{n}_i\Big)^2,
+\qquad w_i = \exp\!\Big(-\frac{r_i^2}{2\nu^2}\Big),
+\label{eq:p2plane}
+\end{equation}
+with Welsch weights \cite{zhang2022fricp,chen1992p2plane}. A pair counts only if the
+normals agree,
+\begin{equation}
+(\mathbf{R}\,\vect{n}^{\mathrm{model}}_i)^{\top}\vect{n}^{\mathrm{scene}}_j \ge \cos 60^\circ ,
+\label{eq:normal_gate}
+\end{equation}
+which stops a thin plate's model from straddling its own two faces. The saved part
+becomes part of the static environment that the next part is registered against.
+\TODO{Figure: the straddling plate before and after the gate (cross-section).}
+\SRC{README Algorithms \S4--7; pose\_stats.py; icp\_pose\_refiner\_node.py.}
+
+\subsection{Symmetric and Cut Parts}
+\label{sec:per_symmetry}
+A plain tube's rotation about its own axis is not observable, so ICP and the tracker each
+return an arbitrary one. The correction is split into a swing (which tilts the axis) and
+a twist (about it), and only the swing is kept:
+\begin{equation}
+\Rf{}{\mathrm{ref}}^{\top}\Rf{}{\mathrm{new}} = \mathbf{R}_{\mathrm{swing}}\,\mathbf{R}_{\mathrm{twist}}(\vect{a}),
+\qquad \Rf{}{\mathrm{saved}} = \Rf{}{\mathrm{ref}}\,\mathbf{R}_{\mathrm{swing}} .
+\label{eq:swing_twist}
+\end{equation}
+A tube cut at an angle (a mitre) is not symmetric, but its spin is still poorly
+observed by the camera. It is fixed by physics instead: the part rests on its base, so
+the spin is the one that makes the cut face sit flat on it,
+\begin{equation}
+\psi^{*} = \arg\min_{\psi}\ \Big(\max_{s} g(s;\psi) - \min_{s} g(s;\psi)\Big),
+\label{eq:spin_settle}
+\end{equation}
+with $g(s;\psi)$ the gap between the cut face and the base along the contact.
+\SRC{pose\_stats.remove\_twist; curved\_seams.settle\_cut\_spins; thesis\_notes.md 2026-10-15.}
+
+% -------------------------------------------------------------------------------------
+\section{Multi-View Close-Range Refinement}
+\label{sec:mc_multiview}
+A single view from the scan pose leaves millimetres of error where it matters most, at
+the joints, which are seen at a distance and at grazing angles. With all parts saved, the
+robot moves the camera to a few close views of the seams and all poses are refined
+together.
+\SRC{notes/multiview\_refine\_plan.md (design D1--D8); README \S15; multiview*.py.}
+
+\subsection{View Planning}
+\TODO{Targets on the seam regions; per candidate view the visibility of each target (range,
+field of view, incidence, occlusion); greedy selection with diminishing returns; IK on
+the branch, singularity and collision checks; the order of the views and the transits
+between them.}
+\figplaceholder{fig:views}{The planned views around an assembly (RViz) and the stacked
+clouds coloured by view}{Planned close-range views.}
+
+\subsection{Joint Refinement of Touching Parts}
+For part $k$ with a correction $\boldsymbol{\xi}_k\in\mathfrak{se}(3)$ about its centre,
+\begin{equation}
+\min_{\boldsymbol{\xi}_k}\ \sum_{v}\sum_{i\in\mathcal{O}_k^v} \rho\big(r_{v,i}\big)^2
++ \boldsymbol{\xi}_k^{\top}\boldsymbol{\Sigma}^{-1}\boldsymbol{\xi}_k\,\sigma^2
++ w_o\sum_{c}\max\!\big(0,\,-\mathrm{sd}_c-\varepsilon\big)^2 ,
+\label{eq:mv_objective}
+\end{equation}
+where $\mathcal{O}_k^v$ are the points of view $v$ that part $k$ owns, the second term is a
+prior on the correction, and the third penalises overlap with the neighbouring parts,
+$\mathrm{sd}_c$ being the signed distance of contact sample $c$ to its neighbour. The
+neighbours are their true shapes, not bounding boxes: a tube's bore is hollow, a cut
+tube ends at its cut. The parts take turns (block coordinate descent).
+\TODO{Ownership with a dead band; the signed distance of each primitive (slab, tube with
+its bore, cut tube, swept band); two rounds.}
+
+\subsection{Observability}
+With the information matrix $\mathbf{H}=\mathbf{J}^{\top}\mathbf{W}\mathbf{J}$ and its
+eigenvalues $\lambda$, a direction is considered measured when
+\begin{equation}
+\sigma_{\mathrm{dir}} = \frac{\sigma_{\mathrm{noise}}}{\sqrt{\lambda}} \le 0.5\ \mathrm{mm}.
+\label{eq:observability}
+\end{equation}
+Directions that are not measured keep their prior value.
+
+\subsection{Online Estimation of the Camera's Extrinsic Translation}
+\label{sec:mv_selfcal}
+An error $\vect{d}$ in the extrinsic translation (camera frame) shifts view $v$'s cloud by
+$\mathbf{R}_v\vect{d}$, differently in every view. Estimated jointly with the poses,
+\begin{equation}
+r_{v,i} = \vect{n}_i^{\top}\big(\mathbf{T}\vect{p}_i - \vect{q}_i + \mathbf{R}_v\vect{d}\big),
+\qquad
+\mathbf{S} = \mathbf{N}_{dd} - \mathbf{N}_{dx}\mathbf{N}_{xx}^{+}\mathbf{N}_{xd},
+\label{eq:extrinsic_d}
+\end{equation}
+where the Schur complement $\mathbf{S}$ is the information about $\vect{d}$ left after
+the poses are accounted for.
+\TODO{Removing $\mathbf{R}_v\vect{d}$ from the views and $\mathbf{R}_{\mathrm{scan}}\vect{d}$
+from the saved poses; why the joint fit alone does not remove $\vect{d}$.}
+
+\subsection{Acceptance}
+\label{sec:mv_accept}
+A refinement is applied when it stays within the limits; the rules are consistent with
+that principle:
+\begin{table}[htbp]
+\caption{When a multi-view correction is refused.}
+\label{tab:mv_acceptance}
+\centering\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+Check & Refused when \\
+\midrule
+Correction size & $>10$ mm or $>5^\circ$ (a pipe: the tilt of its axis, not its spin) \\
+Overlap with neighbours & worse than the saved assembly's by more than 0.2 mm \\
+Fit & \textit{to fill: fitness; an unmeasured relative change} \\
+\bottomrule
+\end{tabular}
+\end{table}
+\TODO{Complete the acceptance rules from multiview\_refine.judge.}
+
+% -------------------------------------------------------------------------------------
+\section{Seams from the Registered Assembly}
+\label{sec:mc_seams}
+Seams are not detected in the point cloud: they are computed from the registered CAD
+models. Each part is represented as one of WeldSet's exact primitives
+(Chapter~\ref{chp:method_weldset}), and the seam rule of WeldSet
+(\S\ref{sec:ws_d4}) is applied to the primitives at their registered poses. The cell's
+seams are thus the same exact geometry that WeldSet uses as ground truth, evaluated at
+the measured poses.
+
+\subsection{CAD Parts as Primitives}
+\label{sec:mc_registry}
+A registry maps every CAD model to a primitive: a slab (plate), a tube (with its bore,
+and its cuts), or a swept slab (a band along a spine curve, fitted as a B-spline). A fit
+is accepted when it is verified both ways, the CAD surface against the primitive and the
+primitive against the CAD surface, within a fraction of a millimetre, and the volumes
+agree; a registry entry whose CAD file has changed since the fit is detected and refused.
+\SRC{weldgen\_registry.py (derive\_box, derive\_tube, derive\_extrusion, verify\_both\_ways);
+part\_shapes.stale\_entries.}
+
+\subsection{Planar Seams}
+Two planar faces with unit normals $\vect{n}_1,\vect{n}_2$ through points
+$\vect{p}_1,\vect{p}_2$ meet on the line
+\begin{equation}
+\vect{d} = \frac{\vect{n}_1\times\vect{n}_2}{\norm{\vect{n}_1\times\vect{n}_2}},\qquad
+\vect{x}(s) = \vect{x}_0 + s\,\vect{d},\quad
+\vect{n}_i^{\top}\vect{x}_0 = \vect{n}_i^{\top}\vect{p}_i\ (i=1,2),
+\label{eq:plane_intersection}
+\end{equation}
+clipped to where both faces exist. Because the parts are registered, not in perfect
+contact, the rule uses a pose tolerance instead of a contact tolerance.
+
+\subsection{Curved Seams}
+\label{sec:mc_curved}
+A tube standing on a plate meets it along a plane--cylinder intersection, an ellipse.
+With the tube axis $\vect{a}$ through $\vect{c}$, radius $r$, orthonormal $\vect{u},\vect{v}\perp\vect{a}$,
+and the plate's top plane $\vect{n}^{\top}\vect{x}=\vect{n}^{\top}\vect{p}_0$,
+\begin{equation}
+\begin{aligned}
+\vect{x}(\theta) &= \vect{c} + r(\cos\theta\,\vect{u}+\sin\theta\,\vect{v}) + h(\theta)\,\vect{a},\\
+h(\theta) &= \frac{\vect{n}^{\top}(\vect{p}_0-\vect{c}) - r\,(\vect{n}^{\top}\vect{u}\cos\theta+\vect{n}^{\top}\vect{v}\sin\theta)}{\vect{n}^{\top}\vect{a}} .
+\end{aligned}
+\label{eq:ellipse_seam}
+\end{equation}
+A branch tube on a main tube meets it along a saddle (cylinder--cylinder intersection);
+a curved band on a plate meets it along the offsets of its spine.
+\TODO{The saddle in general position (the branch at an angle); the band's two toe
+curves; a member must not lie in the face's plane (minimum angle); the frame per point
+(normals of both members, approach) and why it rotates along a curved seam.}
+\SRC{curved\_seams.py (\_tube\_on\_slab, \_tube\_on\_tube, \_band\_on\_slab);
+weldgen/curves.py (ellipse\_from\_plane\_cylinder, saddle\_from\_cylinders).}
+\figplaceholder{fig:mc_seam_kinds}{The three curved cases on the bench parts: pipe on
+plate (ellipse), branch on pipe (saddle), band on plate (spine offsets), with the
+per-point frames}{Curved seams computed from registered primitives.}
+
+\subsection{Fit-Up Gap and Weldability}
+\label{sec:mc_fitup}
+Between registered parts the gap along a seam is measured, and a seam whose gap exceeds
+what a welder could bridge is reported, not silently dropped. The admissible root gap
+follows ISO 5817 \cite{iso5817}:
+\begin{equation}
+h_{\max} = c_0 + c_1\,a,\quad a = 0.7\,t:\ \ (c_0,c_1) = (0.5,0.1)_{B},\ (0.5,0.2)_{C},\ (1,0.3)_{D}\ \mathrm{mm}.
+\label{eq:iso_gap}
+\end{equation}
+\TODO{Verify Eq.~\ref{eq:iso_gap} and its caps against Table~1, no.~617 of the standard.
+Near misses (up to twice the tolerance) reported with the reason.}
+
+% -------------------------------------------------------------------------------------
+\section{Tack Placement and Ordering}
+\label{sec:mc_tacks}
+Tacks follow WeldSet's tack rule (\S\ref{sec:ws_tacks}, Equations~\ref{eq:tackrule_len}
+and~\ref{eq:tackrule_n}) applied to the computed seams, open or closed: both ends tacked,
+the rest evenly spaced. The rule also fixes the order in which they would be welded: the
+ends first, then by bisection, alternating between seams so that heat does not
+accumulate in one place.
+\TODO{OPEN: tack ordering by a rough heat simulation (todo.md, 2026-10-16): each tack a
+heat source, superposed cooling kernels, the next tack the coolest; compared with the
+rule's order. In this thesis or future work?}
+\TODO{OPEN DECISION (THESIS\_PLAN.md \#1): robot-aware placement (a quality field over arc
+length $\times$ roll and an exact DP for $k$ tacks). Note: the per-tack roll DP of
+\S\ref{sec:mc_reach} already chooses the robot's side of it.}
+
+% -------------------------------------------------------------------------------------
+\section{Motion Planning and Execution}
+\label{sec:mc_motion}
+
+\subsection{Collision Model}
+\label{sec:mc_collision}
+The arm is a chain of capsules on its joint frames; the pen tool is its CAD envelope
+(capsules for the pen and holder, boxes for the camera body); the parts are their
+primitives as boxes (a tube as rotated boxes round its axis, a cut tube as sector boxes,
+a band as a chain of boxes); the table is the touched plane, tilted; fixtures are boxes
+entered by pen-tip points. Distances are exact between capsules and between a capsule and
+a box; a box against a box is an intersection test only.
+\TODO{Clearance on tacks vs.\ transits; which contacts are allowed (the pen tip with the
+part at the tack); the C++ port of the model, proven equal to the Python one.}
+\SRC{collision.py docstring; src/transit\_cpp.cpp; test\_transit\_cpp.py.}
+\figplaceholder{fig:mc_collision}{The collision model around a tube-on-plate assembly:
+arm capsules, tool envelope, part boxes, table plane}{The collision model.}
+
+\subsection{Reachability}
+\label{sec:mc_reach}
+Inverse kinematics is solved on one branch, the elbow-up configuration of the home pose
+(the signs of the lift, elbow and second wrist joints are locked). On a straight seam one
+pen roll and tilt is chosen per seam, maximising the smallest clearance over the
+approach pose, the tack pose and the straight descent between them. On a curved seam the
+pen's frame rotates with the seam, so a roll is chosen per tack, jointly over the seam by
+dynamic programming (a Viterbi recursion \cite{forney1973viterbi}):
+\begin{equation}
+\min_{\varphi_1,\dots,\varphi_n}\ \sum_{k=1}^{n}\Big[
+\norm{\mathbf{W}\,\big(\vect{q}_k(\varphi_k)-\vect{q}_{k-1}(\varphi_{k-1})\big)}
++ \kappa\,\max\!\big(0,\ \delta_0-\delta_k(\varphi_k)\big)\Big],
+\label{eq:roll_dp}
+\end{equation}
+with $\delta_k$ the clearance of tack $k$ at roll $\varphi_k$, $\delta_0=10$~mm and
+$\kappa=0.15$~rad/mm. Every pose is taken as the $2\pi$-equivalent that keeps the last
+wrist joint within $\pm180^\circ$ of home: the camera's cable wraps round the wrist, and
+plain joint continuity wound it far enough for its pull to read as a contact.
+\SRC{tack\_reach.py (plan\_tacks, \_plan\_per\_tack, to\_cable\_window); thesis\_notes.md 2026-10-16.}
+\figplaceholder{fig:mc_roll_dp}{The trellis of rolls along a curved seam: feasible rolls
+per tack, the chosen path}{Choosing a pen roll per tack on a curved seam.}
+
+\subsection{Transit Planning}
+\label{sec:mc_transit}
+Transits start and end at departure points, 100~mm out along each tack's pen axis, where
+the tool is in open space. A transit is tried, in order, as: the straight joint-space
+edge; the tool's straight Cartesian line (orientation interpolated by slerp), then the
+same line bowed outward as a quadratic B\'ezier,
+\begin{equation}
+\vect{x}(s) = (1-s)^2\,\vect{x}_0 + 2s(1-s)\,(\vect{x}_m + \beta\,\vect{b}) + s^2\,\vect{x}_1,
+\qquad \beta\in\{0, 30, 60, 100\}\ \mathrm{mm};
+\label{eq:cartesian_bow}
+\end{equation}
+and only then a sampling-based planner: OMPL's AnytimePathShortening
+\cite{luo2014aps,sucan2012ompl} (parallel RRT-Connect \cite{kuffner2000rrtconnect},
+hybridisation and shortcutting within a time budget), in scaled joint coordinates
+$y_j=w_j q_j$ so that path length is weighted joint travel,
+\begin{equation}
+c(\text{path}) = \sum_{k}\norm{\mathbf{W}(\vect{q}_{k+1}-\vect{q}_k)}_2,\qquad
+\mathbf{W}=\operatorname{diag}(2,\,2,\,1.5,\,1,\,1,\,0.5).
+\label{eq:transit_cost}
+\end{equation}
+The path is smoothed, re-checked against the collision model and timed with
+time-optimal trajectory generation \cite{kunz2012totg}.
+\TODO{Why departure points (planning from beside a plate); why the Cartesian line first
+(round a pipe it is short and the same every time); the planning margin capped by the
+end poses' own room.}
+\SRC{marking.py (transit\_path, cartesian\_transit, aps\_path, departure\_chain);
+notes/aps\_transit\_plan.md.}
+
+\subsection{Force-Gated Descent and Marking}
+\label{sec:mc_marking}
+From the departure point the pen moves along its own axis: fast to the approach point
+(35~mm before the tack), slower to the tack, slowest in the last millimetres, and on past
+the registered point by an overshoot, in case the real surface is farther. The descent
+stops at the first sample where the force, with its bias measured at rest just before,
+exceeds the touch threshold:
+\begin{equation}
+\norm{\vect{F}(t)-\vect{F}_{\mathrm{bias}}} > F_{\mathrm{touch}} = 1.5\ \mathrm{N},
+\qquad
+\delta_c = (\vect{p}_{\mathrm{reg}}-\vect{p}_{\mathrm{tip}})^{\top}\vect{a},
+\label{eq:touch}
+\end{equation}
+where $\delta_c$, the contact depth, says how far before ($+$) or past ($-$) the registered
+point the surface was met: an independent measurement of the registration along the pen
+axis. The overshoot ends at the table, since no surface lies beyond it. The mark is a
+dot, or a stroke along the seam with the depth corrected from the force between chunks.
+\TODO{The speed profile and why (an unsprung pen on a rigid part: force grows with
+speed); the retract; the 8 N abort; strokes on curved seams.}
+\SRC{tack\_marking\_node.py, marking.py (descent\_check, time\_descent), motion.py.}
+\figplaceholder{fig:marking_sequence}{One tack: approach, descent, contact, stroke,
+retract; joint trajectory and the force along the pen}{One tack, from transit to retract.}
+
+% -------------------------------------------------------------------------------------
+\section{Implementation Details}
+\label{sec:mc_impl}
+
+\subsection{ROS 2 Architecture}
+\TODO{The nodes and what feeds what: camera, bridge (to the pose server), ICP / assembly
+node (tracking, saving, seams, refinement), gesture and aim nodes, reachability, marking;
+services as the steps of the pipeline; the static environment cloud.}
+\figplaceholder{fig:architecture}{Nodes, topics and services; the desktop (registration
+server in Docker) and the laptop (everything else)}{Software architecture of the cell.}
+\SRC{README ``How the pieces connect'' and the node table.}
+
+\subsection{Performance-Critical Components}
+\TODO{What runs in C++ and why: the collision model and the planners (one plan from minutes
+to seconds), the time-parameterisation service, the 500 Hz command relay.}

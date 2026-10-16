@@ -48,17 +48,23 @@ English)}{Overview of the pipeline from an RGB-D frame to a pen mark.}
 \TODO{Rewrite each item as one sentence that says what is new, and keep the pointer.}
 \begin{itemize}
 \item Analytic seam and tack ground truth, regenerable at any density, public code
-      (Chapter~\ref{chp:weldset}).
-\item A benchmark of literature seam-detection methods on 12 strata (Chapter~\ref{chp:weldset}).
-\item Seams computed from registered CAD with a pose-tolerant accessibility rule
-      (Chapter~\ref{chp:seams}).
+      (Chapter~\ref{chp:method_weldset}).
+\item A benchmark of literature seam-detection methods on 12 strata (Chapter~\ref{chp:method_weldset}).
+\item Two CAD-free seam extractors, footprints from sequential scans and matching with
+      sphere tracing on labelled clouds, built on what the cell produces and scored on
+      WeldSet's exact truth (\S\ref{sec:ws_own}, \S\ref{sec:ws_link}).
+\item Seams computed from registered CAD as WeldSet's exact geometry, straight and
+      curved, with a pose-tolerant accessibility rule (\S\ref{sec:mc_seams}).
 \item Multi-view close-range refinement that estimates the camera's extrinsic
-      translation online from the views' disagreement (Chapter~\ref{chp:perception}).
+      translation online from the views' disagreement (\S\ref{sec:mc_multiview}).
 \item A calibration chain referenced to the robot itself, with the depth error's
-      $z^2$ law measured and removed (Chapter~\ref{chp:system}).
+      $z^2$ law measured and removed (\S\ref{sec:mc_calibration}).
+\item A finger-pointing camera aim with exact latency compensation from rotation-only
+      motion (\S\ref{sec:mc_aim}).
 \item A validated vision-only cell: pen marks within 2.3--2.7~mm of the seam root
-      (Chapter~\ref{chp:experiments}).
+      (Chapter~\ref{chp:results}).
 \end{itemize}
+\TODO{Confirm the two new items (the extractors, the camera aim) belong in the list.}
 \TODO{Decide with the advisor whether robot-aware tack placement (quality field +
 dynamic programming) is a contribution here or future work (THESIS\_PLAN.md, open
 decisions).}

@@ -11,7 +11,7 @@ thesis/
   THESIS_PLAN.md            this file
   manuscript/               the thesis (LaTeX)
     thesis.tex              front matter (title, jury, abstract, keywords), chapter order
-    chapters/ch1..ch8_*.tex one file per chapter
+    chapters/ch1..ch7_*.tex one file per chapter
     appendices/*.tex
     abbreviations.tex       list of abbreviations
     thesis.bib              references (IEEE style); "VERIFY" marks unchecked fields
@@ -23,16 +23,14 @@ thesis/
   support_documents/        GSSS (Social Sciences) documents: NOT our institute
 ```
 
-**Compiling.** There is no LaTeX here, so use one of:
-- **Overleaf:** upload `manuscript/`; `thesis.tex` is the main file; compiler pdfLaTeX;
-  BibTeX.
-- **Locally:** `apt install texlive-latex-extra texlive-science texlive-fonts-recommended`,
-  then:
-  ```
-  pdflatex thesis && bibtex thesis && pdflatex thesis && pdflatex thesis
-  ```
-
-The skeleton has not been compiled yet. Expect small fixes on the first run.
+**Compiling** (TeX Live installed in the container 2026-10-16):
+```
+manuscript/build.sh            # pdflatex, bibtex, pdflatex x2 -> manuscript/build/thesis.pdf
+```
+The packages it needs are listed at the top of `build.sh` (`metu.cls` loads the Greek LGR
+encoding and Turkish babel). Overleaf works too: upload `manuscript/`, main file
+`thesis.tex`, pdfLaTeX + BibTeX. The class is two-sided: every chapter opens on an odd page,
+so blank pages before chapters are intended (the examples do the same).
 
 ## Rules that apply (FBE, MSc)
 
@@ -51,82 +49,63 @@ The skeleton has not been compiled yet. Expect small fixes on the first run.
 
 ## Structure
 
-The examples share a pattern: Introduction (Motivation and Problem Definition, Proposed
-Methods and Models, Contributions and Novelties, Outline) → literature → method chapters
-→ experiments → conclusion. The closest example in content is Gülbeden's (a robot that
-draws with a pen; it includes depth calibration). This thesis follows the same shape:
+**Restructured 2026-10-16** to the shape of the three examples the user named (Oydu,
+Kurt, Ağuş: Introduction → Literature → METHODOLOGY → Setup / Implementation → Results
+and Discussion → Conclusion). The user's order: the robotic cell first, then WeldSet. The
+methods of the 2026-10-08 skeleton's chapters 3–6 are merged into two methodology
+chapters; the old files are removed (git keeps them).
 
 | ch | title | what it holds | main sources in the repo |
 |---|---|---|---|
 | 1 | Introduction | motivation (human tacks, robot welds; annotated, private data), the problem, the two parts, contributions, outline | `weld_generator/notes/thesis_direction_handoff.md` §2–4 |
 | 2 | Background and Related Work | welding / tacks / ISO; seam detection; datasets and ground truth; pose estimation; registration; calibration; planning; the gap | handoff §5 (literature map), `weld_generator/papers/`, `notes/Welding_Robots_Approach_and_Trajectory_Literature_Report.md` |
-| 3 | WeldSet | design goals, primitives, curve-first families, the D4 seam rule, the tack rule, sensor model and rendering, strata, the benchmark of literature methods, (annotation-error experiment) | `weld_generator/docs/MANUAL.md`, `SCHEMA.md`, `PARAMETERS.md`, `notes/phase8_plan.md`, `phase9_plan.md`, the ICRA submission |
-| 4 | System Overview and Calibration | hardware, software (two GPUs), frames, the calibration chain (kinematics, TCP, table, hand-eye, depth) | README "How the pieces connect", Algorithms §1, §14, §16; `thesis_notes.md` |
-| 5 | Perception and Registration | classification (PPF), registration (FoundationPose), live tracking, stationary refinement (ICP, normal gate, robust mean, save-time ICP), multi-view refinement (views, joint refinement, observability, the camera offset, acceptance, fit-up) | `notes/perception_aciklama.md`, `readme_perception.md`, `realtime_fp.md`, `multiview_refine_plan.md`, README §15 |
-| 6 | Seams, Tacks and Motion | mode A seams, tack placement (+ the open decision below), reachability, collision model, APS transits, force-gated marking | `seam_two_modes_plan.md`, `pen_marking_plan.md`, `aps_transit_plan.md`, README Algorithms §8 |
-| 7 | Experiments and Results | setup and protocol, calibration, registration, multi-view, placement accuracy (the error chain), tracking FP vs ICP, APS vs RRT-Connect, timing, curved parts, discussion | README §14 tables, `thesis_notes.md`, captures in `scripts/foundationpose_results/`, `todo.md` "Benchmarks" |
-| 8 | Conclusion | summary, limitations, future work | |
+| 3 | **Methodology: Perception-Guided Robotic Tack Placement** (`ch3_methodology_cell.tex`) | overview, problem formulation; frames and calibration; operator interaction (gestures, camera aim, 500 Hz relay); perception (SAM2 + PPF, FoundationPose, tracking, stationary ICP, swing–twist, spin settling); multi-view refinement; seams from registered primitives (planar, curved, fit-up); tacks and ordering; motion (collision model, reachability with the roll DP and the cable window, transits, force-gated marking); implementation details | README, the plans in `notes/`, module docstrings (each section's `\SRC`) |
+| 4 | **Methodology: WeldSet** (`ch4_methodology_weldset.tex`) | design goals, parts, curved seams by construction, the D4 seam rule, the tack rule, MPS, sensor model and rendering, strata, the evaluation protocol (7 literature methods, oracle ladder, metrics); **the two proposed extractors** (footprint from sequential scans; matching + sphere tracing on labelled clouds); **WeldSet ↔ cell: one geometry** | `weld_generator/docs/MANUAL.md`, `Self_ideas/` (both methods), `scripts/baselines/self_*.py`, notebooks 16–17 |
+| 5 | Experimental Setup and Procedure (`ch5_experimental_setup.tex`) | robot and tool, software, the test assemblies, how the mark error is measured, the procedure, the WeldSet batch | README "Run it", `curved_parts_print_list.md` |
+| 6 | Results and Discussion (`ch6_results.tex`) | calibration, registration, multi-view, placement accuracy, FP vs ICP, APS vs RRT-Connect, timing, curved parts, the camera aim, the WeldSet benchmark, discussion | README §14 tables, `thesis_notes.md`, captures, the aim bags |
+| 7 | Conclusion (`ch7_conclusion.tex`) | summary, limitations, future work | |
 | App. A–D | parameters; standards; derivations; software and data | | node parameters, ISO PDFs, module docstrings, README "Run it" |
 
-The Turkish explanations (`notes/perception_aciklama.md`,
-`notes/admitans kontrol açıklama.md`, `notes/pipeline map.md`) follow the same order as
-Chapters 4–6 and are a good first draft to translate from.
+**How the two parts connect** (Ch. 4 §"One Geometry"): the cell computes its seams and
+tacks with WeldSet's primitives, seam rule, curve constructors and tack rule, so it marks
+WeldSet's exact truth at the measured poses; and the two proposed CAD-free extractors take
+as input what the cell's procedure produces (the base scanned before the next part is
+placed; clouds labelled per part by the registration), scored on WeldSet before the
+robot. Open: do they run on real scans in this thesis (decision 8 below)?
 
 ## Inventory
 
 Status: **have** = the content or data exists; **produce** = needs a run, a plot or a
 photo; **planned** = needs an experiment that is not done yet.
 
-### Figures
+Generated from the chapters on 2026-10-16 (placeholders in place; to refine with the
+user: which formulas, figures, graphs and tables each section needs).
 
-| label | chapter | content | status / how |
-|---|---|---|---|
-| `fig:intro_cell` | 1 | photo of the cell with a mark | produce: photo |
-| `fig:intro_pipeline` | 1 | the pipeline overview | have: `notes/pipeline_map.dot`; redraw in English |
-| `fig:ws_families` | 3 | one render per curved family | produce: weld_generator renders |
-| `fig:tool` | 4 | pen tool + collision envelope | produce: RViz `/tool_model/markers` screenshot |
-| `fig:architecture` | 4 | nodes, topics, two GPUs | produce: diagram (Graphviz, like the pipeline map) |
-| `fig:frames` | 4 | TF tree / frame chain | produce: diagram |
-| `fig:depth_law` | 4 | depth error vs range, before / after the Tare | have the numbers (README §16); produce the plot |
-| `fig:tracking_split` | 5 | desktop registers, laptop tracks | produce: diagram |
-| `fig:views` | 5 | the 4 planned views + coloured clouds | produce: RViz screenshot of a `refine_pose` run |
-| `fig:marking_sequence` | 6 | joints and force during one tack | produce: plot from a recorded run (bag or `tack_marks.json`) |
-| `fig:exp_marks` | 7 | marks on the seam with offsets | produce: photo + measurement |
-| `fig:exp_transits` | 7 | tip paths RRT-Connect vs APS | planned: benchmark (APS step 5) |
-| (more) | 3, 7 | benchmark plots per stratum; the error budget as a bar chart | weld_generator notebooks; README §14 |
+### Figures (placeholders in the chapters)
+
+| chapter | labels |
+|---|---|
+| 1 | `fig:intro_pipeline` (+ `fig:intro_cell` photo, planned) |
+| 3 | `fig:mc_pipeline`, `fig:frames`, `fig:depth_law`, `fig:mc_aim_loop`, `fig:tracking_split`, `fig:views`, `fig:mc_seam_kinds`, `fig:mc_collision`, `fig:mc_roll_dp`, `fig:marking_sequence`, `fig:architecture` |
+| 4 | `fig:ws_families`, `fig:ws_own` (the two extractors on one T-joint), `fig:ws_link` |
+| 5 | `fig:tool`, `fig:setup_parts`, `fig:exp_marks` |
+| 6 | `fig:exp_transits`; to add: the aim's effort spectrum before/after and the 80 ms command zoom (the two bags), benchmark plots per stratum, the error budget |
 
 ### Tables
 
-| label | chapter | content | status |
-|---|---|---|---|
-| `tab:lit_seam` | 2 | literature: sensor, data, ground truth, availability | have most (handoff §5); fill the sensors |
-| `tab:ws_strata` | 3 | strata, ranges, corpus sizes | have ranges; corpus sizes from the desktop |
-| `tab:ws_benchmark` | 3 | seam error per method and stratum | have (Phase 4 batch, desktop) |
-| `tab:hardware` | 4 | hardware | have |
-| `tab:calib_chain` | 4 | link, method, reference, residual | have |
-| `tab:exp_depth` | 7 | depth before / after the Tare | have (filled) |
-| `tab:exp_table_views` | 7 | the table seen by each view | have (filled) |
-| `tab:exp_error_chain` | 7 | causes, fixes, mark error | have (filled from README §14) |
-| (to add) | 7 | repeated placement trials: mean / std / max over N tacks | planned: repeat the bench run N times |
-| (to add) | 7 | FP vs ICP tracking; APS vs RRT-Connect; timing per stage | planned (`todo.md` "Benchmarks", "measure everything") |
-| (to add) | App. A | all parameters | have (node parameters) |
-
-### Equations (already in the skeleton)
-
-| label | content |
+| chapter | labels |
 |---|---|
-| `eq:plane_intersection` | the seam as two planes' intersection |
-| `eq:tackrule_len`, `eq:tackrule_n` | tackrule-0.1 |
-| `eq:frame_chain` | base ← tool ← camera ← object |
-| `eq:handeye` | AX = XB |
-| `eq:depth_error` | Δz = z²δ / (f B) |
-| `eq:ppf` | the point-pair feature |
-| `eq:p2plane`, `eq:normal_gate` | point-to-plane ICP with Welsch weights; the normal gate |
-| `eq:mv_objective` | the multi-view objective (data, prior, overlap) |
-| `eq:observability` | σ = σ_noise / √λ ≤ 0.5 mm |
-| `eq:extrinsic_d` | the residual with R_v d; the Schur complement |
-| `eq:iso_gap` | ISO 5817 no. 617 root-gap limit (**verify against the standard**) |
-| `eq:transit_cost` | weighted joint travel |
+| 3 | `tab:calib_chain`, `tab:gestures`, `tab:mv_acceptance`; to add: a notation table |
+| 4 | `tab:ws_strata`; to add: the primitives |
+| 5 | `tab:hardware`, `tab:setup_parts` |
+| 6 | `tab:exp_depth`, `tab:exp_table_views`, `tab:exp_error_chain`, `tab:ws_benchmark`; planned: repeated placement trials, FP vs ICP, APS vs RRT-Connect, timing per stage |
+
+### Equations (drafted; each to be checked when its section is refined)
+
+| chapter | labels |
+|---|---|
+| 3 | `eq:frame_chain`, `eq:handeye`, `eq:depth_error`, `eq:aim_error`, `eq:aim_law`, `eq:aim_dls`, `eq:relay`, `eq:ppf`, `eq:p2plane`, `eq:normal_gate`, `eq:swing_twist`, `eq:spin_settle`, `eq:mv_objective`, `eq:observability`, `eq:extrinsic_d`, `eq:plane_intersection`, `eq:ellipse_seam`, `eq:iso_gap` (**verify against the standard**), `eq:roll_dp`, `eq:cartesian_bow`, `eq:transit_cost`, `eq:touch` |
+| 4 | `eq:tackrule_len`, `eq:tackrule_n`, `eq:footprint`, `eq:sphere_trace`; to add: the rolling ball, the saddle in general position, the step-ratio angle |
 
 ### Notation (keep it consistent)
 
@@ -136,10 +115,11 @@ photo; **planned** = needs an experiment that is not done yet.
 
 ## Writing order (suggested)
 
-1. **Chapters 4–6 first.** The methods exist and are documented (README, plans, the
-   Turkish explanations); this is mostly translation and condensation.
-2. **Chapter 3:** from weld_generator's MANUAL and the ICRA paper.
-3. **Chapter 7:** fill what exists (the error chain, depth, multi-view), then run the
+1. **Chapter 3 first** (the cell's methodology; first shape 2026-10-16). Then decide per
+   section the formulas, figures and tables, and write the prose out.
+2. **Chapter 4:** WeldSet, from weld_generator's MANUAL, the ICRA paper and the two
+   extractors' plans.
+3. **Chapter 6:** fill what exists (the error chain, depth, multi-view), then run the
    planned experiments and add them: repeated trials, FP vs ICP, APS vs RRT-Connect,
    timing.
 4. **Chapter 2:** with the method chapters written, the related work can be aimed.
@@ -165,8 +145,13 @@ photo; **planned** = needs an experiment that is not done yet.
    placeholders in `thesis.tex`.
 7. **Mode B** (seams without CAD): probably dropped from the thesis (the user, 2026-10-15:
    too much effort for little gain in a robotics thesis). Not yet decided.
+8. **The two proposed extractors on the robot** (footprint, seamfind): real-scan results in
+   Ch. 6, or WeldSet scores only and the robot run as future work? Their attribution (the
+   footprint idea is İsmail Hoca's).
+9. **Tack ordering by a rough heat simulation** (todo.md, 2026-10-16): a section of Ch. 3
+   with results, or future work?
 
-## Comparisons to dig out for Chapter 7 (later; the user, 2026-10-15)
+## Comparisons to dig out for Chapter 6 (later; the user, 2026-10-15)
 
 Most numbers are already in `notes/thesis_notes.md`; each needs a repeatable measurement
 (`todo.md`, "Benchmarks to run"):

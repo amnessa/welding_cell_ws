@@ -1,0 +1,265 @@
+% =====================================================================================
+\chapter{METHODOLOGY: WELDSET, ANALYTIC GROUND TRUTH FOR WELD SEAMS AND TACKS}
+\label{chp:method_weldset}
+% First shape 2026-10-16 (from the 2026-10-08 skeleton chapter 3). The weld_generator
+% project. Material: weld_generator/docs/MANUAL.md (§1-3, 8, 10, 13-14), PARAMETERS.md,
+% SCHEMA.md, notes/dataset_plan.md, phase8_plan.md, phase9_plan.md, the ICRA submission;
+% the two own extractors: Self_ideas/test1_ismail_hoca/weld_seam.py (+ baselines/
+% self_footprint.py, notebooks build_16) and Self_ideas/test2_cagdas/seam_finder.md
+% (+ seamfind/, baselines/self_seamfind.py, notebooks build_17).
+% Scope check with the advisor (THESIS_PLAN.md #2): the full benchmark, or a summary +
+% the paper.
+% =====================================================================================
+
+Seam-extraction methods are evaluated against hand-annotated labels on data that is
+rarely released, and the annotation itself is less accurate than the accuracy claimed.
+WeldSet removes the annotation: the scene is built from the seam outward, so the seam is
+known exactly. This chapter describes how scenes are constructed
+(\S\ref{sec:ws_goals}--\S\ref{sec:ws_sensor}), the corpus (\S\ref{sec:ws_corpus}), how
+extractors are evaluated (\S\ref{sec:ws_protocol}), the two seam extractors proposed in
+this work (\S\ref{sec:ws_own}), and how WeldSet and the robotic cell of
+Chapter~\ref{chp:method_cell} share one geometry (\S\ref{sec:ws_link}).
+
+% -------------------------------------------------------------------------------------
+\section{Design Goals}
+\label{sec:ws_goals}
+\begin{itemize}
+\item \textbf{Ground truth is constructed, never detected.} The generator samples a
+  joint, places the parts by closed-form transforms and computes the seam from the same
+  transforms, exact to floating point. No annotator and no estimator are in the label
+  path.
+\item \textbf{Every condition is a dial.} Thickness, gap, angle, noise, view and
+  fixture are parameters; one seed gives identical twin scenes across any one dial.
+\item \textbf{Every choice is a versioned rule}, and every corpus passes gates that would
+  catch a shortcut or an approximation.
+\item \textbf{Accessible:} the first tier needs no renderer and no GPU.
+\end{itemize}
+\SRC{MANUAL.md \S1--2; thesis\_direction\_handoff.md \S3.}
+
+% -------------------------------------------------------------------------------------
+\section{Parts, Joints and Assemblies}
+\label{sec:ws_parts}
+\TODO{The primitives (Slab, Prism, PreparedSlab with ISO 9692-1 grooves \cite{iso9692},
+PreparedPrism, Tube, SweptSlab) as a table: parameters and what they model. The joint
+types (T, corner, butt, lap, edge) and their sampled parameters; the fixture.}
+\SRC{MANUAL.md \S3.1--3.2; weldgen/joints.py, layouts.py, geom.py.}
+
+\section{Curved Seams by Construction}
+\label{sec:ws_curves}
+For curved joints the order is reversed once more: the seam curve is drawn first and the
+parts are derived from it, so the seam is exact by construction. Seven families cover
+the cases of the literature: a line, a circle (a tube on a plate), an ellipse (a tilted
+tube), a saddle (a branch on a pipe), a rounded rectangle (a box section), a swept path (a
+curved strip) and an arc butt.
+\TODO{The constructors and their closed forms (they are reused by the cell,
+Eq.~\ref{eq:ellipse_seam}).}
+\SRC{weldgen/d29.py, constructors.py, curves.py.}
+\figplaceholder{fig:ws_families}{One rendered example per curved family, the seam drawn
+in colour}{The seven seam families of WeldSet.}
+
+% -------------------------------------------------------------------------------------
+\section{Seams by the Accessibility Rule}
+\label{sec:ws_d4}
+A seam is not every place where two parts touch: it is where they touch \emph{and} a
+torch can reach. The rule (D4) takes every pair of exterior faces of two parts that meet,
+computes their nominal seam as the intersection of the two face planes
+(Eq.~\ref{eq:plane_intersection}), and keeps it when the bisector of the dihedral angle
+escapes to free space. Each seam gets a class (fillet, butt, lap toe, edge); a rejected
+candidate is kept with the reason.
+\TODO{The three seam definitions (D19): nominal (the planes' intersection, stored and
+scored), root (the terminating face's edge), gap-mid; why nominal is the scored one.}
+\SRC{MANUAL.md \S3.3; weldgen/accessibility.py; SCHEMA.md \S1.3.}
+
+\section{Tack Placement Rule}
+\label{sec:ws_tacks}
+Tacks are a rule applied to the seams, versioned and re-runnable, not a label. With $t$
+the thinner member and $L$ the length of an open seam, tackrule-0.1 sets
+\begin{gather}
+\ell_{\mathrm{tack}} = \operatorname{clip}(4t,\,10,\,50)\ \mathrm{mm},\qquad
+d_{\max} = \min(33t,\,400)\ \mathrm{mm},\qquad d_{\min} = 10t,
+\label{eq:tackrule_len}\\
+m = \max(2t,\ \ell_{\mathrm{tack}}),\qquad
+n = \max\!\left(2,\ \ceil*{\frac{L-2m}{d_{\max}}}+1\right),
+\label{eq:tackrule_n}
+\end{gather}
+with the tacks evenly spaced between the two end margins $m$. A closed seam takes an even
+number $n\ge4$ with a deterministic phase. The rule also stores a weld order: the ends,
+then the centre, then by bisection (opposite pairs on a loop), with seams of the same class
+interleaved.
+\TODO{Provenance of the constants (shop practice, EN 1011-2, the literature anchor);
+the short-seam case.}
+\SRC{MANUAL.md \S10; weldgen/tacks.py.}
+
+\section{The Most Probable Seam}
+\label{sec:ws_mps}
+\TODO{Task 2: from one view, the seam a coarsely positioned torch is at: the weldable seam
+with the most visible arc length (mps\_rule-0.1), a geometric proxy by decision; the
+margin between the winner and the runner-up.}
+\SRC{MANUAL.md \S1.4, \S10; weldgen/mps.py.}
+
+% -------------------------------------------------------------------------------------
+\section{Sensor Model, Visibility and Rendering}
+\label{sec:ws_sensor}
+\TODO{Tier 1: area-uniform sampling, per-point visibility by exact ray casting
+(entry-only crossings), exterior flags, the analytic stereo noise model (depth noise
+growing with $z^2$, Eq.~\ref{eq:depth_error}) with camera profiles. Tier 2: the same scenes
+rendered in Isaac Sim (RGB, depth, masks) with published material reflectances, paired by
+seed, and the twin gate (rendered depth on the exact surfaces within 0.25 mm).}
+\SRC{MANUAL.md \S1.5, \S3.4; phase8\_plan.md.}
+
+\section{The Corpus and Its Strata}
+\label{sec:ws_corpus}
+\begin{table}[htbp]
+\caption{WeldSet strata and their geometry ranges.}
+\label{tab:ws_strata}
+\centering\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Stratum & Geometry (generator range) & Notes \\
+\midrule
+T/line & plates $t$ 1--12 mm, $\alpha$ 60--120$^\circ$ & \\
+corner & & \\
+butt square & & \\
+butt grooved & $t$ 4--20 mm; V / bevel / U & \\
+lap & & \\
+edge & $t$ 1--2 mm & \\
+T/circle & tube $r$ 30--80 mm, wall 3--8 mm & \\
+T/ellipse & tilted tube, 10--40$^\circ$ & \\
+T/saddle & branch $r$ 0.3--0.7$R$ & \\
+T/rounded\_rect & $w,h$ 60--160 mm & \\
+T/swept\_path & band 4--10 mm, height 50--156 mm & \\
+butt arc & $R$ 100--400 mm & \\
+\bottomrule
+\end{tabular}
+\end{table}
+\TODO{Fill the empty ranges; the corpus sizes (desktop, out/bench\_phase4) go with the
+results; strata are reported separately, never pooled.}
+\SRC{phase9\_plan.md \S2.}
+
+% -------------------------------------------------------------------------------------
+\section{Evaluation Protocol for Seam Extractors}
+\label{sec:ws_protocol}
+Seven published methods were re-implemented, each with its own notebook recording every
+reading of the paper: plane RANSAC with pairwise intersection, normal-based region
+growing, local-bounding-box flatness with a curve fit, point-pair-feature voting for
+plane pairs, PCA slicing, CAD registration with the seam transferred from the model, and
+quadric surface fits \cite{yi2026seam,wei_regiongrow,zhang_lobb,wang2024ppfseam,wang2026pipes,fang2024modelreg,li2026quadric}.
+\TODO{Check every citation key against the methods (MANUAL \S8.1 table).}
+
+\textbf{The oracle ladder.} Most of these pipelines start with a learned coarse stage
+that was not released. At level L0 each method receives \emph{its own paper's} coarse
+stage from the ground truth, so that no method is handicapped by a stage its authors did
+not publish; L1 withholds it and changes nothing else.
+
+\textbf{Metrics.} F1 at a 3~mm tolerance over densified polylines; the symmetric Chamfer
+distance; the lateral error distribution (its 95th percentile is what a tool path
+cares about); the literature's own matched-path RMSE; the earth mover's distance as a
+coverage check.
+
+\textbf{Conditions.} Two views (a full exterior scan and a single camera), noise levels,
+the fixture on and off, repeated seeds for the randomised methods.
+\TODO{The harness validated with a fake oracle first; the batch; where the results are
+(Chapter 6, Table~\ref{tab:ws_benchmark}).}
+\SRC{MANUAL.md \S8; scripts/baselines/harness.py, metrics.py; run\_phase4\_batch.py.}
+
+% -------------------------------------------------------------------------------------
+\section{Proposed Seam Extractors}
+\label{sec:ws_own}
+Two extractors were developed in this work and scored by the same harness, metrics and
+strata as the seven literature methods. Neither needs a CAD model. Each one starts from
+an input that the robotic cell produces anyway (\S\ref{sec:ws_link}).
+\TODO{Attribution: the footprint idea is İsmail Hoca's; say so (acknowledgments, or the
+section text).}
+
+\subsection{Footprint Extraction from Sequential Scans}
+\label{sec:ws_footprint}
+\textbf{Idea.} Scan the base part $A$ alone, then the assembly $A+B$. Whatever the first
+scan does not explain belongs to $B$, so the segmentation of the assembly comes from the
+order of placement instead of from a learned model. Where $B$ rests on $A$, each part
+leaves a footprint on the other.
+
+\textbf{Method.} The base scan is registered into the assembly scan; points of the
+assembly that are far from the base scan are $B$. For each part, a bounded distance field
+to the other part is computed, and the footprints are the points closer than the fit-up
+gap $g$:
+\begin{equation}
+F_A = \{\vect{p}\in A : D_B(\vect{p}) < g\},\qquad F_B = \{\vect{p}\in B : D_A(\vect{p}) < g\}.
+\label{eq:footprint}
+\end{equation}
+Each footprint point slides along the negative gradient of the distance field until the
+distance reaches $g$. An exposure filter keeps the points where both parts are visible
+nearby; the result is clustered into seams, ordered (the longest path of a minimum
+spanning tree), smoothed by a spline and resampled. A joint frame follows at each point
+from the two leg directions, and a ball rolled in each cross-section gives the toes, the
+leg lengths and the bead area.
+\TODO{The rolling ball (formula); the gap input ($g$ from the welding procedure
+specification vs.\ zero); how the base scan is synthesised in WeldSet (an independent
+sample of $A$ with $A$ as the only occluder).}
+\SRC{Self\_ideas/test1\_ismail\_hoca/weld\_seam.py; scripts/baselines/self\_footprint.py.}
+
+\subsection{Matching and Sphere-Tracing on Labelled Clouds}
+\label{sec:ws_seamfind}
+\textbf{Idea.} Given two point clouds that are already labelled by part, points of $A$ and
+$B$ that are each other's nearest neighbour lie near the seam; from there, each side can
+walk towards the other over its own surface until the two meet.
+
+\textbf{Method.} Normals are estimated per part, so they do not blur across the joint,
+and each part gets a moving-least-squares projection $\Pi_A$, $\Pi_B$. A cheap
+accessibility filter removes points that no torch could see (for example the hidden
+contact face of a lap joint). Seeds are mutual nearest neighbours between farthest-point
+samples of $A$ and $B$ closer than the gap bound. From each seed, a walker on $A$ moves
+towards $B$ by sphere tracing:
+\begin{equation}
+\vect{x}_{k+1} = \Pi_A\!\Big(\vect{x}_k + \alpha\, d_k\,\frac{\vect{t}_k}{\norm{\vect{t}_k}}\Big),
+\qquad d_k = \norm{\vect{x}_k-\Pi_B(\vect{x}_k)},
+\qquad \vect{t}_k = \vect{u}_k - (\vect{u}_k^{\top}\vect{n}_k)\,\vect{n}_k,
+\label{eq:sphere_trace}
+\end{equation}
+where $\vect{u}_k$ points from $\vect{x}_k$ to its projection on $B$ and $\vect{n}_k$ is $A$'s
+normal. The step is the distance to $B$ projected onto $A$'s tangent plane, so the walker
+cannot overshoot, and it stops when it touches $B$ or stalls at a gap. A mirror walker
+runs on $B$. The two end points are the toes; their distance is the gap. The joint angle
+is estimated twice, from the normals and from the walker's step ratio, and the
+disagreement is a quality flag. Root points are clustered into seams, ordered, smoothed
+and given a torch frame, and a torch-cone check marks each span weldable or not.
+\TODO{The step-ratio angle estimate $\theta_r=\arcsin\big((1-\bar r)/\alpha\big)$ and
+its convergence; joint type from the normal angle; the rolling-ball spine extension.}
+\SRC{Self\_ideas/test2\_cagdas/seam\_finder.md (stages 0--6); seamfind/;
+scripts/baselines/self\_seamfind.py.}
+\figplaceholder{fig:ws_own}{The two extractors on one T-joint: (a) base scan, assembly
+scan, footprints and the slid points; (b) seeds, the two walkers' paths, toes and the
+root}{The two proposed seam extractors.}
+
+% -------------------------------------------------------------------------------------
+\section{WeldSet and the Robotic Cell: One Geometry}
+\label{sec:ws_link}
+WeldSet and the cell are connected in two directions.
+
+\textbf{From WeldSet to the cell.} The cell computes seams with WeldSet's own geometry:
+each registered CAD part becomes a WeldSet primitive (\S\ref{sec:mc_registry}); the seam
+rule (\S\ref{sec:ws_d4}), the curve constructors (\S\ref{sec:ws_curves}) and the tack
+rule (\S\ref{sec:ws_tacks}) are applied unchanged. The seams and tacks the robot marks are
+therefore WeldSet's exact ground truth, evaluated at the measured poses; their error is
+the registration's, which the pen's contact measures independently
+(Eq.~\ref{eq:touch}).
+
+\textbf{From the cell to WeldSet.} The two proposed extractors take as input what the
+cell's procedure already produces. The footprint method needs a scan of the base before
+the next part is placed: the cell registers and saves the parts one at a time, so that
+scan exists. The matching method needs clouds labelled by part: the cell segments every
+part and registers it, so its points carry a label. Both are CAD-free, so they can check
+the CAD-based seams of the cell, or replace them where no CAD exists, and WeldSet scores
+them against exact truth before they run on the robot.
+\TODO{DECIDE: do the two extractors run on the robot's real scans in this thesis (then a
+results section in Chapter 6), or does the thesis stop at WeldSet scores and name the
+real-scan run as future work? Related: Mode B (THESIS\_PLAN.md \#7).}
+\figplaceholder{fig:ws_link}{WeldSet and the cell: shared primitives, seam rule and tack
+rule (WeldSet -> cell); sequential scans and per-part labels (cell -> the two
+extractors); exact truth scores both}{How WeldSet and the robotic cell are connected.}
+
+% -------------------------------------------------------------------------------------
+\section{The Annotation-Error Experiment}
+\label{sec:ws_annotation}
+\TODO{If run: hand-annotate scenes as the literature does and measure the annotation
+against the analytic truth: the label-noise floor of the field.}
+\SRC{thesis\_direction\_handoff.md \S3.}

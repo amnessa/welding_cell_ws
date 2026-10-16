@@ -1,0 +1,85 @@
+% =====================================================================================
+\chapter{EXPERIMENTAL SETUP AND PROCEDURE}
+\label{chp:setup}
+% First shape 2026-10-16: the hardware of the 2026-10-08 chapter 4 and the setup
+% section of the former chapter 7, in the shape of the examples (Oydu ch. 4: robot,
+% software, hardware, test environment, procedure).
+% Material: README "Run it", node table; config/pen_tool.json, marking.json;
+% notes/curved_parts_print_list.md; thesis_notes.md; weld_generator MANUAL §7, §8.3.
+% =====================================================================================
+
+\section{Robot and Tool}
+\label{sec:setup_robot}
+\begin{table}[htbp]
+\caption{Hardware of the cell.}
+\label{tab:hardware}
+\centering\small
+\begin{tabular}{@{}p{0.17\textwidth}p{0.45\textwidth}p{0.3\textwidth}@{}}
+\toprule
+Component & Model & Role \\
+\midrule
+Manipulator & Universal Robots UR5e (factory-calibrated kinematics) & motion, F/T sensing \\
+Camera & Intel RealSense D435i, eye-in-hand, off-axis & RGB-D, 1280$\times$720 \\
+Tool & pen in a holder (CAD envelope) & marks instead of a torch \\
+Desktop & GPU (RTX 5070 Ti) & registration (SAM2, PPF, FoundationPose) \\
+Laptop & GPU (RTX 4060, 8 GB) & ROS 2, tracking, refinement, planning \\
+\bottomrule
+\end{tabular}
+\end{table}
+\TODO{The flange F/T sensor (what it measures, the payload setting); the pen holder's
+geometry; the camera's cable (it limits the wrist's turn, \S\ref{sec:mc_reach}).}
+\figplaceholder{fig:tool}{The pen tool: holder, pen, camera arm; the collision envelope
+(RViz, /tool\_model/markers)}{The pen tool and its collision envelope.}
+
+\section{Software}
+\label{sec:setup_software}
+\TODO{ROS 2 Jazzy on Ubuntu 24.04; the UR driver (scaled joint trajectory controller,
+velocity controller); MoveIt's time-optimal parameterisation as a service; OMPL; the pose
+server (SAM2, PPF, FoundationPose) in Docker on the desktop; MediaPipe; the package's
+C++ components. Versions in a table (Appendix~D).}
+
+\section{Workpieces}
+\label{sec:setup_parts}
+\begin{table}[htbp]
+\caption{Test assemblies.}
+\label{tab:setup_parts}
+\centering\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Assembly & Parts & Seam type \\
+\midrule
+Plate T-joint & two 8 mm MDF plates & two straight fillets \\
+\textit{C1} & tube on a plate & ellipse/circle \\
+\textit{E2} & mitred tube on a plate & ellipse \\
+\textit{S3 on R2} & branch tube on a main tube & saddle \\
+\textit{RR1} & rounded-rectangle section on a plate & rounded rectangle \\
+\textit{SP3} & S-shaped band on a plate & swept path \\
+\bottomrule
+\end{tabular}
+\end{table}
+\TODO{Dimensions per part; material (MDF, PLA prints); how parts are held (magnets,
+fixtures); the base plate change (220$\times$220$\times$5.5 mm).}
+\SRC{notes/curved\_parts\_print\_list.md; models/; test/data/bench\_models/README.md.}
+\figplaceholder{fig:setup_parts}{Photographs of the test assemblies on the table}{The test
+assemblies.}
+
+\section{Measuring the Mark Error}
+\label{sec:setup_measure}
+\TODO{The reference is the pen, independent of the camera: the contact depth along the
+pen axis (Eq.~\ref{eq:touch}) for every tack, and the mark's offset from the true root
+measured on the part (ruler or flatbed scan). Which reference for which claim.}
+\figplaceholder{fig:exp_marks}{Photo of marks on a seam with the measured offsets}{Pen
+marks on the weld root and their measured errors.}
+
+\section{Experimental Procedure}
+\label{sec:setup_procedure}
+\TODO{One run, step by step: home; calibration checks; for each part aim, capture,
+segment, register, place, save; multi-view refinement; seams and tacks; reachability;
+marking; measurement. Single-view and multi-view runs on the same placement; how many
+repeats.}
+
+\section{WeldSet Benchmark Setup}
+\label{sec:setup_weldset}
+\TODO{The corpus (strata, scenes, seeds); the two machines and which holds the
+authoritative data; the batch (chunks, resumable, wall time).}
+\SRC{weld\_generator MANUAL.md \S7, \S8.3; memory: project state 2026-09-21.}

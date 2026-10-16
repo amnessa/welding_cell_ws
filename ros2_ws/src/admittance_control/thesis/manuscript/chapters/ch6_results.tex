@@ -1,18 +1,12 @@
 % =====================================================================================
-\chapter{EXPERIMENTS AND RESULTS}
-\label{chp:experiments}
+\chapter{RESULTS AND DISCUSSION}
+\label{chp:results}
 % Material: README §14 (the error chain and budget), §15-16; thesis_notes.md (every
 % number with its date); scripts/foundationpose_results/{tack_marks.json, multiview/};
 % todo.md "Benchmarks to run" and "measure everything" (sections marked PLANNED).
 % =====================================================================================
 
-\section{Experimental Setup and Protocol}
-\label{sec:exp_setup}
-\TODO{The workpieces (8 mm MDF T-joints, magnets; printed curved parts); the reference:
-pen contact, independent of the camera (tack\_marks.json depth along the pen,
-touch\_probe on faces); how a mark error is measured (ruler / flatbed scan); repeats.}
-\figplaceholder{fig:exp_marks}{Photo of marks on a T-joint seam with the measured offsets}{Pen
-marks on the weld root and their measured errors.}
+\TODO{The setup and the procedure are Chapter~\ref{chp:setup}.}
 
 \section{Calibration Results}
 \label{sec:exp_calib}
@@ -68,7 +62,7 @@ $\mathbf{R}_v\vect{d}$ taken out & $-$1.07 & $-$3.89 & $-$1.63 & $-$0.21 & 3.7 \
 its fix.}
 \label{tab:exp_error_chain}
 \centering\small
-\begin{tabular}{@{}llll@{}}
+\begin{tabular}{@{}p{0.09\textwidth}p{0.33\textwidth}p{0.33\textwidth}p{0.15\textwidth}@{}}
 \toprule
 Date & Cause & Fix & Mark error after \\
 \midrule
@@ -108,8 +102,36 @@ from the received pose to the mark; scaling with points, parts, views and transi
 
 \section{Curved Parts}
 \label{sec:exp_curved}
-\TODO{PLANNED: the printed parts (C1, E2, R2+S3, RR1, SP3) through the cell, once mode A
-handles curved seams.}
+\TODO{The printed parts (C1, E2, S3 on R2, RR1, SP3) through the cell, single view and
+multi-view (bench 2026-10-09..16: curved\_seams\_plan.md tables; thesis\_notes.md). Mark
+errors per part and per view mode; the cut pipe's spin settled; the cable window.}
+
+\section{Operator Interaction: the Camera Aim}
+\label{sec:exp_aim}
+\TODO{Time-to-aim, overshoot, the stop when the hand drops (to measure). The command
+staircase: the two bags (50 Hz direct vs.\ the 500 Hz relay) - commands, step size, the
+wrist effort's 20--250 Hz ripple 3.4$\to$1.7$\times$ idle, the 50.8 Hz line gone
+(scripts/aim\_bag\_report.py; thesis\_notes.md 2026-10-16). Figures: the effort spectrum
+before/after; an 80 ms zoom of commanded vs.\ measured velocity.}
+
+\section{WeldSet Benchmark}
+\label{sec:exp_weldset}
+\TODO{The seven literature methods and the two proposed extractors
+(\S\ref{sec:ws_own}) per stratum and condition: F1, lateral p95, Chamfer; the oracle
+ladder's L0$\to$L1 delta.}
+\begin{table}[htbp]
+\caption{Seam extraction per method and stratum (F1 at 3 mm / lateral p95, mm).}
+\label{tab:ws_benchmark}
+\centering\small
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+Method & T/line & corner & butt & lap & \ldots \\
+\midrule
+\textit{TBD} & & & & & \\
+\bottomrule
+\end{tabular}
+\end{table}
+\SRC{weld\_generator Phase 4 batch (desktop, after the fidelity audit); notebooks 15--17.}
 
 \section{Discussion}
 \label{sec:exp_discussion}
