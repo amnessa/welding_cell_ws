@@ -302,6 +302,40 @@ estimated, so the thesis can report them. Per stage:
     3. check the image's stamp and `/joint_states` share a clock. If they don't, the node
        says so once ("latency not compensated") and still works, with a little
        overshoot.
+  - **To fix: the wrist buzzes when the error is small** (seen on the robot 2026-10-15).
+    Large turns are smooth; near the centre the wrist makes a buzzing sound.
+    - **Probably not the missing I or D term.** A buzz is a high-frequency excitation.
+      A D term would amplify the landmark noise, and an I term winds up over the
+      latency. A loop that is oscillating would show as a visible wobble at a few Hz,
+      not a buzz. Suspects, most likely first:
+      1. **50 Hz steps.** The node sends a new velocity every 20 ms and the UR holds
+         each one for 10 of its 2 ms cycles. The arm gets a staircase, not a smooth
+         curve.
+      2. **Tiny velocities.** Near the centre the commands are tiny: the creep at the
+         edge of the deadband, and the optical-centre hold pulling back a few mm (a
+         2 /s gain on mm of drift). The wrist joints may stick and slip at such speeds.
+      3. **Start/stop at the deadband edge.** Hand tremor around the 5 % edge
+         starts and stops the motion again and again.
+    - **Diagnose first.** Record `ros2 bag record /forward_velocity_controller/commands
+      /joint_states /camera_aim/status` during a buzz. Then look at the commands: a
+      staircase (1), a stream of near-zero values (2), or on/off toggling (3).
+    - **Fixes to try, cheapest first:**
+      - once centred, ramp to zero and then send exact zeros: no creep, and the centre
+        hold only beyond ~2 mm;
+      - below ~0.003 rad/s, command 0;
+      - a minimum stop time (e.g. 0.5 s) so tremor at the edge cannot restart it;
+      - a lower gain for small errors (gain scheduling);
+      - if (1) (the user's verdict on the robot, 2026-10-15: it is): smooth commands at
+        the controller's rate. The camera's 30/60 Hz is NOT a limit here: between images
+        the node re-expresses the fixed base-frame fingertip ray with the latest joint
+        state (500 Hz), and the smoother turns the 30 Hz target steps into a continuous
+        rate. The limit is Python: one step (law + collision check) is 2.5 ms, so at
+        most ~400 Hz and realistically 125 Hz. Quick test first: `rate_hz:=125.0` on the
+        aim node (a parameter already). Options for 500 Hz:
+        - a 250–500 Hz interpolating stream (a C++ node or a dedicated thread);
+        - short spline segments streamed to `scaled_joint_trajectory_controller`'s
+          topic, which interpolates at 500 Hz, with no controller switching either;
+        - MoveIt Servo (500 Hz, with its own smoothing filters).
   - **What.** When the gesture node starts, with the robot at home, `Pointing_Up` is a
     live AIM mode: the robot turns the wrist camera to follow the fingertip. The
     operator points the camera at a part in real time. The first `ILoveYou` (capture)
