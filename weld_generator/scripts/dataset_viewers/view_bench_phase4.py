@@ -210,17 +210,21 @@ def look_from_camera(sc: dict):
 
 
 # --------------------------------------------------------------------------- drawing
-def point_colours(sc: dict, idx: np.ndarray, colouring: str):
+def point_colours(sc: dict, idx: np.ndarray, colouring: str) -> np.ndarray:
+    """(n, 4) RGBA array - numeric, so matplotlib does not parse one colour string per point."""
     import matplotlib
+    from matplotlib.colors import to_rgba
     cloud = sc["cloud"]
     if colouring == "part":
-        oid = cloud["object_id"][idx]
-        return np.array([PART.get(int(o), "#a8a7a2") for o in oid], dtype=object)
+        lut = np.tile(to_rgba("#a8a7a2"), (256, 1))
+        for k, c in PART.items():
+            lut[k] = to_rgba(c)
+        return lut[cloud["object_id"][idx].astype(int)]
     if colouring == "face":
         cmap = matplotlib.colormaps["tab20"] if hasattr(matplotlib, "colormaps") else matplotlib.cm.get_cmap("tab20")
         return cmap((cloud["face_id"][idx].astype(int) % 20) / 19.0)
     seen = cloud["visible_from_cam"][idx].astype(bool)
-    return np.where(seen, "#1c5cab", "#d5d4cf")
+    return np.where(seen[:, None], to_rgba("#1c5cab"), to_rgba("#d5d4cf"))
 
 
 def draw_3d(ax, sc: dict, condition: str, colouring: str, budget: int, show_camera: bool,
@@ -229,7 +233,7 @@ def draw_3d(ax, sc: dict, condition: str, colouring: str, budget: int, show_came
     ax.cla()
     idx = pick_points(sc, condition, budget)
     P = sc["cloud"]["xyz"][idx]
-    ax.scatter(P[:, 0], P[:, 1], P[:, 2], s=0.7, c=list(point_colours(sc, idx, colouring)),
+    ax.scatter(P[:, 0], P[:, 1], P[:, 2], s=0.7, c=point_colours(sc, idx, colouring),
                alpha=0.55, linewidths=0, depthshade=False, rasterized=True)
     for m in sc["seams"]:
         X = m["xyz"]
@@ -292,7 +296,10 @@ def draw_camera_image(ax, sc: dict, title: str | None = None):
     ax.cla()
     img = depth_image(sc)
     cmap = LinearSegmentedColormap.from_list("depth", ["#0d366b", "#1c5cab", "#3987e5", "#86b6ef", "#cde2fb"])
-    cmap.set_bad("white")
+    if hasattr(cmap, "with_extremes"):                  # matplotlib >= 3.4; set_bad is being deprecated
+        cmap = cmap.with_extremes(bad="white")
+    else:
+        cmap.set_bad("white")
     T, K, W, H = camera_of(sc["scene"])
     im = ax.imshow(img, cmap=cmap, extent=(0, W, H, 0), interpolation="nearest")
     for m in sc["seams"]:
@@ -398,6 +405,77 @@ def open_in_open3d(sc: dict, condition: str):
     o3d.visualization.draw_geometries(geoms, window_name=sc["scene"]["scene_id"])
 
 
+def radio(ax, labels, active: int = 0):
+    """RadioButtons WITHOUT blitting. With blitting (matplotlib's default since 3.7) the dots
+    are 'animated' artists drawn only after a completed redraw; on some backends / scaled
+    displays, or when redraws pile up, they vanish and the panel looks dead."""
+    from matplotlib.widgets import RadioButtons
+    try:
+        r = RadioButtons(ax, labels, active=active, useblit=False)
+    except TypeError:                                   # matplotlib < 3.7 has no useblit
+        r = RadioButtons(ax, labels, active=active)
+    for t in r.labels:
+        t.set_fontsize(8)
+    return r
+
+
+def environment() -> str:
+    import platform
+    import matplotlib
+    return (f"python {platform.python_version()} · numpy {np.__version__} · matplotlib {matplotlib.__version__}"
+            f" · backend {matplotlib.get_backend()} · {platform.system()} {platform.release()}")
+
+
+class Navigator:
+    """Coalesces navigation. Keys, buttons and slider moves only record the scene wanted;
+    one load-and-draw runs `delay_ms` after the LAST request. Without this, every arrow press
+    or slider position loads and draws a scene inside the GUI event handler, and input that
+    arrives faster than a draw completes piles up until the window stops responding."""
+
+    def __init__(self, fig, apply, delay_ms: int = 120):
+        self.apply, self.want = apply, None
+        self.timer = fig.canvas.new_timer(interval=delay_ms)
+        try:
+            self.timer.single_shot = True
+        except AttributeError:
+            pass
+        self.timer.add_callback(self._fire)
+
+    def request(self, i: int):
+        self.want = i
+        self.timer.stop()
+        self.timer.start()
+
+    def _fire(self):
+        self.timer.stop()
+        if self.want is not None:
+            i, self.want = self.want, None
+            self.apply(i)
+
+    def flush(self):                                    # run now (tests, start-up)
+        self._fire()
+
+
+def safe(fn):
+    """Run a drawing / event function; on an error print it, and keep the viewer alive."""
+    def wrapped(self, *a, **k):
+        try:
+            return fn(self, *a, **k)
+        except Exception:
+            import traceback
+            tb = traceback.format_exc()
+            print(tb, file=sys.stderr)
+            try:
+                self.axt.cla(); self.axt.axis("off")
+                self.axt.text(0, 1, "could not draw this scene - please send this message:\n\n" + tb[-1800:],
+                              va="top", family="monospace", fontsize=6.5, color="#d03b3b",
+                              transform=self.axt.transAxes)
+                self.fig.canvas.draw_idle()
+            except Exception:
+                pass
+    return wrapped
+
+
 def free_keys():
     import matplotlib.pyplot as plt
     used = {"left", "right", "up", "down", "1", "2", "3", "c", "k", "r", "s", "o", "h", "+", "-", "="}
@@ -411,7 +489,7 @@ class Viewer:
     def __init__(self, entries: list[dict], start: int = 0, stratum: str = "all", budget: int = 30000,
                  title: str = "WeldSet tier-1 benchmark (bench_phase4)"):
         import matplotlib.pyplot as plt
-        from matplotlib.widgets import Button, RadioButtons, Slider
+        from matplotlib.widgets import Button, Slider
         free_keys()
         self.all = entries
         self.budget = budget
@@ -426,28 +504,27 @@ class Viewer:
         self.strata = ["all"] + [s for s in STRATA if counts[s]]
         labels = [f"all ({len(entries)})"] + [f"{s} ({counts[s]})" for s in self.strata[1:]]
         self.fig.text(0.006, 0.93, "stratum (scenes)", fontsize=8.5, color=INK2)
-        self.r_stratum = RadioButtons(self.fig.add_axes([0.004, 0.42, 0.135, 0.5], frameon=False), labels,
-                                      active=self.strata.index(stratum) if stratum in self.strata else 0)
+        self.r_stratum = radio(self.fig.add_axes([0.004, 0.42, 0.135, 0.5], frameon=False), labels,
+                               active=self.strata.index(stratum) if stratum in self.strata else 0)
         self.fig.text(0.006, 0.385, "input condition", fontsize=8.5, color=INK2)
-        self.r_cond = RadioButtons(self.fig.add_axes([0.004, 0.25, 0.135, 0.13], frameon=False), CONDITIONS)
+        self.r_cond = radio(self.fig.add_axes([0.004, 0.25, 0.135, 0.13], frameon=False), CONDITIONS)
         self.fig.text(0.006, 0.215, "colour points by", fontsize=8.5, color=INK2)
-        self.r_col = RadioButtons(self.fig.add_axes([0.004, 0.08, 0.135, 0.13], frameon=False), COLOURINGS)
-        for r in (self.r_stratum, self.r_cond, self.r_col):
-            for t in r.labels:
-                t.set_fontsize(8)
+        self.r_col = radio(self.fig.add_axes([0.004, 0.08, 0.135, 0.13], frameon=False), COLOURINGS)
         self.slider = Slider(self.fig.add_axes([0.20, 0.025, 0.33, 0.025]), "scene", 1, 2, valinit=1, valstep=1,
                              valfmt="%d")
+        self.nav = Navigator(self.fig, self.show)
         self.b_prev = Button(self.fig.add_axes([0.555, 0.02, 0.035, 0.035]), "Prev")
         self.b_next = Button(self.fig.add_axes([0.595, 0.02, 0.035, 0.035]), "Next")
         self.fig.text(0.645, 0.012, HELP, fontsize=6.8, color=INK2, family="monospace")
         self.r_stratum.on_clicked(self._on_stratum)
         self.r_cond.on_clicked(lambda lab: self._set(condition=lab))
         self.r_col.on_clicked(lambda lab: self._set(colouring=lab))
-        self.slider.on_changed(lambda v: self.show(int(v) - 1))
+        self.slider.on_changed(lambda v: self.nav.request(int(v) - 1))
         self.b_prev.on_clicked(lambda _: self.step(-1))
         self.b_next.on_clicked(lambda _: self.step(+1))
         self.fig.canvas.mpl_connect("key_press_event", self._on_key)
         self.sc = None
+        self.fig.text(0.995, 0.975, environment(), fontsize=6, color=INK2, ha="right")
         self._filter(stratum if stratum in self.strata else "all", start)
 
     # -- navigation
@@ -459,22 +536,23 @@ class Viewer:
         self.slider.ax.set_xlim(1, max(n, 2))
         self.i = None
         start = int(np.clip(start, 0, n - 1))
-        if int(self.slider.val) == start + 1:
-            self.show(start)
-        else:
-            self.slider.set_val(start + 1)
+        self.slider.set_val(start + 1)
+        self.nav.request(start)
+        self.nav.flush()                                # a stratum switch draws at once
 
     def _on_stratum(self, label: str):
         self._filter(label.split(" (")[0])
 
     def step(self, d: int):
-        self.slider.set_val(int(np.clip(self.i + d, 0, len(self.items) - 1)) + 1)
+        cur = self.nav.want if self.nav.want is not None else (self.i or 0)   # held keys accumulate
+        self.slider.set_val(int(np.clip(cur + d, 0, len(self.items) - 1)) + 1)
 
     def _set(self, **kw):
         for k, v in kw.items():
             setattr(self, k, v)
         self.render(keep_view=True)
 
+    @safe
     def _on_key(self, ev):
         k = ev.key
         if k in ("right", "n"):
@@ -506,6 +584,7 @@ class Viewer:
         elif k == "h":
             print(__doc__)
 
+    @safe
     def show(self, i: int):
         i = int(np.clip(i, 0, len(self.items) - 1)) if self.items else 0
         if i == self.i or not self.items:
@@ -520,7 +599,10 @@ class Viewer:
         return (f"scene {self.i + 1} / {len(self.items)}" + (f" in {self.stratum}" if self.stratum != "all" else "")
                 + f"   ·   {len(self.all)} scenes in total")
 
+    @safe
     def render(self, keep_view: bool):
+        if self.sc is None:
+            return
         view = (self.ax3.elev, self.ax3.azim) if keep_view else default_view(self.sc, self.show_camera)
         draw_3d(self.ax3, self.sc, self.condition, self.colouring, self.budget, self.show_camera, view)
         draw_camera_image(self.axi, self.sc)
@@ -581,6 +663,7 @@ def main(default_root: str = "bench_phase4"):
         save_all(es, Path(a.save_all), a.points)
         return
     import matplotlib.pyplot as plt
+    print(environment())
     Viewer(entries, start=a.start, stratum=a.stratum, budget=a.points)
     plt.show()
 

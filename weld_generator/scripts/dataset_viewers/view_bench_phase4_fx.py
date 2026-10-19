@@ -146,7 +146,7 @@ def pair_text(k: int, n: int, stratum: str, e_o: dict, e_t: dict, so: dict, st: 
 class TwinViewer:
     def __init__(self, pairs: list, surv: dict, start: int = 0, stratum: str = "all", budget: int = 20000):
         import matplotlib.pyplot as plt
-        from matplotlib.widgets import Button, RadioButtons, Slider
+        from matplotlib.widgets import Button, Slider
         base.free_keys()
         self.all, self.surv, self.budget = pairs, surv, budget
         self.condition, self.colouring = "exterior", "part"
@@ -164,23 +164,22 @@ class TwinViewer:
         self.strata = ["all"] + [s for s in base.STRATA if counts[s]]
         labels = [f"all ({len(pairs)})"] + [f"{s} ({counts[s]})" for s in self.strata[1:]]
         self.fig.text(0.006, 0.93, "stratum (pairs)", fontsize=8.5, color=INK2)
-        self.r_stratum = RadioButtons(self.fig.add_axes([0.004, 0.62, 0.115, 0.3], frameon=False), labels,
-                                      active=self.strata.index(stratum) if stratum in self.strata else 0)
+        self.r_stratum = base.radio(self.fig.add_axes([0.004, 0.62, 0.115, 0.3], frameon=False), labels,
+                                    active=self.strata.index(stratum) if stratum in self.strata else 0)
         self.fig.text(0.006, 0.58, "input condition", fontsize=8.5, color=INK2)
-        self.r_cond = RadioButtons(self.fig.add_axes([0.004, 0.45, 0.115, 0.12], frameon=False), base.CONDITIONS)
+        self.r_cond = base.radio(self.fig.add_axes([0.004, 0.45, 0.115, 0.12], frameon=False), base.CONDITIONS)
         self.fig.text(0.006, 0.41, "colour points by", fontsize=8.5, color=INK2)
-        self.r_col = RadioButtons(self.fig.add_axes([0.004, 0.28, 0.115, 0.12], frameon=False), base.COLOURINGS)
-        for r in (self.r_stratum, self.r_cond, self.r_col):
-            for t in r.labels:
-                t.set_fontsize(8)
+        self.r_col = base.radio(self.fig.add_axes([0.004, 0.28, 0.115, 0.12], frameon=False), base.COLOURINGS)
         self.slider = Slider(self.fig.add_axes([0.18, 0.025, 0.42, 0.022]), "pair", 1, 2, valinit=1, valstep=1,
                              valfmt="%d")
         self.b_prev = Button(self.fig.add_axes([0.625, 0.018, 0.04, 0.034]), "Prev")
         self.b_next = Button(self.fig.add_axes([0.67, 0.018, 0.04, 0.034]), "Next")
+        self.nav = base.Navigator(self.fig, self.show)
+        self.fig.text(0.995, 0.975, base.environment(), fontsize=6, color=INK2, ha="right")
         self.r_stratum.on_clicked(lambda lab: self._filter(lab.split(" (")[0]))
         self.r_cond.on_clicked(lambda lab: self._set(condition=lab))
         self.r_col.on_clicked(lambda lab: self._set(colouring=lab))
-        self.slider.on_changed(lambda v: self.show(int(v) - 1))
+        self.slider.on_changed(lambda v: self.nav.request(int(v) - 1))
         self.b_prev.on_clicked(lambda _: self.step(-1))
         self.b_next.on_clicked(lambda _: self.step(+1))
         self.fig.canvas.mpl_connect("key_press_event", self._on_key)
@@ -196,13 +195,13 @@ class TwinViewer:
         self.slider.ax.set_xlim(1, max(n, 2))
         self.i = None
         start = int(np.clip(start, 0, n - 1))
-        if int(self.slider.val) == start + 1:
-            self.show(start)
-        else:
-            self.slider.set_val(start + 1)
+        self.slider.set_val(start + 1)
+        self.nav.request(start)
+        self.nav.flush()
 
     def step(self, d: int):
-        self.slider.set_val(int(np.clip(self.i + d, 0, len(self.items) - 1)) + 1)
+        cur = self.nav.want if self.nav.want is not None else (self.i or 0)
+        self.slider.set_val(int(np.clip(cur + d, 0, len(self.items) - 1)) + 1)
 
     def _set(self, **kw):
         for k, v in kw.items():
@@ -217,6 +216,7 @@ class TwinViewer:
         dst.view_init(src.elev, src.azim)
         self.fig.canvas.draw_idle()
 
+    @base.safe
     def _on_key(self, ev):
         k = ev.key
         if k in ("right", "n"):
@@ -243,6 +243,7 @@ class TwinViewer:
         elif k == "o":
             base.open_in_open3d(self.st, self.condition)
 
+    @base.safe
     def show(self, i: int):
         i = int(np.clip(i, 0, len(self.items) - 1)) if self.items else 0
         if i == self.i or not self.items:
@@ -253,7 +254,10 @@ class TwinViewer:
         self.st = base.load_scene(self.e_t)
         self.render(keep_view=False)
 
+    @base.safe
     def render(self, keep_view: bool):
+        if getattr(self, "st", None) is None:
+            return
         view = (self.axf.elev, self.axf.azim) if keep_view else base.look_from_camera(self.st)
         base.draw_3d(self.axf, self.st, self.condition, self.colouring, self.budget, False, view,
                      title=f"with fixture (twin) · {self.condition}")
@@ -299,6 +303,7 @@ def main():
     pairs = [(originals.get(e["twin_key"]), e) for e in twins]
     print(f"{len(pairs)} twins, {sum(p[0] is not None for p in pairs)} matched to their original")
     import matplotlib.pyplot as plt
+    print(base.environment())
     TwinViewer(pairs, surv, start=a.start, stratum=a.stratum, budget=a.points)
     plt.show()
 

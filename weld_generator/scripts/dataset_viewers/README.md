@@ -31,6 +31,11 @@ In the window: the slider and Prev / Next move through scenes, the left panels c
 stratum, the input condition and the point colouring, and dragging rotates the 3D view.
 Keys: ← → scene, ↑ ↓ stratum, 1 2 3 input condition, c colouring, k camera, s save PNG.
 
+If the window ever misbehaves, the first line the script prints (Python, numpy, matplotlib
+versions and the plotting backend) and any message shown in the right-hand panel are what we
+need to fix it. Holding an arrow key or dragging the slider skips through scenes and draws only
+where you stop.
+
 ## What a scene shows
 
 * **Point cloud**, under one of three input conditions: *exterior* (what a perfect multi-view
