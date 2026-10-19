@@ -31,6 +31,16 @@ DOI. It costs neither here, because **no scenes have been generated yet**; Phase
 started. Recorded anyway, because the policy is only worth having if it is applied when it is
 free as well as when it hurts.
 
+**2.4.0 adds one enum member: `contact_mode: "line"`** (2026-10-19), a cylinder resting on the
+fixture table along a line. It exists because the D12 fixture twins were extended from the
+six plate strata to all twelve: five curved families rest flat on a plate or strip like the
+plate joints, but the saddle's main pipe lies on the table (user decision: on the table, not
+in V-blocks). Minor bump per the table above; the affected split is `bench_phase4_fx`, whose
+curved twins are new. Every 2.3.0 scene stays valid (the schema accepts both versions). One
+consequence to remember: `schema_version` is hashed, so regenerating a 2.3.0 corpus with
+this code reproduces its scenes exactly except for that string, and the stored content
+hashes no longer match byte for byte.
+
 **2.3.0 adds three `seams[]` fields and narrows one.** The narrowing is the part worth
 reading: `occluded_fraction` used to mean *everything the sensor did not return* — occlusion,
 image bounds and blind zone together. It now means **occlusion by another part** alone, with
@@ -465,7 +475,7 @@ regenerable — you can reproduce any single scene from its id alone.
     "type": "T",                  // T | corner | butt | lap | edge
     "seam_shape": "line",         // line | arc | spline | closed
     "quality_level": "C",         // ISO 5817 level the sampled defects satisfy — PARAMETERS.md §3
-    "contact_mode": "flat",       // free | flat | on_edge | propped;  "free" ⟺ no fixture (D12)
+    "contact_mode": "flat",       // free | flat | on_edge | propped | line (2.4.0);  "free" ⟺ no fixture (D12)
     "included_angle_deg": 90.0,   // D18 — DESIGN nominal, ISO 9692-1. NOT a defect, NOT dihedral_deg
     "in_plane_yaw_deg": 23.8,     // D28 (Phase 6a) — rotation of B about the contact-face normal,
                                   // T and lap only; 0 elsewhere and in pre-6a corpora. NOT dihedral:
@@ -688,6 +698,8 @@ regenerable — you can reproduce any single scene from its id alone.
   is a function of it. See `PARAMETERS.md` §2.4 for the convention used to set it.
 - **`contact_mode`** describes how the assembly rests on the fixture — it has to sit in a
   physically consistent way, and *how* it sits changes which seams the camera can see.
+  `"flat"` = a face rests on the table (plates, and the base plate / strip of the curved
+  families); `"line"` (2.4.0) = a cylinder lies on it (the saddle's main pipe).
   **`"free"` means no fixture in the scene**, and is the only legal value when no
   `role: "fixture"` object is present. Phase 1 is entirely `"free"` (D12).
 - **`noise_model.profile`** (D16) names a sensor rather than hard-coding one. `min_z_mm`

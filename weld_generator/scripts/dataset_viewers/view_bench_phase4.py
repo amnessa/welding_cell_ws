@@ -495,6 +495,11 @@ class Viewer:
         self.budget = budget
         self.condition, self.colouring, self.show_camera = "exterior", "part", False
         self.fig = plt.figure(figsize=(16, 9))
+        # The figure must own the viewer. matplotlib holds widget and key callbacks through WEAK
+        # references, so a viewer nothing else refers to is freed by the next garbage
+        # collection: the window stays open (the 3D panel still rotates) but every button,
+        # the slider and the keys go dead - after a random 10-20 scenes, when gc happens to run.
+        self.fig._weldset_viewer = self
         self.fig.canvas.manager.set_window_title(title) if self.fig.canvas.manager else None
         self.fig.text(0.006, 0.975, title, fontsize=12, fontweight="bold", color=INK)
         self.ax3 = self.fig.add_axes([0.15, 0.09, 0.47, 0.84], projection="3d")
@@ -664,7 +669,7 @@ def main(default_root: str = "bench_phase4"):
         return
     import matplotlib.pyplot as plt
     print(environment())
-    Viewer(entries, start=a.start, stratum=a.stratum, budget=a.points)
+    viewer = Viewer(entries, start=a.start, stratum=a.stratum, budget=a.points)  # noqa: F841 (kept alive)
     plt.show()
 
 

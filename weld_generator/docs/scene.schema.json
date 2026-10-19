@@ -57,7 +57,11 @@
   },
   "properties": {
     "schema_version": {
-      "const": "2.3.0"
+      "enum": [
+        "2.3.0",
+        "2.4.0"
+      ],
+      "description": "2.4.0 adds contact_mode \"line\" (a pipe resting on the fixture table); 2.3.0 scenes stay valid - a new enum member is a minor, backward-compatible bump."
     },
     "generator_version": {
       "type": "string",
@@ -137,9 +141,10 @@
             "free",
             "flat",
             "on_edge",
-            "propped"
+            "propped",
+            "line"
           ],
-          "description": "\"free\" iff no fixture object is present (D12) \u2014 enforced by the root allOf."
+          "description": "\"free\" iff no fixture object is present (D12) \u2014 enforced by the root allOf. \"line\" (2.4.0): a cylinder resting on the table along a line (saddle fixture twins)."
         },
         "included_angle_deg": {
           "type": "number",

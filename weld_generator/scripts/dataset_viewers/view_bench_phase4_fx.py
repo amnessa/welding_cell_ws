@@ -151,6 +151,11 @@ class TwinViewer:
         self.all, self.surv, self.budget = pairs, surv, budget
         self.condition, self.colouring = "exterior", "part"
         self.fig = plt.figure(figsize=(18, 10))
+        # The figure must own the viewer. matplotlib holds widget and key callbacks through WEAK
+        # references, so a viewer nothing else refers to is freed by the next garbage
+        # collection: the window stays open (the 3D panel still rotates) but every button,
+        # the slider and the keys go dead - after a random 10-20 scenes, when gc happens to run.
+        self.fig._weldset_viewer = self
         title = "WeldSet fixture twins (bench_phase4_fx): left the original without fixture, right the same parts on the fixture table"
         if self.fig.canvas.manager:
             self.fig.canvas.manager.set_window_title("WeldSet fixture twins")
@@ -304,7 +309,7 @@ def main():
     print(f"{len(pairs)} twins, {sum(p[0] is not None for p in pairs)} matched to their original")
     import matplotlib.pyplot as plt
     print(base.environment())
-    TwinViewer(pairs, surv, start=a.start, stratum=a.stratum, budget=a.points)
+    viewer = TwinViewer(pairs, surv, start=a.start, stratum=a.stratum, budget=a.points)  # noqa: F841
     plt.show()
 
 

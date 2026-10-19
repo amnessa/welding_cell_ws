@@ -6,8 +6,10 @@ What differs is the spine of the pipeline, which is the D29 curve-first order:
 
     seam_curve stream   -> the curve family and its parameters (d29.sample_d29_seam)
     joint_config stream -> the realization's nuisance dims (wall, height, gap, plate)
-    placement stream    -> the assembly pose (z-preserving: translate + rot_z;
-                           the fixture is OFF for curved configurations, patch_phase6b)
+    placement stream    -> the assembly pose (translate + rot_z), then - only with
+                           `fixture_present` - the fixture table: lift, tilt, dims
+                           (D12 extended to the curved families 2026-10-19; see
+                           `_fixture_under` and SCHEMA 2.4.0)
     camera / surface_sample / noise -> exactly the plate pipeline's roles
 
 Before anything is emitted the generation GATE runs: the D4 arm rediscovers the seam
@@ -34,7 +36,7 @@ from .config import SENSOR_PROFILES, classify_quality, geometry_config
 from .constructors import build_d29
 from .curves import transform_parametric
 from .d29 import sample_d29_seam
-from .geom import Slab, SweptSlab, Tube, rot_z, translate
+from .geom import Slab, SweptSlab, Tube, rot_x, rot_y, rot_z, translate
 from .hashing import config_id, twin_key
 from .rng import Streams
 from .sampling import sample_slab_surface
@@ -136,6 +138,33 @@ def _faces_block(parts) -> list[dict[str, Any]]:
     return out
 
 
+def _fixture_under(parts, dims_mm) -> tuple[Slab, str]:
+    """The D12 fixture table for a curved assembly, in the JOINT frame (z up).
+
+    The table's top touches the assembly's lowest point and is centred under the part that
+    rests on it - the same rule as the plate pipeline (`scene.generate_scene`: "A rests
+    flat on the working surface"). For families 2, 3, 5 and 6 that part is the base plate
+    and for 7 the thicker strip, both resting FLAT; for family 4 (saddle) it is the main
+    pipe, lying on the table along a LINE - `contact_mode: "line"`, the SCHEMA 2.4.0
+    member (user decision 2026-10-19: a pipe on the table, not V-blocks).
+
+    Curved surfaces are meshed with chords inside the true surface, so a mesh vertex can
+    sit up to `max_chord_error_mm` above the true lowest point; the table is lowered by
+    that bound so it never cuts the part (a contact gap of at most a few hundredths of a
+    millimetre, inside the D34 chord budget)."""
+    lows = []
+    for p in parts:
+        z = float(np.min(np.asarray(p.mesh().vertices)[:, 2]))
+        lows.append(z - float(getattr(p, "max_chord_error_mm", 0.0) or 0.0))
+    k = int(np.argmin(lows))
+    rest = parts[k]
+    V = np.asarray(rest.mesh().vertices)
+    cx, cy = 0.5 * (V[:, 0].min() + V[:, 0].max()), 0.5 * (V[:, 1].min() + V[:, 1].max())
+    fl, fw, ft = (float(v) for v in dims_mm)
+    table = Slab("F", "fixture", 255, (fl, fw, ft), translate(cx, cy, lows[k] - ft / 2.0))
+    return table, ("line" if isinstance(rest, Tube) else "flat")
+
+
 def _sample_cloud(parts, density: float, rng) -> dict[str, np.ndarray]:
     xyz, nrm, oid, fid = [], [], [], []
     base = 0
@@ -200,16 +229,37 @@ def generate_curved_scene(cfg: dict[str, Any],
     coarse = curved_seam_set(built, n=64)
     density_per_mm = 10.0
     dense = curved_seam_set(built, density_per_mm=density_per_mm)
-    verdicts = [seam_verdict(s, built["parts"], access) for s in coarse]
 
-    # --- pose (z-preserving; fixture off for curved configurations) ---------------
+    # --- placement, substream 3: pose, then (fixture on only) the table -----------
+    # The draws keep their order inside the placement substream - xy translation, yaw -
+    # and the fixture arm APPENDS its own (lift, two tilts, dims), so a fixture-off scene
+    # is bit-identical to one generated before the fixture existed for curved families.
     g3 = streams["placement"]
     span = float(cfg["assembly_translation_mm"])
-    T_pose = (translate(*(g3.uniform(-span, span, size=3) * np.array([1.0, 1.0, 0.0])))
-              @ rot_z(float(g3.uniform(0.0, 360.0))))
-    parts = built["parts"]
-    for p in parts:
+    T_xy = translate(*(g3.uniform(-span, span, size=3) * np.array([1.0, 1.0, 0.0])))
+    R_yaw = rot_z(float(g3.uniform(0.0, 360.0)))
+    fixture, contact_mode = None, "free"
+    if bool(cfg.get("fixture_present", False)):
+        lift = float(g3.uniform(*cfg["fixture_height_mm"]))
+        tilt = float(cfg["fixture_tilt_deg"])
+        R_tilt = rot_x(float(g3.uniform(-tilt, tilt))) @ rot_y(float(g3.uniform(-tilt, tilt)))
+        dims = [float(g3.uniform(*cfg["fixture_dims_mm"][k]))
+                for k in ("length", "width", "thickness")]
+        # table and assembly share the pose, so they lift and tilt together (plate rule)
+        T_pose = T_xy @ translate(0.0, 0.0, lift) @ R_yaw @ R_tilt
+        fixture, contact_mode = _fixture_under(built["parts"], dims)
+    else:
+        T_pose = T_xy @ R_yaw
+
+    # verdicts in the joint frame, against the workpieces AND the table: a table under
+    # the joint can block the torch cone exactly as it does for a plate twin
+    blockers = built["parts"] + ([fixture] if fixture is not None else [])
+    verdicts = [seam_verdict(s, blockers, access) for s in coarse]
+
+    parts = built["parts"]                                   # workpieces only
+    for p in blockers:
         p.T_world_part = T_pose @ p.T_world_part
+    scene_parts = blockers                                   # workpieces + table
     R_pose = T_pose[:3, :3]
 
     def w_pts(a):
@@ -268,7 +318,7 @@ def generate_curved_scene(cfg: dict[str, Any],
                 g5,
                 lambda el, az: sample_pose(target, standoff, el, az, roll),
                 lambda T: float(seam_visibility(
-                    t_pts, t_app, parts, T, K, width, height,
+                    t_pts, t_app, scene_parts, T, K, width, height,
                     prof["min_z_mm"]).mean()),
                 cfg["elevation_deg"],
                 float(cfg.get("approach_visibility_min", 0.5)),
@@ -286,12 +336,13 @@ def generate_curved_scene(cfg: dict[str, Any],
     # --- cloud, substream 4 --------------------------------------------------------
     g4 = streams["surface_sample"]
     density = float(g4.uniform(*cfg["density_per_mm2"]))
-    cloud = _sample_cloud(parts, density, g4)
+    # the table is sampled LAST, so the workpiece samples match the fixture-off twin's
+    cloud = _sample_cloud(scene_parts, density, g4)
     cloud["visible_from_cam"] = visible_mask(
-        cloud["xyz"], cloud["normals"], parts, T_cam, K, width, height,
+        cloud["xyz"], cloud["normals"], scene_parts, T_cam, K, width, height,
         prof["min_z_mm"])
     cloud["exterior"] = exterior_scan_subsampled(cloud["xyz"], cloud["normals"],
-                                                 parts)
+                                                 scene_parts)
 
     # --- seam emission -------------------------------------------------------------
     arrays: dict[str, np.ndarray] = {}
@@ -316,7 +367,7 @@ def generate_curved_scene(cfg: dict[str, Any],
         arrays[f"seams.npz:seam_{out_i}_nB"] = w_vec(s["nB"])
         arrays[f"seams.npz:seam_{out_i}_dihedral"] = \
             s["dihedral_deg"].astype(np.float32)
-        masks = seam_masks(pts, appr, parts, T_cam, K, width, height,
+        masks = seam_masks(pts, appr, scene_parts, T_cam, K, width, height,
                            prof["min_z_mm"])
         arrays[f"seams.npz:seam_{out_i}_visible"] = masks["visible"]
 
@@ -379,7 +430,7 @@ def generate_curved_scene(cfg: dict[str, Any],
             "realization": built["realization"],
             "quality_level": classify_quality(t_min, 0.0, 0.0, gap_mm,
                                               0.7 * t_min),
-            "contact_mode": "free",
+            "contact_mode": contact_mode,    # D12: "free" iff no fixture
             "included_angle_deg": included,
             "in_plane_yaw_deg": 0.0,
             "iso_17659_term": _iso_17659_term(built["joint_type"], included),
@@ -398,8 +449,8 @@ def generate_curved_scene(cfg: dict[str, Any],
                            "dihedral_min_deg", "dihedral_max_deg",
                            "contact_tol_mm", "coplanar_tol_mm",
                            "cross_run_tol_deg", "min_seam_length_mm")},
-        "objects": _objects_block(parts),
-        "faces": _faces_block(parts),
+        "objects": _objects_block(scene_parts),
+        "faces": _faces_block(scene_parts),
         "fit": {"root_gap_mm": gap_mm, "linear_misalignment_mm": 0.0,
                 "angular_misalignment_deg": 0.0,
                 "throat_thickness_mm": 0.7 * t_min},
