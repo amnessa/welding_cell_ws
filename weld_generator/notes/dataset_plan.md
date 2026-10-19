@@ -2089,6 +2089,17 @@ part-fixture contact line is a crease to it), `lit-pcaslice` ΔF1 −0,24 (−0,
 target is fixture-contact rejection — a physical prior (the seam is between
 workpieces, never against the table) that the crease detector lacks.
 
+**Step 2b DONE 2026-10-19 — fixture twins for the curved strata too (user request).**
+`scene_curved` now supports `fixture_present` (table under the lowest part; flat for
+families 2, 3, 5, 6, 7, `contact_mode: "line"` for the saddle's main pipe - SCHEMA 2.4.0;
+pose z-preserving, no tilt, because offset curves need it). `make_fixture_twins.py --only
+curved --append` added 360 twins to `out/bench_phase4_fx` (**60/60 kept in every curved
+stratum**, against 36-54/60 for the plates, whose twins tilt up to +-10 deg), then meshes,
+`apply_rule_blocks.py` (360 updated, 274 skipped) and `weldgen verify` (634/634). The 274
+plate twins are byte-identical (scene-hash fingerprint checked against a pre-run backup).
+The Phase 4 fixture chunks have NOT been re-run on the curved pairs - the paper's fixture
+numbers are the plate study as submitted.
+
 **Step 4 DONE 2026-09-07 — the tack-complete corpus IS the same corpus.**
 `scripts/apply_rule_blocks.py` retro-applies `mps_rule-0.1` and `tackrule-0.1` into
 every stored `scene.json` of `bench_phase4` (720) and `bench_phase4_fx` (274) — the

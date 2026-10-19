@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """WeldSet fixture-twin viewer: browse `bench_phase4_fx/` next to its originals in `bench_phase4/`.
 
-`bench_phase4_fx` holds 274 FIXTURE TWINS: plate scenes of `bench_phase4` regenerated with the
-workpieces clamped on a fixture table. A twin and its original share `twin_key`: the same two
+`bench_phase4_fx` holds FIXTURE TWINS: scenes of `bench_phase4` regenerated with the workpieces
+resting on a fixture table, for all 12 strata. A twin and its original share `twin_key`: the same two
 parts, same dimensions, same relative pose, same seam candidates. What differs is the table
 itself, where the assembly sits on it, the camera pose drawn for that placement, and which
 seams stay weldable and visible (the table can block the torch or hide a seam from the camera).
 The benchmark scores every method on these pairs to measure what a fixture in view costs it.
 
-Why 274 and not 720: only the six straight-seam PLATE strata (360 scenes) get a fixture (the
-fixture model describes how a plate rests on a table; a tube resting on a line does not fit
-it). Seeds the fixture makes unusable are recorded and not replaced; the viewer lists how
-many each stratum kept and why the rest were lost.
+How the parts rest: the base plate (or the thicker strip of an arc butt) lies flat on the
+table; for the saddle, the main pipe lies on it along a line. Not all 720 scenes have a twin:
+seeds the fixture makes unusable (it hides every seam from the camera, or a contact closes
+the joint) are recorded and not replaced; the viewer lists how many each stratum kept and why.
 
 This viewer shows each pair side by side: left the original (no fixture), right the twin
 (fixture grey), each with its camera's depth image, plus a seam-by-seam comparison.
@@ -49,7 +49,11 @@ REASON = {"NoVisibleSeams": "no visible seam",       # the fixture hides every s
           "NoSeamsFound": "no weldable seam"}         # a fixture contact closes the joint
 SOURCE_TO_STRATUM = {("T", "line"): "T/line", ("corner", "line"): "corner/line",
                      ("butt", "line_square"): "butt/line", ("butt", "line_grooved"): "butt/line_grooved",
-                     ("lap", "line"): "lap/line", ("edge", "line"): "edge/line"}
+                     ("lap", "line"): "lap/line", ("edge", "line"): "edge/line",
+                     ("T", "circle"): "T/circle", ("T", "ellipse"): "T/ellipse", ("T", "saddle"): "T/saddle",
+                     ("T", "rounded_rect"): "T/rounded_rect", ("T", "swept_path"): "T/swept_path",
+                     ("butt", "arc"): "butt/arc_butt"}
+REST = {"flat": "parts rest flat on the table", "line": "the main pipe lies on the table (line contact)"}
 
 
 def survival(fx_root: Path) -> dict:
@@ -70,7 +74,7 @@ def survival(fx_root: Path) -> dict:
 
 
 def survival_text(surv: dict) -> str:
-    rows = ["twins per stratum: kept / plate seeds replayed with a fixture",
+    rows = ["twins per stratum: kept / seeds replayed with a fixture",
             "lost seeds are recorded, not replaced. no visible seam = the fixture",
             "hides every seam from the camera; no weldable seam = a fixture contact",
             "closes the joint"]
@@ -80,7 +84,7 @@ def survival_text(surv: dict) -> str:
             why = ", ".join(f"{n} {REASON.get(k, k)}" for k, n in d["lost"].most_common())
             rows.append(f" {st:<18} {d['kept']:>3} / {d['seeds']:<3} {why}")
     tot_k = sum(d["kept"] for d in surv.values()); tot_s = sum(d["seeds"] for d in surv.values())
-    rows.append(f" {'total':<18} {tot_k:>3} / {tot_s}  (curved strata: no fixture, by design)")
+    rows.append(f" {'total':<18} {tot_k:>3} / {tot_s}")
     return "\n".join(rows)
 
 
@@ -111,7 +115,8 @@ def seam_comparison(orig: dict, twin: dict) -> str:
         rows.append(f" ... {len(order) - 14} more")
     rows.append(" prim. = primary seam (truth), weld. = other weldable, rej. = rejected")
     rows.append(" seen = fraction seen by the camera; * = changed by the fixture")
-    rows.append(f" + {n_fix} part-fixture contact lines in the twin (rejected: fixture_contact)")
+    if n_fix:                                   # plate twins enumerate the part-table contacts
+        rows.append(f" + {n_fix} part-fixture contact lines in the twin (rejected: fixture_contact)")
     return "\n".join(rows)
 
 
@@ -133,7 +138,7 @@ def pair_text(k: int, n: int, stratum: str, e_o: dict, e_t: dict, so: dict, st: 
         f"parts      {' + '.join(o['primitive'] for o in wp)} · thickness "
         + (f"{min(t):.1f}–{max(t):.1f} mm" if t else "-"),
         f"fixture    table {fx['dims_mm'][0]:.0f} x {fx['dims_mm'][1]:.0f} x {fx['dims_mm'][2]:.1f} mm"
-        f" · parts rest '{j.get('contact_mode', '-')}'",
+        f" · {REST.get(j.get('contact_mode'), j.get('contact_mode', '-'))}",
         f"camera     {s['noise_model'].get('profile', '?')} · standoff {co.get('standoff_mm', 0):.0f}->"
         f"{ct.get('standoff_mm', 0):.0f} mm · elev. {co.get('elevation_deg', 0):.0f}°->{ct.get('elevation_deg', 0):.0f}°",
         "           (each scene draws its own camera for its placement)",

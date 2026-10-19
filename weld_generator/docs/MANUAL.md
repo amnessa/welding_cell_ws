@@ -307,7 +307,7 @@ scene validates against it.
 | `out/bench6a` | | Phase 6a plate corpus with outlines + yaw (the D28 fix), used by Phase 5 annotation |
 | `out/bench6b` | 300 | Phase 6b family-balanced corpus (60 per class, families balanced within class) |
 | **`out/bench_phase4`** | **720** | **the Phase 4 run corpus: 60 per family**, D28 PASS 0,34, D34 PASS, mps + tacks applied |
-| `out/bench_phase4_fx` | 274 | its fixture twins (plate strata; the curved families keep the fixture off) |
+| `out/bench_phase4_fx` | 634 | its fixture twins, all 12 strata: 274 plate twins (2026-09-07) + 360 curved (2026-10-19, schema 2.4.0; saddle `contact_mode: "line"`) |
 | `out/annotation` | 20 | the Phase 5 export + scores |
 
 Builders: `scripts/make_bench6b.py [--per-family N]`, `scripts/make_fixture_twins.py`,

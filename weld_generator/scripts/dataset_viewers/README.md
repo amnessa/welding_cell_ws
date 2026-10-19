@@ -5,12 +5,19 @@ This folder holds the tier-1 (analytic) part of WeldSet and two viewers for brow
 | folder | scenes | what it is |
 |---|---|---|
 | `bench_phase4/` | 720 | the benchmark: 12 strata × 60 scenes, no fixture |
-| `bench_phase4_fx/` | 274 | fixture twins: plate scenes of `bench_phase4` regenerated on a clamping table |
+| `bench_phase4_fx/` | 634 | fixture twins: scenes of `bench_phase4` regenerated on a fixture table, all 12 strata |
 
 The 12 strata: T-joints with straight, circular, elliptical, saddle, rounded-rectangle and
 curved-strip (arc / B-spline) seams; corner joints; square, grooved (ISO 9692-1 single V / U /
 bevel) and curved-strip butt joints; lap joints; edge joints. Joint terms follow ISO 17659,
 preparations ISO 9692-1, quality levels ISO 5817. All lengths are in millimetres.
+
+A fixture twin has the same two parts in the same relative pose as its original; the
+assembly rests on the table (flat on its base plate or strip; the saddle's main pipe lies on
+it along a line), with its own placement and camera. 634 of the 720 seeds have a twin: the
+rest were lost because the fixture hid every seam from the camera or a contact closed the
+joint (the fixture viewer lists the counts per stratum). The 274 plate twins carry schema
+2.3.0, the 360 curved twins 2.4.0, which only adds the contact mode `line`.
 
 ## Running the viewers
 

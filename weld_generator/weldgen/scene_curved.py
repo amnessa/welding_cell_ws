@@ -7,7 +7,8 @@ What differs is the spine of the pipeline, which is the D29 curve-first order:
     seam_curve stream   -> the curve family and its parameters (d29.sample_d29_seam)
     joint_config stream -> the realization's nuisance dims (wall, height, gap, plate)
     placement stream    -> the assembly pose (translate + rot_z), then - only with
-                           `fixture_present` - the fixture table: lift, tilt, dims
+                           `fixture_present` - the fixture table: lift and dims (no
+                           tilt: the pose stays z-preserving)
                            (D12 extended to the curved families 2026-10-19; see
                            `_fixture_under` and SCHEMA 2.4.0)
     camera / surface_sample / noise -> exactly the plate pipeline's roles
@@ -36,7 +37,7 @@ from .config import SENSOR_PROFILES, classify_quality, geometry_config
 from .constructors import build_d29
 from .curves import transform_parametric
 from .d29 import sample_d29_seam
-from .geom import Slab, SweptSlab, Tube, rot_x, rot_y, rot_z, translate
+from .geom import Slab, SweptSlab, Tube, rot_z, translate
 from .hashing import config_id, twin_key
 from .rng import Streams
 from .sampling import sample_slab_surface
@@ -241,12 +242,13 @@ def generate_curved_scene(cfg: dict[str, Any],
     fixture, contact_mode = None, "free"
     if bool(cfg.get("fixture_present", False)):
         lift = float(g3.uniform(*cfg["fixture_height_mm"]))
-        tilt = float(cfg["fixture_tilt_deg"])
-        R_tilt = rot_x(float(g3.uniform(-tilt, tilt))) @ rot_y(float(g3.uniform(-tilt, tilt)))
         dims = [float(g3.uniform(*cfg["fixture_dims_mm"][k]))
                 for k in ("length", "width", "thickness")]
-        # table and assembly share the pose, so they lift and tilt together (plate rule)
-        T_pose = T_xy @ translate(0.0, 0.0, lift) @ R_yaw @ R_tilt
+        # Table and assembly share the pose and lift together, as in the plate pipeline -
+        # but WITHOUT the plate arm's +-fixture_tilt_deg: the offset curves of families 5
+        # and 6 only transform under z-preserving poses (`curves.transform_parametric`),
+        # which is why curved poses are z-preserving in the first place.
+        T_pose = T_xy @ translate(0.0, 0.0, lift) @ R_yaw
         fixture, contact_mode = _fixture_under(built["parts"], dims)
     else:
         T_pose = T_xy @ R_yaw

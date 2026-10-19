@@ -167,6 +167,14 @@ cone parameters stay as they are; only the apex moves, and only for `prep != "sq
   D31 clearance rules are defined on plate footprints. The paired fixture ablation
   remains a plate-joint study; extending it to revolved primitives is future work, not
   a silent gap.
+  **Reversed 2026-10-19 (user request: fixture twins for all 12 strata).** `scene_curved`
+  now places the table under the lowest part when `fixture_present` is on: flat under the
+  base plate (families 2, 3, 5, 6) or the thicker strip (7), along a line under the
+  saddle's main pipe (4) - `contact_mode: "line"`, SCHEMA 2.4.0 (user chose the pipe on
+  the table over V-blocks). The pose stays z-preserving (lift + yaw, no tilt): the offset
+  curves of families 5 and 6 only transform under z-preserving poses. Fixture-off scenes
+  are bit-identical to before (the fixture draws are appended to the placement substream);
+  `tests/test_scene_curved_fixture.py` pins both. D31 bands stay plate-scoped.
 - **D31/D32 are plate-scoped**: `class_ambiguity` returns no bands for the curved
   configurations in 6b v1 (their class borders — e.g. a saddle T vs a saddle butt — are
   set by the D29 constructor, not by continuous offsets). Recorded so the clearance
