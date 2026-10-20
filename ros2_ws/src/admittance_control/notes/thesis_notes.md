@@ -12,6 +12,34 @@ the plans under `notes/`; this file keeps the story and the numbers.
 
 ---
 
+## 2026-10-20: The aim's Jacobian was off by a factor of two, and every test passed
+
+**What happened.** Writing the methodology chapter, the thesis review compared every equation of
+the draft with the code. The camera aim's joint rates come from damped least squares on
+`kinematics.ur5e_jacobian`, and its angular rows turned out to be twice the true ones. The aim
+had been tested on the robot two days before and worked.
+
+**Evidence.**
+- The Jacobian takes $R(q+\varepsilon e_i)\,R(q-\varepsilon e_i)^\top\approx I+2\varepsilon[\omega_i]_\times$
+  and divides its skew part by $2\varepsilon$ instead of $4\varepsilon$. At a test pose, the true
+  angular velocity of wrist 1 is $(-0.296,\ 0.955,\ 0)$ rad/s per rad/s, the Jacobian column
+  $(-0.591,\ 1.911,\ 0)$: exactly 2.000×. The linear rows are right.
+- So the arm achieves half the commanded rate: 7.5°/s at the "15°/s" cap, an effective gain of
+  1.25 /s instead of 2.5 /s. The lever-arm term of the optical-centre hold uses the commanded
+  rate, so the optical centre drifts at up to ~8 mm/s, and the P pull holds it.
+- The unit test of the optical-centre hold multiplies the joint rates by the same Jacobian, so it
+  checks the code against itself. The closed-loop test integrates the true kinematics and passes,
+  because a loop with half the gain still converges (centred in < 4 s, drift < 10 mm).
+
+**What we learned.**
+- A test that uses the code's own model as its reference cannot find an error in that model. The
+  reference must be independent: here, finite differences of the forward kinematics.
+- A feedback loop hides a gain error. It converges anyway, just more slowly, and the gain that
+  was tuned by feel on the robot (1.2 → 2.5 /s) was really 0.6 → 1.25 /s.
+- Writing the method down, equation by equation, against the code is itself a test.
+
+---
+
 ## 2026-10-16: A wound-up cable read as a contact, 84 mm above the part
 
 **What happened.** On SP3, two of four reachable tacks stopped their descent in the air:

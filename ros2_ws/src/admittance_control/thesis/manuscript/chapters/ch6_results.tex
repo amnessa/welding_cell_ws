@@ -16,12 +16,14 @@
 \centering
 \begin{tabular}{@{}lccc@{}}
 \toprule
- & 0.29 m & 0.44 m & 0.63 m \\
+ & near & middle & far \\
 \midrule
-Before the Tare & +1.92 & +0.31 & $-$3.28 \\
-After the Tare (robot-computed distance) & +0.29 & +1.06 & +1.43 \\
+Before calibration & +1.92 (291) & +0.31 (439) & $-$3.28 (626) \\
+Tare, distance entered by hand & +1.71 (285) & +3.25 (423) & +5.24 (604) \\
+Tare, distance computed from the robot & +0.29 (297) & +1.06 (443) & +1.43 (657) \\
 \bottomrule
 \end{tabular}
+\par\smallskip\footnotesize Offset of the camera's table from the pen-measured plane in mm (range in mm), one series per state, 2026-10-02.
 \end{table}
 \TODO{Tilt separation (camera-fixed 0.49$^\circ$ / table 0.44$^\circ$ $\to$ 0.07$^\circ$);
 hand-eye residuals; TCP check.}
@@ -30,9 +32,11 @@ hand-eye residuals; TCP check.}
 \section{Registration Accuracy}
 \label{sec:exp_registration}
 \TODO{The normal gate (lean 6.5$^\circ\to$0.3--0.8$^\circ$, root 10 mm $\to\pm$0.2 mm);
-pose jitter of the tracker on a still part (5.2 / 2.5 / 3.0 mm std, 24 mm range) and the
-robust mean; the save-time ICP (synthetic: 4.7 mm / 1.5$^\circ\to$ 0.01 mm / 0.4$^\circ$;
-bench: corrections 1.8--7.9 mm).}
+pose jitter of the ICP tracker on a still part (2026-09-25: 5.2 / 2.5 / 3.0 mm std, 24 mm range,
+swings to 6.4$^\circ$), which motivated the robust mean (FoundationPose's jitter on a still part is
+not measured yet: planned with pose\_jitter\_probe on /perception/fp/pose); the save-time ICP
+(synthetic: 4.7 mm / 1.5$^\circ\to$ 0.01 mm along the normal and 0.4$^\circ$ of tilt, the remaining
+1--2 mm in the plate's own plane; bench: corrections 1.8--7.9 mm).}
 
 \section{Multi-View Refinement}
 \label{sec:exp_multiview}
@@ -71,13 +75,18 @@ Date & Cause & Fix & Mark error after \\
 28 Sep & flat ground cut on a tilted table & measured table plane & 3--5 mm \\
 28 Sep & camera-fixed tilt 0.36$^\circ$ & tilt refinement & 3.7--4.3 mm \\
 29 Sep & nominal kinematics; plate face straddle & calibrated chain; normal gate & \\
-1 Oct & depth $\propto z^2$ & Tare against the robot & \\
+1--2 Oct & depth $\propto z^2$ (contact 8.3--8.8 mm early) & Tare against the robot & \\
 2 Oct & extrinsic translation; single view & multi-view refinement & $\sim$2.5 mm \\
 6 Oct & tracker pose saved (FoundationPose) & ICP at save; APS; roll fallback & 2.3--2.7 mm \\
 \bottomrule
 \end{tabular}
 \end{table}
 \SRC{README \S14 tables; thesis\_notes.md.}
+\TODO{Rows missing against README \S14 / thesis\_notes.md (review B2, @X ch6): 29 Sep the holder
+envelope (clearance 1.1 $\to$ 15.5 mm); 29 Sep an unmodelled 7 mm plate under the ear (9.7 mm early
+contact); 2 Oct the extrinsic tilt 0.49$^\circ\to$0.07$^\circ$; and the empty ``after'' cells of
+29 Sep (straddle: marks 14--16 mm before the fix) and 1--2 Oct. Rebuild the table from the dated
+entries.}
 \TODO{The error budget per link (README \S14), and repeated trials with statistics
 (mean, std, max over $N$ tacks), not single runs.}
 
@@ -90,8 +99,10 @@ and slow push: noise, delay, drift; rate 25--29 Hz vs.\ $\sim$10 Hz.}
 \label{sec:exp_planning}
 \TODO{PLANNED (aps\_transit\_plan.md step 5): per transit, planning time, weighted joint
 travel, tool-tip path length, deviation, clearance, TOTG duration. Known so far:
-front-back transit $\sim$6$\times$ shorter at a 1 s budget; C++ collision check
-$\sim$590$\times$ faster and identical on 8\,800 configurations.}
+front-back transit on the T-joint with $\sim$6$\times$ less weighted joint travel at a 1 s budget
+(2.9 against 17.6--18.0, the median of five RRT-Connect runs); C++ collision check $\sim$590$\times$
+faster (8.6~$\mu$s against 5.1~ms) and identical on 8\,800 configurations (2 $\times$ 4\,400, random
+and near-contact, in two scenes).}
 \figplaceholder{fig:exp_transits}{Tool-tip paths of RRT-Connect and APS for the
 front--back transit (RViz or matplotlib, same view)}{Transit paths: RRT-Connect vs.\ APS.}
 
@@ -108,6 +119,8 @@ errors per part and per view mode; the cut pipe's spin settled; the cable window
 
 \section{Operator Interaction: the Camera Aim}
 \label{sec:exp_aim}
+\TODO{Measure after deciding the Jacobian fix (\S\ref{sec:mc_aim}): the achieved rate is half the
+commanded one until kinematics.ur5e\_jacobian is fixed; the node logs the commanded rate.}
 \TODO{Time-to-aim, overshoot, the stop when the hand drops (to measure). The command
 staircase: the two bags (50 Hz direct vs.\ the 500 Hz relay) - commands, step size, the
 wrist effort's 20--250 Hz ripple 3.4$\to$1.7$\times$ idle, the 50.8 Hz line gone

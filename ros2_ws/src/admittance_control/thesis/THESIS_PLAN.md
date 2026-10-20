@@ -66,12 +66,21 @@ chapters; the old files are removed (git keeps them).
 | 7 | Conclusion (`ch7_conclusion.tex`) | summary, limitations, future work | |
 | App. A–D | parameters; standards; derivations; software and data | | node parameters, ISO PDFs, module docstrings, README "Run it" |
 
-**How the two parts connect** (Ch. 4 §"One Geometry"): the cell computes its seams and
-tacks with WeldSet's primitives, seam rule, curve constructors and tack rule, so it marks
-WeldSet's exact truth at the measured poses; and the two proposed CAD-free extractors take
-as input what the cell's procedure produces (the base scanned before the next part is
-placed; clouds labelled per part by the registration), scored on WeldSet before the
-robot. Open: do they run on real scans in this thesis (decision 8 below)?
+**How the two parts connect** (Ch. 4 §"One Geometry", corrected 2026-10-20): the cell
+represents its parts as WeldSet's primitives and applies WeldSet's **tack rule unchanged**; its
+seams follow WeldSet's geometry in a **registration-tolerant form** (the seam rule with a 10 mm pose
+tolerance instead of the contact tolerance, a clip with slack, a face-extent rule; curved seams by
+WeldSet's *verification* intersection constructors and its curved-seam verdict). So it marks
+WeldSet's exact geometry evaluated at the measured poses. The two proposed CAD-free extractors take
+as input what the cell's procedure produces (the base scanned before the next part is placed; clouds
+labelled per part by the registration), scored on WeldSet before the robot. Open: do they run on
+real scans in this thesis (decision 8 below)?
+
+**Review of 2026-10-20.** The chapters 3-5 and Appendix A were rewritten after a line-by-line
+review of both projects. The reports are in `notes/review_2026-10-20/` (machine-generated, verify
+before use); the section-by-section index is `MATERIAL_MAP.md`; the WeldSet code defects are in
+`notes/weldset_code_review_2026-10-20.md`; the style rules in `notes/writing_style_guide.md`; where
+the thesis sits among the examples in `notes/positioning.md`.
 
 ## Inventory
 
@@ -83,29 +92,40 @@ user: which formulas, figures, graphs and tables each section needs).
 
 ### Figures (placeholders in the chapters)
 
+Regenerated 2026-10-20 from the chapters.
+
 | chapter | labels |
 |---|---|
-| 1 | `fig:intro_pipeline` (+ `fig:intro_cell` photo, planned) |
-| 3 | `fig:mc_pipeline`, `fig:frames`, `fig:depth_law`, `fig:mc_aim_loop`, `fig:tracking_split`, `fig:views`, `fig:mc_seam_kinds`, `fig:mc_collision`, `fig:mc_roll_dp`, `fig:marking_sequence`, `fig:architecture` |
-| 4 | `fig:ws_families`, `fig:ws_own` (the two extractors on one T-joint), `fig:ws_link` |
+| 1 | `fig:intro_cell`, `fig:intro_pipeline` |
+| 3 | `fig:mc_pipeline`, `fig:frames`, `fig:depth_law`, `fig:mc_aim_loop`, `fig:mc_aim_buzz`, `fig:mc_perception`, `fig:sam2_arch` (adapted from SAM 2), `fig:fp_arch` (adapted from FoundationPose), `fig:tracking_states`, `fig:views`, `fig:mc_seam_kinds`, `fig:mc_collision`, `fig:mc_roll_dp`, `fig:marking_sequence`, `fig:architecture`, `fig:cell_states` |
+| 4 | `fig:ws_families`, `fig:ws_access`, `fig:ws_tacks`, `fig:ws_sensor`, `fig:ws_own`, `fig:ws_link` |
 | 5 | `fig:tool`, `fig:setup_parts`, `fig:exp_marks` |
-| 6 | `fig:exp_transits`; to add: the aim's effort spectrum before/after and the 80 ms command zoom (the two bags), benchmark plots per stratum, the error budget |
+| 6 | `fig:exp_transits`; to add: the aim's effort spectrum and the 80 ms command zoom (the two bags), benchmark plots per stratum, the error budget |
 
 ### Tables
 
 | chapter | labels |
 |---|---|
-| 3 | `tab:calib_chain`, `tab:gestures`, `tab:mv_acceptance`; to add: a notation table |
-| 4 | `tab:ws_strata`; to add: the primitives |
-| 5 | `tab:hardware`, `tab:setup_parts` |
+| 2 | `tab:lit_seam` |
+| 3 | `tab:notation`, `tab:calib_chain`, `tab:gestures`, `tab:mv_acceptance`, `tab:nodes`, `tab:rates` |
+| 4 | `tab:ws_primitives`, `tab:ws_plate_ranges`, `tab:ws_families`, `tab:ws_profiles`, `tab:ws_strata`, `tab:ws_methods`, `tab:ws_link` |
+| 5 | `tab:hardware`, `tab:software`, `tab:setup_parts` |
 | 6 | `tab:exp_depth`, `tab:exp_table_views`, `tab:exp_error_chain`, `tab:ws_benchmark`; planned: repeated placement trials, FP vs ICP, APS vs RRT-Connect, timing per stage |
+| App. A | `tab:app_parameters` (values in use) |
 
-### Equations (drafted; each to be checked when its section is refined)
+### Equations
 
 | chapter | labels |
 |---|---|
-| 3 | `eq:frame_chain`, `eq:handeye`, `eq:depth_error`, `eq:aim_error`, `eq:aim_law`, `eq:aim_dls`, `eq:relay`, `eq:ppf`, `eq:p2plane`, `eq:normal_gate`, `eq:swing_twist`, `eq:spin_settle`, `eq:mv_objective`, `eq:observability`, `eq:extrinsic_d`, `eq:plane_intersection`, `eq:ellipse_seam`, `eq:iso_gap` (**verify against the standard**), `eq:roll_dp`, `eq:cartesian_bow`, `eq:transit_cost`, `eq:touch` |
-| 4 | `eq:tackrule_len`, `eq:tackrule_n`, `eq:footprint`, `eq:sphere_trace`; to add: the rolling ball, the saddle in general position, the step-ratio angle |
+| 3 (38) | `eq:frame_chain`, `eq:tcp_4pt`, `eq:tcp_check`, `eq:table_plane`, `eq:handeye`, `eq:depth_error`, `eq:tare_distance`, `eq:tilt_split`, `eq:aim_error`, `eq:aim_law`, `eq:aim_pm`, `eq:aim_dls`, `eq:relay`, `eq:ppf`, `eq:ppf_extent`, `eq:ppf_score`, `eq:fp_update`, `eq:ego_motion`, `eq:track_fit`, `eq:pose_mean`, `eq:p2plane`, `eq:normal_gate`, `eq:swing_twist`, `eq:spin_settle`, `eq:view_gain`, `eq:mv_objective`, `eq:observability`, `eq:extrinsic_d`, `eq:selfcal_apply`, `eq:selfcal_combine`, `eq:iso_gap` (checked against weldgen's `root_gap_limit`; check once against the standard's Table 1), `eq:plane_intersection`, `eq:ellipse_seam`, `eq:holder_clearance`, `eq:roll_dp`, `eq:cartesian_bow`, `eq:transit_cost`, `eq:touch` |
+| 4 (10) | `eq:ws_saddle`, `eq:ws_axes`, `eq:tackrule_len`, `eq:tackrule_n`, `eq:ws_pose`, `eq:ws_noise`, `eq:ws_f1`, `eq:fp_distance`, `eq:footprint`, `eq:sphere_trace` |
+
+### Algorithm boxes
+
+| chapter | labels |
+|---|---|
+| 3 (12) | `alg:aim`, `alg:ppf`, `alg:spin_settle`, `alg:mv_views`, `alg:mv_refine`, `alg:mv_selfcal`, `alg:registry`, `alg:planar_seam`, `alg:curved_seam`, `alg:reach`, `alg:transit`, `alg:descent` |
+| 4 (5) | `alg:ws_generate`, `alg:ws_access`, `alg:ws_tacks`, `alg:ws_footprint`, `alg:ws_seamfind` |
 
 ### Notation (keep it consistent)
 
@@ -150,6 +170,13 @@ user: which formulas, figures, graphs and tables each section needs).
    footprint idea is İsmail Hoca's).
 9. **Tack ordering by a rough heat simulation** (todo.md, 2026-10-16): a section of Ch. 3
    with results, or future work?
+10. **The WeldSet code defects of 2026-10-20** (`notes/weldset_code_review_2026-10-20.md`, P1):
+    fix and regenerate the affected strata on the desktop before the thesis numbers are frozen, or
+    report them as limitations. And whether the ICRA submission needs corrections in the
+    camera-ready (12 statements listed there).
+11. **The camera aim's Jacobian** (todo.md, 2026-10-20): fix `kinematics.ur5e_jacobian` and halve
+    the gain to keep the tested behaviour (then re-test on the robot), or keep the code and report
+    the achieved rates.
 
 ## Comparisons to dig out for Chapter 6 (later; the user, 2026-10-15)
 

@@ -39,6 +39,70 @@ The chain:
 - **2026-10-06: transits by APS** (`transit_planner: aps`, the default), with RRT-Connect
   as the fallback.
 
+## FOUND IN THE THESIS REVIEW (2026-10-20)
+
+The line-by-line review of both projects for the thesis (`thesis/notes/review_2026-10-20/`,
+index `thesis/MATERIAL_MAP.md`). Nothing in the code was changed.
+
+**Code (the cell)**
+- [ ] **`kinematics.ur5e_jacobian` has doubled angular rows** (`kinematics.py:296-303`): the rotation
+  difference $R(q+\varepsilon)R(q-\varepsilon)^\top\approx I+2\varepsilon[\omega]_\times$ is divided by
+  $2\varepsilon$, not $4\varepsilon$. Reproduced 2026-10-20: every angular entry is exactly 2× the true
+  one; the linear rows are right. Effect: the camera aim turns at **half** the commanded rate
+  (K_eff = 1.25 /s, cap 7.5°/s, roll gain 0.75 /s) and its optical centre drifts up to ~8 mm/s against the
+  P pull; `ik_solve` converges more slowly but to the right pose. The aim test checks with the same
+  Jacobian (`test_tool0_twist_keeps_the_optical_centre_still`), so it cannot catch it.
+  Fix: divide by $4\varepsilon$ (or use $\log(R(q+\varepsilon e_i)R(q)^\top)/\varepsilon$); to keep the
+  behaviour tested on 2026-10-15/16, halve `gain_per_s`, `roll_gain_per_s`, `max_rate_deg_s` and
+  `max_acc_deg_s2`; add a test of the Jacobian against finite differences of the FK; re-test on the robot
+  (record a bag). Then update Ch. 3 §3.4.2 (the TODO there) and Appendix A. THESIS_PLAN decision #11.
+- [ ] Camera images are stamped with the ROS clock when `realsense_camera_node.py` publishes them, not
+  with the exposure time; every "pose at the image stamp" inherits the offset. Measure it once (the aim's
+  latency test) or use the driver's hardware stamp.
+- [ ] `multiview_refine._thickness_mm` takes a part's smallest bounding-box extent as its thickness: for a
+  tube that is its diameter or length, not its wall, so the ISO 5817 fit-up warning for tube pairs uses
+  the wrong gauge. Use the registry's gauge.
+- [ ] Stale comments and docstrings (no behaviour change): `camera_aim.py` says 50 Hz (125 Hz);
+  `collision.py:20-22` says box-box inflates by the clearance (it does not); `config/pen_tool.json`
+  `_comment` says the planner uses the nominal chain (calibrated since 2026-09-29); the `kinematics.py`
+  header "RRT-Connect Planner"; the `package.xml` description; `test_multiview_touching_parts.py`
+  docstring (lap rule is off); `srv/ComputeTOTG.srv` default 0.1 (node 0.02); `marking.py` 33 vs 34
+  boxes; `marking.aps_path` docstring ("Python model"); `tack_marking_node.py` docstring (bias at the
+  approach point: it is at the departure point); `MarkingConfig` defaults (10 mm, 15°) differ from
+  `marking.json` (3 mm, 30°); `contact_error.py` docstring ±15 mm vs `span` 25 mm, and the script is not
+  installed; `scripts_in_foundationpose/server.py` comment `threaded=False` vs code `True`;
+  `scripts_in_foundationpose/foundationpose_bridge_node.py` is an old copy (439 lines of diff): delete
+  or mirror.
+
+**Code (weld_generator)**: the P1 defects in `thesis/notes/weldset_code_review_2026-10-20.md` (exterior
+flag on thin stacked plates, interpenetrating parts, the coplanar-arm comparison, the fixture twins'
+yaw, the grooved butts) and its "smallest fix set" (5 steps, then regenerate and re-run the affected
+strata on the desktop). THESIS_PLAN decision #10.
+
+**ICRA submission**: 12 statements that do not match the code or the final batch (the same note, last
+section). Fix in the camera-ready if accepted; do not carry them into the thesis.
+
+**Thesis: answers only the author has (ASK)**
+- [ ] the pen holder's printer, filament and infill; the pen (make, tip); is the clamp rigid?
+- [ ] the parts' filament (PLA?); their measured dimensions (callipers); the real MDF thickness; which
+  base plate each experiment used;
+- [ ] the UR5e payload/CoG setting with the tool; CPU and RAM of both machines; the controller version;
+- [ ] how the true weld root is measured for the mark error (instrument, resolution).
+
+**Thesis: on the desktop (DESKTOP)**
+- [ ] FoundationPose's hypothesis count: `estimater.py` `make_rotation_grid(min_n_views=40,
+  inplane_step=60)` (the notes say 252 = 42 × 6; the paper uses 504);
+- [ ] the Docker image's versions (CUDA, PyTorch, FoundationPose and SAM2 commits, OpenCV contrib), the
+  Dockerfile and run scripts;
+- [ ] WeldSet corpus sizes and yields per stratum, twin-gate statistics, the final batch numbers.
+
+**Literature to fetch** (D_papers Part 4, "fetch first"): MediaPipe Hands + the Gesture Recognizer model
+card; Kirillov 2023 (SAM); Chen & Medioni 1992 and Low 2004; Tsai & Lenz 1989, Park & Martin 1994;
+Keselman 2017 + Intel's D400 depth white paper; Kunz & Stilman 2012; Geraerts & Overmars 2007 and
+Raveh et al. 2011; the ISO/EN tack-weld clauses (JASS 6, EN 1011-2); Tsai et al. 1999; a touch-sensing
+source; MegaPose (Labbé 2022), CNOS, nvdiffrast; Hartley 2013 (rotation averaging); Gelfand 2003 /
+Censi 2007 (ICP observability); Hogan 1985 (impedance). Verify every bib field against the PDF.
+
 ## NEXT (2026-10-08): CAD parts for the strata MDF cannot make
 
 The plate strata (T/line, corner, butt square, lap, edge) are MDF cuts. The curved strata

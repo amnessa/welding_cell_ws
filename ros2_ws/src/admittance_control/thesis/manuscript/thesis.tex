@@ -26,6 +26,7 @@
 \usepackage{listings}
 \usepackage{pdfpages}
 \usepackage{array}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}  % ragged-right paragraph column
 \usepackage{algorithm}
 \usepackage{algorithmic}
 \usepackage{float}
@@ -132,6 +133,7 @@ the error chain, ...), the conclusion.}
 % ---- appendices -----------------------------------------------------------------------
 \chapter*{APPENDICES}
 \addcontentsline{toc}{chapter}{APPENDICES}
+\setcounter{section}{0}                      % \chapter* does not reset it: A, not D
 \renewcommand{\thesection}{\Alph{section}}
 \counterwithin{figure}{section}
 \counterwithin{table}{section}
