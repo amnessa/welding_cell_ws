@@ -22,7 +22,7 @@ Gesture latch & 6 stable frames, 1~s cooldown & \S\ref{sec:mc_gestures} \\
 Dwell, motion hold, aim start & 1~s; 2~s; 3 pointing frames & \S\ref{sec:mc_gestures} \\
 Aim gain, roll gain & 2.5~s$^{-1}$, 1.5~s$^{-1}$ (see the Jacobian note in \S\ref{sec:mc_aim}) & \S\ref{sec:mc_aim} \\
 Deadband, release & 5\,\% of the image width, 40\,\% of it & \S\ref{sec:mc_aim} \\
-Rate and acceleration caps & $15^\circ$/s, $60^\circ$/s$^2$; two 60~ms lags & \S\ref{sec:mc_aim} \\
+Rate and acceleration caps & $15^\circ$/s, $60^\circ$/s$^2$ (commanded; half is achieved until the Jacobian is fixed); two 60~ms lags & \S\ref{sec:mc_aim} \\
 Excursion limits & $\pm35^\circ$ pan, $\pm25^\circ$ tilt, look-ahead 0.35~s & \S\ref{sec:mc_aim} \\
 Optical-centre hold & 2~s$^{-1}$, capped at 20~mm/s & \S\ref{sec:mc_aim} \\
 DLS damping, joint speed cap & $\lambda=0.02$, 0.5~rad/s & \S\ref{sec:mc_aim} \\
@@ -35,11 +35,11 @@ PPF library & $\sim$600 points/model; steps 0.04 of the diameter; 30 angle bins 
 PPF query & $\le2000$ points, voxel $\max(D/60,1.5~\mathrm{mm})$; every 5th reference point & \S\ref{sec:per_classify} \\
 PPF verification & 12 hypotheses/model, ICP 50 it., $\tau=8$~mm; size filter $[0.45,1.15]$ & \S\ref{sec:per_classify} \\
 FoundationPose & 5 refinements at registration, 2 per tracked frame; no symmetry info & \S\ref{sec:per_register} \\
-Tracking loss & fit tolerance 10~mm; lost $<0.5$ for 3 frames; back at $\ge0.6$; re-seed every 3~s & \S\ref{sec:per_track} \\
-Save window & stationary tail 8~mm / $3^\circ$ / 3 frames, at most 75 frames & \S\ref{sec:per_stationary} \\
-Robust mean & 3.5 MAD, $3^\circ$; at least $\max(3,\lfloor n/3\rfloor)$ inliers & \S\ref{sec:per_stationary} \\
-ICP & point-to-plane, Welsch (robust), Anderson depth 5, voxel 6~mm, normal gate $60^\circ$ & \S\ref{sec:per_stationary} \\
-Save-time ICP & 5 clouds; fitness $\ge0.2$; correction $\le20$~mm, $8^\circ$ & \S\ref{sec:per_stationary} \\
+Tracking loss & fit tolerance 10~mm; lost $<0.5$ for 3 frames; back at $\ge0.6$; re-seed at most every 3~s & \S\ref{sec:per_track} \\
+Save window & stationary tail within 8~mm / $3^\circ$, ended by 3 disagreeing poses, at most 75 poses; at least 5 poses, the last $\le1$~s old & \S\ref{sec:per_stationary} \\
+Robust mean & 3.5 robust $\sigma$ ($1.4826\cdot$MAD) per axis, $3^\circ$; all poses if fewer than $\max(3,\lfloor n/3\rfloor)$ agree & \S\ref{sec:per_stationary} \\
+ICP & point-to-plane, Welsch (robust), Anderson depth 5, voxel 6~mm, normal gate $60^\circ$; $d_{\max}$ 20~mm (fitness only), 30 iterations & \S\ref{sec:per_stationary} \\
+Save-time ICP & up to 5 runs within 3.5~s, each kept at fitness $\ge0.2$; correction $\le20$~mm, $8^\circ$ (swing only for an uncut tube) & \S\ref{sec:per_stationary} \\
 Spin settling & $1^\circ$ then $0.05^\circ$; range $\le\max(1.5~\mathrm{mm},\ \tfrac14$ before$)$, gain $\ge1$~mm & \S\ref{sec:per_symmetry} \\
 \midrule
 \multicolumn{3}{@{}l}{\textit{Multi-view refinement}}\\
@@ -53,7 +53,7 @@ Solve & 2 rounds; $\le30$ iterations; converged at 0.2~mm / $0.05^\circ$ & \S\re
 Observability, extrinsic & measured at $\sigma_{\mathrm{dir}}\le0.5$~mm; self-cal above 0.5~mm, $\le4$ passes & \S\ref{sec:mv_observe}, \S\ref{sec:mv_selfcal} \\
 Persistent self-calibration & $\ge3$ runs; spread and leave-one-out $\le1$~mm; promoted by hand & \S\ref{sec:mv_selfcal} \\
 Acceptance & 10~mm / $5^\circ$; fitness 0.2; overlap 1.0~mm and $+0.2$~mm; relative 2~mm / $1^\circ$ & \S\ref{sec:mv_accept} \\
-Fit-up warning & ISO 5817 no.~617, level C & \S\ref{sec:mv_accept} \\
+Fit-up warning & ISO 5817 Table 1, No.~3.2 (ref.~617), level C, design throat $0.7\,t$ & \S\ref{sec:mv_accept} \\
 \midrule
 \multicolumn{3}{@{}l}{\textit{Seams and tacks}}\\
 Pose tolerance & 10~mm (clipped to 0.5--30~mm); near miss up to $2\times$ & \S\ref{sec:mc_planar}, \S\ref{sec:mc_fitup} \\
@@ -64,14 +64,14 @@ Tack rule & tackrule-0.1 (Equations~\ref{eq:tackrule_len}--\ref{eq:tackrule_n}) 
 \midrule
 \multicolumn{3}{@{}l}{\textit{Motion}}\\
 Clearances & tacks 3~mm; free motion 20~mm ($\ge$ tack, $\le0.9\times$ end-pose room) & \S\ref{sec:mc_collision} \\
-Reach grid & tilts $0^\circ,\pm10^\circ,\pm20^\circ$; rolls every $30^\circ$; descent checked at 6 steps & \S\ref{sec:mc_reach} \\
+Reach grid & tilts $0^\circ,\pm10^\circ,\pm20^\circ$; rolls every $30^\circ$; descent checked at 5 interior steps & \S\ref{sec:mc_reach} \\
 Branch lock, joint step & signs of lift, elbow, wrist~2; $\le1.2$~rad between tack poses & \S\ref{sec:mc_reach} \\
 Roll DP & $\mathbf{W}=\operatorname{diag}(2,2,1.5,1,1,0.5)$; $\delta_0=10$~mm; $\kappa=0.15$~rad/mm & \S\ref{sec:mc_reach} \\
 Cable window & wrist~3 within $\pm180^\circ$ of home & \S\ref{sec:mc_reach} \\
 Approach, departure, overshoot & 35~mm; 100~mm; 5~mm (ends at the table) & \S\ref{sec:mc_descent} \\
 Cartesian transit & bows 0, 30, 60, 100~mm; steps 5~mm / $3^\circ$; jump $\le0.3$~rad & \S\ref{sec:mc_transit} \\
 APS & 4 RRT-Connect, 8 hybridised paths; 3~s, then first solution, $\le10$~s; margin $\le2$~mm & \S\ref{sec:mc_transit} \\
-Edge check, timing & 0.01~rad; TOTG 0.3~rad/s, 0.5~rad/s$^2$, 5~mrad blend, 0.02~s & \S\ref{sec:mc_transit} \\
+Edge check, timing & 0.01~rad per joint (planner; weighted in the Python re-checks); TOTG 0.3~rad/s, 0.5~rad/s$^2$, 5~mrad blend, 0.02~s & \S\ref{sec:mc_transit} \\
 Descent speeds & 50, 20, 2~mm/s (last 6~mm) & \S\ref{sec:mc_marking} \\
 Forces & touch 1.5~N; abort 8~N; release 40~N; bias over 0.5~s & \S\ref{sec:mc_marking} \\
 Motion gate & first point within 0.35~rad & \S\ref{sec:mc_marking} \\

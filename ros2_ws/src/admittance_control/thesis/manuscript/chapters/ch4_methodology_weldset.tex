@@ -41,16 +41,16 @@ transforms, exact to floating point. No annotator and no estimator is in the lab
 Four design habits follow from it:
 \begin{itemize}
 \item \textbf{Truth is separated from convention.} Everything that is a convention rather
-  than geometry (the tack layout, the most probable seam, the noise realisation) is a
-  versioned rule applied to the stored scene, so it can be re-applied when the rule changes
-  without regenerating the geometry.
+  than geometry is applied to the stored scene: the tack layout and the most probable seam as
+  versioned rules, the noise as a function of stored sensor parameters. Each can be re-applied
+  when it changes, without regenerating the geometry.
 \item \textbf{Exactness has a contract.} Curves are analytic with analytic positions; parts
   are exact primitives; meshes used for ray casting have a recorded chord error under a
   fixed budget.
 \item \textbf{Determinism by content hash.} A scene is identified by its configuration and
   seed and verified by a hash of its contents, under a pinned software environment.
-\item \textbf{Accessibility.} The first tier needs no renderer, simulator or GPU; it uses
-  NumPy and trimesh only.
+\item \textbf{Accessibility.} The first tier needs no renderer, simulator or GPU; it runs on
+  common scientific Python packages (NumPy, SciPy, trimesh and PyYAML).
 \end{itemize}
 \TODO{Three-motivations paragraph in Kurt's style (Pattern 14, notes/writing\_style\_guide.md)
 for why synthetic, analytic data: labour, ground truth, controllability.}
@@ -69,35 +69,39 @@ derives everything else, so that the seam is never solved for.
 \begin{algorithmic}[1]
 \REQUIRE configuration $c$, seed $n$
 \ENSURE scene description, point cloud, seam and tack arrays, or a recorded rejection
-\STATE spawn eight named random substreams from $n$ (geometry, defects, seam curve, placement, sampling, camera, \dots)
+\STATE spawn eight named random substreams from $n$ (joint configuration, defects, seam curve, placement, surface sampling, camera, noise, render)
 \STATE sample the joint: type, part dimensions, thicknesses, included angle; and the defects: gap, misalignments, quality target
 \STATE build the parts as exact primitives and place them by closed-form transforms (curved families: draw the seam curve first, then derive the parts from it)
-\STATE enumerate the candidate seams and judge each by the accessibility rule (Algorithm~\ref{alg:ws_access}); keep the weldable ones as ground truth
+\STATE enumerate the candidate seams and judge each by the accessibility rule (Algorithm~\ref{alg:ws_access}); store every candidate with its verdict
 \STATE draw a camera pose around the joint (\S\ref{sec:ws_sensor})
 \STATE sample every face area-uniformly at the drawn density; store exact normals and part and face identifiers
 \STATE compute per point: visibility from the camera, and exterior (reachable by a scan)
-\IF{no weldable seam is visible enough}
+\IF{there is no primary seam, or the best-seen primary seam (curved scenes: weldable seam) has a visible fraction below 0.1}
   \STATE record the seed as skipped with its reason and \textbf{return}
 \ENDIF
-\STATE apply the rule blocks: tacks (Algorithm~\ref{alg:ws_tacks}) and the most probable seam
+\STATE optionally apply the rule blocks: the most probable seam, then the tacks (Algorithm~\ref{alg:ws_tacks}); both can also be applied later to a stored corpus
 \STATE write the scene, its arrays and its content hash
 \end{algorithmic}
 \end{algorithm}
 
-Seeds whose scene shows no weldable seam are not replaced: they are recorded with the
-reason, so that the selection of a corpus is a pure function of the configuration and the
-seed range. Because rejections depend on the joint type, the yield (emitted scenes per
+Seeds whose scene has no usable seam are not replaced: they are recorded with the reason, as
+are the seeds rejected by a class-ambiguity rule, by the curve gate of \S\ref{sec:ws_curves} or by
+a stratum's filter, so that the selection of a corpus is a pure function of the configuration and
+the seed range. Because rejections depend on the joint type, the yield (emitted scenes per
 attempted seed) differs between types, and it is reported with every per-type result.
 \TODO{Yields per type (README, Phase 3: T 79\,\%, butt 57\,\%, corner 44\,\%, edge 42\,\%, lap
 36\,\%) and per stratum of the final corpus (DESKTOP).}
 \SRC{weldgen/scene.py, scene\_curved.py, rng.py, hashing.py, writer.py; README.MD.}
 
 \paragraph{Determinism.} Random draws are taken from eight named substreams spawned from the
-seed, and new draws are appended, never inserted, so that adding a parameter does not change
-existing scenes. A scene identifier is the configuration identifier (a hash of the resolved
-configuration) and the seed; its content hash covers the canonical description and every
-array. Hashes are reproducible only under the pinned environment: on 2026-09-11 every hash
-changed between two NumPy releases although the arrays agreed to $10^{-5}$ relative.
+seed, and new draws are appended, never inserted, so that adding a mechanism leaves the draws of
+existing scenes bit-identical. A scene identifier is the configuration identifier (a hash of the
+resolved configuration) and the seed; a new default key would change the configuration identifier,
+and so every scene identifier, which is why new mechanisms are opt-in. The content hash covers the
+canonical description, without its provenance block, and every array, in sorted order with its type
+and shape. Hashes are reproducible only under the pinned environment: on 2026-09-11 every hash
+changed between two NumPy releases although no array or label changed (the largest relative
+difference, $7\times10^{-6}$, was on values near zero).
 \TODO{State the pinned versions (NumPy, trimesh, Python) in Chapter 5 and pin
 requirements.txt. Note: the noise and render substreams are named but not used (the noise is
 seeded by the scene seed): word this correctly or fix the code (weldset\_code\_review, P3).}
@@ -128,13 +132,14 @@ SweptSlab & a planar spine curve, offsets, height & a band along a curve: a box 
 \end{table}
 
 \paragraph{Joint types.} Five plate joints are generated, named after ISO 17659: T (a
-T-joint near $90^\circ$, an angle joint otherwise), corner, butt, lap and edge. A joint is
-sampled from its type's ranges (Table~\ref{tab:ws_plate_ranges}): the thicknesses, the part
-dimensions across the seam (they vary across it, never along it), the included angle, and
-three defects with ISO 5817 limits, namely the root gap $g$, the linear misalignment $h$
-and the angular misalignment $\beta$. A quality level (B, C, D or below D) is drawn first,
-the defects are drawn within that level's limits, and the realised level is the worst of
-the three.
+T-joint within $10^\circ$ of a right angle, an angle joint otherwise), corner, butt, lap and edge.
+A joint is sampled from its type's ranges (Table~\ref{tab:ws_plate_ranges}): the thicknesses, the
+part lengths along the seam, which set the seam's shared run, and the widths across it, the
+included angle, and three defects. The root gap $g$ and the linear misalignment $h$ have limits
+in ISO 5817, Table~1 (nos.~617 and 5071); the angular misalignment $\beta$ has none there, and the
+project maps the fatigue values of the standard's Annex~B to the levels ($1^\circ$, $2^\circ$ and
+$4^\circ$ at B, C and D). A quality level (B, C, D or below D) is drawn first, the defects are
+drawn within that level's limits, and the realised level is the worst of the three.
 \begin{table}[htbp]
 \caption{Sampled plate-joint parameters (as coded).}
 \label{tab:ws_plate_ranges}
@@ -145,7 +150,7 @@ Parameter & Range \\
 \midrule
 Thickness $t$ & U(1, 12) mm, the second part equal with $p=0.7$ (edge joints: U(1, 2) mm, ISO 9692-1) \\
 Length along the seam & U(80, 400) mm per part, offset up to $\pm0.4\min L$ \\
-Width across the seam & U(50, 250) mm \\
+Width across the seam & U(50, 250) mm (edge joints: equal widths with $p=0.35$, both long edges flush) \\
 Included angle $\alpha$ & U(60, 120)$^\circ$ for T and corner; 180$^\circ$ butt; 0 lap and edge \\
 Lap overlap & U(0.15, 0.60) of the upper plate's width \\
 Root gap $g$ & U(0, min(ISO 5817 no.~617 limit, 2 mm)) for levels B--D; below D up to $\approx5.3$ mm \\
@@ -166,20 +171,27 @@ drawn within the row.
 (P1 \#5).}
 
 \paragraph{Anti-shortcut construction.} A method can score well on synthetic plates for the
-wrong reason: if every plate edge is parallel to a world axis, a detector can find the seam
-from the axes alone. Two measures prevent this. Each assembly is turned by a random yaw over
-the full circle, and plates get random convex outlines, so that only the seam-bearing edge
-is constrained. A corpus gate then checks the result: the length-weighted histogram of angles
-between free plate edges and the seam may not have more than twice the uniform mass in its
-two terminal bins (threshold $2\cdot 20/90=0.444$).
+wrong reason. If every assembly were aligned with the world axes, a detector could find the seam
+from the axes; if every plate were a rectangle, the seam would always run parallel or perpendicular
+to the parts' own free edges, and a detector could find it from the outline. Each assembly is
+therefore turned by a random yaw over the full circle and moved, which removes the first shortcut.
+Two mechanisms remove the second: on T and lap joints the upper part is turned in the plane of the
+base by a random yaw, drawn over the part of the full circle in which the seam keeps at least half
+of the shorter part's length; and the parts get random convex outlines (part B in every joint type,
+part A in corner, butt and edge joints), with only the seam-bearing edge pinned. A corpus gate then
+checks the result: the length-weighted histogram of angles between free plate edges and the seam
+may not have more than twice the uniform mass in its two terminal bins (threshold
+$2\cdot 20/90=0.444$).
 \TODO{Gate history: 0.45 FAIL on the first Phase 4 corpus (rectangular grooved plates), 0.34
 PASS after the fix (2026-09-07); the open swept-path seams report 0.45 (not gated).}
 
-\paragraph{The fixture.} Half of the scenes in a fixture study stand on a fixture plate, a
-slab of about $600\times400\times10$ mm tilted by up to $10^\circ$, so that a method meets
-the plate-to-fixture contacts that a real cell has. Such contacts are never seams: a face
-pair that involves the fixture is rejected. Fixture scenes are generated as twins of the
-same seeds without the fixture.
+\paragraph{The fixture.} A real cell holds its parts on a fixture, and a method must not take
+the contact between a part and the fixture for a seam. Fixture scenes are twins of emitted scenes:
+the same seeds regenerated with the assembly standing on a fixture plate of
+U(480, 720) $\times$ U(320, 480) $\times$ U(8, 12) mm. On plate scenes the assembly and the fixture
+are tilted together, by up to $10^\circ$ about each of two axes; on curved scenes the fixture is a
+level table under the lowest part (along a line under the main tube of a saddle). Such contacts are
+never seams: a face pair that involves the fixture is rejected.
 \TODO{Plate twins are not at the same relative pose (P1 \#4).}
 \SRC{weldgen/geom.py, joints.py, layouts.py, config.py, scene.py; PARAMETERS.md \S2--3.}
 
@@ -188,8 +200,8 @@ same seeds without the fixture.
 \label{sec:ws_curves}
 For curved joints the order is reversed once more. A seam family is a curve family with a
 condition under which two parts can realise it: the curve is drawn first and the parts are
-derived from it, so the seam is exact by construction and no surface intersection is solved
-at generation time. Seven families are generated: a line, a circle, an ellipse, a saddle, a
+derived from it, so the seam is exact by construction and no surface intersection enters the
+label. Seven families are generated: a line, a circle, an ellipse, a saddle, a
 rounded rectangle, a swept path and an arc butt (Table~\ref{tab:ws_families}).
 \begin{table}[htbp]
 \caption{Curved seam families (as coded).}
@@ -227,21 +239,26 @@ C&=\norm{\vect{d}}^2-(\vect{d}^{\top}\hat{\vect{m}})^2-R^2,
 \label{eq:ws_saddle}
 \end{equation}
 with $\sigma=-1$ for the entering intersection; for an untilted, centred branch it reduces to
-the textbook $z=\sqrt{R^2-r^2\sin^2\theta}$. The swept-path welds are offset curves of the
+the textbook form $z=\sqrt{R^2-r^2\sin^2\theta}$, with $\theta$ measured round the branch from the
+direction of the main pipe's axis. The swept-path welds are offset curves of the
 spine, $\vect{P}_o(t)=\vect{P}(t)+o\,\hat{\vect{n}}(t)$ with $\hat{\vect{n}}=\hat{\vect{z}}\times\hat{\vect{T}}$
 and $o=\pm t/2$, because the spine itself lies in the middle of the material and is not a
 weld.
 
-\paragraph{Exactness checks.} Every curve has analytic positions; tangents are analytic except
-on the B-spline, where they are central differences. Each part's ray-casting mesh records
-its chord error, which must stay under 0.25 mm. At generation, a separate routine recomputes
-the circle, ellipse and saddle from the placed parts by surface intersection, and the scene
-is refused if the two differ by more than $10^{-6}$ mm; the measured differences are about
-$10^{-13}$ mm.
+\paragraph{Exactness checks.} Every curve has analytic positions, up to a negligible numerical
+term in the offsets of a B-spline spine, whose normals come from central-difference tangents. The
+ray-casting meshes of curved parts are built to a chord tolerance of 0.05~mm, and the largest chord
+error of a scene is recorded and must stay under 0.25~mm. At generation, a separate routine
+recomputes the circle, ellipse and saddle from the placed parts by surface intersection, and the
+scene is refused if the two differ by more than $10^{-6}$~mm (a symmetric Hausdorff distance over
+720 samples); the measured differences are about $10^{-13}$~mm. The constructed families (rounded
+rectangle, swept path, arc butt) are checked instead by how far the curve lies from both parts'
+surfaces, under the same gate.
 
 \paragraph{Bores.} A pipe on a plate also has an inner fillet at its bore. A torch cone can
 clear a 50 mm bore locally, but the torch body cannot enter it, so bores narrower than
-80 mm are rejected as \emph{confined}; wider bores are weldable inner fillets.
+80 mm are rejected as \emph{confined}; wider bores are inner fillets, weldable if the torch cone
+clears at 95\,\% of their points.
 \TODO{Corpus coverage differs from the draw (P2 \#9): the ellipse tilt is drawn
 U(10$^\circ$, 40$^\circ$) but the corpus holds 10.2--30.6$^\circ$, because a dihedral under
 about 59$^\circ$ fails the torch cone.}
@@ -265,16 +282,18 @@ every pair of faces of every pair of parts.
   \IF{the normals are not parallel (more than $8^\circ$)}
     \STATE line $=\Pi_A\cap\Pi_B$ (Eq.~\ref{eq:plane_intersection}), clipped to both faces with slack $\tau_c$
     \STATE drop the pair if the faces are not mutually visible or are farther apart than $\tau_c$
+    \STATE reject if the dihedral is outside $[30^\circ,170^\circ]$
   \ELSIF{the normals agree (coplanar faces)}
     \STATE line = the centreline of the in-plane gap, if the gap is within the tolerance
   \ELSE
-    \STATE facing faces: reject (\emph{bisector blocked}); no line
+    \STATE facing faces: record as \emph{fixture contact} or \emph{bisector blocked}, with no line; next pair
   \ENDIF
-  \STATE reject if a part is the fixture, if the dihedral is outside $[30^\circ,170^\circ]$, if the line is shorter than 10 mm
+  \STATE reject if a part is the fixture, or if the line is shorter than 10~mm
   \STATE search a torch axis (Eq.~\ref{eq:ws_axes}) whose cone clears the scene at five points; none: reject (\emph{bisector blocked})
 \ENDFOR
-\STATE demote a fillet that runs along a weldable butt centreline (\emph{toe of centreline}); demote cross-runs against the joint direction
+\STATE demote a weldable intersecting run that lies along, and within 1.5 gaps of, a weldable butt or edge centreline (the toes of that gap)
 \STATE class each seam from its faces; \emph{primary} = weldable $\wedge$ of the joint type's class
+\STATE demote cross-runs against the joint direction (only primary seams vote)
 \end{algorithmic}
 \end{algorithm}
 
@@ -303,7 +322,8 @@ edge seam; one of each gives a lap toe. With a root gap there are three natural 
 \emph{nominal} curve is the intersection of the extended face planes; the \emph{root} lies
 on the terminating face; the \emph{gap-mid} lies between the faces. The nominal curve is
 stored and scored, because it is continuous as $g\to0$ and does not depend on which part is
-called A; the other two are stored alongside for plate seams. For a fillet whose terminating
+called A; the other two are stored alongside for square-prepared plate seams (a grooved butt
+stores its groove root instead, and a curved scene the nominal curve only). For a fillet whose terminating
 edge stands $H_e$ above the base plane, the root lies $\delta_{\mathrm{root}}=H_e/\sin\varphi$
 from the nominal line.
 \TODO{Fix the coplanar-arm bug (P1 \#3); the three gap-mid definitions (P2 \#10); which
@@ -332,7 +352,8 @@ $L_e=L-2m$, the count before the lower bound is
 n = \max\!\left(2,\ \ceil*{\frac{L_e}{d_{\max}}}+1\right),
 \label{eq:tackrule_n}
 \end{equation}
-and the tacks sit at $s_k=m+k\,L_e/(n-1)$, so that both ends are always tacked.
+and the tacks sit at $s_k=m+k\,L_e/(n-1)$, so that both effective ends, at the margin, are always
+tacked.
 
 \begin{algorithm}[htbp]
 \caption{tackrule-0.1 on one primary seam}
@@ -342,7 +363,7 @@ and the tacks sit at $s_k=m+k\,L_e/(n-1)$, so that both ends are always tacked.
 \STATE compute $\ell, d_{\max}, d_{\min}, m$ (Eq.~\ref{eq:tackrule_len})
 \IF{the seam is open}
   \IF{$L-2m\le\ell$}
-    \STATE one tack at $L/2$ (recorded as degenerate) and \textbf{return}
+    \STATE one tack at $L/2$ and \textbf{return}
   \ENDIF
   \STATE $n$ from Eq.~\ref{eq:tackrule_n}; \textbf{if} $n>2$ and $L_e/(n-1)<d_{\min}$ \textbf{then} $n\gets\max(2,\lfloor L_e/d_{\min}\rfloor+1)$
   \STATE $s_k=m+kL_e/(n-1)$, $k=0,\dots,n-1$; order: the ends, then by recursive bisection
@@ -359,12 +380,15 @@ and the tacks sit at $s_k=m+k\,L_e/(n-1)$, so that both ends are always tacked.
 order) and on a closed loop (even count, hashed phase, opposite pairs)}{Tack layouts on an open and a
 closed seam.}
 
-The phase of a closed loop is taken from a hash so that it is deterministic but not tied to
-the curve's parametrisation; any score on a closed seam must therefore be invariant to
-rotation along the loop. The constants are shop conventions: the thickness-scaled spacing
-and the 400 mm ceiling follow JASS 6 (through the Kobelco handbook), the tack length is
-attributed to EN 1011-2, and Tomk\'ow et al.\ \cite{tomkow2020tacks} give the literature
-anchor.
+The phase of a closed loop is taken from a hash, so that the layout is deterministic and
+seed-free and the tacks do not always start at the stored curve's first point; any score on a
+closed seam must therefore be invariant to rotation along the loop. The constants are shop conventions: the thickness-scaled spacing
+and the 400 mm ceiling follow JASS 6 (through the Kobelco handbook), and the tack length is
+attributed to EN 1011-2. The experimental literature does not fix them: it shows that the number
+and placement of tacks change the distortion, in directions that depend on the process (on thin
+TIG sheet, Tomk\'ow et al.\ \cite{tomkow2020tacks} found that more tacks gave more angular
+distortion; on single-sided fillets, Mondal et al.\ \cite{mondal2015tacking} found tacks on both
+sides best).
 \TODO{Obtain the JASS 6 / EN 1011-2 texts before citing (the length rule is attributed, not
 verified against the standard).}
 \SRC{weldgen/tacks.py; MANUAL.md \S10; scripts/apply\_rule\_blocks.py.}
@@ -376,7 +400,7 @@ A second task asks a question that a single view can answer: given what one came
 which seam is a coarsely positioned torch? The label is again a versioned rule
 (mps\_rule-0.1), a geometric proxy by decision: the weldable seam with the largest visible
 arc length, ties broken by the larger fold $|180^\circ-\text{dihedral}|$, then by the lower
-identifier, and no seam if the largest visible length is under 10 mm. The margin between the
+identifier, and no seam unless the largest visible length exceeds 10~mm. The margin between the
 runner-up and the winner, $\ell_{(2)}/\ell_{(1)}\in[0,1]$, says how much of a choice the view
 leaves.
 \SRC{weldgen/mps.py; MANUAL.md \S1.4, \S10.}
@@ -389,7 +413,8 @@ leaves.
 principal point at the image centre and one of three stereo profiles
 (Table~\ref{tab:ws_profiles}). The camera looks at an aim point near the joint,
 $\vect{a}=\vect{m}+0.15\,L\,\boldsymbol{\xi}$ with $\vect{m}$ the mean of the weldable seam
-midpoints, $L$ the longest part edge and $\boldsymbol{\xi}\sim\mathrm{U}([-1,1]^3)$, from
+midpoints, $L$ the largest part dimension and $\boldsymbol{\xi}\sim\mathrm{U}([-1,1]^3)$ (on curved
+scenes, $\vect{m}$ is the mean of coarse samples of every weld seam and $L=E$), from
 \begin{equation}
 \begin{gathered}
 \vect{C}=\vect{a}+s\,(\cos e\cos\alpha,\ \cos e\sin\alpha,\ \sin e)^{\top},\\
@@ -420,7 +445,8 @@ from U(0.25, 4) points per mm$^2$, with exact positions and normals. A point is 
 the camera when it is inside the image and beyond the minimum depth, faces the camera,
 $(\vect{C}-\vect{p})^{\top}\vect{n}>0$, and the ray to the camera hits no part. Rays are
 tested exactly against planar parts (slab and convex-prism clipping) and by an entry-only
-Möller--Trumbore test against the 0.05 mm chord meshes of tubes and swept parts. A second
+Möller--Trumbore test against the meshes of tubes and swept parts, built to a 0.05~mm chord
+tolerance, ignoring hits closer than 0.25~mm to the ray's origin. A second
 flag marks a point \emph{exterior} when a scan from outside could reach it: some ray of a fan
 within $70^\circ$ of its normal (the normal itself and eight rays each at $38.5^\circ$ and
 $66.5^\circ$) escapes every part. The exterior points form the input of
@@ -430,7 +456,8 @@ voxel subsample and is wrong on thin stacked plates (edge 12\,\%, lap 2.4\,\% of
 Grooved plates use an approximate (9-sample) occlusion test.}
 
 \paragraph{Noise.} The cloud is stored noiseless, and noise is applied at evaluation time by
-a released function, so that the realisation is a rule, not data. A stereo camera measures
+a released function of the stored sensor parameters, so that the realisation is reproducible
+rather than data. A stereo camera measures
 depth from disparity, $z=fb/d_{\mathrm{px}}$, so a disparity error $\sigma_d$ gives
 \begin{equation}
 \sigma_z(z)=\frac{\sigma_d\,z^{2}}{f\,b},\qquad
@@ -441,7 +468,8 @@ depth from disparity, $z=fb/d_{\mathrm{px}}$, so a disparity error $\sigma_d$ gi
 with the depth term along the viewing ray $\hat{\vect{r}}$, a lateral term of 0.8 pixel along
 the image axes, $\epsilon_i\sim\mathcal{N}(0,1)$, and points dropped beyond $75^\circ$ of
 incidence or inside the minimum depth. For the d435i profile this gives 0.59 mm at 0.5 m and
-2.37 mm at 1 m. The benchmark scales $(\sigma_d,\sigma_\ell)$ by $k\in\{0,1,2\}$.
+2.37 mm at 1 m. The benchmark scales $(\sigma_d,\sigma_\ell)$ by $k\in\{0,1,2\}$; at $k=0$ no noise is applied,
+and so no points are dropped either.
 
 \figplaceholder{fig:ws_sensor}{(a) $\sigma_z$ against range for the three profiles
 (Equation~\ref{eq:ws_noise}); (b) one scene: the exact cloud, the visible points of the single view,
@@ -450,8 +478,8 @@ the exterior points, and the noisy cloud at $k=1$}{The sensor model.}
 \paragraph{Rendered tier.} The second tier renders scenes of the same generator in Isaac Sim
 (RGB, depth and seam, tack and object masks) with published material reflectances, real
 backgrounds and lighting. A twin gate ties the two tiers together: the rendered clean depth
-of the first view, back-projected, must land on the exact primitives (99th-percentile residual
-under 0.25 mm) and agree with the analytic visibility (coverage $\ge0.90$, object identity
+of the first view, back-projected, must land on the parts' surface meshes (99th-percentile
+residual under 0.25~mm) and agree with the analytic visibility (coverage $\ge0.90$, object identity
 $\ge0.98$). The gate also served as an independent check of the first tier: it found three
 ray-test defects in the analytic visibility (sampled containment stepping through thin tube
 walls, a mesh cache keyed before re-posing, and exit crossings counted as occluders), which
@@ -477,8 +505,8 @@ strata are reported separately. Table~\ref{tab:ws_strata} gives the ranges.
 \toprule
 Stratum & Geometry \\
 \midrule
-T/line & plates $t$ 1--12 mm, $\alpha$ 60--120$^\circ$, gap 0--5.3 mm; yaw over the full circle, outline on the stem \\
-corner/line & as T, outlines on both parts \\
+T/line & plates $t$ 1--12 mm, $\alpha$ 60--120$^\circ$, gap 0--5.3 mm; the stem turned in plane over its feasible range, outline on the stem \\
+corner/line & as T without the in-plane turn; outlines on both parts \\
 butt/line (square) & $t$ 1--12 mm, $\alpha=180^\circ$, flush on one side when thicknesses differ \\
 butt/line (grooved) & $t$ 4--20 mm; single-bevel, single-V or single-U by ISO 9692-1 row \\
 butt/arc & arc radius 100--400 mm, gap 0.3--2.0 mm, plates $t$ 3--10 mm \\
@@ -504,8 +532,9 @@ train\_v1: DESKTOP; the final corpus is the visibility-fixed rebuild of 2026-09-
 assembly; Task~2 asks for the most probable seam (\S\ref{sec:ws_mps}) from a single view.
 
 \paragraph{Metrics.} A predicted polyline set $\mathcal{P}$ and the truth $\mathcal{G}$ (the
-nominal curves of the primary seams) are densified at 1 mm, and a predicted point counts if
-its exact distance to a truth segment is within $\tau=3$ mm:
+nominal curves of the primary seams) are densified to at most 1~mm per step (the stored truth
+curves are sampled at 0.1~mm already), and a predicted point counts if its exact distance to a truth
+segment is within $\tau=3$~mm:
 \begin{equation}
 \begin{gathered}
 \mathrm{prec}=\frac{1}{|\tilde{\mathcal{P}}|}\sum_{\vect{x}\in\tilde{\mathcal{P}}}\mathbf{1}\big[d(\vect{x},\mathcal{G})\le\tau\big],\qquad
@@ -515,7 +544,9 @@ F_1=\frac{2\,\mathrm{prec}\cdot\mathrm{rec}}{\mathrm{prec}+\mathrm{rec}},
 \label{eq:ws_f1}
 \end{equation}
 where $\tilde{\mathcal{P}}$ and $\tilde{\mathcal{G}}$ are the densified point sets and
-$d(\vect{x},\mathcal{G})$ is the exact distance to the nearest truth segment.
+$d(\vect{x},\mathcal{G})$ is the exact distance to the nearest truth segment. Task~1 is scored
+against the primary seams and Task~2 against the weldable ones; a single view drops from the truth
+the lap toes on the underside, which no camera above the assembly sees.
 The literature's own path metric is reported as well: predictions are matched one-to-one to
 truth seams, greedily by mean distance, and each matched path, resampled at 0.25 mm, gives
 the root-mean-square and the maximum of its distances to the truth.
@@ -537,11 +568,11 @@ The difference between the two is the price of the unpublished stage.
 \toprule
  & Method & L0: the coarse stage given from truth \\
 \midrule
-M1 & multi-plane RANSAC, pairwise plane intersection \cite{yi2026seam} & a 40 mm band around the seams (their PointNet++) \\
-M2 & curvature-seeded region growing, seam points between two grown surfaces \cite{wei_regiongrow} & a keypoint crop keeping 12.7\,\% of the cloud plus per-surface labels (their FastSAM) \\
+M1 & multi-plane RANSAC, pairwise plane intersection \cite{yi2026seam} & a band of 20~mm half-width round the seams, without end caps (their PointNet++) \\
+M2 & curvature-seeded region growing, seam points between two grown surfaces \cite{wei_regiongrow} & a keypoint crop with a target of 12.7\,\% of the cloud (its radius bisected within 5--60~mm), plus per-surface labels (their FastSAM) \\
 M3 & local oriented bounding-box features, crease points, curve fit \cite{zhang_lobb,zhang2025lobbdesc} & per-part labels (their K-Net) \\
-M4 & plane extraction by point-pair coplanarity, orthogonal-pair voting \cite{wang2024ppfseam} & the 40 mm seam band (their Faster R-CNN box) \\
-M5 & PCA slicing of the weld cloud, centre per slice, B-spline \cite{wang2026pipes} & one mask per seam (their YOLO + DeepLab) \\
+M4 & plane extraction by point-pair coplanarity, orthogonal-pair voting \cite{wang2024ppfseam} & the same seam band (their Faster R-CNN box) \\
+M5 & PCA slicing of the weld cloud, centre per slice, B-spline \cite{wang2026pipes} & one mask per seam, with whether it is closed (their YOLO + DeepLab) \\
 M6 & CAD model registered by coherent point drift, seam transferred \cite{fang2024modelreg} & the model itself (no L1) \\
 M7 & plane or quadric per welding surface, seam near the intersection \cite{li2026quadric} & per-surface labels and part membership (their region growing) \\
 \bottomrule
@@ -552,15 +583,17 @@ M7 & plane or quadric per welding surface, seam near the intersection \cite{li20
 every ambiguity and, where the paper reports one, a reproduction of its number. On
 2026-09-14 every module was re-read against its paper; six readings were corrected and the
 old readings kept as labelled rungs of the ladder, so that each choice is priced. The first
-author of M3 reviewed the implementation choices and endorsed them in writing.
+author of M3 reviewed the oracle masks, the switched-off mean shift, the LOBB radius and the
+B-spline extension, and endorsed them in writing (2026-08-27, before the audit changed M3's edge
+window).
 \TODO{One paragraph per method in Chapter 2 (mechanism, coarse stage, the reading choices);
 the reproductions (M1: RMSE 0.60 mm / max 0.81 mm against 0.64 / 1.16 reported).}
 
 \paragraph{Conditions.} The two views (exterior scan, single view); L0 and L1 (L1 on the
 exterior scan); noise at $k=1,2$ on the single view; the fixture twins (40 plate pairs per
 method); 30 seeds for the randomised M1. The harness was validated on a fake oracle (the
-truth plus known jitter) before any method ran: a jitter of $\sigma$ returns an error of about
-$\sigma$, a phantom seam costs precision and never steals a match, and a miss is an unmatched
+truth plus known jitter) before any method ran: a jitter of $\sigma$ returns an error in proportion
+to it (an RMSE of about $1.15\sigma$), a phantom seam costs precision and never steals a match, and a miss is an unmatched
 row.
 \SRC{scripts/baselines/metrics.py, harness.py, lit\_*.py; run\_phase4\_batch.py; notebooks
 04--11, 15; review C4, C5, C6.}
@@ -587,7 +620,9 @@ read zero everywhere:
 D_Q(\vect{x})=\min_{i\in\mathcal{N}_4(\vect{x})}\sqrt{\big((\vect{x}-\vect{q}_i)^{\top}\vect{n}_i\big)^2+\max\!\big(\norm{(\vect{x}-\vect{q}_i)_\perp}-r_s,\,0\big)^2},\qquad r_s=0.75v,
 \label{eq:fp_distance}
 \end{equation}
-and the footprints are the points of each part closer than $g_{fp}=3v+g$ to the other,
+where $(\cdot)_\perp$ is the component orthogonal to $\vect{n}_i$, the offset within the sample's
+tangent plane, and the normals need no orientation. The footprints are the points of each part
+closer than $g_{fp}=3v+g$ to the other,
 \begin{equation}
 F_A=\{\vect{p}\in A: D_B(\vect{p})<g_{fp}\},\qquad F_B=\{\vect{q}\in B: D_A(\vect{q})<g_{fp}\},
 \label{eq:footprint}
@@ -600,7 +635,7 @@ gives the steps.
 \label{alg:ws_footprint}
 \begin{algorithmic}[1]
 \REQUIRE base scan $A_0$, assembly scan $C$, expected gap $g$
-\STATE voxel-downsample both at $v$ (the median 4th-neighbour distance); estimate normals
+\STATE voxel-downsample both at $v$ (the median 4th-neighbour distance of the base scan); estimate normals
 \STATE optionally register $A_0$ into $C$ (point-to-plane ICP)
 \STATE split $C$: a point near $A_0$ (and with a compatible normal) belongs to $A$, the rest to $B$
 \STATE compute $D_B$ on $A$ and $D_A$ on $B$ (Eq.~\ref{eq:fp_distance}); the footprints $F_A$, $F_B$ (Eq.~\ref{eq:footprint})
@@ -629,7 +664,7 @@ notebooks/build\_16; review C\_weldset \S3.A.}
 \subsection{Matching and Sphere-Tracing on Labelled Clouds}
 \label{sec:ws_seamfind}
 Given two point clouds that are already labelled by part, a point of $A$ whose nearest
-point on $B$ lies within the gap bound is near the seam. From there, each side can walk
+point on $B$ lies within the gap bound, plus two point spacings, is near the seam. From there, each side can walk
 towards the other over its own surface until the two meet: the place where the walkers stop
 gives the toes, and the toes give the gap and the root. Normals are estimated per part, so
 they do not blur across the joint, and each part gets a moving-least-squares projection
@@ -642,18 +677,29 @@ d_k=\norm{\vect{x}_k-\vect{q}_k},\qquad \alpha=0.9,
 \end{equation}
 i.e.\ $\alpha$ times the tangential part of the vector to $B$, so that it cannot overshoot.
 It stops when it touches $B$ ($d_k<0.05h$), stalls at a gap ($d_{k-1}-d_k<0.01h$), or reaches
-the edge of its own patch. On two planar faces meeting at an angle $\theta$, each step shrinks
-the distance by the same ratio, $d_{k+1}=d_k(1-\alpha\sin\theta)$, so the mean step ratio
-$\bar r$ gives a second, independent estimate of the joint angle,
-$\theta_r=\arcsin\big((1-\bar r)/\alpha\big)$.
+the edge of its own patch. On two planar faces meeting at an angle $\theta\le90^\circ$, a walker at
+distance $s_k$ from the root is $d_k=s_k\sin\theta$ from $B$, and the tangential part of the vector to
+$B$ has length $d_k\sin\theta$; each step therefore shrinks the distance by the same ratio,
+\begin{equation}
+d_{k+1}=d_k\big(1-\alpha\sin^2\theta\big),\qquad
+\theta_r=\arcsin\sqrt{(1-\bar r)/\alpha},
+\label{eq:step_ratio}
+\end{equation}
+so the mean step ratio $\bar r$ gives a second, independent estimate of the joint angle. Beyond
+$90^\circ$ the nearest point of $B$ is the root edge itself, the ratio is $1-\alpha$ whatever the angle,
+and the estimate saturates.
+\TODO{Code: seamfind/walk.theta\_r still uses the plan's formula $\arcsin((1-\bar r)/\alpha)$, for the
+plan's step of $\alpha d_k$ along the unit tangent, so it is biased low (19$^\circ$ / 36$^\circ$ /
+55$^\circ$ for 30$^\circ$ / 45$^\circ$ / 60$^\circ$ joints; verify/V3 walker\_ratio.py). No benchmark score
+depends on it (the angle check is off by default); fix it before reporting $\theta_r$.}
 
 \begin{algorithm}[htbp]
 \caption{Matching and sphere-tracing seam extraction}
 \label{alg:ws_seamfind}
 \begin{algorithmic}[1]
-\REQUIRE labelled clouds $A$, $B$ (and the camera position for normal signs); gap bound $g_{\max}$
+\REQUIRE labelled clouds $A$, $B$ (normal signs from the stored normals, or towards the camera for a single view); gap bound $g_{\max}$
 \STATE per part: downsample at its spacing $h$; normals (flattest neighbourhood); moving-least-squares projection $\Pi$
-\STATE candidates: points within $\tau=g_{\max}+2h$ of the other part; drop those no torch could see (cone prefilter)
+\STATE candidates: points within $\tau=g_{\max}+2h$ of the other part; drop those no exterior ray reaches (24 rays within $60^\circ$ of the normal, traced on the merged cloud)
 \STATE seeds: pair each candidate with its nearest candidate on the other part; add coplanar boundary pairs (butts)
 \STATE class per seed by the normal angle: fillet, coplanar, facing (dropped), parallel (dropped)
 \FORALL{seeds}
@@ -662,13 +708,18 @@ $\theta_r=\arcsin\big((1-\bar r)/\alpha\big)$.
 \ENDFOR
 \STATE cluster the roots (by position, then by the normal pair); order by the longest path of a spanning tree; smooth and resample at 2 mm
 \STATE apply the generator's rules: drop cross-runs and fillets along a butt centreline
-\STATE torch check at every point: a 30$^\circ$ cone over 7 work $\times$ 3 travel angles, and the 80 mm bore rule; output the weldable spans
+\STATE torch check at every point: a 30$^\circ$ cone over 7 work $\times$ 3 travel angles, the dihedral range 30--170$^\circ$ and the 80~mm bore rule; output the weldable spans
 \end{algorithmic}
 \end{algorithm}
-\TODO{How WeldSet runs it: the labels are the exact part identifiers (the same input M3 gets at
-L0); the gap bound is 5 mm; the defaults differ from the plan in 17 documented ways and were
-chosen on a 12-scene smoke round of the same corpus (say so). Limitations: thin sheets, grooved
-butts in single view, the gap estimate biased upward, $\theta_r$ undefined near 90$^\circ$.}
+\TODO{Attribution: the walkers are a continuous, seed-based variant of the ``walking points'' seam
+method the advisor proposed in the meeting of 2026-10-01 (two points on two registered clouds that
+alternately hop towards each other; the seam between their stop points; with a proof and a
+visualiser asked for); state the relation, and keep the advisor's discrete version, its proof and the
+visualiser as open (todo.md). How WeldSet runs it: the labels are the exact part identifiers (the
+same input M3 gets at L0); the gap bound is 5~mm; the implementation departs from the plan in 19 documented changes,
+four of which (choices 5, 6, 8 and 12) were tuned on a 12-scene smoke round of the same corpus (say
+so). Limitations: thin sheets, grooved butts in single view, the gap estimate biased upward,
+$\theta_r$ saturating at $90^\circ$ and beyond.}
 \SRC{Self\_ideas/test2\_cagdas/seam\_finder.md, seamfind/; scripts/baselines/self\_seamfind.py;
 notebooks/build\_17; review C\_weldset \S3.B.}
 \figplaceholder{fig:ws_own}{The two extractors on one T-joint: (a) base scan, assembly scan,
@@ -682,11 +733,13 @@ WeldSet and the cell share one geometry, in two directions.
 
 \textbf{From WeldSet to the cell.} The cell represents each registered CAD part as a WeldSet
 primitive (\S\ref{sec:mc_registry}) and applies the tack rule of \S\ref{sec:ws_tacks}
-unchanged. Its seams follow WeldSet's geometry in a form adapted to registered rather than
+unchanged, to every weldable seam, since a registered assembly has no joint type to select the
+primary ones. Its seams follow WeldSet's geometry in a form adapted to registered rather than
 constructed parts: the plate rule is the accessibility rule with a pose tolerance in place of
 the contact tolerance, and curved seams are computed by intersecting the registered surfaces
 with WeldSet's curve library (plane--cylinder, cylinder--cylinder, offset curves) and judged
-by its curved-seam verdict. The seams and tacks the robot marks are therefore WeldSet's exact
+by its curved-seam verdict, with a bore limit of 200~mm for the cell's tool in place of the torch's
+80~mm. The seams and tacks the robot marks are therefore WeldSet's exact
 geometry evaluated at the measured poses; their error is the registration's, which the pen's
 contact measures independently (Eq.~\ref{eq:touch}).
 
@@ -703,7 +756,7 @@ exact truth before they meet a real scan.
 Input & In WeldSet & In the cell \\
 \midrule
 Scan of the base alone & synthesised: an independent sample of part A & the parts are registered and saved one at a time, so the base is scanned before the next part is placed \\
-Fit-up gap & the constructed root gap & a procedure's nominal gap, or the measured fit-up \\
+Fit-up gap & footprint: the constructed root gap (and a zero-gap rung); seam finder: a 5~mm bound & a procedure's nominal gap, or the measured fit-up \\
 Part labels & exact part identifiers & SAM2 masks and the registration label every point \\
 \bottomrule
 \end{tabular}
@@ -718,9 +771,10 @@ extractors}{How WeldSet and the robotic cell are connected.}
 \section{The Annotation-Error Experiment}
 \label{sec:ws_annotation}
 The analytic truth also allows the field's usual reference to be measured. Twenty scenes, four
-per plate joint type, were exported as anonymous point clouds with no truth and labelled in
-CloudCompare by a briefed engineering student following the literature's protocol, blind to
-the truth (4--10 clicks per seam, 30 primary truth seams). The clicks were scored against the
+per plate joint type, drawn from an earlier plate corpus (bench6a), were exported as anonymous point
+clouds with no truth and labelled in CloudCompare by a briefed engineering student following the
+literature's protocol: told each scene's joint type, blind to the truth (4--10 clicks per seam, 30
+primary truth seams). The clicks were scored against the
 analytic seams with a 15 mm acceptance gate, after the toolchain had been validated on a
 synthetic annotator with known noise, one planted miss and one planted phantom. The result,
 the label-noise floor of hand annotation, is reported in Chapter~\ref{chp:results}.

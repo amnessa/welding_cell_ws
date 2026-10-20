@@ -3,12 +3,20 @@
 \label{chp:background}
 % Each section: what exists, what it does not do, and how this thesis uses or differs
 % from it. Literature map: weld_generator/notes/thesis_direction_handoff.md §5,
-% weld_generator/papers/, ros2_ws/.../notes/Welding_Robots_Approach_and_Trajectory_
-% Literature_Report.md.
+% weld_generator/papers/, thesis/paper_pool/, thesis/supply_papers/.
+% Do NOT cite the AI-generated literature reports (notes/Welding_Robots_Approach_and_Trajectory_
+% Literature_Report.md, the tack-ordering deep-search report): their citations are partly wrong
+% (review V4); use the verified PDFs they point to instead.
 % =====================================================================================
 
 \section{Welded Joints, Tack Welds and Standards}
 \label{sec:bg_welding}
+\TODO{Tack welds and distortion from verified pool PDFs (review V4): Tomków et al.\
+\cite{tomkow2020tacks} (more tacks, more angular distortion on thin TIG sheet), Mondal et al.\
+\cite{mondal2015tacking} (tacks on both sides best on single-sided fillets), Lowth et al.\
+\cite{lowth2015gaps} (contact points before gaps), Noh et al.\ 2022 and Asadi \& Goldak 2011 (to add
+to thesis.bib), Jia et al.\ \cite{jia2025tack} (tack order for travel). None supports a particular
+along-seam order.}
 \TODO{Joint types (T, corner, butt, lap, edge; pipe-to-plate, pipe-to-pipe), the weld
 root, fit-up gap. Tack welds: purpose, spacing and length rules, sequence. ISO 9692-1
 (joint preparation), ISO 5817 (quality levels, no.~617 root gap), ISO 2553 (symbols).}
@@ -66,8 +74,9 @@ calibration; self-calibration.}
 \TODO{RRT-Connect \cite{kuffner2000rrtconnect}; asymptotic optimality, RRT*
 \cite{karaman2011rrtstar}, RRT*-Connect \cite{klemm2015rrtstarconnect};
 AnytimePathShortening \cite{luna2013aps} in OMPL \cite{sucan2012ompl}; time-optimal
-parameterisation, TOTG \cite{kunz2012totg}; robot-in-the-loop weld planning
-\cite{liu2023rcim}.}
+parameterisation, TOTG \cite{kunz2012totg}; offline weld path programming from measured
+point clouds, with the arm and torch as eight cylinders and a cable-twist term \cite{liu2023rcim};
+linear moves between tacks and tack ordering for travel \cite{jia2025tack}.}
 
 \section{Summary and Research Gap}
 \label{sec:bg_gap}

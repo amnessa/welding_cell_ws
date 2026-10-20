@@ -16,11 +16,16 @@ benchmark. Chapter~\ref{chp:results} reports the results.
 \section{Robot, Camera and Tool}
 \label{sec:setup_robot}
 Table~\ref{tab:hardware} lists the hardware. The UR5e carries a six-axis force/torque sensor at
-its flange, read at 500~Hz; the cell uses only the force, for touch detection, collision aborts
-and the tool-centre and table calibrations. The camera is an Intel RealSense D435i, mounted on the
-wrist beside the pen; it streams colour and depth aligned to colour at $1280\times720$ and 30~Hz.
-Its stereo baseline is 50~mm and its minimum depth at this resolution about 0.28~m, which sets the
-closest view of the multi-view refinement.
+its flange, read at 500~Hz; the cell uses only the force, never the torque, for touch detection,
+collision aborts, the table touches and the check of the tool-centre point. The camera is an Intel
+RealSense of the D435 series, mounted on the wrist beside the pen; the cell's own camera node aligns
+depth to colour and streams both at $1280\times720$ and 30~Hz (under the driver's name for the
+unaligned stream, which can mislead a reader of the topic list). Its stereo baseline is 50~mm and its
+minimum depth at this resolution about 0.28~m, the visibility floor that the view planner enforces
+(the close views themselves are at 0.40~m).
+\TODO{ASK/VERIFY: D435 or D435i? The notes say D435i, but the only SDK output in the repository
+(notebooks/camera\_calibration\_test.ipynb) reports ``Intel RealSense D435'' with no motion module;
+the IMU is used nowhere. Run rs-enumerate-devices and use one name everywhere (ch1, ch4, ch5).}
 
 \begin{table}[htbp]
 \caption{Hardware of the cell.}
@@ -31,32 +36,36 @@ closest view of the multi-view refinement.
 Component & Model & Role \\
 \midrule
 Manipulator & Universal Robots UR5e, factory-calibrated kinematics, flange F/T sensor & motion; force sensing \\
-Camera & Intel RealSense D435i, eye-in-hand & RGB-D, $1280\times720$, 30~Hz \\
+Camera & Intel RealSense D435 series (VERIFY D435/D435i), eye-in-hand & RGB-D, $1280\times720$, 30~Hz \\
 Tool & pen in a 3D-printed holder with the camera mount & marks in place of a torch \\
 Desktop & NVIDIA RTX 5070 Ti & registration (SAM2, PPF, FoundationPose) \\
-Laptop & NVIDIA RTX 4060 Laptop GPU, 8~GB & ROS~2, tracking, refinement, planning, robot interface \\
+Laptop & AMD Ryzen 7 7840HS (8 cores, 16 threads), about 32~GB RAM; NVIDIA RTX 4060 Laptop GPU, 8~GB & ROS~2, tracking, refinement, planning, robot interface \\
 Table & the robot's table, measured as a tilted plane (\S\ref{sec:cal_table}) & the height reference \\
 \bottomrule
 \end{tabular}
 \end{table}
-\TODO{ASK: the CPU and RAM of both machines; the UR5e payload and centre-of-gravity setting used
-with the tool; the controller software version.}
+\TODO{ASK: the desktop's CPU and RAM; the UR5e payload and centre-of-gravity setting used with the
+tool; the controller software version. (The laptop's CPU was read in the development container, which
+sees about 31~GiB of its RAM.)}
 
 \paragraph{The pen holder and camera mount.} The tool was designed for this work and 3D printed
 (Figure~\ref{fig:tool}). It is one assembly bolted to the flange: a flange plate with a side arm
-that carries the camera, on the side opposite the robot's tool connector, and a holder body in
-which two clamp pieces grip the pen. The assembly measures $94\times126\times140$~mm; the holder
+that carries the camera, on the side opposite the robot's tool connector, a holder body for the pen,
+and two clamp pieces (named ``chuck'' in the CAD model) just below the holder body, 44--59~mm above
+the flange face. The assembly measures $94\times126\times140$~mm; the holder
 body reaches from 60 to 140~mm above the flange face. The pen tip, with the cap off, sits at
 $(1.07,\,-1.35,\,180.91)$~mm in the flange frame (the tool-centre calibration of
-\S\ref{sec:cal_tcp}). The camera's optical axis is parallel to the pen within about $0.2^\circ$,
-with its optical centre at about $(34.8,\,89.0,\,54.5)$~mm in the flange frame (the calibrated
+\S\ref{sec:cal_tcp}). The camera's optical axis is parallel to the flange's $z$ axis, which the tool
+model takes as the pen axis, within about $0.2^\circ$, with its optical centre at about $(34.8,\,89.0,\,54.5)$~mm in the flange frame (the calibrated
 extrinsic, Chapter~\ref{chp:results}). The collision envelope of the planner
-(\S\ref{sec:mc_collision}) was derived from the assembly's CAD model with a 3~mm radial margin, and
-the camera body was measured on the bench. The camera's cable runs round the wrist, which is why
+(\S\ref{sec:mc_collision}) was derived from the assembly's CAD model, with a 3~mm radial margin on the holder's capsules, and
+the camera body was measured on the bench; the boxes of the flange adapter and the camera arm have no
+documented source. The camera's cable runs round the wrist, which is why
 the last wrist joint is kept within $\pm180^\circ$ of its home value (\S\ref{sec:mc_reach}).
 \TODO{ASK: the printer and filament of the holder (the repository documents the Creality K1 Max
-only for the test parts), the infill, the pen (make, tip diameter), and whether the clamp holds the
-pen rigidly (the pen is unsprung: \S\ref{sec:cal_table}). Photograph of the tool.}
+only for the test parts), the infill, how it is fastened to the flange, the pen (make, tip diameter),
+what the two clamp pieces do and whether they hold the pen rigidly (the pen is unsprung:
+\S\ref{sec:cal_table}). Photograph of the tool.}
 \figplaceholder{fig:tool}{The pen tool: (a) photograph on the robot; (b) the CAD assembly (flange
 plate with camera arm, holder body, clamps); (c) its collision envelope in RViz with the calibrated
 optical origin}{The pen tool and its collision envelope.}
@@ -68,7 +77,7 @@ scripts/tool\_model\_marker\_node.py; review B1b \S B.1.}
 \label{sec:setup_software}
 The laptop runs Ubuntu 24.04 with ROS~2 Jazzy and Python 3.12, the Universal Robots ROS~2 driver
 (its scaled joint trajectory controller for every planned motion and its velocity controller for the
-camera aim) and the cell's package, a mix of Python nodes and three C++ components
+camera aim) and the cell's package, a mix of Python nodes and three C++ components of the cell
 (\S\ref{sec:impl_cpp}). The registration and tracking servers run in Docker, in one image built for
 each GPU architecture, with Ubuntu 22.04 and Python 3.10; the image holds FoundationPose, SAM~2.1 and
 OpenCV's point-pair features. Table~\ref{tab:software} gives the versions.
@@ -83,36 +92,39 @@ Component & Version & Used for \\
 \midrule
 Ubuntu, ROS~2, Python & 24.04, Jazzy, 3.12.3 & the cell \\
 Universal Robots ROS~2 driver & 3.8.0 & controllers, F/T, TCP pose \\
-UR description (URDF) & 3.5.1 & robot model, with the factory calibration \\
+UR description (URDF) & 3.5.1 (apt) and 2.6.0 (workspace overlay) & robot model, with the factory calibration; the driver from a clean environment uses 3.5.1, the cell's own URDF with the workspace sourced uses 2.6.0 \\
 MoveIt core (time-optimal parameterisation) & 2.12.4 & trajectory timing \\
 OMPL & 1.7.0 & APS, RRT-Connect \\
 pybind11 & 2.11.1 & the C++ planner extension \\
 \texttt{depth\_image\_proc} & 5.0.12 & organized point cloud \\
 MediaPipe & 0.10.35 & gesture recognition \\
 NumPy, SciPy, trimesh, OpenCV & 2.3.5, 1.18.0, 4.12.2, 5.0.0 & geometry, ICP, calibration tools \\
+Open3D, pyrealsense2, ur\_rtde, websocket-client & 0.19.0, 2.57.7, 1.6.3, 1.9.0 & ICP normals and voxels, the camera node, hand-eye capture, the tracker client \\
 Docker image (desktop / laptop) & DESKTOP & FoundationPose, SAM~2.1 Hiera-S, OpenCV \texttt{ppf\_match\_3d}, Flask, WebSocket \\
 \bottomrule
 \end{tabular}
 \end{table}
-\TODO{DESKTOP: the image's versions (CUDA, PyTorch, FoundationPose commit, SAM2 commit, OpenCV
+\TODO{DECIDE: remove the ur\_description overlay (ros2\_ws/src/Universal\_Robots\_ROS2\_Description) or
+state both versions. Note: opencv-contrib-python 4.13 is also installed but shadowed by
+opencv-python 5.0.0, which has no calibrateHandEye. DESKTOP: the image's versions (CUDA, PyTorch, FoundationPose commit, SAM2 commit, OpenCV
 contrib), its Dockerfile name (docker/Dockerfile.blackwell; the laptop build with
 TORCH\_CUDA\_ARCH\_LIST=8.9) and the run scripts; they live in the FoundationPose repository on the
 GPU hosts, not in this workspace.}
 
 \paragraph{Network.} The desktop is reached over a private overlay network (Tailscale), and only one
-HTTP request per registration crosses it; frames for tracking never leave the laptop
-(\S\ref{sec:impl_arch}). On the university's network, which blocks the overlay, a VPN is needed
+HTTP request per registration crosses it; frames for tracking leave the laptop only as the one frame of
+a re-registration while a part is lost (\S\ref{sec:impl_arch}). On the university's network, which blocks the overlay, a VPN is needed
 before registration.
 
 % -------------------------------------------------------------------------------------
 \section{Test Parts}
 \label{sec:setup_parts}
 The test parts cover the seam families of the cell (Table~\ref{tab:setup_parts},
-Figure~\ref{fig:setup_parts}). The plates are cut from 8~mm MDF stock; the tubes, the
-rounded-rectangle section and the band were 3D printed on a Creality K1 Max, each from one watertight
-CAD model in millimetres, from which both the printed STL and the cell's PLY are exported. The
-filament is matte and light: black, glossy or translucent filament gives the D435i holes or wrong
-depth. Walls are at least 3~mm, tubes are printed upright and bands and plates lying flat, and the print
+Figure~\ref{fig:setup_parts}). The ear and the first base plate are cut from 8~mm MDF stock; the current
+base plate is 5.5~mm thick. The tubes, the rounded-rectangle section and the band were 3D printed on a
+Creality K1 Max, each from one watertight CAD model in millimetres, from which both the printed STL
+and the cell's PLY are exported. The print list prescribes a matte, light filament: black, glossy or
+translucent filament gives the camera holes or wrong depth. Walls are at least 3~mm, tubes are printed upright and bands and plates lying flat, and the print
 list prescribes measuring every part with callipers after printing. Every part is in the CAD registry, fitted to
 its exact primitive (\S\ref{sec:mc_registry}).
 
@@ -124,12 +136,12 @@ its exact primitive (\S\ref{sec:mc_registry}).
 \toprule
 Part & Geometry & Seam on its base \\
 \midrule
-Base plate & MDF, $220\times220\times5.5$~mm (before 2026-10-15: $256\times249\times8$~mm) & --- \\
+Base plate & $220\times220\times5.5$~mm, material to state (before 2026-10-15: MDF, $256\times249\times8$~mm) & --- \\
 Ear & MDF, $250\times99\times8$~mm, standing on the base & two straight fillets (T-joint) \\
 C1 & tube $\varnothing62$~mm, wall 3, length 100, flat ends & a circle \\
 E2 & tube $\varnothing90$~mm, wall 5, length 110, base mitred at $25^\circ$ & an ellipse \\
 R2 & tube $\varnothing100$~mm, wall 6, length 180, lying on two V-blocks & (the main tube of S3) \\
-S3 & tube $\varnothing50$~mm, wall 4, length 100, base cut to sit on R2 at $70^\circ$ & a saddle on R2 \\
+S3 & tube $\varnothing50$~mm, wall 4, length 100, base cut to sit on R2 at $70^\circ$; the cut's radius, 51~mm against R2's 50~mm, builds in a gap of about 1~mm & a saddle on R2 \\
 RR1 & rounded-rectangle section $64\times64$~mm, corner radius 12, wall 3, height 100 & a closed rounded rectangle \\
 SP3 & S-shaped band, wall 5, height 80, span about 220~mm (cubic B-spline spine) & two curved fillets \\
 \bottomrule
@@ -141,9 +153,9 @@ plate each experiment used. State one description of E2 (a vertical tube with a 
 it stands tilted).}
 
 \paragraph{Holding the parts.} The tubes and the band stand by themselves on the base plate; R2 lies
-on two MDF V-blocks, and some parts are held by magnets, which can let them move by about a
-millimetre between the scan, the marking and the touches. Fixtures are entered into the collision
-model as a few pen-tip points on their tops (\S\ref{sec:mc_collision}).
+on two V-blocks, and some parts are held by magnets, which can let them move by about a millimetre
+between the scan, the marking and the touches. Fixtures can be entered into the collision model as a
+few pen-tip points on their tops (\S\ref{sec:mc_collision}); none is entered at present.
 \TODO{OPEN (todo.md): enter the V-blocks and holders as fixtures (one of SP3's first tacks hit an
 unmodelled fixture).}
 \figplaceholder{fig:setup_parts}{Photographs of the test assemblies on the table: the T-joint, C1,
@@ -159,7 +171,7 @@ this. The first is the pen's own contact (Equation~\ref{eq:touch}): every descen
 1.5~N touch, so the tip's position at that moment, from the robot's calibrated kinematics, is a point
 on the real part, and its signed distance from the registered point along the pen axis, the contact
 depth $\delta_c$, is the registration's error in that direction. Because a T-joint's two fillets are
-touched along axes $45^\circ$ apart, early contact on both sides indicates a vertical error and early
+touched along axes each $45^\circ$ off the vertical, on opposite sides of the standing plate, early contact on both sides indicates a vertical error and early
 contact on one side with late contact on the other a sideways shift; 1~mm of height error reads as
 about 1.4~mm of contact depth along a $45^\circ$ pen. The second is the mark itself, a pen dot on the
 part, whose distance from the true weld root is measured on the part.
@@ -170,8 +182,9 @@ which claim uses which reference.}
 Two further tools are used for evaluation only, never fed back into the cell. A probe reports, for a
 lightly free-driven pen tip, its height above the touched table and its signed distance to every
 registered face, which separates the causes of an early contact. An offline tool fits, to the
-recorded contacts of an assembly, the real tube's lateral offset and the real plate's height by grid
-search, and reports each mark's distance from the real root.
+recorded contacts of a tube on a plate, the real tube's lateral offset and the real plate's height by
+grid search, and reports each mark's distance from the real root; for a band on a plate it reports the
+contacts against the registered surfaces without a fit.
 \figplaceholder{fig:exp_marks}{Photograph of marks on a seam with the measured offsets}{Pen marks on
 the weld root and their measured errors.}
 \SRC{scripts/touch\_probe.py, contact\_error.py, check\_registration.py, pose\_jitter\_probe.py;
@@ -182,8 +195,9 @@ README Gotchas.}
 \label{sec:setup_procedure}
 One run proceeds as follows.
 \begin{enumerate}
-\item \textbf{Start.} The robot at its scan home, the External Control program running, the motion
-  nodes in dry run until enabled. The calibration chain is checked, not redone: the table height
+\item \textbf{Start.} The robot at its scan home, the External Control program running, the marking
+  node in dry run until enabled (the multi-view refinement and the aim move as soon as they are
+  called). The calibration chain is checked, not redone: the table height
   under the pen and the camera's view of the table (\S\ref{sec:mc_calibration}).
 \item \textbf{Per part.} Place the part; aim the camera by pointing; capture; click the part;
   register; move the part into its place while it is tracked; hold it still for a few seconds; save.
@@ -198,15 +212,18 @@ One run proceeds as follows.
 configuration), single-view and multi-view on the same placement, reported with mean, standard
 deviation, median and maximum; and the planned comparisons (FoundationPose vs ICP tracking, APS vs
 RRT-Connect, the Cartesian transit vs APS round a tube, bounding boxes vs true shapes, timing per
-stage).}
+stage), and the comparison of the PPF pose with the FoundationPose pose on 3--5 different scenes,
+which the advisor asked for three times (meeting of 2026-10-01) and which no chapter plans yet.}
 
 % -------------------------------------------------------------------------------------
 \section{WeldSet Benchmark Setup}
 \label{sec:setup_weldset}
 The benchmark corpus has twelve strata of 60 scenes (\S\ref{sec:ws_corpus}), generated on the
 desktop, which holds the authoritative copy of every corpus, the rendered set and the batch results;
-the laptop's copies are stale. The batch runs the seven literature methods and the two proposed
-extractors over every condition of \S\ref{sec:ws_protocol} in resumable chunks.
+the laptop's copies are stale. The batch runs the seven literature methods over every condition of
+\S\ref{sec:ws_protocol} in resumable chunks. The two proposed extractors run from their own scripts on
+the same 720 scenes, on clean clouds only, in both views, with the same 3~mm tolerance, and without
+the fixture twins and the L1 level.
 \TODO{DESKTOP: corpus sizes and yields per stratum; the final batch (271\,200 rows; about 10.5~h on
 the desktop); the CPU; the pinned versions (NumPy, trimesh, Python), since the content hashes depend
 on them; the rendered set train\_v1 and the Isaac Sim version.}

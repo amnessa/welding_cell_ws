@@ -93,7 +93,19 @@ entries.}
 \section{Live Tracking: FoundationPose versus ICP}
 \label{sec:exp_tracking}
 \TODO{PLANNED (todo.md, Benchmarks): pose\_jitter\_probe on both trackers, still part
-and slow push: noise, delay, drift; rate 25--29 Hz vs.\ $\sim$10 Hz.}
+and slow push: noise, delay, drift; the FoundationPose tracker's rate (25--29~Hz with a stand-in
+camera) against the ICP tracker's 10~Hz timer and its measured cost per call. Known so far: on a
+recorded frame, 1 refinement pass 28.3~ms and 2 passes 43.2~ms on the RTX 4060, jitter 0.5~mm /
+0.16--0.19$^\circ$ (a noise floor, one static image); the fit was fooled to 0.94 by a flat strip on a
+plate.}
+
+\section{Registration: the PPF Pose versus FoundationPose}
+\label{sec:exp_ppf_fp}
+\TODO{PLANNED (the advisor asked three times, meeting of 2026-10-01; todo.md): accuracy and time of
+the PPF pose against the FoundationPose pose on 3--5 different scenes, against the save-time ICP
+or the pen's contacts as the reference. This table is what justifies FoundationPose
+(\S\ref{sec:per_register}). Classification on real data so far: one frame (2026-10-06, margin 0.438)
+and the curved bench of 2026-10-09 (every printed part named; R2 by a margin of 0.040).}
 
 \section{Transit Planning: APS versus RRT-Connect}
 \label{sec:exp_planning}
@@ -109,7 +121,13 @@ front--back transit (RViz or matplotlib, same view)}{Transit paths: RRT-Connect 
 \section{Timing and Resources}
 \label{sec:exp_timing}
 \TODO{PLANNED (todo.md, ``measure everything''): wall and CPU time, memory, per stage
-from the received pose to the mark; scaling with points, parts, views and transits.}
+from the received pose to the mark; scaling with points, parts, views and transits. And the
+perception stages from the server's timings.csv over N warm requests (the first after start-up and
+the operator's clicking excluded): SAM2, the scene cloud, PPF per CAD (match + verify),
+FoundationPose register. One example request (desktop, 14 CADs) took 4.5~s in total, FoundationPose
+1.2~s, and about 0.2~s per voted CAD, so PPF over the library, not FoundationPose, was the largest
+stage (DESKTOP: verify in timings.csv). The advisor asked for this (``how many seconds does one
+comparison take'').}
 
 \section{Curved Parts}
 \label{sec:exp_curved}

@@ -21,6 +21,22 @@ The thesis chapters are the curated output: `manuscript/chapters/ch3_methodology
 | `C_weldset.md`, `C2`–`C7` | weld_generator: the generator, curved families, sensor model, schema and tests, the seven literature methods, the harness and the batch | complete; findings condensed in `../weldset_code_review_2026-10-20.md` |
 | `D_papers.md` | the paper pool: index, digests of FoundationPose, SAM 2, MediaPipe, PPF (Drost; Birdal), RRT-Connect, APS; the bibliography check; missing literature | complete |
 
+## The verification pass (`verify/`)
+
+After the chapters were rewritten, four more agents checked the new drafts against the code and the
+notes, and all their findings were applied to the chapters on 2026-10-20:
+
+| Report | Checked | Findings |
+|---|---|---|
+| `verify/V1_ch3a_ch5.md` | Ch. 3 §3.1-3.5 and Ch. 5 | 3 wrong, 10 imprecise, 43 nuances |
+| `verify/V2_ch3b_app.md` | Ch. 3 §3.6 to the end, Appendices A and C | 5 wrong, 11 imprecise, 59 nuances |
+| `verify/V3_ch4.md` | Ch. 4 against weld_generator | 3 wrong, 9 imprecise, 33 nuances; `walker_ratio.py`, `saddle_check.py`, `nook_check.py` are its numerical checks |
+| `verify/V4_docs_rest.md` | the five notes B2 did not cover (readme_perception, the Turkish robot-line note, the two AI literature reports, the 2026-10-01 meeting transcript) | material in B2's tag format, the citations of the AI reports checked against the PDFs, and a 34-item table of the advisor's requests |
+
+Two corrections to the earlier reports: D_papers line 74 says the AI literature report gets Tomków's
+co-authors wrong (it does not; its wrong Tomków claims are the "16.06 %" result and the description
+of the study), and B1a's ISO 5817 row for t ≤ 3 mm misses the `0.1 a` term.
+
 ## What was cross-checked
 
 - **Chapter 3** values were taken from B1a/B1b/B2 and the most important ones were re-read in the

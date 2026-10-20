@@ -58,7 +58,7 @@ chapters; the old files are removed (git keeps them).
 | ch | title | what it holds | main sources in the repo |
 |---|---|---|---|
 | 1 | Introduction | motivation (human tacks, robot welds; annotated, private data), the problem, the two parts, contributions, outline | `weld_generator/notes/thesis_direction_handoff.md` §2–4 |
-| 2 | Background and Related Work | welding / tacks / ISO; seam detection; datasets and ground truth; pose estimation; registration; calibration; planning; the gap | handoff §5 (literature map), `weld_generator/papers/`, `notes/Welding_Robots_Approach_and_Trajectory_Literature_Report.md` |
+| 2 | Background and Related Work | welding / tacks / ISO; seam detection; datasets and ground truth; pose estimation; registration; calibration; planning; the gap | handoff §5 (literature map), `weld_generator/papers/`, `paper_pool/`, `supply_papers/` (not the AI-generated literature reports: their citations are partly wrong, review V4) |
 | 3 | **Methodology: Perception-Guided Robotic Tack Placement** (`ch3_methodology_cell.tex`) | overview, problem formulation; frames and calibration; operator interaction (gestures, camera aim, 500 Hz relay); perception (SAM2 + PPF, FoundationPose, tracking, stationary ICP, swing–twist, spin settling); multi-view refinement; seams from registered primitives (planar, curved, fit-up); tacks and ordering; motion (collision model, reachability with the roll DP and the cable window, transits, force-gated marking); implementation details | README, the plans in `notes/`, module docstrings (each section's `\SRC`) |
 | 4 | **Methodology: WeldSet** (`ch4_methodology_weldset.tex`) | design goals, parts, curved seams by construction, the D4 seam rule, the tack rule, MPS, sensor model and rendering, strata, the evaluation protocol (7 literature methods, oracle ladder, metrics); **the two proposed extractors** (footprint from sequential scans; matching + sphere tracing on labelled clouds); **WeldSet ↔ cell: one geometry** | `weld_generator/docs/MANUAL.md`, `Self_ideas/` (both methods), `scripts/baselines/self_*.py`, notebooks 16–17 |
 | 5 | Experimental Setup and Procedure (`ch5_experimental_setup.tex`) | robot and tool, software, the test assemblies, how the mark error is measured, the procedure, the WeldSet batch | README "Run it", `curved_parts_print_list.md` |
@@ -154,7 +154,9 @@ Regenerated 2026-10-20 from the chapters.
    contribution and move it to future work.
 2. **How much of WeldSet** goes into the thesis: the full benchmark, or a chapter
    summarising the paper.
-3. **The written no-welding scope** confirmation (open since the handoff).
+3. **The written no-welding scope** confirmation (open since the handoff). Note: in the meeting of
+   2026-10-01 ([01:01:03]-[01:02:45]) the advisor asked for one to three real tacks with a new welding
+   machine; the scope sentences of Ch. 3 and Ch. 7 wait on this decision.
 4. **Title.** Candidates:
    - *Vision-Only Robotic Tack Placement on Registered Weld Assemblies* (in the skeleton)
    - *Analytic Ground Truth and a Vision-Only Robotic Cell for Weld Seam and Tack Localization*
@@ -183,6 +185,9 @@ Regenerated 2026-10-20 from the chapters.
 Most numbers are already in `notes/thesis_notes.md`; each needs a repeatable measurement
 (`todo.md`, "Benchmarks to run"):
 - FoundationPose vs ICP tracking (noise, delay, drift);
+- **the PPF pose vs the FoundationPose pose** on 3-5 scenes, accuracy and time (asked for three times
+  by the advisor on 2026-10-01; the table that justifies FoundationPose);
+- the perception timing per stage from the server's `timings.csv` (SAM2, PPF per CAD, FoundationPose);
 - APS vs RRT-Connect (planning time, joint travel, tip path length);
 - the tool's Cartesian transit vs APS round a pipe (tip path 0.14–0.21 m vs 0.26–1.6 m);
 - single vs multi-view per stratum (marks; the pen's contacts);

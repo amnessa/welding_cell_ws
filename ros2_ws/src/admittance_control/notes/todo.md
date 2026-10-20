@@ -74,13 +74,42 @@ index `thesis/MATERIAL_MAP.md`). Nothing in the code was changed.
   `scripts_in_foundationpose/foundationpose_bridge_node.py` is an old copy (439 lines of diff): delete
   or mirror.
 
-**Code (weld_generator)**: the P1 defects in `thesis/notes/weldset_code_review_2026-10-20.md` (exterior
+- [ ] `seam_from_registration.compute_tacks` hands weldgen's tack rule `primitive = "sweptslab"` and no
+  `params`, so `tacks._member_gauge_mm`'s swept-band case (`"swept_slab"`, z0/z1) never fires: the
+  gauge of a band is then its stored thickness, not min(thickness, height). Harmless for the printed
+  stiffener (SP3: wall 5 mm < height 80 mm), wrong for a band lower than it is thick, such as an
+  arc-butt plate (verification V3 #44).
+
+**Code (weld_generator)**: the seam finder's `Self_ideas/test2_cagdas/seamfind/walk.theta_r` uses the
+plan's angle formula $\arcsin((1-\bar r)/\alpha)$ for a step the implementation no longer takes; the
+implemented step gives $d_{k+1}=d_k(1-\alpha\sin^2\theta)$, so the estimate must be
+$\arcsin\sqrt{(1-\bar r)/\alpha}$ (it reads 19/36/55° for 30/45/60° joints). No benchmark score depends
+on it (`angle_check` off). Then the P1 defects in `thesis/notes/weldset_code_review_2026-10-20.md` (exterior
 flag on thin stacked plates, interpenetrating parts, the coplanar-arm comparison, the fixture twins'
 yaw, the grooved butts) and its "smallest fix set" (5 steps, then regenerate and re-run the affected
 strata on the desktop). THESIS_PLAN decision #10.
 
 **ICRA submission**: 12 statements that do not match the code or the final batch (the same note, last
 section). Fix in the camera-ready if accepted; do not carry them into the thesis.
+
+**From the 2026-10-01 advisor meeting, not listed before** (review V4, the meeting table)
+- [ ] Next-best view when two parts score close in PPF (the advisor: "a very interesting topic",
+  "I am not telling you to do it"); the view planner of `refine_pose` could serve.
+- [ ] A journal paper target with a date and a venue ("bring a journal paper to the goal by New
+  Year", 2027-01-01).
+- [ ] DECIDE with the advisor: one to three real tacks with a new welding machine, against the
+  written no-welding scope (THESIS_PLAN #3).
+- [ ] The perception timing table from `timings.csv` (SAM2, PPF per CAD, FoundationPose); the
+  advisor asked how long one PPF comparison takes.
+
+**More stale comments found by the verification** (no behaviour change): `tack_reach.py:398`
+"1 mm of clearance ~9 deg" (it is 4.3° of the base joint, weight 2); `motion.py:281-284` "7 N alone
+reaches abort_force_n" (the limit is 8 N); `weldgen/tacks.py:18` "the THINNER member" (it is the
+thinnest workpiece of the scene); README `tack_marking_node` row (budget 2 s, bias at the approach
+point, descent 20 mm/s: in use 3 s, the departure point, 50/20/2 mm/s); `multiview_refine_plan.md`
+570-579 (4°, dry run true: in use 5°, false); `notes/admitans kontrol açıklama.md` (touch = force
+along the pen, bias at the approach point, 4°, 1 s, the thinner of two parts, 3-5 mm: the code and
+Ch. 3 are right).
 
 **Thesis: answers only the author has (ASK)**
 - [ ] the pen holder's printer, filament and infill; the pen (make, tip); is the clamp rigid?
@@ -352,8 +381,9 @@ estimated, so the thesis can report them. Per stage:
 - **What.** Choose the order of the tacks by simulating, roughly, the heat each tack puts
   into the parts. That replaces the fixed rule of the weld generator's `tackrule-0.1`
   (D38): both ends of a seam first, then bisection, same-class seams interleaved
-  round-robin "so heat alternates". `compute_tacks` writes that as each tack's `order`,
-  and the marking node visits the tacks in it.
+  round-robin "so heat alternates". `compute_tacks` writes that as each tack's `order`;
+  the marking node visits the tacks seam by seam in `tack_no` order (`marking.visit_order`),
+  not in `order` (corrected 2026-10-20).
 - **Why.** A tack laid next to one that is still hot adds heat where it already is. The
   region grows and shrinks unevenly, and the gap opens or the part pulls out of line. The
   rule's heuristics spread the heat for straight seams on plates. A simulation does it

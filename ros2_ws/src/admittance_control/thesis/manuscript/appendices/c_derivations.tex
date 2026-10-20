@@ -1,6 +1,108 @@
 \section{Derivations}\label{app:derivations}
-\TODO{Point-to-plane Gauss--Newton step with the small-angle linearisation; the Schur
-complement information of the extrinsic offset (Eq.~\ref{eq:extrinsic_d}); the depth error
-law (Eq.~\ref{eq:depth_error}) from the stereo geometry; the overshoot clearance bound of
-the descent check.}
-\SRC{README Algorithms \S4--6; multiview\_refine.py docstrings; marking.descent\_check.}
+This appendix derives the small results that Chapter~\ref{chp:method_cell} uses without proof.
+
+\subsection{Depth Error of a Stereo Camera}
+A stereo camera with focal length $f$ (pixels) and baseline $b$ measures depth from the disparity
+$d_{\mathrm{px}}$ as $z=fb/d_{\mathrm{px}}$. A disparity error $\delta$ changes the depth, to first order, by
+\begin{equation}
+\Delta z\approx-\frac{fb}{d_{\mathrm{px}}^2}\,\delta=-\frac{z^2}{fb}\,\delta ,
+\end{equation}
+whose magnitude is Equation~\ref{eq:depth_error}; an overestimated disparity shortens the depth. A
+constant disparity offset therefore produces an error that grows with the square of the range, and a
+check at one range cannot separate it from a constant depth offset: two ranges determine $a$ and $k$ in
+$\Delta z=a+kz^2$, and a third tests the quadratic form against a linear one.
+
+\subsection{Tool-Centre Error from Touches on a Plane}
+Let the plane be $\vect{n}^{\top}\vect{x}+d=0$, measured with the TCP in use. A touch records the
+tool pose $(\mathbf{R}_i,\vect{p}_i)$ at the TCP; if the real tip is off by $\vect{e}$ in the tool
+frame, it lies at $\vect{p}_i+\mathbf{R}_i\vect{e}$, on the plane:
+\begin{equation}
+\vect{n}^{\top}(\vect{p}_i+\mathbf{R}_i\vect{e})+d=0
+\quad\Longrightarrow\quad
+(\mathbf{R}_i^{\top}\vect{n})^{\top}\vect{e}=-h_i,\qquad h_i=\vect{n}^{\top}\vect{p}_i+d .
+\end{equation}
+Since the plane itself was measured with the erroneous TCP, its offset $d$ is biased by the vertical
+component of the error, which a free offset $\delta$ absorbs, giving Equation~\ref{eq:tcp_check}.
+With the pen vertical (the tool's $z$ axis pointing down to the tip, $\vect{n}$ up),
+$\mathbf{R}_i^{\top}\vect{n}\approx-\vect{e}_z$ for every roll, so only $e_z$
+(confounded with $\delta$) is seen; tilting the pen by $\vartheta$ towards azimuth $\phi$ makes
+$\mathbf{R}_i^{\top}\vect{n}$ gain a lateral component of size $\sin\vartheta$ in the direction
+$\phi$. Tilts towards four azimuths therefore make $e_x$ and $e_y$ observable with a sensitivity of
+$\sin\vartheta$, and the along-pen component separates from $\delta$ only through
+$1-\cos\vartheta$, which is small at $30^\circ$ (0.13) and better at $45^\circ$ (0.29).
+
+\subsection{Phase Margin of the Camera Aim}
+For one axis, the error angle $e$ obeys $\dot\theta_c=K\,e(t-\tau)$, with $e=\theta_t-\theta_c$,
+a lag $\tau$ from the smoother and the arm, and the latency of the image compensated
+(\S\ref{sec:mc_aim}). The open-loop transfer function is $L(s)=K\,e^{-s\tau}/s$, so
+\begin{equation}
+|L(j\omega)|=\frac{K}{\omega},\qquad \angle L(j\omega)=-\frac{\pi}{2}-\omega\tau .
+\end{equation}
+The gain crosses over at $\omega_c=K$, and the phase margin is
+$\pi+\angle L(j\omega_c)=\pi/2-K\tau$, Equation~\ref{eq:aim_pm}. A first-order lag of time constant
+$\tau_s$ contributes $\arctan(\omega\tau_s)\approx\omega\tau_s$ of phase at low frequency, so the two
+60~ms lags of the smoother count as about 0.12~s of the lag.
+
+\subsection{Latency Compensation by Rotation About the Optical Centre}
+If the camera rotates about its optical centre $\vect{c}$, fixed in the base frame, and the fingertip
+$\vect{x}$ is still, the unit direction $\vect{r}_B=(\vect{x}-\vect{c})/\norm{\vect{x}-\vect{c}}$ is
+constant. A ray measured in the camera frame at time $t_k$, $\hat{\vect{d}}_k$, satisfies
+$\vect{r}_B=\Rf{B}{C}(t_k)\,\hat{\vect{d}}_k$; at any later time the same direction in the current
+camera frame is $\Rf{B}{C}(t)^{\top}\vect{r}_B$. The error computed from an old image is therefore the
+exact current error, independent of $\norm{\vect{x}-\vect{c}}$. If the centre moves by
+$\Delta\vect{c}$, the true direction changes by the angle between $\vect{x}-\vect{c}$ and
+$\vect{x}-\vect{c}-\Delta\vect{c}$, at most $\arcsin(\norm{\Delta\vect{c}}/\norm{\vect{x}-\vect{c}})$:
+with the optical-centre hold keeping $\norm{\Delta\vect{c}}$ to millimetres at half a metre, the
+residual is a fraction of a degree.
+
+\subsection{Information Left for the Extrinsic Translation}
+At its solution, the joint estimate of Equation~\ref{eq:extrinsic_d} is a linearised, iteratively
+reweighted least-squares problem, with its rows weighted by the Welsch and view weights, in the
+unknowns $\vect{x}$, the part corrections, and $\vect{d}$. Its normal matrix is
+\begin{equation}
+\mathbf{N}=\begin{bmatrix}\mathbf{N}_{xx}&\mathbf{N}_{xd}\\ \mathbf{N}_{dx}&\mathbf{N}_{dd}\end{bmatrix},
+\qquad
+\operatorname{Cov}(\vect{d})=\sigma^2\big(\mathbf{N}^{-1}\big)_{dd}=\sigma^2\big(\mathbf{N}_{dd}-\mathbf{N}_{dx}\mathbf{N}_{xx}^{-1}\mathbf{N}_{xd}\big)^{-1},
+\end{equation}
+by block inversion. The Schur complement $\mathbf{S}$, divided by $\sigma^2$, is therefore the
+information about $\vect{d}$ after the poses have absorbed what they can: a shift that a change of the part poses explains as well
+as $\vect{d}$ does contributes nothing to $\mathbf{S}$. A pseudo-inverse replaces $\mathbf{N}_{xx}^{-1}$
+when a part has an unobservable direction (a tube's spin).
+
+\subsection{The Overshoot Clearance Bound}
+During the descent the tool translates along its own axis $\vect{a}$ with its orientation held. For
+any point $\vect{y}$ of the tool and any obstacle $\mathcal{O}$, the distance function
+$\operatorname{dist}(\cdot,\mathcal{O})$ is 1-Lipschitz, so
+\begin{equation}
+\operatorname{dist}(\vect{y}+s\,\vect{a},\mathcal{O})\ \ge\ \operatorname{dist}(\vect{y},\mathcal{O})-s .
+\end{equation}
+Taking the minimum over the tool's points, a pose $s$ past the reference pose keeps at least the
+reference clearance minus $s$. For the tool's capsules, whose distances to boxes and to the table are
+true distances, the bound can therefore never be violated. What the descent check can refuse lies
+outside the argument: pairs of boxes, which are only tested for intersection (such as the camera body
+against a part box), and the arm's capsules, which do not translate rigidly.
+
+\subsection{Clearance of the Pen Holder in a Fillet}
+Let a fillet have opening $\theta$, the pen lie on its bisector with the tip at the root, and a
+capsule of radius $r_h$ have its axis along the pen from $\ell$ to $\ell'>\ell$ above the tip. A
+point at height $h$ on the bisector is at distance $h\sin(\theta/2)$ from each plate, increasing
+with $h$, so the capsule's nearest point to the plates is on the sphere at $h=\ell$, at a distance
+$\ell\sin(\theta/2)-r_h$: Equation~\ref{eq:holder_clearance}. For a work-angle tilt $\vartheta$ away
+from one plate (with $\theta/2+\vartheta\le90^\circ$), the clearance to that plate grows to
+$\ell\sin(\theta/2+\vartheta)-r_h$ and the clearance to the other shrinks to
+$\ell\sin(\theta/2-\vartheta)-r_h$. With the pen on the bisector both are equal and the smaller is
+largest at $\vartheta=0$; a tilt helps only when one side binds, as with a leaning plate or a tool that
+is not symmetric about the pen.
+
+\subsection{Six Boxes Round a Tube}
+Each of the six boxes spans the tube's diameter $2r$ in one direction and $2w$, $w=r\sin15^\circ$, in
+the other, rotated by multiples of $30^\circ$. A point of the disc at radius $\rho\le r$ and angle
+$\phi$ is within $15^\circ$ of some box axis, so its distance from that axis is
+$\rho\,|\sin(\phi-\phi_j)|\le r\sin15^\circ=w$, and its distance along the axis,
+$\rho\,|\cos(\phi-\phi_j)|$, is at most $r$; the box covers it: the union covers the disc. The
+union's farthest points are the box corners, at $\sqrt{r^2+w^2}$ from the axis, so the union stands at
+most
+\begin{equation}
+r\Big(\sqrt{1+\sin^2 15^\circ}-1\Big)\approx0.033\,r
+\end{equation}
+proud of the wall, against $r(\sqrt2-1)\approx0.41\,r$ for a single box round the tube.

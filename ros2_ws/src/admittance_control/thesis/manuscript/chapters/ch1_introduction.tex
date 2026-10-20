@@ -61,8 +61,10 @@ English)}{Overview of the pipeline from an RGB-D frame to a pen mark.}
       $z^2$ law measured and removed (\S\ref{sec:mc_calibration}).
 \item A finger-pointing camera aim with exact latency compensation from rotation-only
       motion (\S\ref{sec:mc_aim}).
-\item A validated vision-only cell: pen marks within 2.3--2.7~mm of the seam root
-      (Chapter~\ref{chp:results}).
+\item A vision-only cell that marked every tack of one T-joint within 2.3--2.7~mm of the seam
+      root in one run, possibly within the measurement error (Chapter~\ref{chp:results}).
+      \TODO{Do not call it ``validated'' until the repeated trials exist (positioning.md); the
+      curved bench gave 2--4.4~mm with multi-view and 8--14~mm on round tubes from one view.}
 \end{itemize}
 \TODO{Confirm the two new items (the extractors, the camera aim) belong in the list.}
 \TODO{Decide with the advisor whether robot-aware tack placement (quality field +

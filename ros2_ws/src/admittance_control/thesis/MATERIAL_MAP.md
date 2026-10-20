@@ -37,13 +37,13 @@ Missing-item tags:
 
 | Section | Material | Missing |
 |---|---|---|
-| Welding, tacks, standards | R: D_papers §L (tack/distortion papers: tomkow2020tacks, mondal2015tacking, jia2025tack, chen2023tacked); `weld_generator/notes/ISO 5817_Ed_4_2023.pdf`, ISO 9692-1 | JASS 6 / EN 1011-2 texts before citing the tack constants (Ch. 4 TODO) |
+| Welding, tacks, standards | R: D_papers §L; V4 @S 3.8 (the verified pool evidence: Tomków, Mondal, Lowth, Noh, Asadi & Goldak, Jia); `weld_generator/notes/ISO 5817_Ed_4_2023.pdf`, ISO 9692-1 | JASS 6 / EN 1011-2 texts before citing the tack constants (Ch. 4 TODO); Noh 2022 and Asadi & Goldak 2011 into thesis.bib |
 | Seam extraction from 3D | R: D_papers §B1-B3; R: C4, C5 (the seven methods, one paragraph each: mechanism, coarse stage, reading choices) | one paragraph per method |
 | Datasets and ground truth | R: D_papers §C | |
 | Pose estimation, tracking | R: D_papers §D1-E and the digests §2.1 (FoundationPose), §2.2 (SAM 2) | MegaPose is not in thesis.bib yet |
 | Registration (ICP, PPF, descriptors) | R: D_papers §F1-F3, digests §2.4-2.5 | |
 | Calibration | R: D_papers §I | a hand-eye survey; a touch-sensing source (Ch. 3 TODO) |
-| Planning | R: D_papers §J, digests §2.6-2.7 | Geraerts & Overmars (shortcutting), Raveh et al. (hybridisation): not in the folders |
+| Planning | R: D_papers §J, digests §2.6-2.7; V4 (Liu 2023: eight cylinders, a cable-twist term; Jia 2025: linear moves between tacks) | Geraerts & Overmars (shortcutting), Raveh et al. (hybridisation): not in the folders |
 | HRI and gestures | R: D_papers §K, digest §2.3 | the MediaPipe Hands paper and the Gesture Recognizer model card (VERIFY entries in thesis.bib) |
 
 ## Chapter 3: Methodology, the cell (`manuscript/chapters/ch3_methodology_cell.tex`)
@@ -108,7 +108,16 @@ Missing-item tags:
 
 ## Not yet reviewed
 
-R: B2 has not covered four notes yet: `notes/readme_perception.md`, `notes/admitans kontrol açıklama.md`
-(the legacy admittance controller), the two literature reports in `paper_pool/`, and the transcript of
-the 2026-10-01 advisor meeting (`notes/1 Ekim hocayla zirve.txt`). R: B1b's consolidated §D is
-unfinished; its per-file entries (§E) are complete.
+The five notes that B2 did not cover are in `verify/V4_docs_rest.md`: `notes/readme_perception.md`
+(the English twin of perception_aciklama, with the timing instrumentation and the CAD-unit checks),
+`notes/admitans kontrol açıklama.md` (the robot line from the pose to the pen mark, for the advisor,
+2026-10-04/08; not the legacy admittance controller), the two AI-generated literature reports (their
+citations checked against the PDFs: do not cite them), and the 2026-10-01 advisor meeting, with a
+34-item table of his requests and their status. R: B1b's consolidated §D is unfinished; its per-file
+entries (§E) are complete.
+
+## Verification of the drafts
+
+`notes/review_2026-10-20/verify/` holds the fact-checks of the rewritten chapters (V1: Ch. 3 first
+half and Ch. 5; V2: Ch. 3 second half and the appendices; V3: Ch. 4). Their findings were applied on
+2026-10-20; the reports keep the evidence (file:line) for each value.

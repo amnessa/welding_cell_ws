@@ -29,13 +29,14 @@ reach the same points along the same axes as a torch, with the same clearance fr
 so the geometry, the reach and the accuracy requirements carry over unchanged; the heat does
 not. Welding itself, and the distortion it causes, are outside the scope of this thesis; heat enters
 only as a possible parameter of the order in which tacks are laid (\S\ref{sec:mc_tacks}), not as a
-model of its effect on the material.
-Second, several components are pretrained models or libraries that we did not write: SAM2,
+model of its effect on the material. Second, several components are pretrained models or libraries that we did not write: SAM2,
 FoundationPose, MediaPipe, OpenCV's point-pair features, OMPL and MoveIt's time
 parameterisation. Rather than describing how these tools were built, we explain what each one
 computes, what we give it, what it returns and how its output is used, at the point of use.
 Their architectures are summarised only as far as needed to understand their inputs, outputs
 and failure modes.
+\TODO{DECIDE with the advisor (THESIS\_PLAN \#3): in the meeting of 2026-10-01 he asked for one to
+three real tacks with a new welding machine; the scope sentence above must follow that decision.}
 
 % -------------------------------------------------------------------------------------
 \section{Overview of the Proposed System}
@@ -55,10 +56,11 @@ primitives, so its only error is the registration's. The pipeline has four stage
 \begin{enumerate}
 \item \textbf{Perceive} (per part). The operator aims the camera by pointing, freezes a frame
   and clicks the part with gestures. The part is segmented, identified in the CAD library and
-  registered in 6D, then tracked while it is placed and saved when it comes to rest.
-\item \textbf{Refine} (once, all parts saved). The robot moves the camera to four close views
-  around the joints, and the poses of all parts are refined together, with the camera's
-  extrinsic translation estimated on the way.
+  registered in 6D, then tracked while it is placed and saved when the operator signs that it
+  rests.
+\item \textbf{Refine} (once, all parts saved). The robot moves the camera to four close views,
+  chosen for how much of the seam regions they see, and the poses of all parts are refined
+  together, with the camera's extrinsic translation estimated on the way.
 \item \textbf{Compute.} Each registered part is represented as an exact geometric primitive.
   Seams follow from where the primitives meet, and tacks from a placement rule on the seams.
 \item \textbf{Act.} Reachability on one arm configuration, collision-free transits and a
@@ -73,8 +75,9 @@ ties localisation to the tool. In this thesis, we exclude it by design: a scenar
 parts cannot be touched must remain valid. Touches are used in two roles only: to calibrate the
 cell against the robot (\S\ref{sec:mc_calibration}), and to measure, after a tack is marked,
 how far the pen met the real surface from where the registration put it
-(Equation~\ref{eq:touch}). Neither role feeds a correction back into a tack. Therefore, every
-correction applied to a tack in this thesis comes from the camera.
+(Equation~\ref{eq:touch}). Neither role corrects the registration or the position of a tack:
+both come from the camera alone. Only along the pen's own axis does the contact decide where a dot
+lands, because the descent stops where it meets the surface (\S\ref{sec:mc_marking}).
 \TODO{Cite a touch-sensing source (an industrial seam-finding manual or a review) for the first
 two sentences; not in the paper pool yet.}
 
@@ -152,7 +155,10 @@ time stamp of the image it serves, not the current time. And a mask or a click i
 the frame it was made on.
 \TODO{The camera node stamps images with the ROS clock when it publishes them, not with the
 exposure time (realsense\_camera\_node.py). Every ``pose at the image stamp'' below inherits that
-offset: measure it once (e.g.\ with the aim's latency test) or state it as a limitation.}
+offset (while the robot moves, 50~ms are a few millimetres): measure it once (e.g.\ with the aim's
+latency test) or state it as a limitation. The lookups also fall back silently: the assembly node to
+the latest transform when the stamp is outside its buffer, the aim to the current joints, the tracker to
+no ego-motion when the transform is missing.}
 
 \paragraph{Assumptions.} The parts are rigid and match their CAD models within the
 manufacturing tolerance. Each part rests on the table or on another part; this is used once,
@@ -201,7 +207,9 @@ of the cell.}
 The UR5e's controller computes its tool pose with a kinematic model calibrated at the factory
 for the individual robot, while the URDF used by ROS and by our planners describes the nominal
 robot. In our application the two differ by 2.4--4.2~mm and about $0.5^\circ$ at the tool,
-depending on the pose, which alone put the first marks about 4~mm off (Chapter~\ref{chp:results}).
+depending on the pose, a difference that alone is predicted to move the marks by 4--6~mm; the
+first measured marks were 3.7--4.3~mm off, with other errors still present
+(Chapter~\ref{chp:results}).
 The difference was measured by a probe that compares the controller's own TCP pose with both
 models at every pose. Therefore, the factory calibration, extracted from the controller, is
 loaded into the URDF, the driver and every tool of the cell, and every report records which
@@ -233,9 +241,11 @@ $\mathbf{R}_i$ has its real tip at $\vect{p}_i+\mathbf{R}_i\vect{e}$, which lies
 \qquad h_i=\vect{n}^{\top}\vect{p}_i+d,
 \label{eq:tcp_check}
 \end{equation}
-with $\delta$ a free offset, since the plane was measured with the same TCP. Vertical touches
-see only the component of $\vect{e}$ along $\vect{n}$; the lateral components become observable
-only through the tilt, with a sensitivity of $\sin\vartheta$. The check therefore touches one
+with $\delta$ a free offset, since the plane was measured with the same TCP. With the pen vertical,
+the component of $\vect{e}$ along $\vect{n}$ cannot be told from $\delta$, so vertical touches alone
+fix none of $\vect{e}$ (at four rolls they show a lateral error only as a spread of the dots on
+paper); the lateral components become observable through the tilt, with a sensitivity of
+$\sin\vartheta$. The check therefore touches one
 spot vertically at four rolls (a correct TCP leaves one dot) and tilted by $30^\circ$ towards
 four azimuths with the tool yaw held, and it reports the conditioning of the lateral columns.
 The along-pen component is weakly conditioned even at $30^\circ$, so a doubt about the pen's
@@ -275,9 +285,10 @@ $\mathbf{B}_i$ the relative motion of the board seen by the camera,
 \mathbf{A}_i\,\mathbf{X} = \mathbf{X}\,\mathbf{B}_i,
 \label{eq:handeye}
 \end{equation}
-which is solved by Tsai and Lenz's method \cite{tsai1989handeye} where OpenCV provides it and by
-Park and Martin's \cite{park1994handeye} (the rotation from a least-squares fit in the
-logarithmic map, then the translation linearly) otherwise. The board is a ChArUco board of
+which is solved by Park and Martin's method \cite{park1994handeye}: the rotation from a
+least-squares fit in the logarithmic map, then the translation linearly. The tools also run Tsai
+and Lenz's method \cite{tsai1989handeye} where the installed OpenCV provides it; the extrinsic in
+use is a Park--Martin solve of 33 samples. The board is a ChArUco board of
 $4\times4$ squares of 30~mm with 22~mm markers, its pose found by PnP on the interpolated
 corners; the robot's pose comes from the controller at the pendant's active TCP. The solution is
 therefore the camera in the TCP frame, and it must be composed into the flange frame,
@@ -286,15 +297,19 @@ $\Tf{E}{C}=\Tf{E}{P}\,\Tf{P}{C}$; the tools refuse to save a result without the 
 Every solve is judged by its own consistency: the board's pose in the base,
 $\Tf{B}{\mathrm{board},i}=\Tf{B}{P,i}\,\mathbf{X}\,\Tf{C}{\mathrm{board},i}$, must be the same for
 every sample. The spread of its position (standard deviation and range) and the RMS of its
-rotation about the chordal mean are printed after every solve, and a result is graded good below
-6~mm and $2^\circ$. However, this residual has a blind spot that the cell exposed three times.
-A solve once failed silently inside a library call and was used for weeks because nothing printed
-its residual; a solve left in the TCP frame fitted its samples perfectly, because a rigid change
-of the gripper frame is invisible to Equation~\ref{eq:handeye}, and put the camera 129~mm behind
-the pen tip; and a rotation bias of about $0.36^\circ$ sat inside the solve's own uncertainty, about
-$0.3^\circ$ ($1.8^\circ$ per view over 33 views), and kept every recalibration wandering by a few
-millimetres. A calibration residual only says that a solution fits its own samples. Each of the
-three was found by comparing against an independent reference, the pen. Therefore, the hand-eye
+rotation about the chordal mean are printed after every solve, and a result is graded good when
+the position spread (the norm of the per-axis standard deviations) is below 6~mm and the rotation
+spread below $2^\circ$. However, the residual has limits that the cell ran into three times. A
+solve once failed silently inside a library call; its residual, a 120~mm spread against its own
+samples, would have shown it, but nothing printed it, and the file was used for weeks. A solve left
+in the TCP frame fits its samples exactly as well as the right one, because a rigid change of the
+gripper frame is invisible to Equation~\ref{eq:handeye}, but hung on the flange it misplaced the
+camera by the whole length of the pen. And a rotation bias of about $0.36^\circ$, some 2~mm at
+300~mm, sat inside the solve's own uncertainty of about $0.3^\circ$ ($1.8^\circ$ per view over 33
+views); two calibrations that each fitted their samples to 3~mm disagreed by 18--20~mm. A
+calibration residual only says that a solution fits its own samples. Each problem was found against
+an independent reference: the pen's touches, and for the frame error also the camera body seen in
+RViz. Therefore, the hand-eye
 result is used only as the starting point: its rotation is refined against the table
 (\S\ref{sec:cal_rot}) and its translation online (\S\ref{sec:mv_selfcal}).
 \SRC{helper/calibration/extract\_extrinsics.py, resolve\_handeye.py; notebooks/handeye\_samples.npz
@@ -412,14 +427,17 @@ fingertip, as the pointing pixel.
 documentation and fetch the MediaPipe Hands paper (D\_papers Part 4); cite the model card.}
 
 \paragraph{From frames to commands.} A per-frame classifier flickers, so a gesture acts only
-after it has been recognised in six consecutive frames, once, on the rising edge. It is re-armed
-by a frame without a gesture or by a stable run of a different gesture (Pointing\_Up and
-Thumb\_Up are one finger apart, and the recogniser slides between them without reporting none),
-with a 1~s cooldown. The aim starts after three consecutive pointing frames and stops when the
+after it has been recognised in six consecutive iterations of the recognition loop, which runs on
+the newest image, and it acts once, on the rising edge. It is re-armed by a frame without a
+gesture, or when a different gesture fires its own action (Pointing\_Up and Thumb\_Up are one
+finger apart, and the recogniser slides between them without reporting none); at least 1~s
+separates any two actions. The aim starts after three consecutive pointing frames and stops when the
 hand drops. The one gesture that starts a large robot motion, the multi-view refinement, must be
 held for 2~s. The meaning of a gesture depends on whether a frame is frozen
 (Table~\ref{tab:gestures}): with nothing frozen, Pointing\_Up aims the camera; once a frame is
-frozen, the same gesture moves a cursor on it, and holding it still for 1~s drops a point. An open
+frozen, the same gesture moves a cursor on it, and holding it still for 1~s drops a pending point;
+pointing elsewhere keeps the previous point as \emph{part}, so that one capture can carry a point
+on every part of an assembly. An open
 palm is how a part is placed, and it fired falsely more than twenty times in one session;
 therefore it was given the only action that is harmless if it fires by mistake.
 
@@ -435,7 +453,7 @@ Pointing\_Up & aim the camera (\S\ref{sec:mc_aim}) & cursor; hold still 1~s to d
 ILoveYou & capture: freeze an RGB-D frame & re-capture \\
 Thumb\_Up & --- & keep the point as \emph{part}; segment and register \\
 Thumb\_Down & clear the frame and the points & keep the point as \emph{not this part} \\
-Open\_Palm & compute the seams and tacks & undo the last point \\
+Open\_Palm & compute the seams and tacks & undo the pending point, else the last kept one \\
 Closed\_Fist (2~s) & multi-view refinement (the robot moves) & same \\
 Victory & save the part & save the part \\
 \bottomrule
@@ -478,7 +496,7 @@ not depend on the camera's orientation, so Equation~\ref{eq:aim_error} gives the
 error from an old image, whatever the fingertip's depth. \textit{Proof.} The measured ray, rotated
 by $\Rf{B}{C}(t_k)$, is the base-frame direction from $\vect{c}$ to $\vect{x}$; neither point
 moves. If the optical centre drifts by $\Delta\vect{c}$, the direction changes by at most
-$\norm{\Delta\vect{c}}/\norm{\vect{x}-\vect{c}}$ radians. $\square$ The latency is therefore
+$\arcsin\big(\norm{\Delta\vect{c}}/\norm{\vect{x}-\vect{c}}\big)$. $\square$ The latency is therefore
 compensated, not predicted, and the image delay leaves the loop. A ray more than about $73^\circ$
 off the optical axis ($d_z<0.3$) is ignored.
 
@@ -495,7 +513,8 @@ Two rotations aim the optical axis; the third, the roll
 $\psi=\operatorname{twist}_z\big(\Rf{B}{C_0}^{\top}\Rf{B}{C}\big)$ about the optical axis relative to
 the home view $C_0$ (taken from a swing--twist split), is redundant and is held at home so that the
 image stays upright for the gesture recogniser. The loop engages when $\norm{\vect{e}}$ exceeds
-$\epsilon$, 5\,\% of the image width, and releases inside $0.4\,\epsilon$. Measuring the rate from
+$\epsilon=0.05\,W/f_x$, 5\,\% of the image width $W$ in normalised image coordinates (about
+$4^\circ$), and releases inside $0.4\,\epsilon$. Measuring the rate from
 $0.2\,\epsilon$, inside the release radius, is what lets it stop: measured from the release radius
 itself, the camera crept towards it for ever and never handed the arm back. There is no integral
 term, because it winds up over the latency, and no derivative term, because a hand landmark is
@@ -513,17 +532,19 @@ $\omega_c=K$, and its phase margin is
 \end{equation}
 With $\tau\approx0.15$~s and the latency compensated, $K=2.5~\mathrm{s}^{-1}$ leaves a margin of
 about $68^\circ$; if the compensation failed and $\tau$ grew to 0.25~s, it would still leave about
-$54^\circ$. The gain was raised from $1.2~\mathrm{s}^{-1}$, sized for the uncompensated loop, once
+$54^\circ$. Because the lags are modelled as a dead time, these margins are conservative design
+estimates, not measurements. The gain was raised from $1.2~\mathrm{s}^{-1}$, sized for the uncompensated loop, once
 the latency was compensated.
 
 \paragraph{From the camera rate to joint rates.} The flange moves so that the optical centre
 stays still, with a small proportional pull ($k_p=2~\mathrm{s}^{-1}$, capped at 20~mm/s) back to
 where it started; damped least squares \cite{wampler1986dls} with $\lambda=0.02$ gives the joint
-rates, scaled uniformly so that no joint exceeds 0.5~rad/s:
+rates, scaled uniformly so that no joint exceeds 0.5~rad/s. With $\tilde{\boldsymbol{\omega}}_C$ the
+smoothed and excursion-limited command,
 \begin{equation}
 \begin{aligned}
 \vect{v}_E &= k_p\,(\vect{c}_{0}-\vect{c}) + \boldsymbol{\omega}\times(\vect{p}_E-\vect{c}),
-\qquad \boldsymbol{\omega} = \Rf{B}{C}\,\boldsymbol{\omega}_C,\\
+\qquad \boldsymbol{\omega} = \Rf{B}{C}\,\tilde{\boldsymbol{\omega}}_C,\\
 \dot{\vect{q}} &= \mathbf{J}^{\top}\big(\mathbf{J}\mathbf{J}^{\top}+\lambda^2\mathbf{I}\big)^{-1}
 \begin{bmatrix}\vect{v}_E\\ \boldsymbol{\omega}\end{bmatrix}.
 \end{aligned}
@@ -538,13 +559,15 @@ halve $K$ to keep the tested behaviour, then re-test, or report the achieved val
 
 \paragraph{Execution and safety.} A human in the loop needs a streaming interface, not a
 trajectory: the joint rates go to the driver's velocity controller, which the aim switches in when
-it starts and out, back to the trajectory controller, once the arm is still. We chose our own
+it starts and out, back to the trajectory controller, once the fingertip has been gone for 0.6~s
+and the commanded rate has decayed to zero. We chose our own
 Jacobian solve on the velocity controller over MoveIt Servo, because the collision model and the
 branch lock (\S\ref{sec:mc_reach}) run in every cycle anyway and Servo would add its own
 singularity handling and smoothing on top. Every cycle, the pose 0.3~s ahead is checked against
-the collision model (table, fixtures, arm and tool; no parts are registered yet), the branch lock
-and the wrist singularity. A fingertip lost for 0.3~s ramps the rate to zero, any other gesture
-stops the aim, and a force above 15~N or joint states older than 0.2~s abort it. The aim starts
+the collision model (the table, any fixtures, the arm and the tool; the parts are left out, since
+the camera only turns about its own centre near the scan home), the branch lock and the wrist
+singularity. A fingertip lost for 0.3~s ramps the rate to zero, so a different gesture also stops
+the aim, and a force above 15~N or joint states older than 0.2~s abort it. The aim starts
 only from a still arm with the camera within 5~cm of its home position, and never while the
 multi-view refinement runs.
 
@@ -562,8 +585,8 @@ $\dot{\vect{q}}_{\mathrm{out}}(t_k)$, over the measured command period $T$,
 \dot{\vect{q}}_{\mathrm{want}}(t) = \dot{\vect{q}}_{\mathrm{out}}(t_k) + \operatorname{clip}\!\Big(\frac{t-t_k}{T},0,1\Big)\big(\dot{\vect{q}}_k-\dot{\vect{q}}_{\mathrm{out}}(t_k)\big),
 \label{eq:relay}
 \end{equation}
-and publishes at 500~Hz, each step limited to 4~rad/s$^2$ and 0.6~rad/s. $T$ is a running average
-of the gaps between commands (2--50~ms). The cost is one command period of delay (8~ms). If the
+and publishes at 500~Hz, each step limited to 4~rad/s$^2$ and 0.6~rad/s. $T$ is an exponential
+moving average (weight 0.2) of the gaps between commands, each clamped to 2--50~ms. The cost is one command period of delay (8~ms). If the
 commands stop for 0.1~s, the relay ramps the arm to zero at 2~rad/s$^2$ by itself, which also
 covers a hard kill of the aim node mid-turn, which previously left its last rate on the
 controller.
@@ -661,7 +684,8 @@ prompt tokens and the image embedding attend to each other, upsamples, and outpu
 predicted quality (IoU) each; for an ambiguous prompt such as a single click it returns several
 candidate masks. For video, a memory encoder and a memory bank carry the masks of earlier frames;
 on a single image the memory is empty and the model behaves like SAM. The model was trained on the
-SA-1B images and the SA-V video set (50.9k videos, 35.5M masks); we did not fine-tune it.
+SA-1B images, the SA-V video set (50.9k videos, 35.5M masks) and an internal licensed video set;
+we did not fine-tune it.
 \figplaceholder{fig:sam2_arch}{SAM2 architecture, image path only (image encoder, prompt encoder,
 mask decoder), adapted from \cite{ravi2024sam2}}{The SAM2 architecture.}
 
@@ -704,8 +728,11 @@ of its diameter and 30 angle bins ($12^\circ$). The scene cloud is the masked de
 with $\mathbf{K}$: the mask is eroded by 2 pixels, because edge pixels mix the part's depth and the
 table's; normals are estimated from 12 neighbours on a slightly dilated crop and turned towards the
 camera, since the model's normals point outwards and the angle features are sign-sensitive; the
-cloud is thinned to a voxel of $\max(D/60,\,1.5~\mathrm{mm})$ and at most 2000 points. Fewer than
-20 points means no answer.
+cloud is thinned to a voxel of $\max(D/60,\,1.5~\mathrm{mm})$, with $D$ the cloud's own robust
+diameter, and to at most 2000 points. OpenCV cannot save a trained detector, so only the sampled
+model clouds are stored and the hash tables are rebuilt when the server starts, in about 1--2~s per
+model. With fewer than 20 scene points there is no answer, and the server falls back to a default
+model with a warning unless it runs in strict mode.
 
 \paragraph{Size filter.} A model is voted only if its diameter fits the cloud's,
 \begin{equation}
@@ -714,8 +741,10 @@ cloud is thinned to a voxel of $\max(D/60,\,1.5~\mathrm{mm})$ and at most 2000 p
 \end{equation}
 because a partial view can be much smaller than its part, but not larger. On the first real frame
 tested, a looser upper bound let a 206~mm model compete against a 255~mm segment and win on score;
-at 0.15 it is rejected outright. If every model is rejected, the filter is ignored. The filter also
-turns a CAD exported in the wrong unit into an ``unclassifiable'' answer instead of a wrong one.
+at 0.15 it is rejected outright. If every model is rejected, the filter is ignored. A filter of this
+kind would also hide a CAD model exported in the wrong unit, which would simply never be chosen;
+such a model is caught earlier, when the library is built, where a diameter outside 10~mm--1.5~m or
+five times off the library's median raises a warning.
 
 \paragraph{Verification.} Vote counts are not comparable across models: a peak's height grows with
 the model's point count and its self-similarity. Therefore the votes rank hypotheses only within a
@@ -737,11 +766,16 @@ model explains; the second factor is the fraction of what should be visible that
 blanketing the segment; the visible-model term alone lets a small one win by hiding inside it.
 A model's score is the best over its hypotheses, the winner is the highest score, and the margin to
 the runner-up is reported; a small margin is not an error but a signal that the distinguishing
-feature is out of view. This is structurally Birdal and Ilic's verification \cite{birdal2015ppf},
+feature is out of view. The margin is logged but does not gate anything yet: the server can refuse an
+ambiguous answer, but its threshold was never calibrated from real margins, so it is off. This is structurally Birdal and Ilic's verification \cite{birdal2015ppf},
 with their occlusion discount replaced by an explicit visibility test; their coarse-to-fine
 segmentation and pose clustering are not needed, because the SAM2 mask already isolates the part.
 The PPF pose is discarded: it is scaffolding for the score, and FoundationPose estimates the pose
 from scratch on the chosen model.
+\TODO{OPEN (the advisor asked three times, 2026-10-01; todo.md): that FoundationPose's pose is better
+than the PPF pose was assumed, not measured. Compare the two poses (accuracy and time) on 3--5
+different scenes and put the table in Chapter 6; the PPF pose is computed already and only has to be
+returned.}
 
 \begin{algorithm}[htbp]
 \caption{Part classification by point-pair features}
@@ -795,12 +829,12 @@ FoundationPose pipeline.}
 the SAM2 mask (in place of the paper's 2D detector) and the chosen CAD mesh, scaled from
 millimetres to metres; the output is $\Tf{C}{O}$, the part's CAD frame in the camera frame, and an
 unnormalised ranking score. One estimator stays resident with its networks loaded, and switching
-parts only swaps its mesh, which takes milliseconds; this is what lets PPF choose a different model
-on every request. Registration runs five refinement iterations on about 252 hypotheses (42
+parts only swaps its mesh; this is what lets PPF choose a different model on every request. Registration runs five refinement iterations on about 252 hypotheses (42
 viewpoints $\times$ 6 in-plane rotations in the released code; the paper uses 12 in-plane rotations,
 504 hypotheses). Our CAD models carry no texture, so the renderings are flat grey and the comparison
 rests on geometry and depth. The score is a ranking value of the order of tens, not a probability,
-and is not used as a gate. Symmetry information is not given to the estimator; the cell handles
+and is used only with a threshold of zero, that is, not as a gate. Symmetry information is not given
+to the estimator; the cell handles
 symmetric tubes itself (\S\ref{sec:per_symmetry}). The registered pose is put into the base frame by
 Equation~\ref{eq:frame_chain} with the joint state at the frozen frame's time stamp, not at the
 reply's, so the seed is exact even when the capture, the clicks and the registration took a minute.
@@ -845,8 +879,8 @@ $D$ over the rendered pixels $\mathcal{R}$:
 \end{equation}
 A part is declared lost when the fit stays below 0.5 for three frames, and found again only at 0.6
 or more; the hysteresis keeps a hand passing over the part from toggling the state. While lost, no
-pose is published, the tracker retries cheaply from the last good pose on every frame, and every
-3~s the laptop sends one frame to the desktop for a re-registration, with the CAD silhouette at the
+pose is published, the tracker retries cheaply from the last good pose on every frame, and at most
+every 3~s, one at a time, the laptop sends one frame to the desktop for a re-registration, with the CAD silhouette at the
 last good pose as the mask and the tracked part's name forced, so that no click is needed. The name
 is forced because a re-registration once reclassified the projected mask and answered with the plate
 under the part; an answer that names another part is now refused. The fit has one blind spot: a flat
@@ -855,10 +889,12 @@ plate on a flat table fits the depth almost anywhere in its plane, so a wrong po
 (start; fit $<$ 0.5 for 3 frames; fit $\ge$ 0.6; re-seed every 3 s; stop at save) and the
 desktop/laptop data flow}{Tracking states and the registration--tracking split.}
 
-\paragraph{Why not ICP tracking.} The first tracker ran point-to-plane ICP on every frame, on the
-CPU, inside a crop box that followed the part. Even after its nearest-neighbour search was optimised
-it ran at about 10~Hz, too slow to follow a part being moved by hand, and on a still part its pose
-wandered by millimetres (Chapter~\ref{chp:results}). ICP is right for a stationary part, and it is kept for
+\paragraph{Why not ICP tracking.} The first tracker ran point-to-plane ICP on the CPU, on a 10~Hz
+timer, inside a crop box that followed the part. It could not follow a part moved by hand at that
+rate, and on a still part its pose wandered by millimetres (Chapter~\ref{chp:results}).
+\TODO{The sources disagree on its cost per call (README \S7: about 23~ms on a $640\times480$ cloud
+after optimisation; thesis\_notes 2026-10-02: ``seconds''); measure it in the FoundationPose-vs-ICP
+comparison of Chapter 6.} ICP is right for a stationary part, and it is kept for
 the stationary steps below. Fusing the two trackers, for example in a Kalman filter, was considered
 and dropped, because it would combine a fast tracker with a slow one that adds nothing while the part
 moves. A tracker answers \emph{where is it now}; a registration answers \emph{where exactly is it}.
@@ -883,13 +919,15 @@ by hand before saving. Its robust mean is
 \end{equation}
 the chordal mean of the rotations, over the inliers $\mathcal{I}$: poses within 3.5 robust standard
 deviations (from the median absolute deviation) of the median position on every axis and within
-$3^\circ$ of the chordal mean. If fewer than $\max(3,\lfloor n/3\rfloor)$ poses agree, all are used.
-The spread is recorded with the pose.
+$3^\circ$ of the chordal mean. If fewer than $\max(3,\lfloor n/3\rfloor)$ poses agree, all are used,
+and with fewer than five poses in the tail the last pose is saved unaveraged, with a warning. The
+spread is recorded with the pose.
 
 \paragraph{Save-time ICP.} The tracker's estimate is good enough to follow a part, not to weld it:
 when saved poses came straight from the tracker, neighbouring parts interpenetrated by 6--11~mm.
-Therefore, the averaged pose is refined by point-to-plane ICP \cite{chen1992p2plane} against five
-fresh clouds of the part, from which the table and every saved part have been removed:
+Therefore, the averaged pose is refined by point-to-plane ICP \cite{chen1992p2plane} against up to
+five fresh clouds of the part, taken within 3.5~s, from which the table and every saved part have
+been removed:
 \begin{equation}
 E(\mathbf{R},\vect{t}) = \sum_i w_i\,r_i^2,\qquad
 r_i=\big(\mathbf{R}\vect{p}_i+\vect{t}-\vect{q}_i\big)^{\!\top}\vect{n}_i,
@@ -898,8 +936,8 @@ r_i=\big(\mathbf{R}\vect{p}_i+\vect{t}-\vect{q}_i\big)^{\!\top}\vect{n}_i,
 \end{equation}
 with $\vect{p}_i$ model samples, $\vect{q}_i$ their nearest scene points and $\vect{n}_i$ the scene
 normals; a pair that fails the normal gate below gets zero weight. The Welsch weights follow Zhang et al.'s fast and robust ICP \cite{zhang2022fricp}: the
-kernel width $\nu$ starts at three times the median residual and halves, stage by stage, down to a
-noise floor estimated from the scene's own local flatness, and Anderson acceleration with a
+kernel width $\nu$ starts at three times the median residual and halves, stage by stage, down to
+$1/(3\sqrt3)$ of the scene's local point-to-plane noise, and Anderson acceleration with a
 monotone safeguard speeds up each stage. The indicator is a normal gate: a model point is paired
 only with a scene point whose normal agrees within $60^\circ$,
 \begin{equation}
@@ -911,15 +949,17 @@ some, and without the gate the hidden back face of an 8~mm plate paired with its
 model straddled its own two faces, leaned by $6.5^\circ$ and put the weld root 10~mm off, while the
 fit looked fine. With the gate the same data gave a lean below $1^\circ$. A side effect is a useful
 diagnostic: a plate seen from one side now has a fitness of about 0.5, and the old fitness of 1.0
-was the warning sign. The five results are averaged robustly, and the ICP pose replaces the tracker's
-only if its mean fitness is at least 0.2 and its correction at most 20~mm and $8^\circ$.
+was the warning sign. A run with a fitness below 0.2 is discarded, the surviving runs are averaged
+robustly, and their mean replaces the tracker's pose only if its correction is at most 20~mm and
+$8^\circ$ (for an uncut tube, its swing only); if no run survives, the tracker's pose is saved.
 
 \paragraph{The static environment.} A saved part becomes part of the static environment: its CAD
-samples at the saved pose, held in the base frame. Live points within a few millimetres of it are
-removed from every later scene, so the next part's ICP cannot snap onto an already saved neighbour
-when the two are pushed flush; the same geometry is the neighbour model of the refinement and the
-obstacle model of the planner. The assembly file records every saved part with its model, pose,
-pose statistics and the camera pose it was registered from.
+samples at the saved pose, held in the base frame. Live points within 5~mm of it are removed from
+every later scene, so the next part's ICP cannot snap onto an already saved neighbour when the two
+are pushed flush. The same saved pose places the part's exact primitive, which is the neighbour model
+of the refinement (\S\ref{sec:mc_multiview}) and, as boxes, the obstacle model of the planner
+(\S\ref{sec:mc_collision}). The assembly file records every saved part with its model, pose, pose
+statistics and the camera pose at the save.
 \SRC{pose\_stats.stationary\_tail, robust\_pose\_mean; icp.icp\_point\_to\_plane (robust, Anderson
 depth 5, voxel 6 mm); scripts/icp\_pose\_refiner\_node.py (\_save\_object, \_fp\_icp\_refine,
 fp\_save\_pose\_window 75); notes/model\_based\_background.md; README \S4--7.}
@@ -928,7 +968,7 @@ fp\_save\_pose\_window 75); notes/model\_based\_background.md; README \S4--7.}
 \label{sec:per_symmetry}
 A plain tube looks the same at any rotation about its own axis, so its spin is not observable; the
 tracker and ICP each return an arbitrary one, and once ICP ``corrected'' a pipe by $30.8^\circ$, all
-of it spin. Symmetry must be told to the estimator. The correction from the reference pose to the new
+of it spin, which the save gate then refused. Symmetry must be told to the save gate. The correction from the reference pose to the new
 one is split into a swing, which tilts the axis $\vect{a}$, and a twist about it, and only the swing
 is kept:
 \begin{equation}
@@ -972,7 +1012,7 @@ intersection is spin-free); the fit-up check that guarded it did.
   \STATE require the end to be on $B$: $\max_j|g_j|\le2\tau_{\mathrm{pose}}$
 \ENDFOR
 \STATE take the best base; accept if range$_{\mathrm{after}}\le\max(1.5~\mathrm{mm},\ \mathrm{range}_{\mathrm{before}}/4)$ and the gain is $\ge1$~mm
-\STATE \textbf{if} accepted \textbf{then} $\Tf{B}{O}\gets\Tf{B}{O}\,\mathbf{R}_z(\psi^{*})$; save it to the assembly and the static environment
+\STATE \textbf{if} accepted \textbf{then} $\Tf{B}{O}\gets\Tf{B}{O}\,\Tf{O}{\Pi}\,\mathbf{R}_z(\psi^{*})\,\Tf{O}{\Pi}^{-1}$, a turn about the tube's own axis in its primitive frame $\Pi$; save it to the assembly and the static environment
 \end{algorithmic}
 \end{algorithm}
 \SRC{pose\_stats.remove\_twist; weldgen\_registry.symmetry\_axis; curved\_seams.settle\_cut\_spins;
@@ -989,10 +1029,12 @@ extrinsic translation turns with the wrist, and a depth bias points along each l
 views from different directions disagree in a measurable way. The geometry of the parts adds a
 third reason: a part is registered only as well as the flat faces it shows, and the side of a round
 pipe seen from one direction leaves its position along the view loose. With all parts saved, the
-robot therefore moves the camera to four close views around the joints and refines all poses
-together. The run is one service call: plan the views, move to each, capture, return home, refine,
-and rewrite the assembly. Everything after the capture is computation on data saved to disk, so a
-run can be replayed offline with the same code, for example with another extrinsic.
+robot therefore moves the camera to four close views of the assembly, all aimed at the centre of its
+bounding box and chosen for how much of the seam regions they see, and refines all poses together.
+The run is one service call: plan the views, move to each, capture, return home, refine, and rewrite
+the assembly. Everything after the capture is computation on data saved to disk, so a run can be
+replayed offline with the same code; since the clouds are stored in the camera frame, a replay with
+another extrinsic would be possible, though it is not implemented.
 \SRC{notes/multiview\_refine\_plan.md (design D1--D8); multiview.py, multiview\_capture.py,
 multiview\_refine.py, multiview\_service.py, selfcal.py, part\_shapes.py; README \S15.}
 
@@ -1000,13 +1042,14 @@ multiview\_refine.py, multiview\_service.py, selfcal.py, part\_shapes.py; README
 \label{sec:mv_views}
 The views should see as much of the seam regions as possible, each region from more than one
 direction, from poses the arm can reach on its locked branch without coming near anything. The
-targets are the CAD surface samples of the saved parts: a sample 1--30~mm from another part lies in
-the seam band, where the weld roots will be, and weighs 1; any other sample weighs 0.1; a sample
+targets are the CAD surface samples of the saved parts: a sample 1--30~mm from another part's
+collision box lies in the seam band, where the weld roots will be, and weighs 1; any other sample weighs 0.1; a sample
 closer than 1~mm to another part is a touching face, hidden, and is dropped. The candidates look at
 the centre of the assembly's bounding box from 0.40~m, at elevations of $45^\circ$ and $60^\circ$,
 every $30^\circ$ of azimuth and every $90^\circ$ of roll: 96 poses. A candidate sees a target if the
-target is between 0.28 and 0.60~m away, inside the $69^\circ\times42^\circ$ field of view, within
-$60^\circ$ of incidence, and not behind another part's collision box. The views are picked greedily
+target's depth along the optical axis is between 0.28 and 0.60~m, it lies inside the
+$69^\circ\times42^\circ$ field of view, within $60^\circ$ of incidence, and no part's collision box
+hides it (the ray stops 2~mm short of the target). The views are picked greedily
 with diminishing returns: with $c_i$ the number of picked views that already see target $i$, the
 gain of a candidate $v$ is
 \begin{equation}
@@ -1022,7 +1065,8 @@ nearest-neighbour order in joint space, each joint vector taken as the $2\pi$-eq
 joint limits and the cable window (\S\ref{sec:mc_reach}).
 
 Two elevations were left out on purpose. A $30^\circ$ view would halve the weakest uncertainty of
-the bench T-joint, but none is reachable at 0.40~m on the bench and its candidates doubled the
+the extrinsic estimate on the bench T-joint (from 0.16 to 0.08~mm on synthetic views), but none is
+reachable at 0.40~m on the bench and its candidates doubled the
 planning time; a $75^\circ$ view sees the faces of a standing plate beyond $60^\circ$ of incidence and
 adds nothing.
 
@@ -1036,10 +1080,10 @@ adds nothing.
 \STATE keep the candidates that see at least one seam-band target
 \FOR{$k=1$ \TO 4}
   \STATE rank the candidates by Equation~\ref{eq:view_gain}, excluding directions within $30^\circ$ of a pick
-  \STATE take the best \emph{feasible} one: IK on the locked branch, wrist and elbow away from their singularities, arm and tool $\ge20$~mm from the parts, fixtures and table
+  \STATE take the best \emph{feasible} one: IK on the locked branch, $|\sin q_5|,|\sin q_3|\ge\sin0.35$ (wrist and elbow), arm and tool $\ge20$~mm from the parts, fixtures and table
   \STATE among its rolls within 98\,\% of the gain, prefer the least joint travel; update the sighting counts
 \ENDFOR
-\STATE order the views by nearest neighbour in joint space; plan the transits between them and home
+\STATE order the views by nearest neighbour in joint space; plan the transits between them and home (straight edge, else RRT-Connect); drop a view that no transit reaches
 \STATE \textbf{if} fewer than two views or no way home \textbf{then} refuse
 \end{algorithmic}
 \end{algorithm}
@@ -1051,13 +1095,13 @@ clouds coloured by view}{Planned close-range views.}
 Tracking is paused for the whole run, because a live crop would chase the moving camera. The arm
 drives to each view with the same force-watched executor as the marking motion
 (\S\ref{sec:mc_marking}), at a capped joint speed, waits 0.5~s after it stops, and takes the
-per-pixel median of 16 fresh organized clouds, with the camera pose from the transforms at the
-cloud's own stamp. The median cuts the temporal noise of a still scene before any geometry is done,
+per-pixel median of 16 fresh organized clouds (at least eight within 8~s), with the camera pose from
+the transforms at the stamp of the first of them. The median cuts the temporal noise of a still scene before any geometry is done,
 and frames are cheap. Before the arm moves, the extrinsic in use is checked against the calibration
-file (to 0.1~mm), and a failed or aborted move stops where it is, with no automatic recovery motion.
-Each view is stored in the camera frame. For the refinement it is cropped to 30~mm around the saved
-parts, cut 2~mm above the table plane, thinned to a 3~mm voxel, given normals that face that view's
-camera (the normal gate relies on it) and transformed into the base frame.
+file (to 0.1~mm and $0.01^\circ$), and a failed or aborted move stops where it is, with no automatic recovery motion.
+Each view is stored in the camera frame. For the refinement it is given normals that face that
+view's camera (the normal gate relies on it), transformed into the base frame, cropped to 30~mm
+around the saved parts' bounding boxes, cut 2~mm above the table plane and thinned to a 3~mm voxel.
 \SRC{multiview\_service.MultiviewRefiner (n\_frames 16, settle 0.5 s); multiview\_capture.preprocess\_view.}
 
 \subsection{Joint Refinement of Touching Parts}
@@ -1091,8 +1135,10 @@ r_i=\vect{n}_i^{\top}\big(\mathbf{T}(\boldsymbol{\xi}_k)\vect{p}_i-\vect{q}_i\bi
 \end{gathered}
 \label{eq:mv_objective}
 \end{equation}
-where $\mathcal{O}_k^v$ are the points of view $v$ that part $k$ owns, paired with its CAD samples
-$\vect{p}_i$ within 10~mm and through the normal gate; $\omega_v=1/N_v$ makes the views equal;
+where each CAD sample $\vect{p}_i$ of part $k$ is paired with its nearest scene point $\vect{q}_i$
+among the points of view $v$ that the part owns ($\mathcal{O}_k^v$), within 10~mm and through the
+normal gate, and $\vect{n}_i$ is that scene point's normal; $\omega_v\propto1/N_v$, normalised to a
+mean of one over the part's points, makes the views roughly equal;
 $w_i$ are Welsch weights whose width starts at the largest of three times the median residual, its
 90th percentile and $\sigma$, and shrinks by 0.7 per iteration down to the point noise
 $\sigma=1.5$~mm; $\boldsymbol{\Sigma}=\operatorname{diag}\big((1^\circ)^2\mathbf{I},(3~\mathrm{mm})^2\mathbf{I}\big)$
@@ -1121,7 +1167,7 @@ determine a standing plate, and the gap is measured and reported instead
 \label{alg:mv_refine}
 \begin{algorithmic}[1]
 \REQUIRE parts $k$ (CAD samples with normals, saved poses $\mathbf{T}_k^0$, true shapes); views (points, normals, camera rotations $\mathbf{R}_v$)
-\STATE $\omega_v\gets1/N_v$; assign every scene point to its owner (dead band 4~mm, none beyond 15~mm)
+\STATE $\omega_v\propto1/N_v$ (mean one); assign every scene point to its owner (dead band 4~mm, none beyond 15~mm)
 \FOR{round $=1,2$}
   \FORALL{parts $k$, most owned points first}
     \STATE contacts $\gets$ up to 200 samples of $k$ within 8~mm of a neighbour
@@ -1141,9 +1187,11 @@ determine a standing plate, and the gap is measured and reported instead
 \label{sec:mv_observe}
 A refinement must say not only where a part is but also which of its directions the views actually
 measured. With $\vect{J}_i=\big[(\vect{p}_i\times\vect{n}_i)^{\top}/\rho,\ \vect{n}_i^{\top}\big]$ the
-Jacobian of residual $i$, the rotation scaled by the part's size $\rho$ (the 90th-percentile radius
-of its samples) so that all six directions are in millimetres, the data information of part $k$ and
-the uncertainty of each of its eigen-directions are
+Jacobian of residual $i$, with $\vect{p}_i$ taken relative to the part's centre and the rotation
+scaled by the part's size $\rho$ (the 90th-percentile radius of its samples) so that all six
+directions are in millimetres, the data information of part $k$ (with the view weights only: no
+Welsch weights, no prior and no overlap rows) and the uncertainty of each of its eigen-directions
+are
 \begin{equation}
 \mathbf{H}_k=\sum_i\omega_i\,\vect{J}_i^{\top}\vect{J}_i,\qquad
 \sigma_{\mathrm{dir}} = \frac{\sigma}{\sqrt{\lambda}},
@@ -1153,9 +1201,9 @@ and a direction counts as measured when $\sigma_{\mathrm{dir}}\le0.5$~mm. The cr
 on purpose. A first, relative version counted a direction as measured if it carried 5\,\% of the
 strongest direction's information; because a plate's broad faces carry thousands of points, its
 edges then looked unmeasured, and the in-plane rotation of a standing plate was refused although its
-resting contact pinned it. Unmeasured directions are not frozen: the prior holds them, and they feed
-the acceptance rule for relative poses below. A tube's spin about its own axis is named symmetric and
-is exempt.
+resting contact, then switched on, pinned it. Unmeasured directions are not frozen: the prior holds them, and they feed
+the acceptance rule for relative poses below. An uncut tube's spin about its own axis is named symmetric and
+is exempt; a cut tube's weakly measured spin is not.
 
 One limitation is known. The base plate's slide within its own plane varies by 1--3~mm from run to
 run, although it counts as measured: it rests on grazing points along the plate's edges, which are
@@ -1180,15 +1228,17 @@ r_{v,i} = \vect{n}_i^{\top}\big(\mathbf{T}_k\vect{p}_i - \vect{q}_i + \mathbf{R}
 \label{eq:extrinsic_d}
 \end{equation}
 where $\mathbf{N}=\mathbf{A}^{\top}\mathbf{A}$ is the normal matrix of the stacked residuals in the
-unknowns $(\boldsymbol{\xi}_1,\dots,\boldsymbol{\xi}_K,\vect{d})$ and the Schur complement $\mathbf{S}$
-is the information about $\vect{d}$ that is left after the poses have been accounted for. Only the
-eigen-directions of $\mathbf{S}$ with an uncertainty of 0.5~mm or better are kept; the others are
+unknowns $(\boldsymbol{\xi}_1,\dots,\boldsymbol{\xi}_K,\vect{d})$ and the Schur complement $\mathbf{S}$,
+divided by $\sigma^2$, is the information about $\vect{d}$ that is left after the poses have been
+accounted for. Only the eigen-directions with an uncertainty $\sigma/\sqrt{\lambda}$ of 0.5~mm or better
+are kept; the others are
 named and set to zero. A first version estimated $\vect{d}$ from the per-view poses of each part
 instead; even from the true poses it returned $(7,13,-15)$~mm for an injected $(3,-2,1)$~mm. The
 points, not the per-view poses, carry the information.
 
 \paragraph{Correcting a run.} When $\norm{\vect{d}}$ exceeds 0.5~mm, the run takes the shift out of
-its own data and refines again, up to four times, until the remaining estimate is below 0.5~mm:
+its own data and refines again, up to four times, until the remaining estimate is below 0.5~mm (after
+the fourth pass the last refinement is used as it is):
 \begin{equation}
 \vect{q}\leftarrow\vect{q}-\mathbf{R}_v\vect{D}\ \ \text{(every point of view $v$)},\qquad
 \vect{t}_k^{0}\leftarrow\vect{t}_k^{0}-\mathbf{R}_{\mathrm{scan},k}\vect{D}\ \ \text{(every saved pose)},
@@ -1200,8 +1250,9 @@ scan view, and correcting only the close views, while the prior still held the u
 directions at the uncorrected saved poses, created a fake change of the fit-up of about 8~mm on the
 bench. The correction limits are then judged against the corrected prior.
 
-\paragraph{Correcting the calibration.} Each run records its estimate and its $3\times3$ information
-$\mathbf{I}_r$ under a hash of the extrinsic file it was made with. Runs with the same file are
+\paragraph{Correcting the calibration.} Each run that determines at least one direction records its
+total estimate and the $3\times3$ information of its first estimate, $\mathbf{I}_r$, under a hash of
+the extrinsic file it was made with. Runs with the same file are
 combined by their information,
 \begin{equation}
 \vect{d}^{*}=\Big(\sum_r\mathbf{I}_r\Big)^{+}\sum_r\mathbf{I}_r\vect{d}_r,
@@ -1211,7 +1262,9 @@ combined by their information,
 so a direction one run cannot see is filled by another, and a corrected file is written only when at
 least three runs agree (spread and leave-one-out shift both within 1~mm). It is promoted by hand.
 Repeated captures of one scene are not independent evidence: they show repeatability, not
-correctness. And any run made before a depth recalibration learned the depth error. The weakest
+correctness. And any run made before a depth recalibration learned the depth error. These two rules
+are kept by hand: the code keys the runs only by the extrinsic file's hash, and the corrected file is
+written by a command the operator runs. The weakest
 direction is vertical: a shift that moves every view's cloud up or down together is, for views at one
 elevation, almost indistinguishable from all parts sitting higher. On the runs of one day the online
 correction lowered the parts by about 7~mm while the camera was known to place surfaces about 2~mm
@@ -1225,8 +1278,8 @@ over three distinct assemblies.}
 \label{alg:mv_selfcal}
 \begin{algorithmic}[1]
 \REQUIRE refined parts and the views of one run; threshold 0.5~mm
-\STATE solve Equation~\ref{eq:extrinsic_d} for $(\boldsymbol{\xi}_1,\dots,\boldsymbol{\xi}_K,\vect{d})$ by Welsch-weighted least squares
-\STATE $\mathbf{S}\gets$ Schur complement; keep $\vect{d}$ along eigen-directions with $1/\sqrt{\lambda}\le0.5$~mm
+\STATE solve Equation~\ref{eq:extrinsic_d} for $(\boldsymbol{\xi}_1,\dots,\boldsymbol{\xi}_K,\vect{d})$, without a prior on the parts, by at most 20 Welsch-weighted iterations
+\STATE $\mathbf{S}\gets$ Schur complement; keep $\vect{d}$ along eigen-directions with $\sigma/\sqrt{\lambda}\le0.5$~mm
 \IF{$\norm{\vect{d}}>0.5$~mm}
   \STATE $\vect{D}\gets\vect{d}$
   \FOR{at most 4 iterations}
@@ -1251,10 +1304,10 @@ lists the rules.
 \toprule
 Check & Refused when \\
 \midrule
-Correction size & beyond the camera's share, more than 10~mm or $5^\circ$; for an uncut tube, the tilt of its axis, not its spin (a spin over $0.5^\circ$ is reported) \\
+Correction size & beyond the camera's share, more than 10~mm or $5^\circ$; for a tube, cut or not, the tilt of its axis, not its spin (a spin over $0.5^\circ$ is reported) \\
 Fit & fitness below 0.2 \\
 Overlap & penetration into a neighbour over 1.0~mm \emph{and} more than 0.2~mm worse than in the saved assembly (over 1.0~mm but no worse: applied with a warning) \\
-Relative pose & the pose between two touching parts changed by more than 2~mm or $1^\circ$, with more than 2~mm of a part's correction along directions its views did not measure: that relative pose is the fit-up \\
+Relative pose & the pose between two parts changed by more than 2~mm or $1^\circ$, with more than 2~mm of a part's correction along directions its views did not measure: that relative pose is the fit-up \\
 Camera & $\norm{\vect{d}}>0.5$~mm while online self-calibration is off: every part kept as saved \\
 \bottomrule
 \end{tabular}
@@ -1263,15 +1316,17 @@ A refused part keeps its saved pose, and every accepted part is refined once mor
 accepted part whose pose relative to a held one would still change beyond 2~mm or $1^\circ$ is held
 too, until nothing changes. The assembly is refined together or not at all. The rules were shaped by
 real failures in both directions. Before the depth was calibrated, the refinement failed safely: its
-fit was three times worse than on synthetic data and the rules refused both parts, so the assembly was
-not corrupted. Later, a mitred tube's correction was refused for overlap although its saved pose
-overlapped its plate as much, and for a rotation that was mostly its symmetric spin; the overlap rule
+fit was nearly three times worse than on synthetic data (0.96 against 0.35~mm RMS) and the
+relative-pose rule refused both parts, so the assembly was not corrupted. Later, a mitred tube's
+correction was refused for overlap although its saved pose overlapped its plate as much, and for a
+rotation that was mostly its spin, which does not move the seam; the overlap rule
 now compares with the saved assembly, and a tube is judged by its axis.
 
 \paragraph{Fit-up.} After the refinement, the gap of every face that rests on a neighbour (a
-down-facing face opposite a neighbour's face) is measured along the whole contact, because an operator
-who places the parts too far apart must be told. It is compared with the root-gap limit of
-ISO~5817:2023, Table~1, no.~617 \cite{iso5817}, for fillet welds, with the throat $a=0.7\,t$:
+down-facing face opposite a neighbour's face) is measured at up to 200 sampled points of the
+contact, because an operator who places the parts too far apart must be told. It is compared with
+the root-gap limit of ISO~5817:2023, Table~1, No.~3.2 (reference 617) \cite{iso5817}, for fillet
+welds, with a design throat $a=0.7\,t$ in place of the actual one:
 \begin{equation}
 h_{\max}=
 \begin{cases}
@@ -1308,15 +1363,16 @@ desktop before stating it in Chapter 6.}
 
 \subsection{CAD Parts as Primitives}
 \label{sec:mc_registry}
-A registry maps every CAD model to a primitive. The mapping is derived automatically from the mesh,
-and verified, never guessed:
+A registry maps every CAD model to a primitive. The mapping is derived automatically from the mesh
+(entries written by hand are kept, and verified too), and it is never guessed:
 \begin{itemize}
 \item \textbf{Slab.} The oriented bounding box, with its axes sorted so that $w$ is the thickness. It
   is exact when every vertex is a box corner (within 0.05~mm) and the volumes agree within 1\,\%; it is
   an \emph{envelope} when every vertex lies on the box surface and the mesh fills at least 90\,\% of
   it, as for a plate with small notches or tabs, whose deficit is recorded.
 \item \textbf{Tube.} The sweep axis is the direction least spread by the area-weighted face normals
-  (the smallest eigenvector of $\sum_fA_f\vect{n}_f\vect{n}_f^{\top}$); the lateral faces give the centre
+  (the smallest eigenvector of $\sum_fA_f\vect{n}_f\vect{n}_f^{\top}$, re-estimated four times on the
+  faces nearly parallel to it, so that the end faces do not pull it); the lateral faces give the centre
   by a circle fit and must lie on two radii; each end is classified as flat, a plane (a mitre) or a
   cylinder (a saddle), each fitted within 0.05~mm. A flat top is required; the other end is the base,
   where the cut is.
@@ -1327,12 +1383,13 @@ and verified, never guessed:
   re-projection, and the first spine within 0.025~mm wins.
 \end{itemize}
 Anything else is recorded as unsupported, with the measured reason; a band whose wall varies, for
-instance, is refused with the range of its wall rather than approximated. Each entry is then verified
-in both directions against its CAD model, the CAD vertices onto the primitive and the primitive's
-vertices onto the CAD, with the volumes compared, within the 0.25~mm chord budget of WeldSet. Both
-directions are needed: the first alone accepts an entry that is too long or too thick. The check
-caught a drawing error: a printed band whose second side had been drawn as a sideways copy of the first
-instead of an offset along the normal. Finally, at run time, an entry is \emph{stale} if any vertex of
+instance, is refused with the range of its wall rather than approximated. This test caught a drawing
+error: a printed band whose second side had been drawn as a sideways copy of the first instead of an
+offset along the normal, so that its wall ran from 2.4 to 5.0~mm. Each entry can then be verified in
+both directions against its CAD model, the CAD vertices onto the primitive and the primitive's
+vertices onto the CAD, with the volumes compared, within the 0.25~mm chord budget of WeldSet; the
+check is run when the library changes, and it only flags a failure. Both directions are needed: the
+first alone accepts an entry that is too long or too thick. Finally, at run time, an entry is \emph{stale} if any vertex of
 its CAD model lies more than 0.5~mm from the primitive. A stale entry is refused loudly, because once a
 replaced plate kept its old entry, turned by $90^\circ$, and no seam was found at all, without a word.
 
@@ -1383,13 +1440,13 @@ tolerance, and never rejects a seam for its fit-up:
   one);
 \item the fit-up is the signed distance of each face's near edge to the other's plane, positive for a
   gap and negative for penetration, reported with the seam;
-\item a seam is non-weldable, with its reason, if the dihedral is out of range, if it is shorter than
-  10~mm, or if no torch axis about the bisector clears the scene at five points along it
-  (Equation~\ref{eq:ws_axes}).
+\item a seam is non-weldable, with its reason, if a part is a fixture, if the dihedral is outside
+  $30$--$170^\circ$, if it is shorter than 10~mm, or if no torch axis within $45^\circ$ of the
+  bisector, facing both members, clears the scene at five points along it (Equation~\ref{eq:ws_axes}).
 \end{itemize}
 Rejected candidates are kept, with their reasons, because the planner must avoid them. WeldSet's
-post-passes then remove a fillet that runs along a butt seam's centreline and cross-runs against the
-joint direction, and every seam is oriented so that its dominant component is positive, so that the
+post-passes then mark as non-weldable, and keep as negatives, a run along a butt or edge seam's
+centreline and the cross-runs against the joint direction, and every seam is oriented so that its dominant component is positive, so that the
 two fillets of one joint count their tacks from the same end.
 
 \begin{algorithm}[htbp]
@@ -1426,11 +1483,13 @@ h(\theta) &= \frac{\vect{n}^{\top}(\vect{p}_0-\vect{c}) - r\,(\vect{n}^{\top}\ve
 \label{eq:ellipse_seam}
 \end{equation}
 valid when $\vect{n}^{\top}\vect{a}\neq0$; the cell requires the tube to stand at least $10^\circ$
-off the face. A branch tube on a main tube meets it along a saddle (Equation~\ref{eq:ws_saddle}), and a
+off the face. A branch tube on a main tube, of a larger radius, meets it along a saddle
+(Equation~\ref{eq:ws_saddle}), which must lie on the main tube's length within the tolerance; and a
 band on a plate meets it along its two walls: each wall is an offset of the spine, traced along the
-band's extrusion axis $\vect{z}_w$ onto the plate, $\vect{x}=\vect{p}_0+\lambda\vect{z}_w$ with
-$\lambda=-(\vect{n}^{\top}\vect{p}_0+d)/(\vect{n}^{\top}\vect{z}_w)$, which is exact at any tilt
-because the wall is a ruled surface along that axis.
+band's extrusion axis $\vect{z}_w$ onto the plate $\vect{n}^{\top}\vect{x}+d=0$,
+$\vect{x}=\vect{w}_0+\lambda\vect{z}_w$ with
+$\lambda=-(\vect{n}^{\top}\vect{w}_0+d)/(\vect{n}^{\top}\vect{z}_w)$ and $\vect{w}_0$ the wall point at
+the band's base, which is exact at any tilt because the wall is a ruled surface along that axis.
 
 Which end of a tube stands on the plate is found, not assumed: both ends and both faces of the plate
 are tried, and an end counts when its axial distance to the curve stays within the pose tolerance all
@@ -1441,7 +1500,7 @@ seam; the dihedral varies along the curve, from $65^\circ$ to $115^\circ$ round 
 The verdict is WeldSet's torch cone, tested at every point: the seam is weldable when at least 95\,\% of
 its points clear. A tube's bore is an inner fillet and a negative here, unless it is at least 200~mm
 wide, because the pen holder and the camera are wider than a welding torch, for which WeldSet uses
-80~mm. A curve that runs off the plate is refused as such, and a pair for which no rule exists yet (a
+80~mm. A curve that runs off the plate (outside its face, grown by the tolerance) is refused as such, and a pair for which no rule exists yet (a
 band on a tube) is reported, not dropped.
 
 Curved seams tolerate registration error for the same reason planar ones do: a plane--cylinder curve
@@ -1492,9 +1551,11 @@ the root-gap limit of ISO~5817 (Equation~\ref{eq:iso_gap}) is made after the mul
 where the gaps are best measured.
 
 \paragraph{Fallback.} The cell keeps the edge detector it began with, a radius-PCA classifier of crease
-points in the static environment cloud, for a part without a registry entry. It is used only when
-allowed, and it says so: once, a new module missing from the installed package made every curved part
-fall back to it silently, and a test now guards the install list.
+points in the static environment cloud. When the computation of the seams fails, because a part has no
+usable registry entry or the geometry library cannot be loaded, the seams of the whole assembly come
+from this detector; the fallback is allowed by default and logs a warning. Once, a new module missing
+from the installed package made the whole curved bench fall back to it, and the single warning went
+unnoticed because the result looked normal; a test now guards the install list.
 \SRC{seam\_from\_registration (fitup\_mm); curved\_seams.\_near\_miss; icp\_pose\_refiner\_node
 (weld\_method, weld\_fallback\_pca); test/test\_install\_list.py; thesis\_notes.md 2026-09-29,
 2026-10-09.}
@@ -1505,19 +1566,22 @@ fall back to it silently, and a test now guards the install list.
 Tacks follow WeldSet's tack rule, tackrule-0.1 (\S\ref{sec:ws_tacks}, Equations~\ref{eq:tackrule_len}
 and~\ref{eq:tackrule_n}), applied unchanged to the weldable seams, with $t$ the gauge
 of the thinnest workpiece of the assembly: a 3~mm tube wall gives 12~mm tacks, an 8~mm plate 32~mm. On an
-open seam both effective ends are tacked and the rest are spaced evenly between them. A closed seam has
-no ends: it gets an even number of tacks, at least four, evenly spaced from a phase that the rule derives
-from a hash of the scene and the seam, so the layout is deterministic but does not depend on how the
-curve happens to be parametrised. In the cell the scene's identifier is the directory the assembly was
-saved in, so a closed seam's tack phase changes when the same assembly is saved again.
+open seam both effective ends, a margin $\max(2t,\ell)$ in from the ends, are tacked and the rest are
+spaced evenly between them; a seam too short for two gets one tack at its middle. A closed seam has no
+ends: it gets an even number of tacks, at least four, spaced by arc length from the stored curve's first
+point and shifted by a phase that the rule derives from a hash of the scene and the seam, so the layout
+is deterministic and seed-free. In the cell the scene's identifier is the fixed results directory, so
+the phase is the same on every save; it changes only with the directory or with the seam's index.
 
 Each tack carries two numbers. Its \emph{tack number} counts along its seam from the seam's start, and is
-the label it is shown and reached by. Its \emph{order} is the weld sequence of the scene: the ends first,
-then the middles by recursive bisection, with the seams of one class interleaved so that heat would
-alternate between them. On a curved seam each tack also carries its own approach axis, interpolated from
+the label it is shown and reached by. Its \emph{order} is the weld sequence of the scene: on an open seam the ends
+first, then the middles by recursive bisection, on a closed seam opposite pairs in bisection order,
+with the seams of one class interleaved so that heat would alternate between them. This order is the
+rule's convention: no source in the paper pool supports it, and the verified studies vary which
+positions are tacked rather than their order (\S\ref{sec:bg_welding}). On a curved seam each tack also carries its own approach axis, interpolated from
 the seam's per-point frames at its arc length. The pen has no heat to balance, so it visits the tacks
-seam by seam in tack-number order, which is the shorter route; the weld order is kept in the file for the
-day a torch replaces the pen.
+seam by seam, in the seams' stored order and in tack-number order within each, without optimising the
+route; the weld order is kept in the file for the day a torch replaces the pen.
 
 \TODO{OPEN (todo.md 2026-10-16; THESIS\_PLAN \#9): tack ordering by a rough heat estimate. Each tack a
 heat source $Q$ at its point; the temperature at a point the superposition of an analytic cooling kernel
@@ -1525,7 +1589,14 @@ of a thin plate, $T(r,t)=\frac{Q}{4\pi k\,h\,t}\exp\!\big(-\frac{r^2}{4\alpha t}
 summed over the tacks laid so far, with each tack's time from the marking plan; the next tack the
 coolest, then a cost (peak temperature when laid, heat imbalance as a distortion proxy, travel) and a
 beam search if greedy is beaten; compared with tackrule-0.1's order on the bench assemblies; the kernel
-checked once against a small transient FE run. Decide: a section with results here, or future work.}
+checked once against a small transient FE run. Decide: a section with results here, or future work.
+The verified pool evidence varies which positions are tacked rather than their order: Tomków et al.\
+\cite{tomkow2020tacks} (thin TIG sheet: more tacks, more angular distortion), Mondal et al.\
+\cite{mondal2015tacking} (6~mm single-sided fillets: tacks on both sides best), Lowth et al.\
+\cite{lowth2015gaps} (tacking contact points before gaps: 19 times less out-of-plane distortion), and a
+rigidity-based order that gained only 2\,\% (Noh et al.~2022, to add to thesis.bib); Jia et al.\
+\cite{jia2025tack} order tacks for travel only. So: add a gap term (the cell measures the fit-up of every
+seam) and keep ``ends first'' as an option (review V4).}
 \TODO{OPEN DECISION (THESIS\_PLAN \#1): robot-aware tack placement (a quality field over arc length
 $\times$ roll and an exact DP for $k$ tacks). The per-tack roll DP of \S\ref{sec:mc_reach} already
 chooses the robot's side of it; the tack positions themselves are still the rule's.}
@@ -1540,8 +1611,9 @@ pen\_marking\_plan.md \S E (decided 2026-09-22).}
 The last stage brings the pen to every tack. Three choices shape it. First, the collision model: the
 scene is a handful of exact primitives whose poses we already hold, and a sampling planner's validity
 test runs hundreds of thousands of times per plan; therefore we use our own model on capsules, boxes
-and a plane, rather than a general mesh-based planning scene, which remains the upgrade path once
-fixtures with real shapes enter the cell \cite{liu2023rcim}. Second, the descent: the registration
+and a plane, as Liu et al.\ model a welding arm and its torch as eight cylinders with closed-form
+distances \cite{liu2023rcim}, rather than a general mesh-based planning scene, which remains the upgrade
+path once fixtures with real shapes enter the cell. Second, the descent: the registration
 error we first measured was 4--11~mm, so a position-controlled pen would have gone 5~mm into the plate
 or stopped 5~mm above it; a force-gated descent turns that error into a number instead of a crash, and
 the number is the validation. Third, the mark: a dot measures, a stroke along the seam demonstrates.
@@ -1568,13 +1640,14 @@ camera body, measured on the bench. The parts are their primitives as boxes:
   1~mm.
 \end{itemize}
 The table is the touched, tilted plane (\S\ref{sec:cal_table}), and fixtures are boxes standing on it,
-entered as a few pen-tip points on their tops. Distances are computed in closed form between capsules;
+entered as a few pen-tip points on their tops (none is entered at present). Distances are computed in closed form between capsules;
 between a capsule and a box by a golden-section search along the capsule's segment, exact to
 $10^{-4}$ of its length because the distance to a convex set is convex along a line; and against the
 table from each primitive's lowest point. A box against a box is an intersection test only, so a tool
 box such as the camera body gets no clearance against a part box, only ``not touching''; this is a
 known limitation. The pairs checked are the arm and the tool against the parts, the fixtures and the
-table, and the tool against the base, shoulder and upper arm; full self-collision is not modelled,
+table (the base and shoulder, which stand on it, are exempt), and the tool against the base, shoulder
+and upper arm; full self-collision is not modelled,
 because the branch lock keeps the arm in one configuration.
 
 \paragraph{Clearances.} On the bisector of a fillet with opening $\theta$, a capsule of radius $r_h$
@@ -1583,26 +1656,30 @@ whose axis ends a distance $\ell$ up the pen from the tip clears both plates by
 c_{\mathrm{holder}}=\ell\sin\frac{\theta}{2}-r_h .
 \label{eq:holder_clearance}
 \end{equation}
-With the holder first modelled as a single capsule ($r_h=42$~mm, $\ell\approx61$~mm), a square T-joint
-was cleared by about 1~mm, and some seams counted as reachable only because a wrong registration had
-opened the corner; the envelope derived from the holder's CAD model ($r_h=20.5$~mm, $\ell\approx51$~mm)
-clears it by 15.5~mm. The tack clearance of 3~mm dates from the single-capsule model, under which a
-square fillet allowed at most about 3~mm; with the envelope from the CAD model it is a margin on top of
+With the holder first modelled as a single capsule ($r_h=42$~mm), a square T-joint was cleared by
+3.1~mm with the pen tip as first calibrated, at 183.78~mm ($\ell\approx64$~mm), and by about 1~mm once
+the tip was re-measured at 180.91~mm ($\ell\approx61$~mm); some seams had counted as reachable only
+because a wrong registration had opened the corner. The envelope derived from the holder's CAD model
+($r_h=20.5$~mm, $\ell\approx51$~mm) clears it by 15.5~mm. The tack clearance of 3~mm was set under the
+single-capsule model with the first tip; with the envelope from the CAD model it is a margin on top of
 an envelope that already carries 3~mm of its own. Free motions keep 20~mm, because a transit planned with the tack clearance
 once skimmed a standing plate and, with the parts about 10~mm off their models, hit it at 9~N; near a
 tack the free-motion clearance is lowered to 90\,\% of the end pose's own clearance, never below the
-tack clearance, so that a transit can still start beside a plate. At a tack, the pen may touch the part,
-and the table under a thin plate, but never reach the table itself.
+tack clearance, so that a transit can still start beside a plate. At a tack, the pen's pairs with the part
+and with the table are exempt from the clearance, so it may come within 3~mm of the table beside a thin
+plate, but a pen at or below the table plane is a collision.
 
-\paragraph{A C++ port.} The planner calls the validity test from several threads, and in Python one
-plan spent most of its minutes in it. The model was therefore ported to C++ (exposed to Python through
-pybind11, the interpreter lock released during planning) and built from a specification exported by the
-Python model, which remains the single source of truth. The port was tested where the two are most
+\paragraph{A C++ port.} OMPL's anytime planner is not exposed by its Python bindings, and a validity test
+written in Python would serialise the planner's threads. The model was therefore ported to C++ (exposed
+to Python through pybind11, the interpreter lock released during planning) and built from a
+specification exported by the Python model, which remains the single source of truth. Later, the
+Python re-checks of edges, splines and timed samples, which still took three of a plan's three and a
+half minutes, were moved onto it too. The port was tested where the two are most
 likely to differ: on random and near-contact configurations, bisected towards the collision boundary,
 it agrees exactly on validity and to $10^{-9}$ on distances, and it is about 590 times faster. The test
-found a bug in the binding's output array and one exact tie decided by the last bit. Motions are checked
-at a resolution of 0.01~rad per joint, about 5~mm of tip travel, so an 8~mm plate cannot slip between
-two checks.
+found a bug in the binding's output array and one exact tie decided by the last bit. The planner checks
+its motions at 0.01~rad per joint, about 5~mm of tip travel, so an 8~mm plate cannot slip between two
+checks; the Python re-checks step 0.01 in a weighted joint norm, up to 0.03~rad on the last wrist joint.
 \SRC{collision.py (ur5e\_capsules, boxes\_from\_parts, fixture\_boxes, pair\_distances); config/pen\_tool.json;
 src/transit\_cpp.cpp; test/test\_transit\_cpp.py; tack\_reach.pen\_contact\_pair;
 thesis\_notes.md 2026-09-29, 2026-10-06, 2026-10-09.}
@@ -1620,13 +1697,15 @@ Each solution is found by damped least squares from the previous solution, the h
 seeds around it.
 
 The pen axis of a tack is its seam's approach axis, tilted by a work angle
-$\vartheta\in\{0^\circ,\pm10^\circ,\pm20^\circ\}$ about the seam tangent; a tilt away from the closer
-plate is what makes a tack on a leaning plate reachable. The pen is axisymmetric, so its roll $\varphi$
+$\vartheta\in\{0^\circ,\pm10^\circ,\pm20^\circ\}$ about the seam tangent. On the bisector both plates
+are cleared alike (Equation~\ref{eq:holder_clearance}), so a tilt helps only where one side binds: a
+leaning plate, a seam whose approach is already off the bisector, or the camera's boxes on one side of
+the tool. The pen is axisymmetric, so its roll $\varphi$
 about its own axis is free. That one degree of freedom is spent on reachability and on keeping the arm
 elbow-up, never on a branch flip. A pair $(\vartheta,\varphi)$ is admissible for a tack when the tool
 clears the scene at the tack and at the approach point 35~mm out along the pen (checked first on the
 tool alone, before any inverse kinematics), both poses have a solution on the branch less than 1.2~rad
-apart, and the straight descent between them, checked at six steps, stays continuous and clear.
+apart, and the straight descent between them, checked at five interior steps, stays continuous and clear.
 
 \paragraph{Straight seams.} The pen's frame is the same at every tack of a straight seam, so one
 $(\vartheta,\varphi)$ is chosen for the whole seam, from five tilts and twelve rolls: the one with the
@@ -1648,7 +1727,7 @@ where $\vect{q}_{k,j}$ is the approach pose of tack $k$ with its $j$-th admissib
 clearance, $\delta$ the joint difference taken the short way round (except for the last wrist joint,
 which stays in its window), $\mathbf{W}=\operatorname{diag}(2,2,1.5,1,1,0.5)$ the joint weights of the
 transit planner, $\delta_0=10$~mm and $\kappa=0.15$~rad/mm, so that 1~mm of clearance below 10~mm is
-worth about $9^\circ$ of base-joint motion. The chain starts at home or at the previous seam's last
+worth about $4.3^\circ$ of base-joint motion (weight 2), or $8.6^\circ$ of a wrist joint. The chain starts at home or at the previous seam's last
 approach, and the best sequence is recovered by backtracking. The recursion is exact and costs
 $O(nJ^2)$ for $n$ tacks with $J$ admissible pairs each. A tack with no admissible pair is reported with
 the reason of its best attempt, and skipped; the unreachable tacks are of the expected kinds, a concave
@@ -1657,10 +1736,12 @@ fillet tighter than the holder, or the far side of a tube with no elbow-up solut
 \paragraph{The cable window.} The camera's cable wraps round the wrist. Taking each new pose as the
 $2\pi$-equivalent nearest the previous one, for continuity, wound the last wrist joint to $-202^\circ$
 and $-287^\circ$ over one curved seam, and the cable's pull stopped two descents with a false 1.5~N
-``contact'' 84~mm above the part; every good contact of the day before had that joint within
+``contact'' 82--84~mm before the registered point, 66--68~mm above the part; every good contact of the day before had that joint within
 $\pm151^\circ$ of home. Every pose is therefore taken as the $2\pi$-equivalent nearest the previous one
 \emph{among those within $\pm180^\circ$ of home}. The window loses no tool pose, since one full turn of
-the last joint fits in it, and it keeps the cable slack.
+the last joint fits in it, and it keeps the cable slack. Liu et al.\ penalise the fluctuation of the
+summed displacement of the fourth and sixth joints in their path objective for a similar reason, a wire
+feeder mounted behind the forearm \cite{liu2023rcim}.
 
 \begin{algorithm}[htbp]
 \caption{Reachability with a locked branch}
@@ -1707,7 +1788,7 @@ thesis\_notes.md 2026-10-14, 2026-10-16.}
 A transit is tried, in order, as:
 \begin{enumerate}
 \item the straight joint-space edge;
-\item between two tacks, the tool's straight Cartesian line, its orientation interpolated by
+\item on a transit to a tack, the tool's straight Cartesian line, its orientation interpolated by
   spherical linear interpolation, and then the same line bowed away from the joint as a quadratic
   B\'ezier curve whose midpoint is displaced by $\beta$:
   \begin{equation}
@@ -1733,25 +1814,28 @@ A transit is tried, in order, as:
   with the base and shoulder weighted most because they sweep the most space;
 \item a single RRT-Connect in C++, then in Python, each followed by collision-aware shortcutting.
 \end{enumerate}
-Every path is re-checked at the nominal clearance, smoothed by a centripetal Catmull--Rom spline through
-its waypoints (kept only if every sample is clear) and timed by time-optimal trajectory generation
-\cite{kunz2012totg} at 0.3~rad/s and 0.5~rad/s$^2$, with every timed sample collision-checked and a
-trapezoidal profile as the fallback.
+Every path is re-checked at the nominal clearance; a path from a planner is also smoothed by a
+centripetal Catmull--Rom spline through its waypoints (kept only if every sample is clear); and every
+transit is timed by time-optimal trajectory generation \cite{kunz2012totg} at 0.3~rad/s and
+0.5~rad/s$^2$, with every timed sample collision-checked and a trapezoidal profile as the fallback.
 
 \paragraph{Why this order.} We first planned every transit with APS alone, which minimises weighted joint
 travel. Round a tube, two transits of nearly equal joint cost, 3.5 and 3.9~rad, moved the pen tip along
-257 and 772~mm, and repeated runs between the same two poses varied from 0.26 to 1.6~m of tip travel.
+257 and 772~mm, and repeated runs between the same two poses moved the tip 0.50--1.87~m at a 2~s
+budget and 0.35--0.60~m at 5~s.
 Joint-space shortest is not what a cell should drive round a pipe: the quantity that matters is how far
 the tool sweeps. The tool's straight line between departure points is the move a welder would program,
-it is the same on every run, and between neighbouring tacks it is short; a sampling planner only has to
+and Jia et al.\ run every move between tacks in linear mode for the same reason \cite{jia2025tack}; it
+is the same on every run, and between neighbouring tacks it is short; a sampling planner only has to
 step in when that line is blocked. APS remains the fallback because, unlike asymptotically optimal
 planners, it returns a solution quickly and improves it within a fixed budget, and on high-dimensional
 arms it found shorter paths than RRT$^\ast$ in the same time \cite{luna2013aps}. It runs in C++ because
 its Python bindings do not expose it and a Python validity callback would serialise its threads. The
 planning margin, 2~mm above the clearance, is capped at half of the room the end poses themselves have:
-uncapped, it made the end poses invalid, OMPL never started, and every transit fell back to the slow
+uncapped, it made the end poses invalid, OMPL never started, and most transits fell back to the slow
 planner. Safety margins compose. At execution, a planned transit is joined from where the arm actually
-stands instead of being re-planned.
+stands, if that is within 0.35~rad of its start and the joining edge is clear, instead of being
+re-planned.
 
 \begin{algorithm}[htbp]
 \caption{The transit cascade}
@@ -1759,7 +1843,7 @@ stands instead of being re-planned.
 \begin{algorithmic}[1]
 \REQUIRE start and goal joints (goal in the cable window); clearance $c_t=\max\big(c,\ \min(20~\mathrm{mm},\,0.9\,c(\vect{q}_a),\,0.9\,c(\vect{q}_b))\big)$
 \STATE \textbf{if} the straight joint edge is clear (checked every 0.01~rad) \textbf{then return} it
-\IF{the transit joins two tacks}
+\IF{the transit ends at a tack}
   \FORALL{$\beta\in\{0,30,60,100\}$~mm}
     \STATE IK chain along Equation~\ref{eq:cartesian_bow}; \textbf{if} every pose and edge is clear \textbf{then return} it
   \ENDFOR
@@ -1777,7 +1861,8 @@ src/transit\_cpp.cpp; src/totg\_service\_node.cpp; notes/aps\_transit\_plan.md; 
 \subsection{Force-Gated Descent and Marking}
 \label{sec:mc_marking}
 At the departure point, with the arm at rest, the force bias is measured over 0.5~s; the sensor's zero
-drifts, by 7~N after one power cycle, which alone would trigger the abort limit. The pen then moves along
+drifts, by 7~N after one power cycle, within 1~N of the abort limit, and every first transit after it
+aborted. The pen then moves along
 its own axis: at 50~mm/s to the approach point 35~mm before the tack, at 20~mm/s, and at 2~mm/s in the
 last 6~mm before it and through the overshoot. The speeds follow from the pen being rigid: once the
 threshold is crossed, the force keeps growing for the stopping time, at a rate set by the speed and the
@@ -1797,7 +1882,8 @@ as no contact. Any motion is aborted above 8~N, and a move away from a contact a
 stopped on a rigid part can press harder than 8~N and must still be able to leave. A motion starts only
 if its first point is within 0.35~rad of the current joints.
 
-The mark is a dot, held for 0.5~s if the force is moderate, or a stroke along the tack. A stroke runs in
+The mark is a dot, held for 0.5~s if the force is below twice the touch threshold, or a stroke along
+the tack. A stroke runs in
 10~mm chunks at the contact depth, and between chunks the depth is corrected from the force along the pen,
 by $2\times10^{-5}$~m/N times the difference to the holding force, at most 0.2~mm per chunk; two chunks
 under 0.4~N mean the pen has lifted off, and the stroke stops. On a curved seam each tack draws its own
@@ -1842,8 +1928,8 @@ trajectory and the force along the pen, with the contact instant}{One tack, from
 \label{sec:impl_arch}
 The cell runs on two machines (Figure~\ref{fig:architecture}). The desktop, with the RTX 5070 Ti, runs
 the registration server in a Docker container that holds SAM2, the PPF library and FoundationPose; it
-answers one HTTP request per registration, so only one frame per part crosses the network, over a
-private overlay network (\S\ref{sec:setup_software}). The laptop, with the RTX 4060 mobile GPU, runs ROS~2 Jazzy, the camera, the robot driver,
+answers one HTTP request per registration, so only one frame per registration (and one per re-seed
+while a part is lost) crosses the network, over a private overlay network (\S\ref{sec:setup_software}). The laptop, with the RTX 4060 mobile GPU, runs ROS~2 Jazzy, the camera, the robot driver,
 every node of the cell and a second container of the same image that only tracks. The tracker and its
 ROS client talk over a WebSocket on the same laptop, because the container runs Ubuntu 22.04 and
 Python 3.10 without ROS, while the workspace runs ROS~2 Jazzy on Python 3.12, and ROS~2 Humble, the
@@ -1878,9 +1964,11 @@ Tracker client & \texttt{fp\_\allowbreak{}tracker\_\allowbreak{}node} & streams 
 Assembly & \texttt{icp\_\allowbreak{}pose\_\allowbreak{}refiner\_\allowbreak{}node} & saving, the static environment, multi-view refinement, seams and tacks, the assembly file \\
 Gestures & \texttt{gesture\_\allowbreak{}control\_\allowbreak{}node} & MediaPipe recognition; calls the pipeline's services; publishes the pointing pixel \\
 Aim & \texttt{camera\_\allowbreak{}aim\_\allowbreak{}node},\newline\texttt{aim\_\allowbreak{}rate\_\allowbreak{}relay} & the camera aim (125~Hz) and its 500~Hz relay to the velocity controller \\
-Reachability & \texttt{tack\_\allowbreak{}reachability} & solves every tack offline, before any motion \\
+Robot driver & \texttt{ur\_\allowbreak{}robot\_\allowbreak{}driver} & the UR's controllers, joint states, force/torque and TCP pose \\
+Reachability & \texttt{tack\_\allowbreak{}reachability} & a command-line script, not a node: solves every tack before any motion \\
 Marking & \texttt{tack\_\allowbreak{}marking\_\allowbreak{}node} & plans and executes transits, descents and marks; writes the marking record \\
 Timing & \texttt{totg\_\allowbreak{}service\_\allowbreak{}node} & time-optimal trajectory generation as a service \\
+Display & \texttt{detection\_\allowbreak{}marker\_\allowbreak{}node},\newline\texttt{tool\_\allowbreak{}model\_\allowbreak{}marker\_\allowbreak{}node}, RViz & detections, the tool envelope, plans and tacks \\
 Desktop server & \texttt{fp\_\allowbreak{}server (Docker)} & SAM2, PPF classification, FoundationPose registration (HTTP) \\
 Laptop tracker & \texttt{fp\_\allowbreak{}track\_\allowbreak{}server (Docker)} & FoundationPose tracking only (WebSocket) \\
 \bottomrule
@@ -1898,7 +1986,7 @@ Camera, gesture recognition & 30~Hz & the sensor's rate at $1280\times720$ \\
 Camera aim (control law) & 125~Hz & error recomputed from joint states between images \\
 Aim relay, robot controller, force sensor & 500~Hz & the UR's control rate; no command steps \\
 Tracking & as the GPU allows & newest frame first; frames dropped, never queued \\
-Re-seed while lost & every 3~s & a registration costs seconds on the desktop \\
+Re-seed while lost & at most every 3~s & a registration costs seconds on the desktop \\
 Force watchdog during motion & 2~ms & the stop distance at the descent speeds \\
 Multi-view capture & 16 frames per view & per-pixel median of a still scene \\
 \bottomrule
@@ -1914,28 +2002,31 @@ registering; tracking; saved, then the next part or refining; seams and tacks co
 tack by tack; done. Every transition has a failure edge, and every failure leaves the cell in a state from
 which the operator can continue: a refused registration keeps the frozen frame for another try; a lost
 part is re-seeded or re-registered; a refused refinement keeps the saved poses; an unreachable tack is
-reported and skipped; an aborted motion stops where it is, with no automatic recovery motion; and every
-motion node starts in a dry-run mode until it is told otherwise.
+reported and skipped; and an aborted motion stops where it is, with no automatic recovery motion. The
+marking node starts in a dry run until it is told otherwise, while the refinement and the aim move as
+soon as they are called, behind their own checks.
 \figplaceholder{fig:cell_states}{The cell's state machine with labelled transitions (gestures, service
 results) and the failure and abort edges}{The cell as a state machine.}
 
 \subsection{Performance-Critical Components}
 \label{sec:impl_cpp}
-Three components are written in C++: the collision model and the planners, as a Python extension, which
-turned the validity checks of one plan from minutes into seconds; the time-optimal trajectory generation,
-as a service around MoveIt's implementation that needs no robot model; and the 500~Hz rate relay of the
-aim. Everything else is Python. The rule that governs both is the same: what the Python side computes is
-geometry, and time comes from the C++ side.
+Three components of the cell are written in C++ (a fourth C++ target of the package is legacy): the
+collision model and the planners, as a Python extension, which turned the validity checks of one plan
+from minutes into seconds; the time-optimal trajectory generation, as a service around MoveIt's
+implementation that needs no robot model; and the 500~Hz rate relay of the aim. Everything else is
+Python. For transits the division is clean: Python computes the geometry and the C++ service gives it
+time; descents, strokes and the refinement's moves are timed in Python.
 
 \subsection{Failing Loudly}
 \label{sec:impl_loud}
-Several of the incidents above were silent failures: a calibration solve that failed without a residual,
-a seam step that fell back to an older detector because a module was missing from the installed package,
-a near-miss seam dropped without a word, a stale registry entry that produced no seam. The implementation
+Several of the incidents above were failures that went unnoticed: a calibration solve that failed
+without a printed residual, a seam step that fell back to an older detector, with a single warning,
+because a module was missing from the installed package, a near-miss seam dropped without a word, a
+stale registry entry that produced no seam. The implementation
 therefore follows one rule: a step that cannot do its job refuses with its reason, and a fallback says
 that it ran. The install list of the package is tested, registry entries are checked against their CAD
 models at run time, near misses are reported with their numbers, every refinement reports which parts it
-kept and why, and the motion nodes default to a dry run.
+kept and why, and the marking node defaults to a dry run.
 \SRC{test/test\_install\_list.py; thesis\_notes.md 2026-10-09 (night): ``a fallback that only logs makes
 a failure look like a result''.}
 
