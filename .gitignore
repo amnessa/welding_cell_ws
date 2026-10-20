@@ -47,3 +47,5 @@ logs/
 *.iml
 
 .venv
+ros2_ws/src/admittance_control/thesis/supply_papers
+ros2_ws/src/admittance_control/thesis/paper_pool
