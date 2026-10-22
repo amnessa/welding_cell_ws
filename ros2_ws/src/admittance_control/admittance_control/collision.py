@@ -17,9 +17,10 @@ and needs nothing beyond numpy:
 
 Distances: capsule-capsule (segment-segment, closed form), capsule-box (point-to-box
 is convex along a segment, so a golden-section search on the segment parameter is
-exact to the tolerance), box-box (separating-axis test after inflating the scene box by
-the clearance; an intersection test, not a distance, so `min_distance` reports 0 or
-"clear" for that pair), primitive-plane (lowest point).
+exact to the tolerance), box-box (separating-axis test on the boxes as they are, not
+inflated by the clearance: an intersection test, not a distance, so `min_distance`
+reports 0 or "clear" for that pair and the clearance does not apply to it),
+primitive-plane (lowest point).
 
 What it does NOT do, stated: full self-collision. The branch lock keeps the arm
 elbow-up, and the tool primitives are checked against the base column and the upper

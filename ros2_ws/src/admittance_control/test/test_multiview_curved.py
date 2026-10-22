@@ -12,7 +12,9 @@ as test_multiview_touching_parts.py renders the plate T. Claims:
   * S3 on R2, as designed: with the true shapes nothing "penetrates" and both refine;
     with bounding boxes (the old neighbours) S3's saddle flanks, wrapped round R2, sit
     ~5 mm inside R2's box and the joint does not refine;
-  * RR1 3 mm off is brought back too (a band: its walls, its interior free).
+  * RR1 3 mm off is brought back too (a band: its walls, its interior free);
+  * the ISO 5817 fit-up limit takes each part's registered gauge: C1 on the 8 mm plate is
+    judged by its 3 mm wall (0.51 mm at level C), not its bounding box (62 mm, 1.62 mm).
 """
 
 from __future__ import annotations
@@ -139,6 +141,24 @@ def test_shapes_match_their_cad():
             ok |= np.hypot(loc[:, 0], loc[:, 1]) <= s.prim.r_inner_mm + 0.5
         ok |= np.abs(sq) < 5e-4
         assert ok.mean() > 0.995, n
+
+
+def test_the_fitup_limit_takes_the_registered_gauge_not_the_box():
+    # until 2026-10-22 a part's t was its box's smallest extent: C1 counted as its 62 mm
+    # diameter, the plate's 8 mm set the limit, and a 0.8 mm gap under a 3 mm wall passed
+    _need("C1.ply", "test_objv2_base.ply")
+    shapes = load_shapes(BENCH, ["C1.ply", "test_objv2_base.ply"])
+    plate = _part("test_objv2_base.ply", PLATE, shapes=shapes)
+    c1 = _part("C1.ply", _on_plate((-500.0, 80.0)), seed=1, shapes=shapes)
+    assert mr._gauge_mm(c1) == pytest.approx(3.0, abs=0.01)
+    assert mr._gauge_mm(plate) == pytest.approx(8.0, abs=0.01)
+    boxed = mr.Part(c1.name, c1.pts, c1.nrm, c1.verts, c1.T_saved, None, None)
+    assert mr._gauge_mm(boxed) == pytest.approx(62.0, abs=0.1)        # the old reading
+    res = [mr.PartResult(plate.name, plate.T_saved, plate.T_saved),
+           mr.PartResult(c1.name, c1.T_saved, c1.T_saved, gaps_mm={plate.name: (0.6, 0.8)})]
+    mr.fitup_warnings(res, [plate, c1], mr.RefineConfig())
+    assert res[1].gap_limit_mm[plate.name] == pytest.approx(0.51, abs=0.005)
+    assert any("exceeds the ISO 5817" in w and "t 3.0 mm" in w for w in res[1].warnings), res[1].warnings
 
 
 def test_c1_registered_8_mm_off_sideways_is_brought_back():

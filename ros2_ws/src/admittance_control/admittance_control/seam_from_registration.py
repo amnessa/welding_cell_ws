@@ -406,6 +406,31 @@ def compute_seams(parts, access: dict[str, Any] | None = None,
     return seams
 
 
+def scene_objects(parts) -> list[dict[str, Any]]:
+    """The parts as the `objects` of a weldgen scene.json, written by the generator's own
+    serialisers (the exact inverse of `geom.from_object`, the pairing its
+    tests/test_from_object.py checks), so the tack rule reads every primitive by the
+    name and params it was written for: `_member_gauge_mm` takes a swept band's gauge
+    as min(band, z1 - z0). Until 2026-10-22 the cell wrote these entries itself, with
+    names weldgen does not use ("sweptslab", "preparedslab") and no params, so a band
+    was gauged by its band width alone: 80 mm for a curved plate 6 mm high."""
+    import_weldgen()
+    from weldgen.geom import SweptSlab, Tube
+    from weldgen.scene import _object_entry
+    from weldgen.scene_curved import _objects_block
+    return [_objects_block([p])[0] if isinstance(p, (Tube, SweptSlab)) else _object_entry(p)
+            for p in parts]
+
+
+def member_gauge_mm(part) -> float:
+    """A part's material thickness as the tack rule reads it (weldgen's `_member_gauge_mm`
+    on its scene object): a plate's t, a tube's wall, a swept band's min(band, height).
+    The multi-view ISO 5817 fit-up check takes its `t` from here too."""
+    import_weldgen()
+    from weldgen.tacks import _member_gauge_mm
+    return float(_member_gauge_mm(scene_objects([part])[0]))
+
+
 def compute_tacks(parts, seams: Sequence[dict[str, Any]], scene_id: str = "cell",
                   params: dict[str, float] | None = None, weldgen_path: str | None = None
                   ) -> dict[str, Any]:
@@ -414,7 +439,9 @@ def compute_tacks(parts, seams: Sequence[dict[str, Any]], scene_id: str = "cell"
     The rule is a pure function of the seams (length, polyline) and the members'
     gauges, so the cell reuses it unchanged: tack length clip(4t, 10, 50) mm, spacing
     ceiling min(33t, 400), floor 10t, end margin max(2t, tack length), both effective
-    ends always tacked, evenly spaced between. `t` is the thinnest member.
+    ends always tacked, evenly spaced between. `t` is the gauge of the thinnest
+    workpiece in the assembly (weldgen's `_member_gauge_mm`: a plate's thickness, a
+    tube's wall, a swept band's min(band, height)), read from `scene_objects(parts)`.
 
     Every tack carries two numberings, because they answer different questions:
       * `tack_no`  - 1-based position ALONG ITS SEAM from `p0_mm` (1, 2, 3, 4 ...),
@@ -427,9 +454,7 @@ def compute_tacks(parts, seams: Sequence[dict[str, Any]], scene_id: str = "cell"
     """
     acc, _, _ = import_weldgen(weldgen_path)
     from weldgen import tacks as wt
-    objects = [{"role": p.role, "primitive": type(p).__name__.lower(),
-                "thickness_mm": float(p.thickness_mm), "params": getattr(p, "params", None)}
-               for p in parts]
+    objects = scene_objects(parts)
     scene_seams, arrays = [], {}
     for s_ in seams:
         if not s_["weldable"] or len(s_["polyline_mm"]) < 2:

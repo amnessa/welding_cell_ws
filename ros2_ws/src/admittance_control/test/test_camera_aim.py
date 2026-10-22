@@ -112,6 +112,14 @@ def test_tool0_twist_keeps_the_optical_centre_still():
     assert np.linalg.norm(v_cam) < 1e-12
     qd = joint_rates(HOME_Q, tw, CFG)
     assert np.allclose(ur5e_jacobian(HOME_Q) @ qd, tw, atol=2e-3)
+    # ... and the arm does it: a small step along qd turns the camera at w about its
+    # optical centre (the Jacobian's angular rows were doubled until 2026-10-22, and the
+    # camera turned at w / 2 while its centre wandered)
+    h = 1e-5
+    C1 = ur5e_fk(HOME_Q + h * qd) @ T_TOOL0_CAM
+    assert np.allclose(Rotation.from_matrix(C1[:3, :3] @ C[:3, :3].T).as_rotvec() / h, w,
+                       atol=2e-3)
+    assert np.linalg.norm(C1[:3, 3] - C[:3, 3]) / h < 2e-3
 
 
 def test_check_ahead_names_the_refusal():
@@ -138,7 +146,7 @@ def test_joint_history_interpolates_and_refuses_gaps():
 # ---------------------------------------------------------------- the closed loop -----
 def _run(target_px, latency=0.10, T=6.0, compensate=True, seed=0):
     """A still fingertip at `target_px` of the home view, 0.55 m out; returns per-cycle
-    (t, pixel error, rate, drift, roll, pan) and the aim."""
+    (t, pixel error, commanded rate, drift, roll, pan, achieved rate) and the aim."""
     rng = np.random.default_rng(seed)
     aim = CameraAim(CFG, T_TOOL0_CAM, HOME_Q)
     q = HOME_Q.copy()
@@ -163,12 +171,16 @@ def _run(target_px, latency=0.10, T=6.0, compensate=True, seed=0):
                         hist.at(ts) if compensate else q)
         qd, info = aim.step(q, dt, DEADBAND)
         qd_arm += (dt / (0.03 + dt)) * (qd - qd_arm)          # the arm lags 30 ms
+        R_before = aim.camera_pose(q)[:3, :3]
         q = q + qd_arm * dt
         t += dt
         C = aim.camera_pose(q)
         d = C[:3, :3].T @ (P - C[:3, 3])
         err = math.hypot(K[0, 0] * d[0] / d[2], K[1, 1] * d[1] / d[2])
-        rows.append((t, err, info.rate_deg_s, info.drift_mm, info.roll_deg, info.pan_deg))
+        achieved = math.degrees(np.linalg.norm(
+            Rotation.from_matrix(C[:3, :3] @ R_before.T).as_rotvec())) / dt
+        rows.append((t, err, info.rate_deg_s, info.drift_mm, info.roll_deg, info.pan_deg,
+                     achieved))
     return rows, aim
 
 
@@ -176,10 +188,12 @@ def _run(target_px, latency=0.10, T=6.0, compensate=True, seed=0):
 def test_the_camera_centres_a_still_fingertip(target):
     rows, aim = _run(target)
     t_in = next(r[0] for r in rows if r[1] < CFG.deadband_frac * 640)
-    assert t_in < 4.0                                         # ~20 deg at 15 deg/s
+    assert t_in < 4.0                                         # ~20 deg at 7.5 deg/s
     assert rows[-1][1] < CFG.deadband_frac * 640              # roughly centred ...
     assert rows[-1][2] < 0.05 and aim.stopped()               # ... and stopped there
     assert max(r[2] for r in rows) <= CFG.max_rate_deg_s + 1e-6
+    # the arm turns the camera at the commanded rate, not half of it (until 2026-10-22)
+    assert 0.9 * max(r[2] for r in rows) <= max(r[6] for r in rows) <= 1.05 * CFG.max_rate_deg_s
     assert max(abs(r[4]) for r in rows) < 0.5                 # roll held at home
     assert max(r[3] for r in rows) < 10.0                     # optical centre held (mm)
 

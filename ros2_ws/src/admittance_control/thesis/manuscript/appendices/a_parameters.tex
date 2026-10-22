@@ -20,9 +20,9 @@ Parameter & Value & Section \\
 \multicolumn{3}{@{}l}{\textit{Gestures and aim}}\\
 Gesture latch & 6 stable frames, 1~s cooldown & \S\ref{sec:mc_gestures} \\
 Dwell, motion hold, aim start & 1~s; 2~s; 3 pointing frames & \S\ref{sec:mc_gestures} \\
-Aim gain, roll gain & 2.5~s$^{-1}$, 1.5~s$^{-1}$ (see the Jacobian note in \S\ref{sec:mc_aim}) & \S\ref{sec:mc_aim} \\
+Aim gain, roll gain & 1.25~s$^{-1}$, 0.75~s$^{-1}$ & \S\ref{sec:mc_aim} \\
 Deadband, release & 5\,\% of the image width, 40\,\% of it & \S\ref{sec:mc_aim} \\
-Rate and acceleration caps & $15^\circ$/s, $60^\circ$/s$^2$ (commanded; half is achieved until the Jacobian is fixed); two 60~ms lags & \S\ref{sec:mc_aim} \\
+Rate and acceleration caps & $7.5^\circ$/s, $30^\circ$/s$^2$; two 60~ms lags & \S\ref{sec:mc_aim} \\
 Excursion limits & $\pm35^\circ$ pan, $\pm25^\circ$ tilt, look-ahead 0.35~s & \S\ref{sec:mc_aim} \\
 Optical-centre hold & 2~s$^{-1}$, capped at 20~mm/s & \S\ref{sec:mc_aim} \\
 DLS damping, joint speed cap & $\lambda=0.02$, 0.5~rad/s & \S\ref{sec:mc_aim} \\
@@ -53,7 +53,7 @@ Solve & 2 rounds; $\le30$ iterations; converged at 0.2~mm / $0.05^\circ$ & \S\re
 Observability, extrinsic & measured at $\sigma_{\mathrm{dir}}\le0.5$~mm; self-cal above 0.5~mm, $\le4$ passes & \S\ref{sec:mv_observe}, \S\ref{sec:mv_selfcal} \\
 Persistent self-calibration & $\ge3$ runs; spread and leave-one-out $\le1$~mm; promoted by hand & \S\ref{sec:mv_selfcal} \\
 Acceptance & 10~mm / $5^\circ$; fitness 0.2; overlap 1.0~mm and $+0.2$~mm; relative 2~mm / $1^\circ$ & \S\ref{sec:mv_accept} \\
-Fit-up warning & ISO 5817 Table 1, No.~3.2 (ref.~617), level C, design throat $0.7\,t$ & \S\ref{sec:mv_accept} \\
+Fit-up warning & ISO 5817 Table 1, No.~3.2 (ref.~617), level C, design throat $0.7\,t$, $t$ the thinner registered gauge & \S\ref{sec:mv_accept} \\
 \midrule
 \multicolumn{3}{@{}l}{\textit{Seams and tacks}}\\
 Pose tolerance & 10~mm (clipped to 0.5--30~mm); near miss up to $2\times$ & \S\ref{sec:mc_planar}, \S\ref{sec:mc_fitup} \\

@@ -9,7 +9,8 @@ both fillets on the plane-intersection line with the gap / penetration reported 
 fit-up; a pose tolerance wider than the sheet does not pair a plate's own underside
 with the standing plate; a lapping sheet thinner than the pose tolerance is reported
 undecidable rather than guessed; the two saved bench assemblies yield their T fillets;
-and a part without a registry entry is a RegistryError, not a silent skip.
+a part without a registry entry is a RegistryError, not a silent skip; and every
+primitive type reaches the tack rule as the object weldgen itself writes, gauged right.
 """
 
 from __future__ import annotations
@@ -245,3 +246,32 @@ def test_tacks_follow_the_generator_rule_and_are_numbered_along_each_seam():
     xyz, rgb, idx = sfr.tacks_points_m(tacks)
     assert len(set(idx.tolist())) == 6 and np.abs(xyz).max() < 0.3
     assert json.dumps(tk)
+
+
+def test_every_primitive_reaches_the_tack_rule_as_weldgen_writes_it():
+    # the names and params weldgen's serialisers write, so the rule gauges each type
+    # right: a plate's t, a tube's wall, a swept band's min(band, height). Until
+    # 2026-10-22 the cell wrote "sweptslab" without params and gauged the flat curved
+    # plate below at its 80 mm band.
+    from weldgen.curves import Arc3D
+    from weldgen.geom import (PRIMITIVES, PreparedPrism, PreparedSlab, Prism, Slab,
+                              SweptSlab, Tube, from_object)
+    from weldgen.hashing import canonical_json
+    from weldgen.tacks import _member_gauge_mm
+    I = np.eye(4)
+    quad = np.array([[50.0, 0.0], [-50.0, 0.0], [-50.0, -60.0], [50.0, -60.0]])
+    vee = {"kind": "single_V", "bevel_deg": 30.0, "root_face_mm": 2.0}
+    arc = Arc3D(np.zeros(3), np.array([1.0, 0, 0]), np.array([0, 1.0, 0]), 150.0, 1.0, 2.0)
+    parts = [Slab("A", "workpiece", 0, (200.0, 100.0, 4.0), I),
+             Prism("B", "workpiece", 1, quad, 5.0, I),
+             PreparedSlab("C", "workpiece", 2, 150.0, 80.0, 10.0, vee, I),
+             PreparedPrism("D", "workpiece", 3, quad, 12.0, vee, I),
+             Tube("E", "workpiece", 4, 31.0, 3.0, 100.0, I),
+             SweptSlab("F", "workpiece", 5, arc, -40.0, 40.0, 0.0, 6.0, I)]
+    objs = sfr.scene_objects(parts)
+    assert [o["primitive"] for o in objs] == list(PRIMITIVES)
+    for part, o in zip(parts, objs):                     # exactly what from_object reads
+        rebuilt = from_object(o)
+        assert type(rebuilt) is type(part)
+        assert canonical_json(sfr.scene_objects([rebuilt])[0]) == canonical_json(o)
+    assert [_member_gauge_mm(o) for o in objs] == pytest.approx([4.0, 5.0, 10.0, 12.0, 3.0, 6.0])

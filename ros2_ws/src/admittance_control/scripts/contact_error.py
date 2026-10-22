@@ -16,7 +16,7 @@ or on the real wall; this fits the two errors that explain them:
     plate's plane (2 numbers);
   * `plate_mm`: how far the real plate top is above (+) the registered one.
 
-The fit is a grid search (+-15 mm lateral, +-10 mm plate) of the sum over contacts of the
+The fit is a grid search (+-25 mm lateral, +-10 mm plate) of the sum over contacts of the
 smaller of the two surface residuals, with the side conditions (a plate contact lies
 outside the real tube, a wall contact above the real plate) and a small pull to zero
 when the contacts leave a direction free. Then every mark's distance from the REAL seam

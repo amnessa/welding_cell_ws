@@ -916,6 +916,10 @@ kendi GPU'sunda yapıyor, bu düşüş olmuyor.
   sonra ve cevap gelmeden hareket ederse başlangıç pozu o kadar kayık oluyor.
   Küçük kaymaları takip topluyor, büyükleri LOST ve yeniden kayıtla bitiyor.
   Bridge'te düzeltme: `out.header.stamp = frozen.stamp`.
+  *Düzeltme (2026-10-22):* bu düzeltme 2026-10-06'da yapılmış: bridge tespitleri yakalanan
+  karenin damgasıyla yayınlıyor (`foundationpose_bridge_node.py`,
+  `_build_detection_array(..., frozen.stamp)`). Kameranın kendi damgası da 2026-10-22'den
+  beri yayın anı değil, pozlamanın ortası (`realsense_camera_node.py`, `frame_stamp.py`).
 - **Varsayılan tam kare.** Düğüm parçanın etrafını kırpabiliyor (`use_roi`). Ama
   takipçi aynı makinede olduğu için kazanç az.
 - ICP değişmedi ve hareketsiz adımları (`save_object`, `refine_pose`) hâlâ o
@@ -996,8 +1000,8 @@ parametreler: [readme_perception.md](readme_perception.md).
       şu an aday.
 - [ ] **Canlı takip, gerçek parçayla.** Hareket eden gerçek bir parçanın kaydını
       al; takibin doğruluğunu ve uyum (fit) eşiğini onunla kontrol et (Bölüm 12.4).
-- [ ] **Bridge'in zaman damgası:** `/perception/detections`, yakalanan karenin
-      zamanını taşımalı (`frozen.stamp`).
+- [x] **Bridge'in zaman damgası:** `/perception/detections`, yakalanan karenin
+      zamanını taşımalı (`frozen.stamp`). 2026-10-06'da yapıldı.
 
 **Toplantıdan (1 Ekim 2026) gelen açık sorular:**
 

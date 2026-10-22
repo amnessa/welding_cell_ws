@@ -188,6 +188,7 @@ def predict_pose():
 
 
 if __name__ == '__main__':
-    # threaded=False keeps the single-GPU pipeline strictly serial; the lock
-    # above is the real guard, but this avoids spawning idle worker threads.
+    # threaded=True so /health and a second /predict_pose are answered while a
+    # run is on the GPU (the latter with 503 "busy"); _pipeline_lock above keeps
+    # the single-GPU pipeline strictly serial.
     app.run(host='0.0.0.0', port=5000, threaded=True)

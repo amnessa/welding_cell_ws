@@ -585,7 +585,13 @@ Parçaları yerleştiren kişi onları birbirinden fazla uzak koyabilir. Sistem 
 - Bir parçanın komşusuna oturan alt yüzleri ile komşunun karşı yüzü arasındaki aralık,
   temas boyunca ölçülüyor.
 - Sınır: **ISO 5817:2023, Tablo 1, no. 617** (köşe kaynağında kök aralığı), weld_generator'ın
-  `root_gap_limit` fonksiyonuyla, a = 0.7·t. 8 mm plaka için:
+  `root_gap_limit` fonksiyonuyla, a = 0.7·t. `t`, iki parçadan incesinin kalınlığı ve
+  registry'deki primitiften okunuyor (tack kuralıyla aynı): plakada kalınlık, boruda et
+  kalınlığı, eğri şeritte min(şerit genişliği, yükseklik). Registry şekli olmayan parçada
+  sınırlayıcı kutunun en kısa kenarı kullanılıyor. *Düzeltme (2026-10-22):* o güne kadar her
+  parçanın `t`'si kutusundan alınıyordu; C1 borusu 3 mm'lik eti yerine 62 mm'lik çapıyla
+  sayılıyor, sınırı alttaki 8 mm'lik plaka belirliyordu (C seviyesinde 0.51 mm yerine
+  1.62 mm). 8 mm plaka için:
 
   | kalite seviyesi | B | C (varsayılan) | D |
   |---|---|---|---|

@@ -51,10 +51,10 @@ Missing-item tags:
 | Section | Material | Missing |
 |---|---|---|
 | 3.1 Overview, vision only, two computers | R: B2 @S 3.1; `ros2_ws/.../notes/pipeline_map.dot`; README "Big picture" | the pipeline figure (redraw the .dot in English) |
-| 3.2 Problem, notation, assumptions | R: B2 @S 3.2; README §1 (eye-in-hand rules) | OPEN: the camera's image stamp is the publish time, not the exposure time: measure or state |
+| 3.2 Problem, notation, assumptions | R: B2 @S 3.2; README §1 (eye-in-hand rules); `admittance_control/frame_stamp.py` (the image stamp, mid-exposure since 2026-10-22) | measure the stamps' age at publish on the bench (the camera node logs it) |
 | 3.3 Calibration (kinematics, TCP, table, hand-eye, depth, rotation, translation) | R: B1b §C (every tool, procedure and file); R: B1a A1-A3; R: B2 @S 3.3; thesis_notes 2026-10-02 (depth) | results go to Ch. 6 (`tab:exp_depth` etc.) |
 | 3.4.1 Gestures | R: B1b §E.2; R: B2 @S 3.4.1; `scripts/gesture_control_node.py` | VERIFY the MediaPipe model description (Ch. 3 TODO) |
-| 3.4.2 Camera aim, the relay, the buzz | R: B1a B1-B2; R: B2 @S 3.4.2; thesis_notes 2026-10-15/16; the two bags | DECIDE the Jacobian fix (THESIS_PLAN #11); the bag figures |
+| 3.4.2 Camera aim, the relay, the buzz | R: B1a B1-B2; R: B2 @S 3.4.2; thesis_notes 2026-10-15/16, 2026-10-22 (the Jacobian fixed); the two bags | re-record one aiming bag (the Jacobian and the stamps changed on 2026-10-22); the bag figures |
 | 3.5 Perception (capture, SAM2, PPF, FoundationPose, tracking, saving, symmetric/cut tubes) | R: B1b §A (the Docker server step by step); R: D_papers §2.1-2.5; R: B1a C2-C4, E3; `notes/perception_aciklama.md` §6-12 (Turkish; the most detailed) | VERIFY 252 hypotheses on the desktop; the architecture figures (adapted from the papers) |
 | 3.6 Multi-view (views, capture, joint refinement, observability, self-calibration, acceptance, ISO fit-up) | R: B1a D1-D6 and algorithms 9-11; R: B2 @S 3.6; `notes/multiview_refine_plan.md` | OPEN: the table-anchored height; the self-calibration bench check |
 | 3.7 Seams (registry, planar, curved, fit-up, fallback) | R: B1a E1-E3 and algorithms 5-7; R: B2 @S 3.7; `notes/curved_seams_plan.md`, `seam_two_modes_plan.md` | DECIDE mode B (THESIS_PLAN #7) |

@@ -153,12 +153,20 @@ rules follow from Equation~\ref{eq:frame_chain}. Everything that must stay put (
 the static environment) is stored in $B$, never in $C$. Every lookup of $\Tf{B}{E}$ uses the
 time stamp of the image it serves, not the current time. And a mask or a click is valid only for
 the frame it was made on.
-\TODO{The camera node stamps images with the ROS clock when it publishes them, not with the
-exposure time (realsense\_camera\_node.py). Every ``pose at the image stamp'' below inherits that
-offset (while the robot moves, 50~ms are a few millimetres): measure it once (e.g.\ with the aim's
-latency test) or state it as a limitation. The lookups also fall back silently: the assembly node to
-the latest transform when the stamp is outside its buffer, the aim to the current joints, the tracker to
-no ego-motion when the transform is missing.}
+
+The second rule needs a stamp that says when the image was taken. The camera times every frame with
+its own clock, and the driver maps that clock onto the computer's. The frame's metadata give the
+time from the middle of the exposure to the start of the readout, and the stamp is moved back by it,
+to the middle of the exposure: the instant the image shows. The colour image, the depth image
+aligned to it and the intrinsics carry the colour frame's stamp, so they always pair. A frame whose
+own time is missing or implausible (in the future, or more than 0.5~s old) is stamped when it is
+published, with a warning.
+\TODO{Measure on the bench: the camera node logs how old the stamps are when published (median
+and 95th percentile every 30~s) and the gap between the depth and colour frames; put both in
+Chapter~\ref{chp:results}. Until 2026-10-22 the stamp was the publish time, after the alignment.
+The lookups also fall back silently: the assembly node to the latest transform when the stamp is
+outside its buffer, the aim to the current joints, the tracker to no ego-motion when the transform is
+missing.}
 
 \paragraph{Assumptions.} The parts are rigid and match their CAD models within the
 manufacturing tolerance. Each part rests on the table or on another part; this is used once,
@@ -508,7 +516,7 @@ a proportional loop on the angular error with a deadband:
 s=\frac{\norm{\vect{e}}-0.2\,\epsilon}{\norm{\vect{e}}},
 \label{eq:aim_law}
 \end{equation}
-with $K=2.5~\mathrm{s}^{-1}$, $k_r=1.5~\mathrm{s}^{-1}$, both rates capped at $15^\circ$/s.
+with $K=1.25~\mathrm{s}^{-1}$, $k_r=0.75~\mathrm{s}^{-1}$, both rates capped at $7.5^\circ$/s.
 Two rotations aim the optical axis; the third, the roll
 $\psi=\operatorname{twist}_z\big(\Rf{B}{C_0}^{\top}\Rf{B}{C}\big)$ about the optical axis relative to
 the home view $C_0$ (taken from a swing--twist split), is redundant and is held at home so that the
@@ -518,7 +526,7 @@ $4^\circ$), and releases inside $0.4\,\epsilon$. Measuring the rate from
 $0.2\,\epsilon$, inside the release radius, is what lets it stop: measured from the release radius
 itself, the camera crept towards it for ever and never handed the arm back. There is no integral
 term, because it winds up over the latency, and no derivative term, because a hand landmark is
-noisy. The command is smoothed by two first-order lags of 60~ms with a $60^\circ/\mathrm{s}^2$
+noisy. The command is smoothed by two first-order lags of 60~ms with a $30^\circ/\mathrm{s}^2$
 cap, so the acceleration is continuous, and a component that would take the optical axis beyond
 $\pm35^\circ$ of pan or $\pm25^\circ$ of tilt from home within the next 0.35~s (about the
 stopping time from full rate) is dropped, while one that brings it back is kept.
@@ -530,10 +538,10 @@ $\omega_c=K$, and its phase margin is
 \mathrm{PM}=\frac{\pi}{2}-K\tau .
 \label{eq:aim_pm}
 \end{equation}
-With $\tau\approx0.15$~s and the latency compensated, $K=2.5~\mathrm{s}^{-1}$ leaves a margin of
-about $68^\circ$; if the compensation failed and $\tau$ grew to 0.25~s, it would still leave about
-$54^\circ$. Because the lags are modelled as a dead time, these margins are conservative design
-estimates, not measurements. The gain was raised from $1.2~\mathrm{s}^{-1}$, sized for the uncompensated loop, once
+With $\tau\approx0.15$~s and the latency compensated, $K=1.25~\mathrm{s}^{-1}$ leaves a margin of
+about $79^\circ$; if the compensation failed and $\tau$ grew to 0.25~s, it would still leave about
+$72^\circ$. Because the lags are modelled as a dead time, these margins are conservative design
+estimates, not measurements. The gain was raised from $0.6~\mathrm{s}^{-1}$, sized for the uncompensated loop, once
 the latency was compensated.
 
 \paragraph{From the camera rate to joint rates.} The flange moves so that the optical centre
@@ -550,12 +558,14 @@ smoothed and excursion-limited command,
 \end{aligned}
 \label{eq:aim_dls}
 \end{equation}
-\TODO{Code defect found 2026-10-20 (notes/todo.md): kinematics.ur5e\_jacobian divides the
-rotation difference by $2\varepsilon$ instead of $4\varepsilon$, so its angular rows are doubled
-and the arm turns the camera at \emph{half} the commanded rate ($K_{\mathrm{eff}}=1.25$~s$^{-1}$,
-cap $7.5^\circ$/s), the optical centre drifting at up to $\sim$8~mm/s against the P pull.
-Equations \ref{eq:aim_law}--\ref{eq:aim_dls} describe the design. Either fix the Jacobian and
-halve $K$ to keep the tested behaviour, then re-test, or report the achieved values.}
+\TODO{Fixed 2026-10-22 (THESIS\_PLAN \#11): until then kinematics.ur5e\_jacobian divided the
+rotation over two steps of $\varepsilon$ by $2\varepsilon$ instead of $4\varepsilon$, so its
+angular rows were doubled and the arm turned the camera at half the commanded rate. The robot was
+tested on 2026-10-15/16 with twice the values above commanded, so it achieved the values above; the
+fix halved the commanded values to keep that behaviour. In the closed-loop test the optical centre
+wandered up to 6.5~mm before the fix and stays within 0.2~mm after it. The bags of 2026-10-15/16
+were also recorded with images stamped at publish (\S\ref{sec:mc_problem}): re-record one bag
+before quoting them in Chapter~\ref{chp:results}.}
 
 \paragraph{Execution and safety.} A human in the loop needs a streaming interface, not a
 trajectory: the joint rates go to the driver's velocity controller, which the aim switches in when
@@ -610,10 +620,10 @@ scripts/aim\_bag\_report.py)}{Command steps before and after the rate relay.}
 \STATE $\mathbf{R}\gets\Rf{B}{C}(\vect{q})$;\ \ $\psi\gets\operatorname{twist}_z(\Rf{B}{C_0}^{\top}\mathbf{R})$;\ \ $\boldsymbol{\omega}_C\gets(0,0,-k_r\psi)$
 \IF{$\vect{r}_B$ and $d_z\ge0.3$ for $\vect{d}=\mathbf{R}^{\top}\vect{r}_B$}
   \STATE $\vect{e}\gets(d_x/d_z,\,d_y/d_z)$; engaged $\gets\norm{\vect{e}}>\epsilon$ or (engaged and $\norm{\vect{e}}>0.4\epsilon$)
-  \STATE \textbf{if} engaged \textbf{then} set the pan and tilt rates by Equation~\ref{eq:aim_law}, capped at $15^\circ$/s
+  \STATE \textbf{if} engaged \textbf{then} set the pan and tilt rates by Equation~\ref{eq:aim_law}, capped at $7.5^\circ$/s
 \ENDIF
 \STATE drop a pan or tilt rate that would cross $\pm35^\circ$ / $\pm25^\circ$ within 0.35~s
-\STATE smooth: two 60~ms lags, $\norm{\Delta\boldsymbol{\omega}}\le60^\circ/\mathrm{s}^2\cdot\Delta t$
+\STATE smooth: two 60~ms lags, $\norm{\Delta\boldsymbol{\omega}}\le30^\circ/\mathrm{s}^2\cdot\Delta t$
 \STATE $\dot{\vect{q}}\gets$ Equation~\ref{eq:aim_dls}, scaled so that $\max_j|\dot q_j|\le0.5$~rad/s
 \STATE $\vect{q}_1\gets\vect{q}+0.3\,\mathrm{s}\cdot\dot{\vect{q}}$
 \IF{$\vect{q}_1$ collides, leaves the branch or nears the wrist singularity, or $\norm{\vect{F}-\vect{F}_{\mathrm{bias}}}>15$~N, or the joint states are stale}
@@ -1337,11 +1347,14 @@ h_{\max}=
 \end{equation}
 where, at levels B, C and D, $c_0'$ is 0.2, 0.3 and 0.5~mm, $c_1$ is 0.1, 0.2 and 0.3, $c_0$ is
 0.5, 0.5 and 1~mm, and $h_{\mathrm{cap}}$ is 2, 3 and 4~mm.
-We use quality level C, which gives 1.62~mm for 8~mm plates (1.06 at B, 2.68 at D). A gap over the limit
-is a warning, never a rejection. The rule is the same function that WeldSet uses to grade its joints
-(\S\ref{sec:ws_parts}).
-\TODO{Limitation: $t$ is taken as the smaller of the two parts' smallest bounding-box extents, which
-for a tube is its diameter or length, not its wall; use the registry's gauge.}
+Here $t$ is the thinner part's material thickness, read from its registered primitive as the tack
+rule reads it (\S\ref{sec:mc_tacks}): a plate's thickness, a tube's wall, and for a swept band the
+smaller of its width and its height. It is rounded to 0.01~mm, so that a 3~mm wall fitted at
+3.000002~mm stays in the $t\le3$~mm row. A part without a registered shape falls back to the
+smallest extent of its bounding box, which is right for a plate only. We use quality level C, which
+gives 1.62~mm for 8~mm plates (1.06 at B, 2.68 at D) and 0.51~mm for the 3~mm wall of a pipe on such a
+plate. A gap over the limit is a warning, never a rejection. The rule is the same function that
+WeldSet uses to grade its joints (\S\ref{sec:ws_parts}).
 \SRC{multiview\_refine.judge, \_fallback, fitup\_warnings; weldgen/config.py root\_gap\_limit;
 thesis\_notes.md 2026-10-02 (MV), 2026-10-15; curved\_seams\_plan.md (E2 with multi-view).}
 
@@ -1957,7 +1970,7 @@ perception and motion: every step after saving reads it.
 \toprule
 Node & Executable & Role \\
 \midrule
-Camera & \texttt{realsense\_\allowbreak{}camera\_\allowbreak{}node} & colour and aligned depth, $1280\times720$, 30~Hz; with \texttt{depth\_image\_proc}, the organized cloud \\
+Camera & \texttt{realsense\_\allowbreak{}camera\_\allowbreak{}node} & colour and aligned depth, $1280\times720$, 30~Hz, stamped at the colour frame's mid-exposure; with \texttt{depth\_image\_proc}, the organized cloud \\
 Frames & \texttt{robot\_\allowbreak{}state\_\allowbreak{}publisher},\newline\texttt{camera\_\allowbreak{}extrinsic\_\allowbreak{}tf\_\allowbreak{}publisher} & the calibrated kinematic chain; the extrinsic as a static transform \\
 Registration bridge & \texttt{foundationpose\_\allowbreak{}bridge\_\allowbreak{}node} & capture, clicks and the request to the desktop server; publishes the detection, stamped with the frozen frame's stamp \\
 Tracker client & \texttt{fp\_\allowbreak{}tracker\_\allowbreak{}node} & streams frames to the laptop tracker; publishes the tracked pose; re-seeds on loss \\

@@ -535,6 +535,9 @@ the desktop registers on its own GPU, so this does not happen.
   time, not the captured frame's stamp. If the arm moves between capture and reply,
   the seed is off by that motion (tracking pulls in small offsets; large ones end in
   LOST and a re-seed). Fix in the bridge: `out.header.stamp = frozen.stamp`.
+  *(2026-10-22: done on 2026-10-06; the bridge stamps detections with the frozen frame's
+  stamp, `_build_detection_array(..., frozen.stamp)`. Since 2026-10-22 the camera node's
+  own stamp is the middle of the exposure, not the publish time: `frame_stamp.py`.)*
 - **Full frame by default.** The node can crop to the region around the part
   (`use_roi`), which cuts the copy and the depth filtering, but with the tracker on
   localhost there is little to gain.

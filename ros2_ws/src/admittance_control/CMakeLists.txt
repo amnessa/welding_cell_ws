@@ -122,6 +122,7 @@ install(
     admittance_control/multiview_service.py
     admittance_control/selfcal.py
     admittance_control/fp_stream.py
+    admittance_control/frame_stamp.py
   DESTINATION ${PYTHON_INSTALL_DIR}/${PROJECT_NAME}
 )
 
@@ -161,6 +162,8 @@ install(PROGRAMS
   scripts/selfcal_extrinsic.py
   scripts/multiview_refine_offline.py
   scripts/tare_distance.py
+  scripts/contact_error.py
+  scripts/aim_bag_report.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

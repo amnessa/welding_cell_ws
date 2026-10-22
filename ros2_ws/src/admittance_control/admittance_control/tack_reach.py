@@ -60,6 +60,9 @@ UR_ORDER = ["shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint",
 # ---------------------------------------------------------------- config --------------
 @dataclass
 class MarkingConfig:
+    """The marking settings. The nodes run with config/marking.json's values
+    (`load_marking_config`); these defaults only fill a key it does not set, and two of
+    them differ from it: marking.json sets `clearance_m` 0.003 and `roll_step_deg` 30."""
     home_q: np.ndarray
     branch_joints: tuple[int, ...] = (1, 2, 4)
     standoff_m: float = 0.035

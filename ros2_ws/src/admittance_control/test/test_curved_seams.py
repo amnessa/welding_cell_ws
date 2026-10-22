@@ -9,7 +9,8 @@ the pose tolerance is reported rejected with its fit-up, one far beyond it has n
 along the branch axis, also for the printed S3 on R2; a rounded-rect tube yields its
 outer outline (weld) and inner one (bore); an open band yields both side fillets, with
 per-point normals that stay matched to their points after the seam is re-oriented;
-tacks on a closed seam are an even set, each with the approach at its own point; and a
+tacks on a closed seam are an even set, each with the approach at its own point; a
+curved flat bar lower than it is wide is tacked by its height, not its band; and a
 pair with no rule is reported, not dropped.
 """
 
@@ -223,6 +224,21 @@ def test_tacks_on_a_closed_seam_carry_their_own_approach():
         radial = np.array([p[0], p[1], 0.0]) / np.hypot(p[0], p[1])
         assert a @ radial == pytest.approx(np.sqrt(0.5), abs=0.02)   # 45 deg, outward
     assert len({tuple(np.round(t["approach"], 3)) for t in tacks}) == len(tacks)
+
+
+def test_a_flat_curved_bar_is_tacked_by_its_height_not_its_band():
+    # the arc of "band", 30 mm wide and 6 mm high, lying on the 8 mm plate: the gauge is
+    # the bar's 6 mm, so 24 mm tacks (2026-10-22: gauged by the 30 mm band, the plate's
+    # 8 mm won and the tacks were 32 mm)
+    bar = {"primitive": "swept_slab", "T_cad_prim": I4,
+           "params": {**REG["parts"]["band"]["params"], "offset_lo_mm": -15.0,
+                      "offset_hi_mm": 15.0, "z0_mm": 0.0, "z1_mm": 6.0}}
+    reg = {"parts": {**REG["parts"], "bar": bar}}
+    parts, seams = _seams(PLATE, ("bar.ply", _pose([0.0, 0.0, 0.8])), reg=reg)
+    assert sum(s["weldable"] for s in seams) == 2, sfr.summarize(seams)
+    tk = sfr.compute_tacks(parts, seams)
+    assert tk["params"]["t_mm"] == pytest.approx(6.0)
+    assert tk["tacks"] and all(t["tack_length_mm"] == pytest.approx(24.0) for t in tk["tacks"])
 
 
 def test_a_pair_without_a_rule_is_reported():

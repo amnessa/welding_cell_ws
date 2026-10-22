@@ -45,7 +45,7 @@ The line-by-line review of both projects for the thesis (`thesis/notes/review_20
 index `thesis/MATERIAL_MAP.md`). Nothing in the code was changed.
 
 **Code (the cell)**
-- [ ] **`kinematics.ur5e_jacobian` has doubled angular rows** (`kinematics.py:296-303`): the rotation
+- [x] **`kinematics.ur5e_jacobian` has doubled angular rows** (`kinematics.py:296-303`): the rotation
   difference $R(q+\varepsilon)R(q-\varepsilon)^\top\approx I+2\varepsilon[\omega]_\times$ is divided by
   $2\varepsilon$, not $4\varepsilon$. Reproduced 2026-10-20: every angular entry is exactly 2× the true
   one; the linear rows are right. Effect: the camera aim turns at **half** the commanded rate
@@ -56,13 +56,19 @@ index `thesis/MATERIAL_MAP.md`). Nothing in the code was changed.
   behaviour tested on 2026-10-15/16, halve `gain_per_s`, `roll_gain_per_s`, `max_rate_deg_s` and
   `max_acc_deg_s2`; add a test of the Jacobian against finite differences of the FK; re-test on the robot
   (record a bag). Then update Ch. 3 §3.4.2 (the TODO there) and Appendix A. THESIS_PLAN decision #11.
-- [ ] Camera images are stamped with the ROS clock when `realsense_camera_node.py` publishes them, not
+  **Done 2026-10-22**: 4ε, the four values halved (1.25 /s, 0.75 /s, 7.5°/s, 30°/s²), a Jacobian-vs-FK test
+  and an achieved-rate check in the closed loop; Ch. 3 and Appendix A updated. Left: re-record one aiming
+  bag on the robot.
+- [x] Camera images are stamped with the ROS clock when `realsense_camera_node.py` publishes them, not
   with the exposure time; every "pose at the image stamp" inherits the offset. Measure it once (the aim's
-  latency test) or use the driver's hardware stamp.
-- [ ] `multiview_refine._thickness_mm` takes a part's smallest bounding-box extent as its thickness: for a
+  latency test) or use the driver's hardware stamp. **Done 2026-10-22**: the colour frame's global time,
+  moved to mid-exposure by the metadata (`admittance_control/frame_stamp.py`, `stamp_source`). Left: read
+  the node's 30 s log on the bench (age at publish, depth - colour gap) for Ch. 6.
+- [x] `multiview_refine._thickness_mm` takes a part's smallest bounding-box extent as its thickness: for a
   tube that is its diameter or length, not its wall, so the ISO 5817 fit-up warning for tube pairs uses
-  the wrong gauge. Use the registry's gauge.
-- [ ] Stale comments and docstrings (no behaviour change): `camera_aim.py` says 50 Hz (125 Hz);
+  the wrong gauge. Use the registry's gauge. **Done 2026-10-22** (`_gauge_mm`, rounded to 0.01 mm: C1's
+  wall is fitted at 3.000002 mm).
+- [x] Stale comments and docstrings (no behaviour change): `camera_aim.py` says 50 Hz (125 Hz);
   `collision.py:20-22` says box-box inflates by the clearance (it does not); `config/pen_tool.json`
   `_comment` says the planner uses the nominal chain (calibrated since 2026-09-29); the `kinematics.py`
   header "RRT-Connect Planner"; the `package.xml` description; `test_multiview_touching_parts.py`
@@ -72,13 +78,19 @@ index `thesis/MATERIAL_MAP.md`). Nothing in the code was changed.
   `marking.json` (3 mm, 30°); `contact_error.py` docstring ±15 mm vs `span` 25 mm, and the script is not
   installed; `scripts_in_foundationpose/server.py` comment `threaded=False` vs code `True`;
   `scripts_in_foundationpose/foundationpose_bridge_node.py` is an old copy (439 lines of diff): delete
-  or mirror.
+  or mirror. **Done 2026-10-22**, all but the last: `contact_error.py` and `aim_bag_report.py` are now
+  installed; `MarkingConfig` keeps its defaults, with a docstring saying marking.json overrides two of
+  them; E2 is 33 boxes, its scene 34 (both comments were right about different things).
+- [ ] DECIDE: delete `scripts/scripts_in_foundationpose/foundationpose_bridge_node.py` (the old copy of
+  the bridge) or mirror the live one into it.
 
-- [ ] `seam_from_registration.compute_tacks` hands weldgen's tack rule `primitive = "sweptslab"` and no
+- [x] `seam_from_registration.compute_tacks` hands weldgen's tack rule `primitive = "sweptslab"` and no
   `params`, so `tacks._member_gauge_mm`'s swept-band case (`"swept_slab"`, z0/z1) never fires: the
   gauge of a band is then its stored thickness, not min(thickness, height). Harmless for the printed
   stiffener (SP3: wall 5 mm < height 80 mm), wrong for a band lower than it is thick, such as an
-  arc-butt plate (verification V3 #44).
+  arc-butt plate (verification V3 #44). **Done 2026-10-22**: `scene_objects` writes the entries with
+  weldgen's own serialisers, for all six primitive types; tests for each type and for a flat curved bar
+  (t 8 → 6 mm).
 
 **Code (weld_generator)**: the seam finder's `Self_ideas/test2_cagdas/seamfind/walk.theta_r` uses the
 plan's angle formula $\arcsin((1-\bar r)/\alpha)$ for a step the implementation no longer takes; the
@@ -90,7 +102,9 @@ yaw, the grooved butts) and its "smallest fix set" (5 steps, then regenerate and
 strata on the desktop). THESIS_PLAN decision #10.
 
 **ICRA submission**: 12 statements that do not match the code or the final batch (the same note, last
-section). Fix in the camera-ready if accepted; do not carry them into the thesis.
+section). Fix in the camera-ready if accepted; do not carry them into the thesis. (Checked against the
+paper source 2026-10-22: items 1-10 are in the paper, 11-12 are in MANUAL §8.3/§9 and notebook 15, and
+one more paper sentence disagrees with its own Table II: "within 1.5 mm on every class", T is 1.55 mm.)
 
 **From the 2026-10-01 advisor meeting, not listed before** (review V4, the meeting table)
 - [ ] Next-best view when two parts score close in PPF (the advisor: "a very interesting topic",

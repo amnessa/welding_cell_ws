@@ -4,7 +4,8 @@ Claims: the nominal file reproduces the planner's FK and link frames to machine
 precision; the robot's calibration file parses and moves the flange by millimetres,
 not centimetres (a sanity bound on the parser); and at the scan home the calibrated
 chain turns the camera by ~0.5 deg against the nominal one (the mismatch found
-2026-09-29).
+2026-09-29); the Jacobian maps joint rates to the tool0 twist the FK makes (its angular
+rows were doubled until 2026-10-22).
 """
 
 from __future__ import annotations
@@ -15,13 +16,15 @@ import sys
 
 import numpy as np
 import pytest
+from scipy.spatial.transform import Rotation
 
 PKG = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PKG))
 
 from admittance_control.kinematics import (active_kinematics, ik_solve, load_kinematics,  # noqa: E402
-                                           ur5e_fk, ur5e_fk_params, ur5e_link_frames,
-                                           ur5e_link_frames_params, use_kinematics)
+                                           ur5e_fk, ur5e_fk_params, ur5e_jacobian,
+                                           ur5e_link_frames, ur5e_link_frames_params,
+                                           use_kinematics)
 
 
 def test_nominal_file_reproduces_the_planner_fk():
@@ -69,3 +72,16 @@ def test_use_kinematics_switches_fk_links_and_ik_then_resets():
     finally:
         assert use_kinematics(None) == "nominal"
     assert np.allclose(ur5e_fk(q), T_nom)
+
+
+def test_jacobian_gives_the_twist_the_fk_makes():
+    # [v; w] of tool0 in base_link, w from the rotation the FK makes over a small step
+    # (the log map, independent of the Jacobian's own skew-part formula)
+    rng = np.random.default_rng(2)
+    h = 1e-5
+    for _ in range(20):
+        q, qd = rng.uniform(-np.pi, np.pi, 6), rng.normal(size=6)
+        Tm, Tp = ur5e_fk(q - h * qd), ur5e_fk(q + h * qd)
+        v = (Tp[:3, 3] - Tm[:3, 3]) / (2 * h)
+        w = Rotation.from_matrix(Tp[:3, :3] @ Tm[:3, :3].T).as_rotvec() / (2 * h)
+        assert np.allclose(ur5e_jacobian(q) @ qd, np.concatenate([v, w]), atol=1e-6)

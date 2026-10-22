@@ -819,7 +819,16 @@ def estimate_extrinsic(parts: Sequence[Part], poses: Sequence[np.ndarray], views
     diag.extrinsic_rms_mm = float(np.sqrt(np.mean(ra ** 2)) * 1000) if len(ra) else float("nan")
 
 
-def _thickness_mm(part: Part) -> float:
+def _gauge_mm(part: Part) -> float:
+    """The part's material thickness for the ISO 5817 limit: its registered primitive's
+    gauge, as the tack rule reads it (`seam_from_registration.member_gauge_mm`: a plate's
+    t, a pipe's wall, a band's min(band, height)). A part without a registered shape
+    falls back to the smallest extent of its bounding box, right for a plate only. Until
+    2026-10-22 every part used the box: a pipe counted as its diameter (C1: 62 mm, not
+    its 3 mm wall), so the plate under it set a limit three times too loose."""
+    if part.shape is not None:
+        from .seam_from_registration import member_gauge_mm
+        return member_gauge_mm(part.shape.prim)
     return float((part.verts.max(0) - part.verts.min(0)).min() * 1000)
 
 
@@ -834,7 +843,9 @@ def fitup_gap_limit_mm(t_a_mm: float, t_b_mm: float, level: str) -> Optional[flo
         from weldgen.config import root_gap_limit
     except Exception:  # noqa: BLE001
         return None
-    t = min(t_a_mm, t_b_mm)
+    # the nominal gauge: C1's 3 mm wall, fitted from its CAD at 3.000002 mm, must stay in
+    # ISO's t <= 3 row (0.51 mm at level C, not the 0.92 of t > 3)
+    t = round(min(t_a_mm, t_b_mm), 2)
     return float(root_gap_limit(t, 0.7 * t, level))
 
 
@@ -848,14 +859,15 @@ def fitup_warnings(results: Sequence[PartResult], parts: Sequence[Part], cfg: Re
             other = by_name.get(nb)
             if other is None:
                 continue
-            lim = fitup_gap_limit_mm(_thickness_mm(p), _thickness_mm(other), cfg.quality_level)
+            t_p, t_o = _gauge_mm(p), _gauge_mm(other)
+            lim = fitup_gap_limit_mm(t_p, t_o, cfg.quality_level)
             if lim is None:
                 continue
             r.gap_limit_mm[nb] = lim
             if gmax > lim:
                 r.warnings.append(f"fit-up gap to {nb} up to {gmax:.1f} mm exceeds the ISO 5817 no. 617 "
                                   f"level {cfg.quality_level} fillet limit {lim:.1f} mm (t "
-                                  f"{min(_thickness_mm(p), _thickness_mm(other)):.0f} mm, a = 0.7 t)")
+                                  f"{min(t_p, t_o):.1f} mm, the thinner member's gauge; a = 0.7 t)")
 
 
 def penetration_mm(parts: Sequence[Part], poses: Sequence[np.ndarray], i: int, cfg: RefineConfig,

@@ -20,7 +20,8 @@ its flange, read at 500~Hz; the cell uses only the force, never the torque, for 
 collision aborts, the table touches and the check of the tool-centre point. The camera is an Intel
 RealSense of the D435 series, mounted on the wrist beside the pen; the cell's own camera node aligns
 depth to colour and streams both at $1280\times720$ and 30~Hz (under the driver's name for the
-unaligned stream, which can mislead a reader of the topic list). Its stereo baseline is 50~mm and its
+unaligned stream, which can mislead a reader of the topic list), stamped with the middle of the
+colour frame's exposure on the computer's clock (\S\ref{sec:mc_problem}). Its stereo baseline is 50~mm and its
 minimum depth at this resolution about 0.28~m, the visibility floor that the view planner enforces
 (the close views themselves are at 0.40~m).
 \TODO{ASK/VERIFY: D435 or D435i? The notes say D435i, but the only SDK output in the repository

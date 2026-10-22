@@ -29,8 +29,9 @@ has been looked at in RViz.
 Safety gates, all of them before any goal: the current joints must be clear in the
 collision model and on the locked branch; every trajectory's first point must be within
 `max_joint_jump_rad` of the current joints; |F| above `abort_force_n` at ANY time
-cancels whatever runs; the wrench bias is re-measured at each approach point over
-`bias_window_s` before the descent.
+cancels whatever runs; the wrench bias is re-measured where each transit ends, at the
+departure point (`departure_m` out along the pen; the approach point when the departure
+is not clear), over `bias_window_s` before the descent.
 
 The stroke (stroke_mode tack | seam) is contact-referenced: the descent finds the
 surface at the stroke's start, the stroke runs at that depth plus `press_m` along the

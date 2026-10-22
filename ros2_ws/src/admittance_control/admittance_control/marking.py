@@ -102,7 +102,8 @@ def fast_is_valid(model: CollisionModel) -> Callable[[np.ndarray], bool]:
     the same model - tests/test_transit_cpp.py proves the two agree, near contact too - at
     ~590x the speed), else the Python model. The edge re-checks of APS paths, their
     spline smoothing and the TOTG samples ran in Python: 2644 checks at 78 ms against
-    E2's 34 boxes, 3 of a plan's 3.5 minutes (2026-10-14)."""
+    the E2 scene's 34 boxes (E2's 33 sector boxes and the plate), 3 of a plan's 3.5
+    minutes (2026-10-14)."""
     try:
         from . import _transit_cpp
     except ImportError:
@@ -188,8 +189,9 @@ def aps_path(q_from: np.ndarray, q_to: np.ndarray, model: CollisionModel,
     """OMPL's official AnytimePathShortening (C++, `_transit_cpp`; notes/aps_transit_plan.md):
     `num_planners` RRT-Connect threads, their paths hybridized and shortcut until
     `budget_s`, on the C++ port of this collision model. Every edge of the answer is
-    re-checked with the PYTHON model before it is used. None (and `info['why']`) when the
-    extension is not built, APS finds nothing, or the Python check disagrees.
+    re-checked with the collision model before it is used (`fast_is_valid`: the C++ port
+    when it is built, the Python model otherwise). None (and `info['why']`) when the
+    extension is not built, APS finds nothing, or the re-check disagrees.
 
     APS plans with the clearance + `margin_m`: an optimised path runs ALONG the clearance
     boundary, so the Python re-check, sampling elsewhere on the same edges, landed a hair
@@ -280,7 +282,7 @@ def transit_path(q_from: np.ndarray, q_to: np.ndarray, model: CollisionModel,
                            f"cost {info['cost']:.2f}")
         else:
             # the C++ RRT-Connect next: the Python one is ~590x slower per check and took
-            # minutes per transit round E2's 33 boxes (2026-10-14)
+            # minutes per transit round the E2 scene's 34 boxes (2026-10-14)
             why = info.get("why", "")
             path = aps_path(q_from, q_to, model, edge_resolution, budget_s, 1, 2, info,
                             margin_m, max_budget_s, planner="rrt_connect")

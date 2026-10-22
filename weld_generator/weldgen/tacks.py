@@ -15,7 +15,10 @@
                      never below 4; positions phase-shifted (D39). Weld order:
                      opposite pairs, pairs in bisection order over the half-loop.
 
-    `t` is the THINNER member (the same reading ISO 5817 uses everywhere else here).
+    `t` is the gauge of the THINNEST workpiece in the scene (`_member_gauge_mm` of every
+    object with role "workpiece"): in a two-part scene the thinner member, the reading
+    ISO 5817 uses everywhere else here. With more parts, every seam takes that one `t`,
+    not its own two members' (the cell's assemblies can have three or more).
     Tacks are SHORT WELDS, not points: each carries `tack_length_mm`, and the margin
     exists so no tack sits in the run-on/run-off zone — this is also where the plan's
     "no tack within ~2t of a free edge" constraint lives now. The old "both endpoints

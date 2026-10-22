@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """
-UR5e RRT-Connect Planner — Configuration-space motion planning.
+UR5e kinematics and joint-space planning.
 
 Implements:
-  - Forward kinematics for UR5e (base_link → tool0) using URDF transforms
+  - Forward kinematics for UR5e (base_link → tool0): the nominal URDF chain, or the
+    robot's own calibrated chain from a ur_description kinematics YAML
+    (`use_kinematics`; the nodes load config/ur5e_calibration.yaml since 2026-09-29)
+  - The geometric Jacobian by central differences of the FK
   - Damped-least-squares iterative IK
   - RRT-Connect bi-directional planner in joint space
   - Shortcut-based path smoothing
@@ -277,8 +280,8 @@ def ur5e_jacobian(q: np.ndarray, eps: float = 1e-6) -> np.ndarray:
     """
     Numerical Jacobian (6×6) via central finite differences.
 
-    Rows 0-2: linear velocity (x, y, z)
-    Rows 3-5: angular velocity (wx, wy, wz)
+    Rows 0-2: linear velocity (x, y, z) of tool0, in base_link
+    Rows 3-5: angular velocity (wx, wy, wz), in base_link
     """
     q = np.asarray(q, dtype=float)
     J = np.zeros((6, NUM_JOINTS))
@@ -295,12 +298,15 @@ def ur5e_jacobian(q: np.ndarray, eps: float = 1e-6) -> np.ndarray:
         # Linear part
         J[:3, i] = (Tp[:3, 3] - Tm[:3, 3]) / (2 * eps)
 
-        # Angular part (from rotation difference)
+        # Angular part: dR = R(q+eps) R(q-eps)^T ~ I + 2 eps [w]x spans TWO steps of
+        # eps, and its skew part dR - dR^T is 2 * (2 eps [w]x): hence 4 eps. (Until
+        # 2026-10-22 this divided by 2 eps, which doubled these rows: the camera aim
+        # turned at half its commanded rate and IK corrected half the orientation
+        # error per iteration.)
         dR = Tp[:3, :3] @ Tm[:3, :3].T
-        # Extract angle-axis from dR
-        J[3, i] = (dR[2, 1] - dR[1, 2]) / (2 * eps)
-        J[4, i] = (dR[0, 2] - dR[2, 0]) / (2 * eps)
-        J[5, i] = (dR[1, 0] - dR[0, 1]) / (2 * eps)
+        J[3, i] = (dR[2, 1] - dR[1, 2]) / (4 * eps)
+        J[4, i] = (dR[0, 2] - dR[2, 0]) / (4 * eps)
+        J[5, i] = (dR[1, 0] - dR[0, 1]) / (4 * eps)
 
     return J
 

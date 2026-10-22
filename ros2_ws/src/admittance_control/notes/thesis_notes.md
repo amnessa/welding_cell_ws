@@ -12,6 +12,46 @@ the plans under `notes/`; this file keeps the story and the numbers.
 
 ---
 
+## 2026-10-22: The review's code defects fixed: the Jacobian, the image stamp, a pipe's gauge
+
+**What happened.** The defects the thesis review found in the cell's code were fixed: the
+aim's Jacobian, the camera's image stamps, and the member gauge, which was wrong in two places
+(the multi-view ISO 5817 check and the input to the tack rule).
+
+**Evidence.**
+- *Jacobian.* `ur5e_jacobian` now divides by 4ε. A new test compares it with the log map of
+  the FK over a small step at 20 random poses (to 1e-6); the old code fails it. To keep the
+  behaviour tested on 2026-10-15/16, the four angular aim values were halved: gain 2.5 → 1.25 /s,
+  roll gain 1.5 → 0.75 /s, cap 15 → 7.5°/s, 60 → 30°/s². In the closed-loop test (three
+  targets, 0.1 s image latency), old and new centre the fingertip in the same time (old
+  2.20–3.34 s, new 2.18–3.30 s) at the same achieved peak of 7.5°/s, and the optical centre's
+  largest wander drops from 4.0–6.5 mm to 0.01–0.2 mm. The closed-loop test now also compares
+  the achieved rate (from the FK) with the commanded one.
+- *Image stamp.* The camera node stamped every image with `now()` after `wait_for_frames` and the
+  depth alignment. It now uses the colour frame's own time: librealsense's global time (the
+  camera clock mapped onto the computer's), moved back from the start of readout to
+  mid-exposure by the frame metadata (FRAME_TIMESTAMP − SENSOR_TIMESTAMP). Checked on a
+  pyrealsense2 software device: global time gives mid-exposure, system time the arrival, the
+  hardware clock alone falls back to `now()` with a warning. Not measured on the camera yet:
+  the node logs the stamps' age at publish (median, p95) every 30 s.
+- *Gauge, multi-view.* The ISO limit took `t` from the bounding box. C1 (r 31 mm, wall 3 mm)
+  counted as 62 mm, so on the 8 mm plate the level C limit read 1.62 mm instead of 0.51 mm. It
+  now takes the registry primitive's gauge. Found on the way: the registry fits C1's wall at
+  3.000002 mm, which falls in ISO's t > 3 mm row (0.92 mm), so `t` is rounded to 0.01 mm.
+- *Gauge, tack rule.* `compute_tacks` handed weldgen's tack rule `"sweptslab"` with no params,
+  so its swept-band case, min(band, height), never fired. The objects now come from weldgen's
+  own serialisers. A curved flat bar 30 mm wide and 6 mm high on the 8 mm plate: `t` 8 → 6 mm,
+  tacks 32 → 24 mm. SP3 (band 5 mm, 80 mm high) is unchanged.
+
+**What we learned.**
+- When two programs share a data format, write it with the producer's own code. The cell
+  re-typed weldgen's object entries, got two names wrong, and nothing complained.
+- A table with a boundary at a round number (t ≤ 3 mm) needs the nominal value, not a fitted
+  one.
+- The stamp of an image is the time the image shows, not the time it is sent.
+
+---
+
 ## 2026-10-20: The aim's Jacobian was off by a factor of two, and every test passed
 
 **What happened.** Writing the methodology chapter, the thesis review compared every equation of

@@ -17,9 +17,11 @@ cloud by R_cam d - the error that turns with the wrist. Claims:
   * the overlap rule: a part started sunk 2 mm into its neighbour ends < 0.5 mm deep, and
     a real 1 mm gap is kept, not closed;
   * ownership and its dead band: labels as designed; for the T (parts meeting at a right
-    angle) they change nothing, the normal gate already separates; for a lap joint
-    (parallel faces) ownership plus max_corr <= half the gap is what keeps one plate off
-    the other's top face;
+    angle) they change nothing, the normal gate already separates;
+  * a lap joint (parallel faces 8 mm apart): the feared swap onto the lower plate's top
+    does not happen, not even without ownership, so the half-gap cap on the matching
+    distance (`parallel_gap_rule`) is off by default and the gap is only reported; with
+    the rule on, a 6 mm error is out of its 4 mm reach;
   * the rounds converge and do not depend on the order the parts are listed in;
   * the acceptance rules (D7).
 """

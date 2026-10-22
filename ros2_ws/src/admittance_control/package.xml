@@ -4,8 +4,12 @@
   <name>admittance_control</name>
   <version>1.0.0</version>
   <description>
-    UR5e task-space plane extraction and trajectory preparation pipeline
-    for Isaac Sim based admittance control workflows.
+    Vision-only robotic tack placement on a UR5e with a wrist RealSense: the
+    parts are registered to their CAD (pose-server bridge, FoundationPose
+    tracking, ICP, multi-view refinement), the weld seams and tacks are
+    computed from the registered geometry (weld_generator), and the tacks are
+    marked with a pen (collision model, planning, Cartesian descent). Also
+    holds the earlier admittance-control and drawing pipeline.
   </description>
   <maintainer email="cagdas96vkp@gmail.com">Cagdas</maintainer>
   <license>MIT</license>

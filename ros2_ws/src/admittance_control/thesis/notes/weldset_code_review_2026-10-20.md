@@ -77,7 +77,14 @@ Then compare the old and new tables stratum by stratum and say in the thesis wha
 ## Statements in the ICRA submission that do not match the code or the final batch
 
 From the harness/batch review (C6 §7, "High"). Fix in the camera-ready if accepted, and do not
-carry them into the thesis:
+carry them into the thesis.
+
+*Checked against the paper source on 2026-10-22* (`weld_generator/paper/icra2027/submission/root.tex`,
+identical to `main.tex`, 2026-09-18): items 1-10 are sentences of the paper (lines 79, 108, 174, 79
+and the Fig. 3 caption at 142, 149, 149, 206, 134, 194, 108). Items 11 and 12 are not in the paper:
+11 is MANUAL §8.3, 12 is MANUAL §9 and notebook 15. One more sentence of the paper does not match its
+own table (C6 #20): "\M7 localises the named seam within 1.5 mm on every class" (line 172), while
+Table II gives 1.55 mm for T.
 
 1. Densification: the paper says 0.5 mm; the code densifies at 1.0 mm (matching at 0.25 mm), and
    matching has no tolerance (only F1 does).

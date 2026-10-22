@@ -176,9 +176,10 @@ Regenerated 2026-10-20 from the chapters.
     fix and regenerate the affected strata on the desktop before the thesis numbers are frozen, or
     report them as limitations. And whether the ICRA submission needs corrections in the
     camera-ready (12 statements listed there).
-11. **The camera aim's Jacobian** (todo.md, 2026-10-20): fix `kinematics.ur5e_jacobian` and halve
+11. ~~**The camera aim's Jacobian** (todo.md, 2026-10-20): fix `kinematics.ur5e_jacobian` and halve
     the gain to keep the tested behaviour (then re-test on the robot), or keep the code and report
-    the achieved rates.
+    the achieved rates.~~ **Decided and done 2026-10-22:** fixed, the four angular values halved (the
+    achieved behaviour is unchanged in simulation). Left: re-record one aiming bag on the robot.
 
 ## Comparisons to dig out for Chapter 6 (later; the user, 2026-10-15)
 

@@ -4,7 +4,8 @@ Before the first capture the operator points (MediaPipe `Pointing_Up`) and the w
 camera turns until the index fingertip sits in the middle of the image. The camera turns
 about its own optical centre - its position is held - so the operator steers WHERE IT
 LOOKS and nothing else. scripts/camera_aim_node.py runs one `CameraAim.step` per control
-cycle (50 Hz) and streams the joint rates to the UR driver's forward_velocity_controller.
+cycle (125 Hz) and streams the joint rates, through the C++ aim_rate_relay, to the UR
+driver's forward_velocity_controller.
 
 One cycle, in order:
   1. the fingertip's ray, measured on an image ~0.1 s old, was turned into the BASE frame
@@ -15,7 +16,7 @@ One cycle, in order:
      image latency exactly - nothing is predicted;
   2. the angular error to camera rates (`aim_rates`): w_x = -K e_y, w_y = K e_x, behind a
      deadband with hysteresis (move when the fingertip leaves ~5 % of the image, stop
-     when it is back within 40 % of that), capped at ~15 deg/s. A P loop: an integral
+     when it is back within 40 % of that), capped at 7.5 deg/s. A P loop: an integral
      winds up over the ~0.1 s latency, a derivative of a hand landmark is noise;
   3. w_z holds the ROLL at home. Two rotations aim the optical axis; the third, about the
      axis itself, is the over-actuated one. Its twist relative to the home view
@@ -48,15 +49,19 @@ from .tack_reach import branch_signature
 @dataclass
 class AimConfig:
     #: camera rate (rad/s) per rad of fingertip error. The latency is compensated (see
-    #: the module doc), so the loop's lag is the smoother and the arm, ~0.15 s; 2.5 /s
-    #: keeps a ~50 deg phase margin even if the compensation is off (0.25 s)
-    gain_per_s: float = 2.5
+    #: the module doc), so the loop's lag is the smoother and the arm, ~0.15 s; 1.25 /s
+    #: keeps a ~70 deg phase margin even if the compensation is off (0.25 s).
+    #: The gain, the rate and acceleration caps and the roll gain are half the values the
+    #: robot was tested with on 2026-10-15/16: ur5e_jacobian's angular rows were doubled
+    #: then, so the arm turned at half the command. Halving them with the fix (2026-10-22)
+    #: keeps the tested speeds.
+    gain_per_s: float = 1.25
     deadband_frac: float = 0.05          # of the image width: start moving beyond this
     release_frac: float = 0.4            # ... and stop within this fraction of it
-    max_rate_deg_s: float = 15.0         # the aiming speed cap
-    max_acc_deg_s2: float = 60.0
+    max_rate_deg_s: float = 7.5          # the aiming speed cap
+    max_acc_deg_s2: float = 30.0
     smooth_tau_s: float = 0.06           # each of the two lags
-    roll_gain_per_s: float = 1.5
+    roll_gain_per_s: float = 0.75
     pan_limit_deg: float = 35.0          # from the home view
     tilt_limit_deg: float = 25.0
     limit_lookahead_s: float = 0.35      # ~ the stopping time from max_rate

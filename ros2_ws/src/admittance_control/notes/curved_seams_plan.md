@@ -338,7 +338,7 @@ so its tip is a point on the real part).
 - **"Invalid start / goal" on most transits.** It was not the time budget.
   `transit_model` sets the clearance to 90 % of an approach pose's own, and APS's 2 mm
   margin on top made that pose invalid, so OMPL's RRT-Connect threads never started.
-  The Python RRT-Connect fallback took 1.5–3 min per transit round E2's 34 boxes, and
+  The Python RRT-Connect fallback took 1.5–3 min per transit round the E2 scene's 34 boxes (E2's 33 and the plate), and
   the re-checks of APS paths, their smoothing and the TOTG samples ran in Python too.
   - **Fixed:** the margin is capped at half of the end poses' room.
   - Past `transit_budget_s` (now **2 s**, as asked) APS waits for a first path up to

@@ -201,6 +201,11 @@ does not pin down. Four layers guard against it.
 - **The check:** against the ISO 5817:2023 no. 617 fillet root-gap limit at
   `mv_quality_level` (default C), computed by weldgen's own `root_gap_limit` with
   a = 0.7·t: 1.06 / 1.62 / 2.68 mm at B / C / D for 8 mm plates.
+- **`t`:** the thinner member's gauge from its registry primitive, the same one the tack
+  rule uses (a plate's thickness, a pipe's wall, a band's min(band, height)); the
+  bounding box's smallest extent only for a part without a registered shape. Until
+  2026-10-22 the box was used for every part, which made a pipe's `t` its diameter
+  (C1: 62 mm, wall 3 mm; level C limit 1.62 mm on the 8 mm plate instead of 0.51 mm).
 - **Over the limit: a WARNING in the reply, never a rejection.** An operator who places a
   part too far off must be told, and a bad fit-up is information.
 - **Optional resting contact (`mv_resting_contact`, default OFF):** a gentle pull of those

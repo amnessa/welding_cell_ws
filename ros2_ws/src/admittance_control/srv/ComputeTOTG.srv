@@ -16,10 +16,12 @@ float64[] max_velocity
 float64[] max_acceleration
 
 # Max deviation at intermediate waypoints for corner blending (rad).
-# Larger → smoother corners but less path accuracy.  Default ~0.1
+# Larger → smoother corners but less path accuracy.  <= 0: 0.02
+# (totg_service_node; drawing_action_server sends 0.002)
 float64 path_tolerance
 
-# Desired output timestep for resampled trajectory (s).  Default ~0.1
+# Desired output timestep for resampled trajectory (s).  <= 0: 0.1
+# (drawing_action_server sends 0.01)
 float64 resample_dt
 ---
 # ── Response ─────────────────────────────────────────────────────────────
