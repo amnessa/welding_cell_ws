@@ -172,7 +172,9 @@ Regenerated 2026-10-20 from the chapters.
    Ch. 6, or WeldSet scores only and the robot run as future work? Their attribution (the
    footprint idea is İsmail Hoca's).
 9. **Tack ordering by a rough heat simulation** (todo.md, 2026-10-16): a section of Ch. 3
-   with results, or future work?
+   with results, or future work? Proposed 2026-10-26 (`notes/tack_ordering_plan.md`): gap-seeded
+   farthest-first sequencing in Ch. 3 with results in Ch. 6, the heat model as its tie-break and
+   regime map; a heat-optimising planner as future work.
 10. **The WeldSet code defects of 2026-10-20** (`notes/weldset_code_review_2026-10-20.md`, P1):
     fix and regenerate the affected strata on the desktop before the thesis numbers are frozen, or
     report them as limitations. And whether the ICRA submission needs corrections in the

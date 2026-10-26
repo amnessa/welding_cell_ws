@@ -429,6 +429,12 @@ estimated, so the thesis can report them. Per stage:
 
 ## OPEN — tack ordering by a rough heat simulation (asked 2026-10-16)
 
+**Plan (2026-10-26): `notes/tack_ordering_plan.md`.** Gap-seeded farthest-first sequencing, with the
+thermal kernel as its tie-break and as an analysis layer (a regime map), not as the optimiser. The
+notes below are the first idea; the plan corrects two of its premises: the heat between tacks along
+a seam is negligible at this scale, while across a web it is not; and Lowth et al. 2015 make the
+measured gap pick the first tack.
+
 - **What.** Choose the order of the tacks by simulating, roughly, the heat each tack puts
   into the parts. That replaces the fixed rule of the weld generator's `tackrule-0.1`
   (D38): both ends of a seam first, then bisection, same-class seams interleaved

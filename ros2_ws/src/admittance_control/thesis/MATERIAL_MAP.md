@@ -58,7 +58,7 @@ Missing-item tags:
 | 3.5 Perception (capture, SAM2, PPF, FoundationPose, tracking, saving, symmetric/cut tubes) | R: B1b §A (the Docker server step by step); R: D_papers §2.1-2.5; R: B1a C2-C4, E3; `notes/perception_aciklama.md` §6-12 (Turkish; the most detailed) | VERIFY 252 hypotheses on the desktop; the architecture figures (adapted from the papers) |
 | 3.6 Multi-view (views, capture, joint refinement, observability, self-calibration, acceptance, ISO fit-up) | R: B1a D1-D6 and algorithms 9-11; R: B2 @S 3.6; `notes/multiview_refine_plan.md` | OPEN: the table-anchored height; the self-calibration bench check |
 | 3.7 Seams (registry, planar, curved, fit-up, fallback) | R: B1a E1-E3 and algorithms 5-7; R: B2 @S 3.7; `notes/curved_seams_plan.md`, `seam_two_modes_plan.md` | DECIDE mode B (THESIS_PLAN #7) |
-| 3.8 Tacks | R: B1a E2; `weld_generator/weldgen/tacks.py`; R: B2 @S 3.8 | OPEN/DECIDE: heat-based ordering (#9), robot-aware placement (#1), tack length |
+| 3.8 Tacks | R: B1a E2; `weld_generator/weldgen/tacks.py`; R: B2 @S 3.8; tack sequencing: `ros2_ws/.../notes/tack_ordering_plan.md` | DECIDE: the sequencing (#9, plan written 2026-10-26), robot-aware placement (#1), tack length |
 | 3.9 Motion (collision, reach, descent, transits, marking) | R: B1a F1-F6 and algorithms 12-15; R: B2 @S 3.9; `notes/pen_marking_plan.md`, `aps_transit_plan.md` | OPEN: fixtures in marking.json; box-box clearance |
 | 3.10 Implementation (architecture, nodes, rates, state machine, C++, failing loudly) | R: B1b §E (per-node entries); R: B2 @S 3.10; README node reference | the architecture and state-machine figures; DECIDE the digital twin sentence |
 
