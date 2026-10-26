@@ -37,7 +37,7 @@ Missing-item tags:
 
 | Section | Material | Missing |
 |---|---|---|
-| Welding, tacks, standards | R: D_papers §L; V4 @S 3.8 (the verified pool evidence: Tomków, Mondal, Lowth, Noh, Asadi & Goldak, Jia); `weld_generator/notes/ISO 5817_Ed_4_2023.pdf`, ISO 9692-1 | JASS 6 / EN 1011-2 texts before citing the tack constants (Ch. 4 TODO); Noh 2022 and Asadi & Goldak 2011 into thesis.bib |
+| Welding, tacks, standards | R: D_papers §L; V4 @S 3.8 (the verified pool evidence: Tomków, Mondal, Lowth, Noh, Asadi & Goldak, Jia); `weld_generator/notes/ISO 5817_Ed_4_2023.pdf`, ISO 9692-1 | the tack constants against EN 1011-2:2001 cl. 13 and JASS 6 (2007) 4.13 d: checked 2026-10-26, DECIDE the rule (todo.md); Noh 2022 and Asadi & Goldak 2011 into thesis.bib |
 | Seam extraction from 3D | R: D_papers §B1-B3; R: C4, C5 (the seven methods, one paragraph each: mechanism, coarse stage, reading choices) | one paragraph per method |
 | Datasets and ground truth | R: D_papers §C | |
 | Pose estimation, tracking | R: D_papers §D1-E and the digests §2.1 (FoundationPose), §2.2 (SAM 2) | MegaPose is not in thesis.bib yet |

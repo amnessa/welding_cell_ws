@@ -162,33 +162,25 @@ Ch. 3 are right).
   Dockerfile and run scripts;
 - [ ] WeldSet corpus sizes and yields per stratum, twin-gate statistics, the final batch numbers.
 
-**Literature to fetch** (D_papers Part 4, "fetch first"). In `thesis/supply_papers/` since 2026-10-26:
-the Gesture Recognizer model card, SAM (Kirillov 2023), Chen & Medioni 1992, Tsai & Lenz 1989, Park &
-Martin 1994, Keselman 2017, Kunz & Stilman 2012, Geraerts & Overmars 2007, EN 1011-2:2001, MegaPose,
-CNOS, nvdiffrast, Hartley 2013, Censi 2007, Hogan 1985 Part II. Still to fetch (titles checked online
-2026-10-26):
-- [ ] Low 2004: Kok-Lim Low, "Linear Least-Squares Optimization for Point-to-Plane ICP Surface
-  Registration", Technical Report TR04-004, Department of Computer Science, UNC Chapel Hill, February
-  2004 (PDF on the author's NUS page).
-- [ ] Raveh, Enosh & Halperin 2011: "A Little More, a Lot Better: Improving Path Quality by a
-  Path-Merging Algorithm", IEEE Transactions on Robotics 27(2):365-371, doi:10.1109/TRO.2010.2098622
-  (preprint arXiv:1001.2391, titled "... by a Simple Path Merging Algorithm"). The hybridisation in APS.
-- [ ] Tsai, Park & Cheng 1999: "Welding Distortion of a Thin-Plate Panel Structure", Welding Journal
-  78(5):156s-165s. The joint rigidity method (tack ordering, future work).
-- [ ] Gelfand, Ikemoto, Rusinkiewicz & Levoy 2003: "Geometrically Stable Sampling for the ICP
-  Algorithm", 3DIM 2003 (Banff), pp. 260-267 (PDF on Rusinkiewicz's Princeton page). For the
-  observability of a registration (multi-view).
-- [ ] The touch-sensing source for Ch. 3 §3.1 "Vision only" (its first two sentences): Kah, Shrestha,
-  Hiltunen & Martikainen 2015, "Robotic arc welding sensors and programming in industrial
-  applications", International Journal of Mechanical and Materials Engineering 10:13,
-  doi:10.1186/s40712-015-0042-y (open access: wire or nozzle as the sensor, the 3D offset); for "slow"
-  a vendor page as `@misc`: Yaskawa Motoman, "Pros and Cons of Robotic Seam Finding and Seam
-  Tracking" (slower, conductive parts, little gap information), or Lincoln Electric, "Intelligent
-  Robotic Arc Sensing" (3-5 s of search per joint).
-- [ ] MediaPipe Hands: Zhang et al. 2020, "MediaPipe Hands: On-device Real-time Hand Tracking",
-  arXiv:2006.10214. (`MediaPipe.pdf` in the folder is the framework paper, Lugaresi et al. 2019.)
-- [ ] Intel's D400 tuning white paper (Grunnet-Jepsen et al.); JASS 6; Hogan 1985 Parts I (theory) and
-  III (applications), if cited.
+**Literature to fetch** (D_papers Part 4, "fetch first"): **all in `thesis/supply_papers/`** since
+2026-10-26: the Gesture Recognizer model card, MediaPipe Hands (Zhang 2020), SAM (Kirillov 2023), Chen &
+Medioni 1992, Low 2004 (TR04-004), Gelfand et al. 2003, Censi 2007, Tsai & Lenz 1989, Park & Martin 1994,
+Keselman 2017, Intel's D400 tuning white paper (Grunnet-Jepsen et al., rev. 1.9), Kunz & Stilman 2012,
+Geraerts & Overmars 2007, Raveh et al. 2011, MegaPose, CNOS, nvdiffrast, Hartley 2013, Hogan 1985 Parts
+I-III, Tsai, Park & Cheng 1999, Kah et al. 2015 (the touch-sensing source), EN 1011-2:2001 and JASS 6
+(the English version of the 2007 edition, printed 2012). (`MediaPipe.pdf` is the framework paper,
+Lugaresi et al. 2019.) In `thesis.bib` so far, from the PDFs: `en1011_2`, `jass6`, and Kobe Steel's
+tack-welding page (`kobelco_tack`, for the ~400 mm pitch). Still to do:
+- [ ] write bib entries for the others as they are cited, every field from the PDF;
+- [ ] the touch-sensing citation in Ch. 3 §3.1 (Kah et al. 2015; a vendor page for the search time);
+- [ ] DECIDE: the tack rule against the standards (checked 2026-10-26, Ch. 4 §Tack Placement Rule).
+  EN 1011-2 cl. 13: a tack of at least 50 mm, below 12 mm at least 4 x the THICKER part. JASS 6 (2007)
+  4.13 d(4), Table 4.6: at least 30 mm (t <= 6) / 40 mm (t > 6) of the larger member, leg >= 4 mm, the
+  intervals only "as required" (the ~400 mm pitch is Kobe Steel's). tackrule-0.1 takes 4t from the
+  THINNEST workpiece: right on equal plates for EN 1011-2, short on a thin part against a thick one, and
+  below JASS 6's 40 mm on 8 mm plates (32 mm); its 10t-33t spacing has no source. Keep it and state
+  this (Ch. 4 does now), or a tackrule-0.2 (t of the thicker member; a 40 mm floor?) re-applied on the
+  desktop with `scripts/apply_rule_blocks.py`; the cell follows the same rule.
 Verify every bib field against the PDF.
 
 ## NEXT (2026-10-08): CAD parts for the strata MDF cannot make

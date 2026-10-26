@@ -1971,7 +1971,7 @@ perception and motion: every step after saving reads it.
 \toprule
 Node & Executable & Role \\
 \midrule
-Camera & \texttt{realsense\_\allowbreak{}camera\_\allowbreak{}node} & colour and aligned depth, $1280\times720$, 30~Hz, stamped at the colour frame's mid-exposure; with \texttt{depth\_image\_proc}, the organized cloud \\
+Camera & \texttt{realsense\_\allowbreak{}camera\_\allowbreak{}node} & colour and aligned depth, $1280\times720$, 30~Hz; with \texttt{depth\_image\_proc}, the organized cloud \\
 Frames & \texttt{robot\_\allowbreak{}state\_\allowbreak{}publisher},\newline\texttt{camera\_\allowbreak{}extrinsic\_\allowbreak{}tf\_\allowbreak{}publisher} & the calibrated kinematic chain; the extrinsic as a static transform \\
 Registration bridge & \texttt{foundationpose\_\allowbreak{}bridge\_\allowbreak{}node} & capture, clicks and the request to the desktop server; publishes the detection, stamped with the frozen frame's stamp \\
 Tracker client & \texttt{fp\_\allowbreak{}tracker\_\allowbreak{}node} & streams frames to the laptop tracker; publishes the tracked pose; re-seeds on loss \\

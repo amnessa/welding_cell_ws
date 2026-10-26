@@ -417,9 +417,13 @@ to one recorded centre tack when too short; closed loops take an even n ≥ 4 wi
 deterministic phase from `sha256(scene_id, seam_id)` (D39 — any tack scoring on a
 closed seam must be rotation-invariant); a stored weld order (ends → centre →
 bisection; opposite pairs on loops) staggers same-class seams round-robin. Provenance
-stated plainly: shop-practice conventions (JASS 6 via the Kobelco handbook for
-spacing; EN 1011-2 for tack length, attributed not verified; Tomków et al. 2020 as the
-literature anchor). Every constant is a parameter.
+(checked against the texts 2026-10-26): shop-practice conventions. The 4t / 50 mm length
+is EN 1011-2:2001 cl. 13, which reads 4 × the thicker part where this rule takes the
+thinner; JASS 6 (2007) 4.13 d asks for 30 / 40 mm (t ≤ 6 / t > 6, of the larger member)
+and gives no pitch; the 400 mm ceiling is the pitch in Kobe Steel's table of the JASS 6
+lengths ("How to Carry Out Tack Welding"); the 10t-33t thickness scaling of the spacing
+is the rule's own; Tomków et al. 2020 is the literature anchor. Every constant is a
+parameter.
 
 Both blocks were **retro-applied** to the finished corpus (`apply_rule_blocks.py`) —
 the design's whole point — so `bench_phase4` is the tack-complete corpus with its

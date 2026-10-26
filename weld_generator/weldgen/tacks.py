@@ -38,12 +38,22 @@
     with both effective endpoints mandatory it breaks the `d_max` bound the rule
     guarantees, and the two constraints cannot both hold.
 
-    Provenance of the constants, stated plainly: these are SHOP-PRACTICE conventions,
-    not code limits. The thickness scaling and the 400 mm ceiling are attributed to
-    JASS 6 via the Kobelco handbook; the 4t/50 mm tack length is attributed to
-    EN 1011-2 (NOT verified against the standard's text — we do not hold it); Tomków,
-    Sobota & Krajewski 2020 is the literature anchor named by the plan. Every constant
-    is a parameter of the rule, so nobody argues with 33 — they re-run it.
+    Provenance of the constants, checked against the texts on 2026-10-26: these are
+    SHOP-PRACTICE conventions, not code limits.
+      * EN 1011-2:2001 cl. 13: a tack of at least 50 mm, and below 12 mm at least 4 x the
+        THICKER part. That is the 4t / 50 mm here, except that `t` here is the thinnest
+        workpiece: on parts of unequal thickness these tacks are shorter than it asks.
+      * JASS 6 (2007, English version) 4.13 d(4), Table 4.6: at least 30 mm (t <= 6) /
+        40 mm (t > 6), t of the larger member, leg >= 4 mm; the intervals only "as
+        required" to hold the shape and avoid cracking. 4t on 8 mm plates (32 mm) is below
+        its 40 mm.
+      * Kobe Steel ("How to Carry Out Tack Welding", The ABC's of Arc Welding), tabulating
+        the same lengths: a pitch of about 400 mm or shorter. That is the 400 mm ceiling
+        here (JASS 6 itself gives no pitch).
+      * The thickness scaling of the spacing (10t floor, 33t ceiling) is in none of them:
+        it is this rule's own.
+    Tomków, Sobota & Krajewski 2020 is the literature anchor named by the plan. Every
+    constant is a parameter of the rule, so nobody argues with 33 — they re-run it.
 
     Which seams: PRIMARY (weldable AND matches_joint_type) — you tack what you weld.
 """

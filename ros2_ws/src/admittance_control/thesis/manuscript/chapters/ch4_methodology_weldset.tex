@@ -382,15 +382,26 @@ closed seam.}
 
 The phase of a closed loop is taken from a hash, so that the layout is deterministic and
 seed-free and the tacks do not always start at the stored curve's first point; any score on a
-closed seam must therefore be invariant to rotation along the loop. The constants are shop conventions: the thickness-scaled spacing
-and the 400 mm ceiling follow JASS 6 (through the Kobelco handbook), and the tack length is
-attributed to EN 1011-2. The experimental literature does not fix them: it shows that the number
+closed seam must therefore be invariant to rotation along the loop. The constants are shop
+conventions, and only some of them have a written source. EN~1011-2 recommends a tack of at least
+50~mm and, for material thinner than 12~mm, at least four times the thickness of the thicker part
+\cite{en1011_2}. JASS~6, the Japanese specification for steel structures, asks for at least 30~mm
+up to 6~mm and 40~mm above, read from the thicker member, with a leg of at least 4~mm, and leaves the
+intervals to what keeps the parts in shape and the tacks free of cracks \cite{jass6}. Kobe Steel,
+tabulating the same lengths, adds a pitch of about 400~mm or less \cite{kobelco_tack}. The rule takes
+its length $4t$, capped at 50~mm, from EN~1011-2 and its 400~mm ceiling from that pitch, but it reads
+$t$ from the thinnest workpiece. On parts of equal thickness it therefore meets EN~1011-2; on a thin
+part against a thick one its tacks are shorter than both standards ask, and on 8~mm plates its 32~mm
+is below the 40~mm of JASS~6. The scaling of the spacing with the thickness ($10t$ to $33t$) is in
+none of these sources: it is the rule's own convention. The experimental literature does not fix the constants either: it shows that the number
 and placement of tacks change the distortion, in directions that depend on the process (on thin
 TIG sheet, Tomk\'ow et al.\ \cite{tomkow2020tacks} found that more tacks gave more angular
 distortion; on single-sided fillets, Mondal et al.\ \cite{mondal2015tacking} found tacks on both
 sides best).
-\TODO{Obtain the JASS 6 / EN 1011-2 texts before citing (the length rule is attributed, not
-verified against the standard).}
+\TODO{DECIDE (notes/todo.md): keep tackrule-0.1 and state these differences, or a tackrule-0.2
+with $t$ from the thicker member (and the 40~mm floor of JASS~6?), re-applied to the corpora on the
+desktop (scripts/apply\_rule\_blocks.py). JASS~6 is cited from its English version of the 2007
+edition (\S4.13~d, Table~4.6); a 2018 Japanese edition exists and is not in hand.}
 \SRC{weldgen/tacks.py; MANUAL.md \S10; scripts/apply\_rule\_blocks.py.}
 
 % -------------------------------------------------------------------------------------
