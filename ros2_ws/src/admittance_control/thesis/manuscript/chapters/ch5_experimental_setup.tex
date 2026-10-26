@@ -39,13 +39,13 @@ Component & Model & Role \\
 Manipulator & Universal Robots UR5e, factory-calibrated kinematics, flange F/T sensor & motion; force sensing \\
 Camera & Intel RealSense D435 series (VERIFY D435/D435i), eye-in-hand & RGB-D, $1280\times720$, 30~Hz \\
 Tool & pen in a 3D-printed holder with the camera mount & marks in place of a torch \\
-Desktop & NVIDIA RTX 5070 Ti & registration (SAM2, PPF, FoundationPose) \\
+Desktop & AMD Ryzen 7 5700X (8 cores, 16 threads); NVIDIA RTX 5070 Ti, 16~GB & registration (SAM2, PPF, FoundationPose); the WeldSet corpora and batch \\
 Laptop & AMD Ryzen 7 7840HS (8 cores, 16 threads), about 32~GB RAM; NVIDIA RTX 4060 Laptop GPU, 8~GB & ROS~2, tracking, refinement, planning, robot interface \\
 Table & the robot's table, measured as a tilted plane (\S\ref{sec:cal_table}) & the height reference \\
 \bottomrule
 \end{tabular}
 \end{table}
-\TODO{ASK: the desktop's CPU and RAM; the UR5e payload and centre-of-gravity setting used with the
+\TODO{ASK: the desktop's RAM; the UR5e payload and centre-of-gravity setting used with the
 tool; the controller software version. (The laptop's CPU was read in the development container, which
 sees about 31~GiB of its RAM.)}
 
@@ -226,6 +226,6 @@ the laptop's copies are stale. The batch runs the seven literature methods over 
 the same 720 scenes, on clean clouds only, in both views, with the same 3~mm tolerance, and without
 the fixture twins and the L1 level.
 \TODO{DESKTOP: corpus sizes and yields per stratum; the final batch (271\,200 rows; about 10.5~h on
-the desktop); the CPU; the pinned versions (NumPy, trimesh, Python), since the content hashes depend
+the desktop); the pinned versions (NumPy, trimesh, Python), since the content hashes depend
 on them; the rendered set train\_v1 and the Isaac Sim version.}
 \SRC{weld\_generator MANUAL.md \S7, \S8.3; scripts/run\_phase4\_batch.py; memory: project state.}

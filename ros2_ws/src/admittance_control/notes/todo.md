@@ -81,8 +81,9 @@ index `thesis/MATERIAL_MAP.md`). Nothing in the code was changed.
   or mirror. **Done 2026-10-22**, all but the last: `contact_error.py` and `aim_bag_report.py` are now
   installed; `MarkingConfig` keeps its defaults, with a docstring saying marking.json overrides two of
   them; E2 is 33 boxes, its scene 34 (both comments were right about different things).
-- [ ] DECIDE: delete `scripts/scripts_in_foundationpose/foundationpose_bridge_node.py` (the old copy of
-  the bridge) or mirror the live one into it.
+- [x] DECIDE: delete `scripts/scripts_in_foundationpose/foundationpose_bridge_node.py` (the old copy of
+  the bridge) or mirror the live one into it. **Done 2026-10-26**: deleted here and in the FoundationPose
+  container.
 
 - [x] `seam_from_registration.compute_tacks` hands weldgen's tack rule `primitive = "sweptslab"` and no
   `params`, so `tacks._member_gauge_mm`'s swept-band case (`"swept_slab"`, z0/z1) never fires: the
@@ -105,6 +106,27 @@ strata on the desktop). THESIS_PLAN decision #10.
 section). Fix in the camera-ready if accepted; do not carry them into the thesis. (Checked against the
 paper source 2026-10-22: items 1-10 are in the paper, 11-12 are in MANUAL §8.3/§9 and notebook 15, and
 one more paper sentence disagrees with its own Table II: "within 1.5 mm on every class", T is 1.55 mm.)
+
+False icra statements:
+
+## The 12 ICRA statements
+
+I checked these against `weld_generator/paper/icra2027/submission/root.tex` (dated 2026-09-18). If the version you submitted from the desktop differs, the line numbers may shift.
+
+1. **Line 79:** "densified to 0.5 mm spacing and matched at a tolerance τ = 3 mm". The code densifies at 1.0 mm and matches seams on 0.25 mm samples. The matching has no tolerance; only F1 uses τ.
+2. **Line 108:** "M1 gives 0.60 mm RMSE and 0.81 mm mean error". The 0.81 is the maximum error (`me = d.max()`).
+3. **Line 174:** "Every method runs in well under 4 s per scene." The paper's own cost table shows M6 at 5.01 s and M3 at L1 at 10.42 s.
+4. **Line 79 and the Fig. 3 caption:** Task 1 is "every weldable seam". The batch scores only the primary seams, so other weldable seams count as false positives (64 seams in 29 of 60 butt scenes).
+5. **Line 149:** M2's crop "carries more than any other in the ladder (0.58 → 0.11)". M7 drops 0.87 → 0.00 and M5 drops 0.64 → 0.00.
+6. **Line 149:** for M3, "corners and butts… return nothing". Square butts score 0.27 and arc butts 0.49; only corner and grooved are 0.00.
+7. **Line 206:** our extractor scores "below 0.05 precision on edge joints". That is an older full-geometry measurement; notebook 12 shows 0.199, and the extractor has no rows in the final batch.
+8. **Line 134:** "both curved butt strata". There is only one, the arc butt.
+9. **Line 194:** "on fillets 1.3 mm from the root against 2.0 mm". That holds for T joints only (4 scenes); corners give 1.00 mm nominal, 1.03 mm root and 0.96 mm gap-midline.
+10. **Line 108:** M3 "median 0.51 mm RMSE on corner joints". That is the value from before the fidelity audit. After it, the reproduction test records 0.112 mm RMSE on one corner scene, and M3's benchmark corner F1 is 0.00.
+11. **Not in the paper (MANUAL §8.3):** "~64 h on a 16-core laptop" was the first run, on 2026-09-05. The final run took about 10.5 h on the desktop.
+12. **Not in the paper (MANUAL §9 and notebook 15 text):** written before the fidelity audit. For example, "plane intersection scores zero on every curved family" is wrong (PPF scores 0.27–0.37), and LOBB is not "the only method non-zero".
+
+The review list also missed one mismatch in the paper. Line 172 says M7 "localises the named seam within 1.5 mm on every class", but Table II gives 1.55 mm for T.
 
 **From the 2026-10-01 advisor meeting, not listed before** (review V4, the meeting table)
 - [ ] Next-best view when two parts score close in PPF (the advisor: "a very interesting topic",
@@ -129,7 +151,8 @@ Ch. 3 are right).
 - [ ] the pen holder's printer, filament and infill; the pen (make, tip); is the clamp rigid?
 - [ ] the parts' filament (PLA?); their measured dimensions (callipers); the real MDF thickness; which
   base plate each experiment used;
-- [ ] the UR5e payload/CoG setting with the tool; CPU and RAM of both machines; the controller version;
+- [ ] the UR5e payload/CoG setting with the tool; the desktop's RAM (the CPUs, 2026-10-26: desktop AMD
+  Ryzen 7 5700X, laptop AMD Ryzen 7 7840HS; in Ch. 5); the controller version;
 - [ ] how the true weld root is measured for the mark error (instrument, resolution).
 
 **Thesis: on the desktop (DESKTOP)**
@@ -139,12 +162,34 @@ Ch. 3 are right).
   Dockerfile and run scripts;
 - [ ] WeldSet corpus sizes and yields per stratum, twin-gate statistics, the final batch numbers.
 
-**Literature to fetch** (D_papers Part 4, "fetch first"): MediaPipe Hands + the Gesture Recognizer model
-card; Kirillov 2023 (SAM); Chen & Medioni 1992 and Low 2004; Tsai & Lenz 1989, Park & Martin 1994;
-Keselman 2017 + Intel's D400 depth white paper; Kunz & Stilman 2012; Geraerts & Overmars 2007 and
-Raveh et al. 2011; the ISO/EN tack-weld clauses (JASS 6, EN 1011-2); Tsai et al. 1999; a touch-sensing
-source; MegaPose (Labbé 2022), CNOS, nvdiffrast; Hartley 2013 (rotation averaging); Gelfand 2003 /
-Censi 2007 (ICP observability); Hogan 1985 (impedance). Verify every bib field against the PDF.
+**Literature to fetch** (D_papers Part 4, "fetch first"). In `thesis/supply_papers/` since 2026-10-26:
+the Gesture Recognizer model card, SAM (Kirillov 2023), Chen & Medioni 1992, Tsai & Lenz 1989, Park &
+Martin 1994, Keselman 2017, Kunz & Stilman 2012, Geraerts & Overmars 2007, EN 1011-2:2001, MegaPose,
+CNOS, nvdiffrast, Hartley 2013, Censi 2007, Hogan 1985 Part II. Still to fetch (titles checked online
+2026-10-26):
+- [ ] Low 2004: Kok-Lim Low, "Linear Least-Squares Optimization for Point-to-Plane ICP Surface
+  Registration", Technical Report TR04-004, Department of Computer Science, UNC Chapel Hill, February
+  2004 (PDF on the author's NUS page).
+- [ ] Raveh, Enosh & Halperin 2011: "A Little More, a Lot Better: Improving Path Quality by a
+  Path-Merging Algorithm", IEEE Transactions on Robotics 27(2):365-371, doi:10.1109/TRO.2010.2098622
+  (preprint arXiv:1001.2391, titled "... by a Simple Path Merging Algorithm"). The hybridisation in APS.
+- [ ] Tsai, Park & Cheng 1999: "Welding Distortion of a Thin-Plate Panel Structure", Welding Journal
+  78(5):156s-165s. The joint rigidity method (tack ordering, future work).
+- [ ] Gelfand, Ikemoto, Rusinkiewicz & Levoy 2003: "Geometrically Stable Sampling for the ICP
+  Algorithm", 3DIM 2003 (Banff), pp. 260-267 (PDF on Rusinkiewicz's Princeton page). For the
+  observability of a registration (multi-view).
+- [ ] The touch-sensing source for Ch. 3 §3.1 "Vision only" (its first two sentences): Kah, Shrestha,
+  Hiltunen & Martikainen 2015, "Robotic arc welding sensors and programming in industrial
+  applications", International Journal of Mechanical and Materials Engineering 10:13,
+  doi:10.1186/s40712-015-0042-y (open access: wire or nozzle as the sensor, the 3D offset); for "slow"
+  a vendor page as `@misc`: Yaskawa Motoman, "Pros and Cons of Robotic Seam Finding and Seam
+  Tracking" (slower, conductive parts, little gap information), or Lincoln Electric, "Intelligent
+  Robotic Arc Sensing" (3-5 s of search per joint).
+- [ ] MediaPipe Hands: Zhang et al. 2020, "MediaPipe Hands: On-device Real-time Hand Tracking",
+  arXiv:2006.10214. (`MediaPipe.pdf` in the folder is the framework paper, Lugaresi et al. 2019.)
+- [ ] Intel's D400 tuning white paper (Grunnet-Jepsen et al.); JASS 6; Hogan 1985 Parts I (theory) and
+  III (applications), if cited.
+Verify every bib field against the PDF.
 
 ## NEXT (2026-10-08): CAD parts for the strata MDF cannot make
 

@@ -163,8 +163,9 @@ Regenerated 2026-10-20 from the chapters.
    - *From CAD to Tack: Registration-Based Weld Seam Computation and Robotic Validation*
 5. **Jury** (3 members, at least one from outside METU?) and the defence date: these
    decide the deadlines (draft to the institute ≥ 1 month before).
-6. The advisor's **title and surname**, the head of the programme, the FBE director: all
-   placeholders in `thesis.tex`.
+6. ~~The advisor's **title and surname**~~ (filled 2026-10-26: supervisor Assoc. Prof. Dr. Ahmet
+   Buğra Koku, co-supervisor Prof. Dr. Erol Şahin; their departments to check), the head of the
+   programme, the FBE director: still placeholders in `thesis.tex`.
 7. **Mode B** (seams without CAD): probably dropped from the thesis (the user, 2026-10-15:
    too much effort for little gain in a robotics thesis). Not yet decided.
 8. **The two proposed extractors on the robot** (footprint, seamfind): real-scan results in

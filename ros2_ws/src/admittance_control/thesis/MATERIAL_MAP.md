@@ -42,8 +42,8 @@ Missing-item tags:
 | Datasets and ground truth | R: D_papers §C | |
 | Pose estimation, tracking | R: D_papers §D1-E and the digests §2.1 (FoundationPose), §2.2 (SAM 2) | MegaPose is not in thesis.bib yet |
 | Registration (ICP, PPF, descriptors) | R: D_papers §F1-F3, digests §2.4-2.5 | |
-| Calibration | R: D_papers §I | a hand-eye survey; a touch-sensing source (Ch. 3 TODO) |
-| Planning | R: D_papers §J, digests §2.6-2.7; V4 (Liu 2023: eight cylinders, a cable-twist term; Jia 2025: linear moves between tacks) | Geraerts & Overmars (shortcutting), Raveh et al. (hybridisation): not in the folders |
+| Calibration | R: D_papers §I | a hand-eye survey; a touch-sensing source (Ch. 3 TODO; candidates in `notes/todo.md`) |
+| Planning | R: D_papers §J, digests §2.6-2.7; V4 (Liu 2023: eight cylinders, a cable-twist term; Jia 2025: linear moves between tacks) | Raveh et al. (hybridisation): not in the folders (Geraerts & Overmars is in `supply_papers/` since 2026-10-26) |
 | HRI and gestures | R: D_papers §K, digest §2.3 | the MediaPipe Hands paper and the Gesture Recognizer model card (VERIFY entries in thesis.bib) |
 
 ## Chapter 3: Methodology, the cell (`manuscript/chapters/ch3_methodology_cell.tex`)
@@ -79,7 +79,7 @@ Missing-item tags:
 
 | Section | Material | Missing |
 |---|---|---|
-| Robot, camera, tool | R: B1b §B.1 (the holder CAD and envelope); `config/pen_tool.json` | ASK: printer, filament and infill of the holder; the pen; the payload setting; CPU/RAM; photo |
+| Robot, camera, tool | R: B1b §B.1 (the holder CAD and envelope); `config/pen_tool.json` | ASK: printer, filament and infill of the holder; the pen; the payload setting; the desktop's RAM; photo |
 | Software | `tab:software` (laptop versions read 2026-10-20) | DESKTOP: the Docker image's versions and Dockerfile |
 | Test parts | R: B1b §B.2 (dimensions from the CADs and the registry); `notes/curved_parts_print_list.md` | ASK: filament (PLA?), measured dimensions, real MDF thickness, which base plate per experiment |
 | Measuring the error, procedure | R: B1b §C.8 (probes); README Gotchas | DECIDE: how the true root is measured; the repeated trials (positioning.md) |

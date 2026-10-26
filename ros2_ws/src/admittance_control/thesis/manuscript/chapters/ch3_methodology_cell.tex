@@ -78,8 +78,9 @@ how far the pen met the real surface from where the registration put it
 (Equation~\ref{eq:touch}). Neither role corrects the registration or the position of a tack:
 both come from the camera alone. Only along the pen's own axis does the contact decide where a dot
 lands, because the descent stops where it meets the surface (\S\ref{sec:mc_marking}).
-\TODO{Cite a touch-sensing source (an industrial seam-finding manual or a review) for the first
-two sentences; not in the paper pool yet.}
+\TODO{Cite a touch-sensing source for the first two sentences: Kah et al.\ 2015 (a review, open
+access) for what touch sensing is, and a vendor page (Yaskawa Motoman or Lincoln Electric) for its
+search time per joint; the full references are in notes/todo.md.}
 
 \paragraph{Two computers.} The work is split by what each stage needs. Registration is rare and
 heavy: it runs on a desktop with an NVIDIA RTX 5070 Ti, in a Docker container that holds the
