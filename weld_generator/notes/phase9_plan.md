@@ -1,5 +1,9 @@
 # Phase 9 plan — the real subset (written 2026-09-21)
 
+**2026-10-27: superseded in scope by `phase9_real_set_plan.md`** (the parts arrived: 66
+configurations in ~9 working days; no Ø114.3 was delivered; 304 is non-magnetic). The rules
+below (truth, reuse, exclusions) still hold.
+
 *Companion to `dataset_plan.md` Phase 9. What the real subset is for, how its truth is
 constructed, what to cut and buy, the 120-configuration matrix, the capture protocol,
 and the order of work. Ranges quoted below are the generator's, measured on
