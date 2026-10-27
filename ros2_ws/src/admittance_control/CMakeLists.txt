@@ -123,6 +123,7 @@ install(
     admittance_control/selfcal.py
     admittance_control/fp_stream.py
     admittance_control/frame_stamp.py
+    admittance_control/tack_order.py
   DESTINATION ${PYTHON_INSTALL_DIR}/${PROJECT_NAME}
 )
 

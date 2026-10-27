@@ -435,6 +435,16 @@ notes below are the first idea; the plan corrects two of its premises: the heat 
 a seam is negligible at this scale, while across a web it is not; and Lowth et al. 2015 make the
 measured gap pick the first tack.
 
+**2026-10-27: steps 1–4 done.**
+- [x] The literature is read in its PDFs: Gonzalez, Carslaw & Jaeger, Wärmefjord, both Jonsson
+  papers (the Welding Journal one is October 1985, 296-s–301-s), Abid & Siddique, Hatala.
+- [x] Where the gap is: `fitup_along_mm`, `gap_profile`, `gap_at`.
+- [x] `tack_order.py` and its tests.
+- [x] The node's `tack_order` parameter (default `seam`), and per-step times in
+  tack_marks.json.
+- [ ] Run on the bench: O1 against O3 (and O2), 3 runs each, then the measured step times
+  into the heat model (plan steps 5–7).
+
 - **What.** Choose the order of the tacks by simulating, roughly, the heat each tack puts
   into the parts. That replaces the fixed rule of the weld generator's `tackrule-0.1`
   (D38): both ends of a seam first, then bisection, same-class seams interleaved

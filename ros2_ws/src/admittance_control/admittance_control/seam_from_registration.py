@@ -124,7 +124,12 @@ def runtime_access(parts, pose_tol_mm: float = 10.0,
 
 
 def _face_corners(part, face: str) -> np.ndarray:
-    """The four world corners of a slab face."""
+    """The world corners of a face: the four of a slab face, or the primitive's own
+    `face_vertices` where it has them (a prism's polygon cap and side rectangles, the
+    prepared shapes). Before 2026-10-27 only slab faces were handled and a prism's side
+    face `s0` raised here; the registry builds no prisms yet, the real set's plates will."""
+    if hasattr(part, "face_vertices"):
+        return np.asarray(part.face_vertices(face), dtype=float)
     half = np.asarray(part.dims_mm, dtype=float) / 2.0
     axis = "uvw".index(face[1]); sign = 1.0 if face[0] == "+" else -1.0
     others = [k for k in range(3) if k != axis]
@@ -138,11 +143,16 @@ def _face_corners(part, face: str) -> np.ndarray:
     return np.asarray(corners) @ T[:3, :3].T + T[:3, 3]
 
 
-def _edge_fitup(part, face: str, plane) -> tuple[float, float]:
-    """Signed distance (mm) of the face's near edge to the other part's plane: the two
-    corners closest to that plane, sorted. Positive = gap, negative = penetration."""
-    d = np.sort(plane.n @ _face_corners(part, face).T + plane.d)
-    return float(d[0]), float(d[1])
+def _edge_fitup_ends(part, face: str, plane) -> tuple[np.ndarray, np.ndarray]:
+    """The face's near edge: its two corners closest to the other part's plane and their
+    signed distances (mm; positive = gap, negative = penetration), in corner order. Until
+    2026-10-27 `_edge_fitup` returned only the two distances, sorted, so where along the
+    seam the gap is smallest was lost; the tack sequencing's first tack goes there
+    (notes/tack_ordering_plan.md step 2)."""
+    c = _face_corners(part, face)
+    d = plane.n @ c.T + plane.d
+    k = np.argsort(d)[:2]
+    return c[k], d[k]
 
 
 def _extends_beyond(part, face: str, plane, pose_tol: float) -> str:
@@ -278,7 +288,7 @@ def judge_registered(A, fa: str, B, fb: str, ref: tuple[str, str], solids, acces
     if "behind" in reach:
         return None                    # one face is on the far side of the other part
 
-    fitup = {A.id: _edge_fitup(A, fa, pb), B.id: _edge_fitup(B, fb, pa)}
+    fitup = {A.id: _edge_fitup_ends(A, fa, pb), B.id: _edge_fitup_ends(B, fb, pa)}
     theta = acc.dihedral_deg(na, nb)
     bis = na + nb
     bis_norm = float(np.linalg.norm(bis))
@@ -344,6 +354,23 @@ def enumerate_registered(parts, access: dict[str, Any], acc, samples_along: int 
     return out
 
 
+def _fitup_along(seam: dict[str, Any], ends) -> dict[str, list[list[float]]] | None:
+    """`{part_id: [[s_mm, gap_mm], [s_mm, gap_mm]]}`: each member's two near-edge corners
+    placed along the seam (arclength from the FINAL `p0_mm`, by projection; a corner may
+    sit a little outside 0..length where the edge outruns the seam), with their signed
+    distances. The edge is straight, so the gap is linear between them (`gap_at`)."""
+    if not ends or seam["p0_mm"] is None or seam["length_mm"] <= 1e-6:
+        return None
+    p0 = np.asarray(seam["p0_mm"], float)
+    u = np.asarray(seam["p1_mm"], float) - p0
+    u /= np.linalg.norm(u)
+    out = {}
+    for k_, (xyz, d) in ends.items():
+        s_ = (np.asarray(xyz, float) - p0) @ u
+        out[k_] = [[float(s_[i]), float(d[i])] for i in np.argsort(s_)]
+    return out
+
+
 def compute_seams(parts, access: dict[str, Any] | None = None,
                   density_per_mm: float = 1.0, weldgen_path: str | None = None
                   ) -> list[dict[str, Any]]:
@@ -363,8 +390,9 @@ def compute_seams(parts, access: dict[str, Any] | None = None,
             "length_mm": float(c.length_mm),
             # signed mm of each member's near edge to the other's face plane, per part
             # id: > 0 gap, < 0 penetration; the abutting member is the one within tol
-            "fitup_mm": None if fitup is None else {k_: [float(a), float(b)]
-                                                   for k_, (a, b) in fitup.items()},
+            "fitup_mm": None if fitup is None else {k_: [float(d.min()), float(d.max())]
+                                                   for k_, (_, d) in fitup.items()},
+            "_fitup_ends": fitup,                    # -> fitup_along_mm once p0 is final
             "pose_tol_mm": float(access["pose_tol_mm"]),
             "p0_mm": None if c.p0 is None else [float(x) for x in c.p0],
             "p1_mm": None if c.p1 is None else [float(x) for x in c.p1],
@@ -383,6 +411,8 @@ def compute_seams(parts, access: dict[str, Any] | None = None,
         if d[int(np.argmax(np.abs(d)))] < 0:
             s["p0_mm"], s["p1_mm"] = s["p1_mm"], s["p0_mm"]
             s["polyline_mm"] = s["polyline_mm"][::-1]
+    for s in seams:
+        s["fitup_along_mm"] = _fitup_along(s, s.pop("_fitup_ends"))
     # pairs with a curved part: the intersection of the registered surfaces
     # (curved_seams.py, notes/curved_seams_plan.md step 2); closed seams have no ends
     # to orient, open ones are oriented as above with their per-point frames
@@ -399,6 +429,10 @@ def compute_seams(parts, access: dict[str, Any] | None = None,
                         for k_ in ("polyline_mm", "n_a_per_point", "n_b_per_point",
                                    "approach_per_point"):
                             s[k_] = s[k_][::-1]
+                        if s.get("fitup_along_mm"):
+                            L = float(s["length_mm"])
+                            s["fitup_along_mm"] = {m: [[L - a, g] for a, g in v[::-1]]
+                                                   for m, v in s["fitup_along_mm"].items()}
                 seams.append(s)
     seams.sort(key=lambda s: (not s["weldable"], -s["length_mm"]))
     for k, s in enumerate(seams):
@@ -579,6 +613,38 @@ def abutting_fitup(seam: dict[str, Any]) -> tuple[str, float, float] | None:
     if min(abs(lo), abs(hi)) > tol:
         return None
     return best[0], lo, hi
+
+
+def gap_profile(seam: dict[str, Any]) -> tuple[str, np.ndarray, np.ndarray] | None:
+    """`(part_id, s_mm, gap_mm)`: the abutting member's signed gap along the seam, by
+    arclength from `p0_mm` - its two near-edge corners on a plate seam (the gap is linear
+    between them), one value per polyline point on a curved seam. None when no member
+    abuts within the pose tolerance or the seam was saved before 2026-10-27."""
+    f = abutting_fitup(seam)
+    along = seam.get("fitup_along_mm")
+    if f is None or not along or f[0] not in along:
+        return None
+    a = np.asarray(along[f[0]], dtype=float)
+    return f[0], a[:, 0], a[:, 1]
+
+
+def gap_at(seam: dict[str, Any], s_mm: float) -> float | None:
+    """The abutting member's signed gap (mm) at arclength `s_mm` along the seam: linear
+    through the two edge corners on a plate seam (extrapolated past them, the edge being
+    straight), interpolated between the points of a curved one (periodic on a loop)."""
+    g = gap_profile(seam)
+    if g is None:
+        return None
+    _, s, d = g
+    if len(s) == 1:
+        return float(d[0])
+    if seam.get("closed"):
+        return float(np.interp(float(s_mm), s, d, period=float(seam["length_mm"])))
+    if len(s) == 2:
+        if abs(s[1] - s[0]) < 1e-9:
+            return float(0.5 * (d[0] + d[1]))
+        return float(d[0] + (d[1] - d[0]) * (float(s_mm) - s[0]) / (s[1] - s[0]))
+    return float(np.interp(float(s_mm), s, d))
 
 
 def _fitup_note(seam: dict[str, Any]) -> str:

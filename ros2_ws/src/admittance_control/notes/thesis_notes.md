@@ -12,6 +12,83 @@ the plans under `notes/`; this file keeps the story and the numbers.
 
 ---
 
+## 2026-10-27: Tack sequencing built: gap seed, farthest-first, heat, then transit
+
+**What happened.** The pipeline's last step, ordering the tacks, was built from
+`notes/tack_ordering_plan.md` (steps 1–4), once every source it relies on had been read in its
+PDF. Three things surfaced on the way:
+- the cell had been throwing away where along a seam the gap is smallest;
+- the generator's rule order is not a farthest-first order on large loops;
+- one source's year was wrong in a secondary reference list.
+
+**Evidence.**
+- *Where the gap is.* The fit-up kept only (low, high) per seam: `_edge_fitup` sorted away
+  which end was low. Each seam now keeps its gap along its length. On a T with the web tilted
+  1.5° (one end 5.2 mm lower), the profile matches the pose to 1e-6 mm and puts the minimum at
+  the low end.
+- *The bench T* (tacks at 32 and 218 mm on both sides of an 8 mm web; nominal 16 kJ per tack,
+  15 s per tack). Both orders hold both seams after two tacks.
+  - The rule's round-robin fires the 2nd and 4th tacks across the web from a tack 15 s old:
+    a predicted 216 °C rise each.
+  - The sequencer fires the 2nd at the far end of the other side (0 °C). Every across-the-web
+    tack then comes 30 s after its neighbour: 113 °C at worst. That is the best any order can
+    do at a constant step: in four slots, at least one station's two tacks are at most 30 s
+    apart.
+- *The rule on loops.* On loops of 4, 6 and 8 tacks the rule's order covers the loop as well as
+  farthest-first at every prefix. On 10 and 12 its covering radius is twice as large after 4
+  and 5 tacks (100.5 vs 50.3 mm and 83.8 vs 41.9 mm), because it bisects the half-loop ends
+  first.
+- *The guarantee.* r_k ≤ 2·r*_k + ℓ held against brute force on 60 random small cases; an
+  id-only order breaks it in 39 of them.
+- *The sources.*
+  - Jonsson, Karlsson & Lindgren's tack paper is *Welding Journal*, October 1985,
+    296-s–301-s. Abid & Siddique's reference list dates it 1995; the companion paper (*J. Eng.
+    Mater. Technol.*, October 1985) cites it as accepted, which settles it.
+  - Wärmefjord et al.'s "the geometry points lock the geometry" is in their full text, for spot
+    welds.
+
+**What we learned.**
+- A secondary reference list can carry a wrong year: check the primary PDF.
+- A heat criterion may choose *where* the next tack goes, never *when*. Jonsson et al. found
+  that letting the first tacks cool before the next raised the forces in the tacks: "the tack
+  welding procedure should be performed as fast as possible".
+- A rule that reads like bisection is not automatically farthest-first. On a loop it bisects
+  the half-loop's indices, which leaves part of the loop uncovered longer.
+
+---
+
+## 2026-10-27: The real test set's parts, checked against the generator's draw ranges
+
+**What happened.** The stock for the real WeldSet test set arrived: 304 stainless (2 mm-wall
+pipes Ø42.4–Ø101.6, three RHS sizes, 3 mm sheet), 1–2 mm high-carbon steel sheet, and a CNC
+router with a bed of at least 600×600. Checking the planned parts against the generator's code,
+not from memory, showed that several first choices put real scenes outside the corpus's own
+draws for no reason, and that one flagged extension was not one.
+
+**Evidence.**
+- *Needlessly out of range, now fixed:*
+  - a 300×300 base (the plate strata draw widths of 50–250; the curved scenes' base is the
+    seam's extent plus 50–170 mm) → B1 300×240 for T line and lap, B2 200×200 for the curved T
+    scenes;
+  - contact fit-ups on the curved T scenes (gaps drawn 0.1–1.2 mm) and the butt arc (0.3–2.0)
+    → shims of ~0.2 and ~1 mm; arcs at 0.5 and ~1.5;
+  - a 10° mitre (tilts drawn 10–40°) → 15°;
+  - a 120° stiffener arc (104 mm; spans drawn 120–300) → 150° and 170° arcs;
+  - edge joints in 3 mm (drawn 1–2 mm) → the thin carbon steel.
+- *Unavoidable, flagged:* the 2 mm walls (tubes drawn 3–8 mm, the stiffener 4–10), the 3 mm
+  base under the curved T scenes (drawn 4–12), C42 (outer radius 21.2 against 30–80), S76 (r/R
+  0.75 against at most 0.7), RR50 (50 against 60–160), probably every RHS corner radius (drawn
+  from 8 mm), and the Ø76.1 stiffener arc (span 110).
+- *Wrongly flagged before:* Ø60.3 (outer radius 30.15, inside 30–80).
+
+**What we learned.** A real test set inherits the stock that was bought. Much of what puts a
+scene in or out of distribution is still a free choice, though: base size, fit-up, angles, arc
+length. Check those against the generator's code before anything is cut. The extension flags
+will be computed from a range table that a test checks against the generator, not kept by hand.
+Plan: `weld_generator/notes/phase9_real_set_plan.md`.
+
+---
+
 ## 2026-10-22: The review's code defects fixed: the Jacobian, the image stamp, a pipe's gauge
 
 **What happened.** The defects the thesis review found in the cell's code were fixed: the

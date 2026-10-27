@@ -38,6 +38,56 @@ def test_visit_order_is_seam_then_tack_no():
     assert [(t["seam_id"], t["tack_no"]) for t in mk.visit_order(tacks)] == [(0, 1), (0, 3), (1, 2)]
 
 
+def _web_scene(gap_ends=None):
+    """The two fillets of a T (t = 8, 250 mm), tacks at 32 and 218 mm on each side, as the
+    cell's files hold them: welding_tacks.json (the rule's round-robin `order`),
+    welding_seams.json, and a reachability report."""
+    tacks, report, seams = [], [], []
+    for sid, y in ((0, -4.0), (1, 4.0)):
+        seam = {"id": sid, "face_pair": ["A:+w", f"B:{'-' if sid == 0 else '+'}w"],
+                "length_mm": 250.0, "closed": False, "pose_tol_mm": 10.0}
+        if gap_ends is not None:                      # the abutting web's gap at s = 0 and 250
+            g0, g1 = gap_ends
+            seam["fitup_mm"] = {"B": sorted([g0, g1]), "A": [-60.0, -40.0]}
+            seam["fitup_along_mm"] = {"B": [[0.0, g0], [250.0, g1]]}
+        seams.append(seam)
+        for no, s in ((1, 32.0), (2, 218.0)):
+            tid = len(tacks)
+            tacks.append({"id": tid, "seam_id": sid, "order": 2 * (no - 1) + sid, "arclength_mm": s,
+                          "point_mm": [s, y, 0.0], "tack_length_mm": 32.0})
+            report.append({"tack_id": tid, "seam_id": sid, "tack_no": no, "ok": True,
+                           "q_app": [0.1 * tid, -1.0, 1.0, 0.0, 1.57, 0.0]})
+    return report, tacks, seams
+
+
+def test_visit_orders_seam_rule_and_sequenced():
+    report, tacks, seams = _web_scene()
+    ids = lambda ts: [t["tack_id"] for t in ts]             # noqa: E731
+    assert ids(mk.visit_order(report)) == [0, 1, 2, 3]                        # seam by seam
+    assert ids(mk.visit_order(report, "rule", tacks)) == [0, 2, 1, 3]         # round-robin
+    order, rec = mk.plan_visit(report, "sequenced", tacks, seams, q_start=np.zeros(6))
+    # the second tack: the far end of the other side, not across the web from the first
+    assert ids(order)[:2] == [0, 3] and rec["decided_by"][1] == "farthest>heat"
+    assert rec["predicted_rise_c"][1] < 1.0
+    json.dumps(rec)                                                          # goes into tack_marks.json
+    with pytest.raises(ValueError):
+        mk.plan_visit(report, "rule")                                        # needs welding_tacks.json
+    with pytest.raises(ValueError):
+        mk.plan_visit(report, "fastest", tacks, seams)
+
+
+def test_sequenced_order_starts_at_the_contact_end():
+    report, tacks, seams = _web_scene(gap_ends=(1.9, 0.1))     # the web touches at s = 250
+    order, rec = mk.plan_visit(report, "sequenced", tacks, seams)
+    # the gap chose the end; the id which of the two equal sides
+    assert order[0]["tack_no"] == 2 and rec["decided_by"][0] == "gap>id"
+    assert rec["gap_mm"][order[0]["tack_id"]] == pytest.approx(0.1 + 1.8 * 32 / 250)
+    # a uniform gap is not information: the order is the one without gaps
+    report_u, tacks_u, seams_u = _web_scene(gap_ends=(0.6, 0.4))
+    assert [t["tack_id"] for t in mk.visit_order(report_u, "sequenced", tacks_u, seams_u)] == \
+           [t["tack_id"] for t in mk.visit_order(*_web_scene()[:1], "sequenced", *_web_scene()[1:])]
+
+
 def test_contact_depth_sign():
     point = np.array([0.5, 0.0, 0.02]); axis = np.array([0, 0, -1.0])       # pen going down
     assert mk.contact_depth_m(point, point + 0.004 * np.array([0, 0, 1.0]), axis) == pytest.approx(0.004)   # met 4 mm early

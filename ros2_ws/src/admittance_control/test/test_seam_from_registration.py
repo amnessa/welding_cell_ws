@@ -125,6 +125,64 @@ def test_registered_t_joint_keeps_both_fillets_and_reports_fitup(dz, tilt, lean,
                    for s in seams if s["polyline_mm"])
 
 
+def test_tilted_standing_plate_keeps_where_its_gap_is_smallest():
+    """Step 2 of notes/tack_ordering_plan.md: the fit-up keeps WHERE the gap is, not only
+    its range, so the first tack can go to the contact end (Lowth et al. 2015)."""
+    reg, objs = _t_joint_posed(4.0, 1.5, 0.0)                     # floating 4 mm, one end lifted
+    parts = sfr.posed_parts(objs, reg)
+    seams = sfr.compute_seams(parts, sfr.runtime_access(parts, pose_tol_mm=10.0))
+    weld = [s for s in seams if s["weldable"]]
+    assert len(weld) == 2
+    web = parts[1]
+    half = np.asarray(web.dims_mm) / 2.0
+    loc = np.array([[a, b, c] for a in (-1, 1) for b in (-1, 1) for c in (-1, 1)]) * half
+    xyz = loc @ web.T_world_part[:3, :3].T + web.T_world_part[:3, 3]
+    # the bottom edge at each end: its lowest corners; the base's top face is z = t/2 = 4
+    ends = []
+    for sign in (-1.0, 1.0):
+        at = xyz[np.sign(xyz[:, 0]) == sign]
+        ends.append(at[np.argmin(at[:, 2])])
+    (xa, za), (xb, zb) = [(e[0], e[2] - 4.0) for e in ends]
+    assert abs(za - zb) > 4.0                                      # 1.5 deg over 200 mm: 5.2 mm
+    x_low = xa if za < zb else xb
+    for s in weld:
+        member, s_mm, g = sfr.gap_profile(s)
+        assert member == "B" and len(s_mm) == 2
+        p0 = np.asarray(s["p0_mm"]); u = (np.asarray(s["p1_mm"]) - p0) / s["length_mm"]
+        for at in (0.0, 0.5 * s["length_mm"], s["length_mm"]):
+            x = (p0 + at * u)[0]
+            expected = za + (zb - za) * (x - xa) / (xb - xa)        # the straight bottom edge
+            assert sfr.gap_at(s, at) == pytest.approx(expected, abs=1e-6)
+        assert np.sign((p0 + s_mm[np.argmin(g)] * u)[0]) == np.sign(x_low)
+        lo, hi = sfr.abutting_fitup(s)[1:]
+        assert [lo, hi] == pytest.approx(sorted(g.tolist()), abs=1e-9)
+    # a seam saved before 2026-10-27 has no profile: no gap, not a guess
+    old = {k: v for k, v in weld[0].items() if k != "fitup_along_mm"}
+    assert sfr.gap_profile(old) is None and sfr.gap_at(old, 10.0) is None
+
+
+def test_prism_standing_plate_yields_its_two_fillets():
+    """A polygon plate (the real set's plates are prisms) standing on a slab. Until
+    2026-10-27 `_face_corners` read slab faces only and raised on the prism's side face."""
+    reg = {"parts": {"base": derive_box(_box(200, 100, 4)) | {"source": "base.ply"},
+                     "web": {"primitive": "prism", "thickness_mm": 4.0, "outline_shape": "quad",
+                             "T_cad_prim": np.eye(4).tolist(),
+                             "outline_uv": [[-90.0, 0.0], [90.0, 0.0], [40.0, 70.0], [-60.0, 50.0]]}}}
+    Rx = np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]], float)      # seam edge s0 down, on y = 0
+    T = np.eye(4); T[:3, :3] = Rx; T[:3, 3] = [0, 0, 0.003]       # 1 mm above the base top (z 2)
+    parts = sfr.posed_parts([("base.ply", np.eye(4)), ("web.ply", T)], reg)
+    assert type(parts[1]).__name__ == "Prism"
+    weld = [s for s in sfr.compute_seams(parts, sfr.runtime_access(parts, pose_tol_mm=10.0))
+            if s["weldable"]]
+    assert [s["seam_class"] for s in weld] == ["fillet", "fillet"]
+    for s in weld:
+        p = np.asarray(s["polyline_mm"])
+        assert np.allclose(p[:, 2], 2.0, atol=1e-6) and abs(abs(p[:, 1].mean()) - 2.0) < 1e-6
+        assert s["length_mm"] == pytest.approx(180.0, abs=2.0)   # the 180 mm seam edge
+        assert sfr.abutting_fitup(s)[1:] == pytest.approx((1.0, 1.0), abs=1e-6)
+        assert sfr.gap_at(s, 0.5 * s["length_mm"]) == pytest.approx(1.0, abs=1e-6)
+
+
 def test_wide_pose_tolerance_does_not_pair_the_underside_on_thin_sheet():
     reg, objs = _t_joint(t=2.0)
     parts = sfr.posed_parts(objs, reg)

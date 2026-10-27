@@ -111,6 +111,27 @@ def test_pipe_on_plate_is_one_closed_circle_with_its_gap():
     assert "gap" in sfr.summarize(seams)
 
 
+def test_tilted_pipe_keeps_where_its_gap_is_smallest():
+    """Step 2 of notes/tack_ordering_plan.md: the gap at every point, so the first tack
+    can go where the pipe's end is lowest."""
+    parts, seams = _seams(PLATE, ("pipe.ply", _pose([10.0, -5.0, 2.0], _ry(3.0))))
+    (w,) = _by_role(seams, "weld")
+    member, s, g = sfr.gap_profile(w)
+    pts = np.asarray(w["polyline_mm"])
+    assert member == "B" and len(s) == len(pts)
+    assert g.min() == pytest.approx(w["fitup_mm"]["B"][0], abs=1e-9)
+    # the base rim's lowest point, from the pipe's own pose
+    T = parts[1].T_world_part
+    phi = np.linspace(0.0, 2 * np.pi, 3600, endpoint=False)
+    rim = np.column_stack([31.0 * np.cos(phi), 31.0 * np.sin(phi), np.zeros_like(phi)])
+    rim = rim @ T[:3, :3].T + T[:3, 3]
+    low = rim[np.argmin(rim[:, 2])]
+    assert np.linalg.norm(pts[int(np.argmin(g))][:2] - low[:2]) < 2.0
+    # a loop: the profile wraps
+    k = int(np.argmin(g))
+    assert sfr.gap_at(w, s[k] + w["length_mm"]) == pytest.approx(g[k], abs=1e-9)
+
+
 def test_pipe_standing_on_its_top_cap():
     _, seams = _seams(PLATE, ("pipe.ply", _pose([0.0, 0.0, 101.0], _rx(180.0))))
     (w,) = _by_role(seams, "weld")

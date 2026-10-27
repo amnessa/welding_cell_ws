@@ -142,6 +142,7 @@ def _record(face_pair, role, closed, pts, nA, nB, gap, member_id, parts, access,
         ok, why, frac = False, reject, float("nan")
     L = _poly_length(pts, closed)
     first, last = pts[0], (pts[0] if closed else pts[-1])
+    s_pts = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(pts, axis=0), axis=1))])
     return {
         "id": -1, "face_pair": list(face_pair), "seam_class": "fillet", "role": role,
         "closed": bool(closed), "weldable": ok, "reject_reason": why,
@@ -150,6 +151,9 @@ def _record(face_pair, role, closed, pts, nA, nB, gap, member_id, parts, access,
         "dihedral_deg_range": [float(dih.min()), float(dih.max())],
         "separation_mm": float(np.median(gap)), "length_mm": L,
         "fitup_mm": {member_id: [float(gap.min()), float(gap.max())]},
+        # the gap at every point, by arclength from p0: where it is smallest is where the
+        # tack sequencing starts (notes/tack_ordering_plan.md step 2)
+        "fitup_along_mm": {member_id: [[float(a), float(g)] for a, g in zip(s_pts, gap)]},
         "member_end": member_end,
         "cavity_width_mm": None if cavity is None else float(cavity),
         "pose_tol_mm": float(access["pose_tol_mm"]),

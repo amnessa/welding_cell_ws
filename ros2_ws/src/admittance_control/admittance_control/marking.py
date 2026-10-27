@@ -530,10 +530,87 @@ class MarkingPlan:
         return "\n".join(lines)
 
 
-def visit_order(report_tacks: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Seam by seam, `tack_no` ascending - the pen's order (no heat to balance)."""
-    return sorted([t for t in report_tacks if t.get("ok")],
-                  key=lambda t: (int(t["seam_id"]), int(t["tack_no"])))
+#: `tack_order` modes: `seam` = seam by seam, tack_no ascending (the order until 2026-10-27);
+#: `rule` = the generator's `order` (tackrule-0.1, welding_tacks.json); `sequenced` =
+#: tack_order.py (notes/tack_ordering_plan.md step 4)
+TACK_ORDERS = ("seam", "rule", "sequenced")
+
+
+def visit_order(report_tacks: Sequence[dict[str, Any]], mode: str = "seam",
+                tacks_json: Sequence[dict[str, Any]] | None = None,
+                seams_json: Sequence[dict[str, Any]] | None = None,
+                q_start: np.ndarray | None = None, cfg=None,
+                gauge_mm: float | None = None) -> list[dict[str, Any]]:
+    """The reachable tacks of a report in the order the pen visits them (`TACK_ORDERS`)."""
+    return plan_visit(report_tacks, mode, tacks_json, seams_json, q_start, cfg, gauge_mm)[0]
+
+
+def plan_visit(report_tacks: Sequence[dict[str, Any]], mode: str = "seam",
+               tacks_json: Sequence[dict[str, Any]] | None = None,
+               seams_json: Sequence[dict[str, Any]] | None = None,
+               q_start: np.ndarray | None = None, cfg=None,
+               gauge_mm: float | None = None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """`(ordered report tacks, record)`; the record names the sequence for tack_marks.json.
+
+    `sequenced` builds one `tack_order.Site` per reachable tack from welding_tacks.json
+    (arclength, centre, length) and welding_seams.json (the seam's length, loop or not, the
+    two parts it joins, the abutting member's gap at the tack: `gap_at`), and the transit
+    cost is the largest joint change between the report's approach poses (from `q_start`
+    for the first). `cfg` is a `tack_order.SequenceConfig`; `gauge_mm` (the tack rule's t)
+    sets the heat model's sheet thickness."""
+    ok = [t for t in report_tacks if t.get("ok")]
+    if mode == "seam":
+        return (sorted(ok, key=lambda t: (int(t["seam_id"]), int(t["tack_no"]))),
+                {"sequence": "seam by seam, tack_no ascending"})
+    if mode not in TACK_ORDERS:
+        raise ValueError(f"tack_order '{mode}': use one of {TACK_ORDERS}")
+    if tacks_json is None:
+        raise ValueError(f"tack_order={mode} needs welding_tacks.json")
+    by_id = {int(t["id"]): t for t in tacks_json}
+    missing = [int(t["tack_id"]) for t in ok if int(t["tack_id"]) not in by_id]
+    if missing:
+        raise ValueError(f"tacks {missing} of tack_reach.json are not in welding_tacks.json")
+    if mode == "rule":
+        out = sorted(ok, key=lambda t: (int(by_id[int(t["tack_id"])]["order"]), int(t["tack_id"])))
+        return out, {"sequence": "rule order (tackrule-0.1, welding_tacks.json)",
+                     "order": [int(t["tack_id"]) for t in out]}
+    if seams_json is None:
+        raise ValueError("tack_order=sequenced needs welding_seams.json")
+    from . import tack_order as to
+    from .seam_from_registration import gap_at
+    seams = {int(s["id"]): s for s in seams_json}
+    sites, geoms = [], {}
+    for t in ok:
+        tk = by_id[int(t["tack_id"])]
+        seam = seams[int(tk["seam_id"])]
+        s_mm = float(tk["arclength_mm"])
+        sites.append(to.Site(id=int(t["tack_id"]), seam=int(tk["seam_id"]), s_mm=s_mm,
+                             xyz_mm=tuple(float(v) for v in tk["point_mm"]),
+                             pair="|".join(sorted(str(f).split(":")[0] for f in seam["face_pair"])),
+                             gap_mm=gap_at(seam, s_mm), length_mm=float(tk["tack_length_mm"])))
+        geoms[int(tk["seam_id"])] = to.SeamGeom(float(seam["length_mm"]), bool(seam.get("closed")))
+    cfg = cfg or to.SequenceConfig()
+    if gauge_mm:
+        cfg = dataclasses.replace(cfg, thermal=dataclasses.replace(cfg.thermal,
+                                                                   h_mm=float(gauge_mm)))
+    q_app = {int(t["tack_id"]): np.asarray(t["q_app"], float) for t in ok}
+
+    def transit(prev, cand):
+        a = q_app[cand]
+        b = q_app[prev] if prev is not None else (None if q_start is None
+                                                  else np.asarray(q_start, float))
+        return 0.0 if b is None else float(np.abs(a - b).max())
+
+    res = to.sequence(sites, geoms, cfg, transit)
+    rec = {int(t["tack_id"]): t for t in ok}
+    m = to.evaluate(res.order, sites, geoms, cfg, transit)
+    return [rec[i] for i in res.order], {
+        "sequence": "gap-seeded farthest-first (tack_order.py)", "order": res.order,
+        "decided_by": res.decided_by, "tol_mm": res.tol_mm,
+        "gap_mm": {s.id: s.gap_mm for s in sites},
+        "predicted_rise_c": m.rise_c, "r_mm": m.r_mm, "hold_step": m.hold_step,
+        "transit_rad": m.travel, "step_s": cfg.step_s,
+        "thermal": dataclasses.asdict(cfg.thermal)}
 
 
 def stroke_targets(mode: str, report_tacks: Sequence[dict[str, Any]],
@@ -673,9 +750,11 @@ def build_marking_plan(report: dict[str, Any], tool, model: CollisionModel,
                        cfg: MarkingConfig, q_now: np.ndarray, overshoot_m: float = 0.003,
                        edge_resolution: float = 0.01, strokes: dict[int, np.ndarray] | None = None,
                        stroke_mode: str | dict[int, str] = "dot", smooth_transits: bool = False,
-                       transit_opts: dict | None = None) -> MarkingPlan:
+                       transit_opts: dict | None = None,
+                       order: Sequence[dict[str, Any]] | None = None) -> MarkingPlan:
     """Transit + descent for every reachable tack of a `tack_reach.json` report, in visit
-    order, starting from the robot's current joints and ending with a path home. With
+    order (`order`, from `plan_visit`; seam by seam when None), starting from the robot's
+    current joints and ending with a path home. With
     `strokes` (from `stroke_targets`) the descent aims at the stroke's first point and the
     step carries the polyline to draw after contact (`stroke_mode`: one mode, or one per
     tack id from `stroke_modes`). `smooth_transits`: round the transits'
@@ -687,7 +766,7 @@ def build_marking_plan(report: dict[str, Any], tool, model: CollisionModel,
     q_prev = q_now
     all_ok = True
     strokes = strokes or {}
-    for t in visit_order(report["tacks"]):
+    for t in (order if order is not None else visit_order(report["tacks"])):
         step = TackStep(tack_id=int(t["tack_id"]), seam_id=int(t["seam_id"]),
                         tack_no=int(t["tack_no"]), point_m=np.asarray(t["point_m"], float),
                         axis_m=np.asarray(t["axis_m"], float), roll_deg=float(t["roll_deg"]),

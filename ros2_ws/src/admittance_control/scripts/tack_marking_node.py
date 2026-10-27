@@ -21,6 +21,9 @@ no controller switching.
     # -p stroke_mode:=seam   draw the whole weldable seam (welding_seams.json), once per seam
     #                        (a curved seam: each tack draws its piece - one pen axis
     #                        cannot draw a loop round a pipe)
+    # -p tack_order:=sequenced   the visit order: seam (default: seam by seam, tack_no
+    #                        ascending) | rule (tackrule-0.1's order) | sequenced
+    #                        (tack_order.py: gap seed, farthest-first, heat, transit)
 
 `dry_run:=true` (default) computes and publishes everything (the planned tip path on
 /tack_marking/tip_path, the log) and sends NO goal. Set it false only after the plan
@@ -75,11 +78,12 @@ sys.path.insert(0, str(PKG.parents[2] / "weld_generator"))
 from admittance_control import seam_from_registration as sfr  # noqa: E402
 from admittance_control.collision import CollisionModel, boxes_from_parts  # noqa: E402
 from admittance_control.kinematics import active_kinematics, ur5e_fk, use_kinematics  # noqa: E402
-from admittance_control.marking import (build_marking_plan, contact_depth_m, fast_is_valid,  # noqa: E402
-                                        line_chain,
-                                        plan_to_dict, stroke_chain, stroke_modes,
+from admittance_control.marking import (TACK_ORDERS, build_marking_plan,  # noqa: E402
+                                        contact_depth_m, fast_is_valid, line_chain,
+                                        plan_to_dict, plan_visit, stroke_chain, stroke_modes,
                                         stroke_targets,
                                         time_descent, transit_model)
+from admittance_control.tack_order import SequenceConfig  # noqa: E402
 from admittance_control.motion import TrajectoryExecutor  # noqa: E402
 from admittance_control.tack_reach import load_marking_config, same_branch  # noqa: E402
 from admittance_control.tool_model import load_tool_model  # noqa: E402
@@ -136,6 +140,12 @@ class TackMarkingNode(Node):
         p('depth_gain_m_per_n', 0.00002)   # per chunk, clipped to +/- max_depth_step_m; must be
         p('max_depth_step_m', 0.0002)      # << 1/stiffness (tens of N/mm on steel) to be stable
         p('min_contact_force_n', 0.4)      # below this for 2 chunks = pen lifted off -> stop
+        # the visit order (notes/tack_ordering_plan.md step 4): 'seam' = seam by seam, tack_no
+        # ascending (the only order before 2026-10-27); 'rule' = the generator's tackrule-0.1
+        # order; 'sequenced' = tack_order.py (gap seed, farthest-first, heat, transit). The
+        # default stays 'seam' until the bench run compares them.
+        p('tack_order', 'seam')
+        p('tack_order_step_s', 15.0)       # time per tack for the heat model (until measured)
 
         self._save_dir = Path(str(self.get_parameter('save_dir').value))
         self._tool = load_tool_model(str(self.get_parameter('tool_config').value) or None,
@@ -277,9 +287,10 @@ class TackMarkingNode(Node):
             return (f"tack_reach.json was solved with kinematics '{rep_kin}' but this node uses "
                     f"'{active_kinematics()}' - re-run tack_reachability.py")
         self._report = report
-        self._tacks_json = self._seams_json = None
+        self._tacks_json = self._seams_json = self._tacks_params = None
         try:
-            self._tacks_json = json.loads((self._save_dir / 'welding_tacks.json').read_text())['tacks']
+            tacks_doc = json.loads((self._save_dir / 'welding_tacks.json').read_text())
+            self._tacks_json, self._tacks_params = tacks_doc['tacks'], tacks_doc.get('params')
             self._seams_json = json.loads((self._save_dir / 'welding_seams.json').read_text())['seams']
         except (FileNotFoundError, KeyError):
             pass
@@ -306,6 +317,19 @@ class TackMarkingNode(Node):
             response.success = False
             response.message = f'stroke_mode={mode} needs welding_tacks.json + welding_seams.json in the save dir'
             return response
+        order_mode = str(self.get_parameter('tack_order').value)
+        try:
+            order, self._sequence = plan_visit(
+                self._report['tacks'], order_mode, self._tacks_json, self._seams_json, q_start=q,
+                cfg=SequenceConfig(step_s=float(self.get_parameter('tack_order_step_s').value)),
+                gauge_mm=(self._tacks_params or {}).get('t_mm'))
+        except ValueError as exc:
+            response.success = False
+            response.message = f'tack_order={order_mode} ({"|".join(TACK_ORDERS)}): {exc}'
+            return response
+        self._say(f"visit order ({self._sequence['sequence']}): "
+                  + ' > '.join(f"s{t['seam_id']}#{t['tack_no']}" for t in order)
+                  + (f"; decided by {self._sequence['decided_by']}" if 'decided_by' in self._sequence else ''))
         strokes = stroke_targets(mode, self._report['tacks'], self._tacks_json, self._seams_json)
         self._plan = build_marking_plan(self._report, self._tool, self._model, self._cfg, q,
                                         float(self.get_parameter('overshoot_m').value),
@@ -313,7 +337,7 @@ class TackMarkingNode(Node):
                                         stroke_mode=stroke_modes(mode, self._report['tacks'],
                                                                  self._seams_json),
                                         smooth_transits=bool(self.get_parameter('smooth_transits').value),
-                                        transit_opts=self._transit_opts())
+                                        transit_opts=self._transit_opts(), order=order)
         self._drawn_seams = set()
         self._exec.set_sim(q)
         self._next_step = 0
@@ -365,6 +389,7 @@ class TackMarkingNode(Node):
             self._next_step += 1
             return False, f'tack {step.tack_id} skipped: {step.reason}'
         self._exec.clear_abort()
+        t_start = time.time()                  # the step's start: what the order costs in seconds
         tag = f'tack {step.tack_id} (seam {step.seam_id} #{step.tack_no})'
         # 1. transit - from where the arm IS, which may not be where the plan started
         q_now = self._where()
@@ -402,7 +427,7 @@ class TackMarkingNode(Node):
                   'point_m': step.point_m.tolist(), 'axis_m': step.axis_m.tolist(),
                   'tack_point_m': None if step.tack_point_m is None else step.tack_point_m.tolist(),
                   'roll_deg': step.roll_deg, 'tilt_deg': step.tilt_deg, 'stroke_mode': step.stroke_mode,
-                  'dry_run': self.dry_run, 'time': time.time()}
+                  'dry_run': self.dry_run, 'time': time.time(), 't_start': t_start}
         if contact is not None:
             q_c, f_c = contact
             tip = self._tool.tip_in(ur5e_fk(q_c))
@@ -443,6 +468,7 @@ class TackMarkingNode(Node):
                                              v_fast=float(self.get_parameter('v_approach_m_s').value),
                                              fast_beyond_m=self._cfg.standoff_m),
                                 f'{tag} retract', watch_touch=False, away=True)
+        record['t_end'] = time.time()          # retracted to the departure point
         self._marks.append(record)
         self._write_marks()
         self._next_step += 1
@@ -525,8 +551,9 @@ class TackMarkingNode(Node):
         return self._execute(self._time_transit(path, 'home'), 'home', watch_touch=False, rebias=True)
 
     def _write_marks(self) -> None:
+        seq = getattr(self, '_sequence', None) or {'sequence': 'seam by seam, tack_no ascending'}
         doc = {'touch_force_n': self._touch_force, 'overshoot_m': float(self.get_parameter('overshoot_m').value),
-               'sequence': 'seam by seam, tack_no ascending', 'marks': self._marks}
+               'sequence': seq['sequence'], 'sequence_detail': seq, 'marks': self._marks}
         (self._save_dir / 'tack_marks.json').write_text(json.dumps(doc, indent=1))
         # every run kept, with the assembly it was planned on: the contacts are a measurement
         # of the registration (scripts/contact_error.py), and the next run used to overwrite
