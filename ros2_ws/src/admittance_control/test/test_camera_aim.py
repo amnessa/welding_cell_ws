@@ -191,7 +191,10 @@ def test_the_camera_centres_a_still_fingertip(target):
     assert t_in < 4.0                                         # ~20 deg at 7.5 deg/s
     assert rows[-1][1] < CFG.deadband_frac * 640              # roughly centred ...
     assert rows[-1][2] < 0.05 and aim.stopped()               # ... and stopped there
-    assert max(r[2] for r in rows) <= CFG.max_rate_deg_s + 1e-6
+    # the aim (pan/tilt) is capped; the roll hold adds its own small rate about the optical
+    # axis (2026-11-03: 0.011 deg/s at the new home took the total 4e-6 past the cap)
+    roll_rate = CFG.roll_gain_per_s * max(abs(r[4]) for r in rows)
+    assert max(r[2] for r in rows) <= math.hypot(CFG.max_rate_deg_s, roll_rate) + 1e-6
     # the arm turns the camera at the commanded rate, not half of it (until 2026-10-22)
     assert 0.9 * max(r[2] for r in rows) <= max(r[6] for r in rows) <= 1.05 * CFG.max_rate_deg_s
     assert max(abs(r[4]) for r in rows) < 0.5                 # roll held at home

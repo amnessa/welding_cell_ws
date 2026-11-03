@@ -83,12 +83,16 @@ class MarkingConfig:
     #: unregistered obstacles (V-blocks, holders, clamps): `collision.fixture_boxes`
     fixtures: tuple = ()
     source: str = ""
-    #: wrist_3 stays within this of home_q, as the 2*pi-equivalent of each pose (the
-    #: same tool pose: at 180 no tack is lost). The camera's cable wraps round the wrist.
-    #: 2026-10-16, SP3: continuity from tack to tack wound wrist_3 to -202 and -287 deg,
-    #: and the cable's pull read as a 1.5 N "contact" 84 mm above the part, twice; every
-    #: good contact on E2 the day before was within +-151 deg (`to_cable_window`)
+    #: wrist_3 stays within this of `wrist3_centre`, as the 2*pi-equivalent of each pose
+    #: (the same tool pose: at 180 no tack is lost). The camera's cable wraps round the wrist.
+    #: 2026-10-16, SP3: continuity from tack to tack wound wrist_3 to -202 and -287 deg
+    #: from the then home (-251 and -336 absolute), and the cable's pull read as a 1.5 N
+    #: "contact" 84 mm above the part, twice; every good contact on E2 the day before was
+    #: within +-151 deg of that home (`to_cable_window`)
     wrist3_window_deg: float = 180.0
+    #: the window's centre (rad); None = home_q's wrist_3. Set when home moves but the
+    #: cable does not (marking.json, 2026-11-03)
+    wrist3_centre_rad: float | None = None
     #: when set, ONLY these rolls (deg) are tried - the attribution experiment: the same
     #: tack at rolls 90 deg apart moves a TOOL error with the wrist and leaves a WORLD
     #: error (camera, registration) where it is
@@ -97,6 +101,10 @@ class MarkingConfig:
     @property
     def branch_signature(self) -> tuple[int, ...]:
         return branch_signature(self.home_q, self.branch_joints)
+
+    @property
+    def wrist3_centre(self) -> float:
+        return float(self.home_q[5] if self.wrist3_centre_rad is None else self.wrist3_centre_rad)
 
     def table(self) -> tuple[np.ndarray, float] | None:
         """(n, d) of the table for the collision model: `table_z_m` when set (a
@@ -148,6 +156,8 @@ def load_marking_config(path: str | Path | None = None) -> MarkingConfig:
                          table_plane_file=cfg.get("table_plane_file", "notebooks/table_plane.json"),
                          fixtures=tuple(cfg.get("fixtures", ())),
                          wrist3_window_deg=float(cfg.get("wrist3_window_deg", 180.0)),
+                         wrist3_centre_rad=(None if cfg.get("wrist3_centre_rad") is None
+                                            else float(cfg["wrist3_centre_rad"])),
                          source=str(p))
 
 
@@ -201,10 +211,11 @@ def _unwrap_to(q: np.ndarray, ref: np.ndarray) -> np.ndarray:
 def to_cable_window(q: np.ndarray, ref: np.ndarray, cfg: MarkingConfig) -> np.ndarray:
     """`q` as the joints a move from `ref` should arrive at: each joint the 2*pi-equivalent
     nearest `ref` (continuity, `_unwrap_to`), except wrist_3 - the equivalent nearest `ref`
-    among those within `cfg.wrist3_window_deg` of home_q (the cable), or the one nearest
-    home when none is (a window under 180 deg). The tool pose is the same either way."""
+    among those within `cfg.wrist3_window_deg` of `cfg.wrist3_centre` (the cable), or the one
+    nearest the centre when none is (a window under 180 deg). The tool pose is the same
+    either way."""
     q = _unwrap_to(q, ref)
-    home, w = float(cfg.home_q[5]), np.deg2rad(cfg.wrist3_window_deg)
+    home, w = cfg.wrist3_centre, np.deg2rad(cfg.wrist3_window_deg)
     opts = [q[5] + 2.0 * np.pi * n for n in range(-2, 3)]
     inside = [x for x in opts if abs(x - home) <= w + 1e-9]
     q[5] = (min(inside, key=lambda x: abs(x - float(ref[5]))) if inside
@@ -213,7 +224,7 @@ def to_cable_window(q: np.ndarray, ref: np.ndarray, cfg: MarkingConfig) -> np.nd
 
 
 def in_cable_window(q: np.ndarray, cfg: MarkingConfig, slack_deg: float = 0.0) -> bool:
-    return abs(float(q[5]) - float(cfg.home_q[5])) <= np.deg2rad(cfg.wrist3_window_deg + slack_deg) + 1e-9
+    return abs(float(q[5]) - cfg.wrist3_centre) <= np.deg2rad(cfg.wrist3_window_deg + slack_deg) + 1e-9
 
 
 # ---------------------------------------------------------------- the plan ------------

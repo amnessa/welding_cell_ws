@@ -10,6 +10,7 @@ guessed; and the report serialises.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import pathlib
 import sys
@@ -33,13 +34,13 @@ trimesh = pytest.importorskip("trimesh")
 
 JS_NAMES = ["elbow_joint", "shoulder_lift_joint", "shoulder_pan_joint",
             "wrist_1_joint", "wrist_2_joint", "wrist_3_joint"]
-JS_POS = [-1.5552871227264404, -1.4443891805461426, -0.34471112886537725,
-          -1.5529543210617085, 1.9432356357574463, -0.8597829977618616]
+JS_POS = [-1.0316810607910156, -1.6212569675841273, -0.7818577925311487,     # 2026-11-03
+          -2.2044884167113246, 2.0711512565612793, -1.6435826460467737]
 
 
 def test_joint_states_reorder_and_home_branch():
     q = tr.joint_state_to_ur_order(JS_NAMES, JS_POS)
-    assert q[0] == pytest.approx(-0.3447, abs=1e-3) and q[2] == pytest.approx(-1.5553, abs=1e-3)
+    assert q[0] == pytest.approx(-0.7819, abs=1e-3) and q[2] == pytest.approx(-1.0317, abs=1e-3)
     cfg = tr.load_marking_config()
     assert np.allclose(cfg.home_q, q)
     assert cfg.branch_signature == (-1, -1, 1)               # lift -, elbow -, wrist_2 +
@@ -116,9 +117,17 @@ def test_solutions_on_the_other_branch_are_rejected(setup):
 
 def test_wrist_3_stays_in_its_cable_window():
     """2026-10-16, SP3: tack-to-tack continuity wound wrist_3 to -202 and -287 deg from
-    home, and the camera cable's pull read as a 1.5 N contact 84 mm above the part. Every
-    pose has a 2*pi-equivalent within +-180 deg of home - the same tool pose."""
+    the then home, and the camera cable's pull read as a 1.5 N contact 84 mm above the
+    part. Every pose has a 2*pi-equivalent within +-180 deg of the window's centre - the
+    same tool pose. Home moved on 2026-11-03 and the centre stayed with the cable."""
     cfg = tr.load_marking_config()
+    c = cfg.wrist3_centre
+    assert c == pytest.approx(-0.8598, abs=1e-4) and c != pytest.approx(cfg.home_q[5], abs=0.1)
+    assert dataclasses.replace(cfg, wrist3_centre_rad=None).wrist3_centre == cfg.home_q[5]
+    for w3_deg, inside in ((-200.2, True), (-251.4, False), (-336.5, False)):   # good, false, false
+        q = cfg.home_q.copy()
+        q[5] = np.deg2rad(w3_deg)
+        assert tr.in_cable_window(q, cfg) == inside
     home = cfg.home_q
     rng = np.random.default_rng(0)
     for _ in range(200):
@@ -131,12 +140,12 @@ def test_wrist_3_stays_in_its_cable_window():
         assert np.allclose(ur5e_fk(out), ur5e_fk(q), atol=1e-9)
     # the SP3 case: from -160 deg, plain continuity took tack 4 to -287; inside: +73
     q4, ref = home.copy(), home.copy()
-    q4[5], ref[5] = home[5] + np.deg2rad(-287.0), home[5] + np.deg2rad(-160.0)
-    assert np.degrees(tr.to_cable_window(q4, ref, cfg)[5] - home[5]) == pytest.approx(73.0)
+    q4[5], ref[5] = c + np.deg2rad(-287.0), c + np.deg2rad(-160.0)
+    assert np.degrees(tr.to_cable_window(q4, ref, cfg)[5] - c) == pytest.approx(73.0)
     # a window over 180 deg keeps continuity where it can: -200 is inside +-210
     cfg.wrist3_window_deg = 210.0
-    q4[5] = home[5] + np.deg2rad(-200.0)
-    assert np.degrees(tr.to_cable_window(q4, ref, cfg)[5] - home[5]) == pytest.approx(-200.0)
+    q4[5] = c + np.deg2rad(-200.0)
+    assert np.degrees(tr.to_cable_window(q4, ref, cfg)[5] - c) == pytest.approx(-200.0)
 
 
 def test_the_roll_choice_counts_wrist_3_as_the_transit_turns_it():

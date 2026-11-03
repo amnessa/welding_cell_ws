@@ -65,9 +65,30 @@ def test_arm_capsules_follow_the_chain():
     assert np.allclose(caps["wrist_2"]["p1"], T[:3, 3], atol=1e-9)     # ends at tool0
     d_upper = np.linalg.norm(caps["upper_arm"]["p1"] - caps["upper_arm"]["p0"])
     assert d_upper == pytest.approx(0.425, abs=1e-9)
+    # the forearm tube runs straight in its own plane; the wrist_1 housing takes the d4
+    # step along the wrist_1 axis (until 2026-11-03 one capsule cut the corner diagonally)
     d_fore = np.linalg.norm(caps["forearm"]["p1"] - caps["forearm"]["p0"])
-    assert d_fore == pytest.approx(np.hypot(0.3922, 0.1333), abs=1e-9)
+    assert d_fore == pytest.approx(0.3922, abs=1e-9)
+    hous = caps["wrist_1_housing"]
+    assert np.allclose(hous["p0"], caps["forearm"]["p1"]) and np.allclose(hous["p1"], caps["wrist_1"]["p0"])
+    assert np.linalg.norm(hous["p1"] - hous["p0"]) == pytest.approx(0.1333 - col.ELBOW_OFFSET, abs=1e-9)
+    assert np.linalg.norm(caps["elbow"]["p1"] - caps["elbow"]["p0"]) == pytest.approx(
+        col.SHOULDER_OFFSET - col.ELBOW_OFFSET, abs=1e-9)
     assert caps["base"]["p0"][2] == 0.0
+
+
+def test_the_camera_meets_the_wrist_1_housing_where_it_hit():
+    """2026-11-03, E2 tack s0#2: twice the camera's plug end hit the forearm's end on
+    the way to the tack's departure pose (wrist_2 at 146 deg), stopped at 9.1 and 8.1 N.
+    The pose below is where the arm stood after the second. The old model called it
+    clear (camera >= 70 mm from a forearm that ran to the wrist_1 origin, and the tool
+    checked only against base, shoulder and upper arm); the new home is clear."""
+    m = col.CollisionModel(tool=load_tool_model(), clearance=0.003)
+    hit = np.array([-0.70914, -2.25804, -1.92017, -0.61756, 2.54632, -0.06034])
+    d, a, b = m.min_distance(hit)
+    assert d == 0.0 and a.startswith(("camera", "flange")) and b in ("wrist_1_housing", "forearm")
+    home = np.array([-0.78186, -1.62126, -1.03168, -2.20449, 2.07115, -1.64358])
+    assert m.min_distance(home)[0] > 0.02                                  # transit clearance
 
 
 # ---------------------------------------------------------------- the scene ----------

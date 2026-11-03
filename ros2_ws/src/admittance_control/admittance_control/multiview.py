@@ -258,7 +258,7 @@ def nearest_in_limits(q: np.ndarray, ref: np.ndarray, margin: float = 0.1,
     """Per joint, the 2*pi-equivalent of `q` nearest `ref` that is inside the joint
     limits (with `margin`): continuity without winding past them - a plain unwrap to the
     previous view put wrist_3 at -7.97 rad, beyond the UR's +-2*pi (2026-10-01). With
-    `mcfg`, wrist_3 also within `wrist3_window_deg` of home (the camera cable,
+    `mcfg`, wrist_3 also within `wrist3_window_deg` of its centre (the camera cable,
     `tack_reach.to_cable_window`)."""
     q = np.asarray(q, float).copy()
     for k, (lo, hi) in enumerate(JOINT_LIMITS):
@@ -266,7 +266,7 @@ def nearest_in_limits(q: np.ndarray, ref: np.ndarray, margin: float = 0.1,
         opts = [x for x in opts if lo + margin <= x <= hi - margin]
         if k == 5 and mcfg is not None:
             w = np.deg2rad(mcfg.wrist3_window_deg) + 1e-9
-            opts = [x for x in opts if abs(x - mcfg.home_q[5]) <= w] or opts
+            opts = [x for x in opts if abs(x - mcfg.wrist3_centre) <= w] or opts
         if opts:
             q[k] = min(opts, key=lambda x: abs(x - ref[k]))
     return q

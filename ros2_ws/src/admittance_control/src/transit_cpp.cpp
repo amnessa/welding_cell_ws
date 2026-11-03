@@ -352,13 +352,18 @@ public:
     const auto F = frames(q);
     auto o = [&](int i) -> Vec3 { return F[i].block<3, 1>(0, 3); };
     const Vec3 z_lift = F[1].block<3, 1>(0, 2), z_elbow = F[2].block<3, 1>(0, 2);
+    const Vec3 z_w1 = F[3].block<3, 1>(0, 2);
     const Vec3 up0 = o(1) + shoulder_offset_ * z_lift, up1 = o(2) + shoulder_offset_ * z_lift;
-    const Vec3 fa0 = o(2) + elbow_offset_ * z_elbow, fa1 = o(3) + elbow_offset_ * z_elbow;
+    // the forearm's end: on the wrist_1 axis, back in the forearm's plane (2026-11-03)
+    const Vec3 fa0 = o(2) + elbow_offset_ * z_elbow;
+    const Vec3 fa1 = o(3) - ((o(3) - o(2)).dot(z_elbow) - elbow_offset_) * z_w1;
     arm.clear();
     arm.push_back(capsule("base", Vec3(0, 0, 0), Vec3(0, 0, 0.1625), r_base_));
     arm.push_back(capsule("shoulder", o(0), o(1) + shoulder_offset_ * z_lift, r_shoulder_));
     arm.push_back(capsule("upper_arm", up0, up1, r_upper_));
+    arm.push_back(capsule("elbow", fa0, o(2) + shoulder_offset_ * z_elbow, r_upper_));
     arm.push_back(capsule("forearm", fa0, fa1, r_fore_));
+    arm.push_back(capsule("wrist_1_housing", fa1, o(3), r_wrist_));
     arm.push_back(capsule("wrist_1", o(3), o(4), r_wrist_));
     arm.push_back(capsule("wrist_2", o(4), o(5), r_wrist_));
     tool.clear();

@@ -4,9 +4,10 @@ Milestone 2 of notes/pen_marking_plan.md (option A1). Everything is closed-form
 geometry on primitives, so it runs inside the RRT's validity check at planning rates
 and needs nothing beyond numpy:
 
-    robot   six capsules hung on the UR5e joint frames (`kinematics.ur5e_link_frames`),
+    robot   eight capsules hung on the UR5e joint frames (`kinematics.ur5e_link_frames`),
             the upper-arm and forearm tubes displaced off the joint line by the URDF's
-            shoulder/elbow offsets (0.138 / 0.007 m), radii with margin
+            shoulder/elbow offsets (0.138 / 0.007 m), the joint housings that bridge
+            those planes (shoulder, elbow, wrist_1), radii with margin
     tool    the primitives of `tool_model.ToolModel` (capsules and boxes) placed by FK
     scene   the registered parts as boxes (mode A's slabs at their poses, mm -> m), the
             fixtures as boxes (`fixture_boxes`, from marking.json), and the table as a
@@ -23,8 +24,11 @@ reports 0 or "clear" for that pair and the clearance does not apply to it),
 primitive-plane (lowest point).
 
 What it does NOT do, stated: full self-collision. The branch lock keeps the arm
-elbow-up, and the tool primitives are checked against the base column and the upper
-arm, which is where a wrist-mounted pen can meet the robot itself. Fixtures are
+elbow-up; the tool primitives are checked against every arm capsule except the wrist_3
+housing they are bolted to (`self_pairs`). Until 2026-11-03 only the base, shoulder and
+upper arm were, and the forearm ran straight to the wrist_1 joint origin, 134 mm to the
+side of the real tube: the camera hit the forearm's end twice on E2 (tack s0#2, wrist_2
+at 146 deg) on paths the model called clear. Fixtures are
 whatever `fixture_boxes` lists (marking.json `fixtures`): unregistered, so measured
 once with the pen tip.
 """
@@ -347,19 +351,30 @@ def fixture_boxes(fixtures: Sequence[dict[str, Any]] | None,
 
 # ---------------------------------------------------------------- the model -----------
 def ur5e_capsules(q: np.ndarray, radii: dict[str, float] | None = None) -> list[dict[str, Any]]:
-    """The arm as capsules in base_link at configuration `q`."""
+    """The arm as capsules in base_link at configuration `q`. The tubes sit off the joint
+    line by the URDF's visual offsets, the upper arm at SHOULDER_OFFSET and the forearm at
+    ELBOW_OFFSET all the way to the wrist; the joint housings bridge those planes along
+    their axes: the shoulder, the elbow, and wrist_1 (from the forearm's end to the wrist_1
+    joint, d4 to the side; the URDF's wrist_1 visual sits 0.127 back along that axis).
+    "wrist_1" and "wrist_2" are named by the frames they join: the wrist_2 and wrist_3
+    housings."""
     r = {**UR5E_RADII, **(radii or {})}
     F = ur5e_link_frames(q)
     o = {k: T[:3, 3] for k, T in F.items()}
     z_lift = F["lift"][:3, 2]                 # shoulder_lift axis
     z_elbow = F["elbow"][:3, 2]               # elbow axis
+    z_w1 = F["wrist_1"][:3, 2]                # wrist_1 axis
     up0, up1 = o["lift"] + SHOULDER_OFFSET * z_lift, o["elbow"] + SHOULDER_OFFSET * z_lift
-    fa0, fa1 = o["elbow"] + ELBOW_OFFSET * z_elbow, o["wrist_1"] + ELBOW_OFFSET * z_elbow
+    fa0 = o["elbow"] + ELBOW_OFFSET * z_elbow
+    # the forearm's end: on the wrist_1 axis, back in the forearm's plane
+    fa1 = o["wrist_1"] - (float(np.dot(o["wrist_1"] - o["elbow"], z_elbow)) - ELBOW_OFFSET) * z_w1
     return [
         capsule("base", [0, 0, 0.0], [0, 0, 0.1625], r["base"]),
         capsule("shoulder", o["shoulder"], o["lift"] + SHOULDER_OFFSET * z_lift, r["shoulder"]),
         capsule("upper_arm", up0, up1, r["upper_arm"]),
+        capsule("elbow", fa0, o["elbow"] + SHOULDER_OFFSET * z_elbow, r["upper_arm"]),
         capsule("forearm", fa0, fa1, r["forearm"]),
+        capsule("wrist_1_housing", fa1, o["wrist_1"], r["wrist"]),
         capsule("wrist_1", o["wrist_1"], o["wrist_2"], r["wrist"]),
         capsule("wrist_2", o["wrist_2"], o["wrist_3"], r["wrist"]),
     ]
@@ -381,7 +396,10 @@ class CollisionModel:
     table_z: float | None = None
     clearance: float = 0.01
     radii: dict[str, float] | None = None
-    self_pairs: tuple[str, ...] = ("base", "shoulder", "upper_arm")
+    #: every arm capsule but the wrist_3 housing ("wrist_2") the tool is bolted to; the
+    #: wrist_2 housing ("wrist_1") stays >= 49 mm from the tool at any wrist_2 / wrist_3
+    self_pairs: tuple[str, ...] = ("base", "shoulder", "upper_arm", "elbow", "forearm",
+                                   "wrist_1_housing", "wrist_1")
     table_exempt: tuple[str, ...] = ("base", "shoulder")      # they stand on it
     table_plane: tuple[Any, float] | None = None
 

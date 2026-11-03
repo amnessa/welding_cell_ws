@@ -242,6 +242,10 @@ the forces in the tacks, and advise tacking as fast as possible (p. 301-s).
      the same registration: s0#2 +0.4 → +2.8 mm, s1#2 +3.5 → +4.8 mm. The other two runs
      agree within 0.2 mm. Check whether a part was touched in between.
    - Until 2026-11-03 only O3's record held the metrics. Every order's record now has them.
+   - These three runs started from the 2026-09-24 home. From 2026-11-03 ~15:15 `home_q` is
+     a new pose. On the T it leaves every tack's joints the same (to 1.7e-4 rad); only the
+     move from home to the first tack and back changes (73° → 118°, mostly wrist_3). The
+     times above leave both out.
 8. **Thesis:**
    - Ch. 3: a section after "Tacks", with the method, an algorithm box, the kernel equation and
      the assumptions;
