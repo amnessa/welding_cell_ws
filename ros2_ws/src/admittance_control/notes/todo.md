@@ -444,6 +444,11 @@ measured gap pick the first tack.
   tack_marks.json.
 - [ ] Run on the bench: O1 against O3 (and O2), 3 runs each, then the measured step times
   into the heat model (plan steps 5–7).
+  - 2026-11-03: the T (test_objv2_base + SP3), 1 run of each order, all 4 reachable marks
+    placed (results in plan step 7). To do: 2 more runs of each order on the T, then the two
+    other assemblies, the orders interleaved.
+  - [x] Every order's record is scored on the same sites (r_k, hold step, predicted rise,
+    transit), not only `sequenced` (2026-11-03).
 
 - **What.** Choose the order of the tacks by simulating, roughly, the heat each tack puts
   into the parts. That replaces the fixed rule of the weld generator's `tackrule-0.1`

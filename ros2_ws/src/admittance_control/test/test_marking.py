@@ -70,6 +70,21 @@ def test_visit_orders_seam_rule_and_sequenced():
     assert ids(order)[:2] == [0, 3] and rec["decided_by"][1] == "farthest>heat"
     assert rec["predicted_rise_c"][1] < 1.0
     json.dumps(rec)                                                          # goes into tack_marks.json
+    # every order scored on the same sites, for the bench comparison (plan step 7)
+    for mode, want, hold in (("seam", [0, 1, 2, 3], 3), ("rule", [0, 2, 1, 3], 2)):
+        order_m, rec_m = mk.plan_visit(report, mode, tacks, seams, q_start=np.zeros(6))
+        assert ids(order_m) == rec_m["order"] == want and rec_m["hold_step"] == hold
+        assert "unscored" not in rec_m and len(rec_m["r_mm"]) == len(rec_m["predicted_rise_c"]) == 4
+        json.dumps(rec_m)
+    # the rule's second tack is across the web from the first, 15 s later
+    assert mk.plan_visit(report, "rule", tacks, seams)[1]["predicted_rise_c"][1] > 100.0
+    # seam and rule still run on files that cannot score them
+    assert "unscored" in mk.plan_visit(report, "seam")[1]
+    broken = [{k: v for k, v in t.items() if k != "arclength_mm"} for t in tacks]
+    order_b, rec_b = mk.plan_visit(report, "seam", broken, seams)
+    assert ids(order_b) == [0, 1, 2, 3] and "arclength_mm" in rec_b["unscored"]
+    with pytest.raises(KeyError):
+        mk.plan_visit(report, "sequenced", broken, seams)
     with pytest.raises(ValueError):
         mk.plan_visit(report, "rule")                                        # needs welding_tacks.json
     with pytest.raises(ValueError):

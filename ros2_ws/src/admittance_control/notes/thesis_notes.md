@@ -12,6 +12,34 @@ the plans under `notes/`; this file keeps the story and the numbers.
 
 ---
 
+## 2026-11-03: First bench runs of the three tack orders: the sequenced one was also the fastest
+
+**What happened.** The three visit orders (seam by seam, the rule's, the sequenced one) each
+marked the T once with the pen, on one registration. Each step took about 15 s, which looked
+like the model's 15 s per tack. It is not a timer: `tack_order_step_s` is only the heat
+model's assumed time between firings, and the robot never waits.
+
+**Evidence.**
+- The T: 4 reachable tacks of 6. Every reachable mark was placed in all three runs.
+- From the first tack's end to the last tack's end: seam 53.3 s, rule 51.1 s, sequenced
+  47.9 s.
+- The TOTG moves after the first tack: 23.1, 21.1 and 16.1 s.
+- The planned transits (Σ max abs Δq) rank the same way: 5.83, 4.96 and 3.89 rad.
+- One step (transit, descent, 20 mm stroke, retract) took 14.2–19.1 s. Descent, stroke and
+  retract take 9–12 s of it in every order; only the transit depends on the order.
+- The first tack was chosen by the gap rule: s0#1 at −0.74 mm, where the gap along the pair
+  ranged over 1.3 mm.
+- The sequenced order's hottest predicted firing was 108 °C, against 195 °C for the other
+  two. They each fire a tack across the web 15 s after its neighbour.
+
+**What we learned.**
+- On a 4-tack part the order costs only seconds, but it is measurable. The transit
+  tie-break turned into the shortest cycle, about 10 % shorter than seam by seam.
+- The cycle is about 60 % fixed per-tack work (descent, stroke, retract; 58–66 % over the
+  three runs), so the order can only win on the transits.
+- Each run's record held the metrics only for the sequenced order; every order is now
+  scored on the same sites, so the comparison needs no reconstruction.
+
 ## 2026-10-27: Tack sequencing built: gap seed, farthest-first, heat, then transit
 
 **What happened.** The pipeline's last step, ordering the tacks, was built from

@@ -215,6 +215,33 @@ the forces in the tacks, and advise tacking as fast as possible (p. 301-s).
    - the planned and measured cycle time, i.e. what the order costs in seconds.
 
    Feed the measured step times back into step 5.
+
+   **2026-11-03, the T, 1 run of each order** (test_objv2_base + SP3, t = 5 mm, 6 tacks
+   generated, 4 reachable; s0#3 and s1#1 put the pen holder 2.9 and 2.0 mm into part B).
+   All three runs used one registration: the tack points agree to 0.00 mm. Every reachable
+   mark was placed in every run. The metrics are `tack_order.evaluate` on the cell's files
+   at 15 s per step; times are from `marks_history/`.
+
+   | | O1 seam | O2 rule | O3 sequenced |
+   |---|---|---|---|
+   | order | s0#1 s0#2 s1#2 s1#3 | s0#1 s1#3 s0#2 s1#2 | s0#1 s1#2 s1#3 s0#2 |
+   | both seams held after | 3 tacks | 2 | 2 |
+   | hottest predicted firing | 195 °C (3rd) | 195 °C (4th) | 108 °C (4th) |
+   | transit, Σ max abs Δq | 5.83 rad | 4.96 rad | 3.89 rad |
+   | TOTG moves after the 1st tack | 23.1 s | 21.1 s | 16.1 s |
+   | 1st tack done → last tack done | 53.3 s | 51.1 s | 47.9 s |
+   | one step, start to end | 14.9–19.1 s | 14.2–18.2 s | 14.4–17.5 s |
+
+   - O3 was the fastest because of its transit tie-break, and the measured times rank like
+     the planned transit.
+   - O1 and O2 fire a tack across the web 15 s after its neighbour, which is the hot
+     case the heat tie-break avoids.
+   - `tack_order_step_s` (15 s) is the model's assumption, not a timer: the robot never
+     waits.
+   - The contact depths moved between the O3 run (13:35) and the other two (14:31, 14:37) on
+     the same registration: s0#2 +0.4 → +2.8 mm, s1#2 +3.5 → +4.8 mm. The other two runs
+     agree within 0.2 mm. Check whether a part was touched in between.
+   - Until 2026-11-03 only O3's record held the metrics. Every order's record now has them.
 8. **Thesis:**
    - Ch. 3: a section after "Tacks", with the method, an algorithm box, the kernel equation and
      the assumptions;

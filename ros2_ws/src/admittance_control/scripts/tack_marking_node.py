@@ -10,7 +10,7 @@ is CANCELLED the moment the wrench exceeds `touch_force_n` (1.5 N, from
 config/pen_tool.json) and the joints at that moment are the contact record. No Servo,
 no controller switching.
 
-    ros2 run admittance_control tack_marking_node.py --ros-args -p dry_run:=false -p stroke_mode:=tack
+    ros2 run admittance_control tack_marking_node.py --ros-args -p dry_run:=false -p stroke_mode:=tack -p tack_order:=sequenced
     ros2 service call /tack_marking/plan  std_srvs/srv/Trigger   # from the current joints
     ros2 service call /tack_marking/next  std_srvs/srv/Trigger   # one tack (transit, descend, dwell, retract)
     ros2 service call /tack_marking/all   std_srvs/srv/Trigger   # every remaining tack, then home

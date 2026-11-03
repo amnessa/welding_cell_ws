@@ -552,32 +552,65 @@ def plan_visit(report_tacks: Sequence[dict[str, Any]], mode: str = "seam",
                gauge_mm: float | None = None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """`(ordered report tacks, record)`; the record names the sequence for tack_marks.json.
 
-    `sequenced` builds one `tack_order.Site` per reachable tack from welding_tacks.json
-    (arclength, centre, length) and welding_seams.json (the seam's length, loop or not, the
-    two parts it joins, the abutting member's gap at the tack: `gap_at`), and the transit
-    cost is the largest joint change between the report's approach poses (from `q_start`
-    for the first). `cfg` is a `tack_order.SequenceConfig`; `gauge_mm` (the tack rule's t)
-    sets the heat model's sheet thickness."""
+    `sequenced` orders the sites of `_visit_sites` with `tack_order.sequence`. Every mode's
+    order is then scored on the same sites (`tack_order.evaluate`: r_k, the hold step, the
+    predicted rise, the transit), so the bench runs of the three orders compare record for
+    record (notes/tack_ordering_plan.md step 7); `seam` and `rule` still run when the files
+    cannot score them, with `unscored` saying why. `cfg` is a `tack_order.SequenceConfig`;
+    `gauge_mm` (the tack rule's t) sets the heat model's sheet thickness."""
+    from . import tack_order as to
     ok = [t for t in report_tacks if t.get("ok")]
-    if mode == "seam":
-        return (sorted(ok, key=lambda t: (int(t["seam_id"]), int(t["tack_no"]))),
-                {"sequence": "seam by seam, tack_no ascending"})
     if mode not in TACK_ORDERS:
         raise ValueError(f"tack_order '{mode}': use one of {TACK_ORDERS}")
-    if tacks_json is None:
-        raise ValueError(f"tack_order={mode} needs welding_tacks.json")
-    by_id = {int(t["id"]): t for t in tacks_json}
-    missing = [int(t["tack_id"]) for t in ok if int(t["tack_id"]) not in by_id]
-    if missing:
-        raise ValueError(f"tacks {missing} of tack_reach.json are not in welding_tacks.json")
+    if mode == "seam":
+        out = sorted(ok, key=lambda t: (int(t["seam_id"]), int(t["tack_no"])))
+        rec = {"sequence": "seam by seam, tack_no ascending"}
+    else:
+        if tacks_json is None:
+            raise ValueError(f"tack_order={mode} needs welding_tacks.json")
+        by_id = {int(t["id"]): t for t in tacks_json}
+        missing = [int(t["tack_id"]) for t in ok if int(t["tack_id"]) not in by_id]
+        if missing:
+            raise ValueError(f"tacks {missing} of tack_reach.json are not in welding_tacks.json")
     if mode == "rule":
         out = sorted(ok, key=lambda t: (int(by_id[int(t["tack_id"])]["order"]), int(t["tack_id"])))
-        return out, {"sequence": "rule order (tackrule-0.1, welding_tacks.json)",
-                     "order": [int(t["tack_id"]) for t in out]}
-    if seams_json is None:
+        rec = {"sequence": "rule order (tackrule-0.1, welding_tacks.json)"}
+    if mode == "sequenced" and seams_json is None:
         raise ValueError("tack_order=sequenced needs welding_seams.json")
+    try:
+        sites, geoms, cfg, transit = _visit_sites(ok, tacks_json, seams_json, q_start, cfg,
+                                                  gauge_mm)
+        if mode == "sequenced":
+            res = to.sequence(sites, geoms, cfg, transit)
+            rec_by_id = {int(t["tack_id"]): t for t in ok}
+            out = [rec_by_id[i] for i in res.order]
+            rec = {"sequence": "gap-seeded farthest-first (tack_order.py)",
+                   "decided_by": res.decided_by, "tol_mm": res.tol_mm}
+        order = [int(t["tack_id"]) for t in out]
+        m = to.evaluate(order, sites, geoms, cfg, transit)
+    except (KeyError, TypeError, ValueError) as exc:
+        if mode == "sequenced":
+            raise
+        return out, {**rec, "order": [t.get("tack_id") for t in out],
+                     "unscored": f"{type(exc).__name__}: {exc}"}
+    return out, {"sequence": rec.pop("sequence"), "order": order, **rec,
+                 "gap_mm": {s.id: s.gap_mm for s in sites},
+                 "predicted_rise_c": m.rise_c, "r_mm": m.r_mm, "hold_step": m.hold_step,
+                 "transit_rad": m.travel, "step_s": cfg.step_s,
+                 "thermal": dataclasses.asdict(cfg.thermal)}
+
+
+def _visit_sites(ok, tacks_json, seams_json, q_start, cfg, gauge_mm):
+    """`tack_order`'s inputs for the reachable tacks `ok`: one `Site` per tack from
+    welding_tacks.json (arclength, centre, length) and welding_seams.json (the seam's length,
+    loop or not, the two parts it joins, the abutting member's gap at the tack: `gap_at`),
+    the config with the sheet thickness, and the transit cost: the largest joint change
+    between the report's approach poses (from `q_start` for the first)."""
     from . import tack_order as to
     from .seam_from_registration import gap_at
+    if tacks_json is None or seams_json is None:
+        raise ValueError("needs welding_tacks.json and welding_seams.json")
+    by_id = {int(t["id"]): t for t in tacks_json}
     seams = {int(s["id"]): s for s in seams_json}
     sites, geoms = [], {}
     for t in ok:
@@ -601,16 +634,7 @@ def plan_visit(report_tacks: Sequence[dict[str, Any]], mode: str = "seam",
                                                   else np.asarray(q_start, float))
         return 0.0 if b is None else float(np.abs(a - b).max())
 
-    res = to.sequence(sites, geoms, cfg, transit)
-    rec = {int(t["tack_id"]): t for t in ok}
-    m = to.evaluate(res.order, sites, geoms, cfg, transit)
-    return [rec[i] for i in res.order], {
-        "sequence": "gap-seeded farthest-first (tack_order.py)", "order": res.order,
-        "decided_by": res.decided_by, "tol_mm": res.tol_mm,
-        "gap_mm": {s.id: s.gap_mm for s in sites},
-        "predicted_rise_c": m.rise_c, "r_mm": m.r_mm, "hold_step": m.hold_step,
-        "transit_rad": m.travel, "step_s": cfg.step_s,
-        "thermal": dataclasses.asdict(cfg.thermal)}
+    return sites, geoms, cfg, transit
 
 
 def stroke_targets(mode: str, report_tacks: Sequence[dict[str, Any]],

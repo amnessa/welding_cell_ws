@@ -667,6 +667,35 @@
    "extrinsic_sha1": "73f1074819cacb0825652f981eea36cb77b1a64d",
    "capture": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/scripts/foundationpose_results/multiview/20261016-152642",
    "n_views": 4
+  },
+  {
+   "time": "2026-11-03 13:32:28",
+   "d_cam_mm": [
+    -0.29249414518707906,
+    4.001679736811728,
+    -4.144762511463164
+   ],
+   "info_per_mm2": [
+    [
+     379.17106103987777,
+     -62.29734989340407,
+     132.0770792429467
+    ],
+    [
+     -62.29734989340406,
+     363.1901788628655,
+     -0.40201716929693015
+    ],
+    [
+     132.0770792429467,
+     -0.4020171692969312,
+     461.73505619378244
+    ]
+   ],
+   "extrinsic_file": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/notebooks/T_tcp_to_cam.npy",
+   "extrinsic_sha1": "73f1074819cacb0825652f981eea36cb77b1a64d",
+   "capture": "/workspaces/welding_cell_ws/ros2_ws/src/admittance_control/scripts/foundationpose_results/multiview/20261103-133205",
+   "n_views": 4
   }
  ]
 }
