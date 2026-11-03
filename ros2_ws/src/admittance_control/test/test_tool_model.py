@@ -28,7 +28,9 @@ def test_package_config_loads_with_tip_and_calibrated_camera():
     names = [p["name"] for p in tool.primitives]
     assert {"pen", "holder_body", "flange_adapter", "camera_arm"} <= set(names)
     cam = next(p for p in tool.primitives if p["name"] == "camera_body")
-    assert np.allclose(cam["centre"], [0.0, 0.09, 0.045]) and cam["half"][0] >= 0.045
+    assert np.allclose(cam["centre"][1:], [0.09, 0.045]) and cam["half"][0] >= 0.045
+    # the camera and its USB-C plug on the -x end: 110 mm, plus 5 mm (2026-11-03)
+    assert cam["centre"][0] - cam["half"][0] <= -0.070 and cam["centre"][0] + cam["half"][0] >= 0.050
     if (PKG / "notebooks" / "T_tcp_to_cam.npy").exists():
         assert tool.T_tool0_cam is not None
         # the calibrated optical origin must be on the tool, not across the room; how far

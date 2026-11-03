@@ -12,6 +12,42 @@ the plans under `notes/`; this file keeps the story and the numbers.
 
 ---
 
+## 2026-11-03: The camera hit the robot's own forearm, twice, on paths the model called clear
+
+**What happened.** Marking E2 on its plate, the robot stopped twice on its way to the same
+tack (s0#2): once from the previous tack (9.1 N, over the 8 N limit), and once on the first
+move from home (8.1 N). Both times, the plug end of the wrist camera pressed against the
+end of the forearm, where the wrist_1 joint sits. The first guess was that the camera
+model was too narrow (90 mm against a 110 mm camera with its USB-C plug). It was not.
+
+**Evidence.**
+- Along the saved plan, which the robot followed (at the previous tack its joints matched
+  within about 1°), the old model kept the camera at least 91 mm from the forearm. Widening
+  the camera box changed nothing.
+- The arm model had two faults:
+  - the forearm capsule ran diagonally from the elbow to the wrist_1 joint origin, which
+    lies d4 = 134 mm to the side of the real tube. The forearm's end and the wrist_1
+    housing (the URDF puts its visual 0.127 m back along the wrist_1 axis) were not in it;
+  - the tool was checked only against the base, shoulder and upper arm.
+- With a straight forearm, a wrist_1 housing and an elbow housing:
+  - the tack's start pose overlaps the arm by 32–40 mm;
+  - contact starts 80 % of the way along the move from home; the robot stopped at 94 %,
+    with 24 mm of overlap, about 4 mm past the ~20 mm of combined margin;
+  - the T's tack s1#3, which ran three times without touching, overlaps by 11 mm, inside
+    the margin.
+- RViz showed the same overlap: the tool markers inside the robot mesh at the stopped pose.
+- After the fix the planner keeps all four E2 tacks, turning the pen to roll 150° or 210°,
+  which puts the camera on the far side of the pen from the forearm.
+
+**What we learned.**
+- When a model says "clear" and the robot hits, measure the robot where it stopped against
+  the model before changing margins. Here the error was 134 mm in the arm, not 10 mm in
+  the camera.
+- A capsule drawn between DH frame origins is not the link. The offsets that the DH
+  parameters fold into one frame (d4 here) are real metal.
+- The 8 N watchdog made both hits harmless. Without it, the second would have pressed on
+  until the controller's own protective stop.
+
 ## 2026-11-03: First bench runs of the three tack orders: the sequenced one was also the fastest
 
 **What happened.** The three visit orders (seam by seam, the rule's, the sequenced one) each

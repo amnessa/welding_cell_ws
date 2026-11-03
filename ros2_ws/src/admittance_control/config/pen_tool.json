@@ -23,9 +23,10 @@
     "camera_body: the D435i as a box in tool0 from the bench (2026-09-22): centre ~9 cm along",
     "  +y, 0 along x, body centre ~4.5 cm along z with the lens face at ~6 cm; 90 x 25 x 25 mm",
     "  plus margin, long axis along tool0 x. Correct it against the RViz markers.",
-    "  2026-11-03: the camera holder hit during E2 tack marking; its width is 110 mm, not the",
-    "  camera's 90, so the box is 120 mm along x (half 0.06: 110 + 5 mm a side, the same",
-    "  margin as before; it was 100). The calibrated colour lens is at x +34.8 mm, inside it.",
+    "  2026-11-03: the camera with its L-shaped USB-C plug is 110 mm wide, the plug on the",
+    "  -x end (away from the colour lens, which calibrates at x +34.8 mm). The box runs from",
+    "  -70 to +60 mm (centre x -5, half 65): camera + plug + 5 mm, and 15 mm past the lens",
+    "  end. It was +-50. The hits that day were the ARM model's (collision.ur5e_capsules).",
     "camera.extrinsic_path: the hand-eye calibration (tool0 -> camera_color_optical_frame),",
     "  used for the reference marker at the calibrated optical origin, which must sit on the",
     "  lens face - if it does not, the calibration is off and the whole pipeline inherits it."
@@ -72,8 +73,8 @@
     {
       "name": "camera_body",
       "type": "box",
-      "centre": [0.0, 0.09, 0.045],
-      "half": [0.06, 0.02, 0.02]
+      "centre": [-0.005, 0.09, 0.045],
+      "half": [0.065, 0.02, 0.02]
     }
   ],
   "camera": {
