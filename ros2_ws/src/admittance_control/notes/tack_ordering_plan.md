@@ -246,6 +246,42 @@ the forces in the tacks, and advise tacking as fast as possible (p. 301-s).
      a new pose. On the T it leaves every tack's joints the same (to 1.7e-4 rad); only the
      move from home to the first tack and back changes (73° → 118°, mostly wrist_3). The
      times above leave both out.
+
+   **2026-11-03, C1 and E2, 1 run of each order** (each on test_objv2_base; 4 reachable tacks,
+   all on one closed seam, so every order holds the seam after its first tack). Every
+   reachable mark was placed in every complete run. Robot time is the sum of the step times
+   after the first tack, so pauses between `~/next` calls drop out.
+
+   | | O1 seam | O2 rule | O3 sequenced |
+   |---|---|---|---|
+   | C1 order | 0 1 2 3 | 0 2 1 3 | 3 1 2 0 |
+   | C1 hottest predicted firing | 57 °C | 64 °C | 64 °C |
+   | C1 planned transit, Σ max abs Δq | 6.15 rad | 7.57 rad | 7.86 rad |
+   | C1 robot time after the 1st tack | 43.9 s | 48.9 s | 49.0 s |
+   | E2 hottest predicted firing | 11 °C | 15 °C | 15 °C |
+   | E2 planned transit | 5.47 rad | 5.98 rad | 6.02 rad |
+   | E2 robot time after the 1st tack | 74.1 s | 81.6 s | 49.1 s and 64.4 s (2 runs) |
+
+   - C1: going round the ring (O1) was the fastest and the coolest. On one small ring of 4
+     tacks, every tack is about as near the others, so farthest-first spreads nothing and costs travel.
+   - E2: the heat is negligible (≤ 15 °C). The time differences come from the transit planner:
+     - APS finds a different path at each plan: the same O3 order took 49.1 and 64.4 s, and
+       its tack 3 step took 18.5 and 33.9 s;
+     - the cable window forces long wrist_3 unwinds (322° from s0#2 to s0#4).
+   - E2 before the arm-model fix (collision.py, 2026-11-03):
+     - the O2 runs at 15:48 and 16:05 stopped after 2 tacks, on the way to s0#2. At 16:05
+       the camera hit the forearm; 15:48 stopped at the same place, probably the same hit;
+     - an O3 run at 16:39 stopped on its first move.
+   - After the fix every run placed every mark, except one O3 run (17:16). It stopped on the
+     transit to s0#4 at 8.1 N with nothing touching, before the payload was set. After the
+     payload estimation and zeroing, the same transit passed.
+   - C1's records show gaps of 8.1–9.3 mm, against about 0 on SP3 and E2. C1's plate and tube
+     registered upside down (their z-axes point down), and the seam is paired with the
+     plate's −w face. The marks landed 1.8–4.3 mm early and repeated within 0.1 mm, so the
+     seam's position was right. The gap value is offset, probably by a constant, which leaves
+     the gap seed's choice unchanged. Check it before using C1's gaps.
+   - Still to do: ≥ 3 runs of each order. On SP3 and C1 the transits are Cartesian moves and
+     repeat. On E2 only repeats, or a fixed APS seed, separate the order from the planner.
 8. **Thesis:**
    - Ch. 3: a section after "Tacks", with the method, an algorithm box, the kernel equation and
      the assumptions;

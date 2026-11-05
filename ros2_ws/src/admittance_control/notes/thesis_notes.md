@@ -12,13 +12,66 @@ the plans under `notes/`; this file keeps the story and the numbers.
 
 ---
 
+## 2026-11-03: Three orders on three assemblies: the sequenced one won only where two seams sit side by side
+
+**What happened.** Each visit order (seam by seam, the rule's, the sequenced one) marked SP3
+(the double-sided T), C1 (a small tube) and E2 (a large ring), once each with the pen. All
+three assemblies had 4 reachable tacks.
+
+**Evidence** (robot time after the first tack; hottest predicted firing at 15 s per tack):
+
+| | seam | rule | sequenced |
+|---|---|---|---|
+| SP3 | 53.3 s, 195 °C | 51.1 s, 195 °C | **47.9 s, 108 °C** |
+| C1 | **43.9 s, 57 °C** | 48.9 s, 64 °C | 49.0 s, 64 °C |
+| E2 | 74.1 s, 11 °C | 81.6 s, 15 °C | 49.1 and 64.4 s, 15 °C |
+
+- SP3 has two seams, one on each side of the web. The seam and rule orders each fire a tack
+  across the web from one just made; the sequenced order does not, and its transit tie-break also gave
+  the shortest cycle.
+- C1 is one small ring, and every tack is about as near the others. Going round the ring
+  was the shortest and slightly the coolest; farthest-first only added travel.
+- On E2 the heat does not matter (the tacks are far apart). The times are the planner's:
+  the same sequenced order took 49.1 and 64.4 s, because APS finds a different path at each
+  plan, and the camera-cable window forces long wrist_3 unwinds.
+
+**What we learned.**
+- At 4 tacks the order matters only when seams are close together. On a single loop, the
+  shortest path is as good as anything. The method has to be shown where N is larger (the
+  corpus), as the plan expected.
+- A time comparison on a cell with a randomized planner needs repeats, or a fixed seed,
+  before it says anything about the order.
+
+## 2026-11-03: The 8 N watchdog tripped on a long transit with nothing touching: no payload was set
+
+**What happened.** After the arm-model fix, an E2 run stopped at 8.1 N on the transit
+between two opposite tacks, with nothing touching and the cable hanging free.
+
+**Evidence.**
+- At rest at home the sensor read 3.9 N and 0.7 N·m: the controller's payload did not
+  match the tool (pen holder, camera, bracket, plug). The node zeroes the sensor at the
+  start of every move, but the weight error turns with the tool.
+- That transit unwound wrist_3 by 322° and turned gravity, as seen from the tool, through
+  179°. That can change a 3.8 N weight error by up to 7.6 N.
+- After the pendant's payload estimation and zeroing: under 1.3 N at rest in 7 orientations;
+  over 12 still poses (some during later runs), the largest change between two was 3.46 N.
+  The home reading crept by about 0.8 N in 8 minutes. The next full run passed the same transit.
+
+**What we learned.**
+- A force limit on free moves is only as good as the payload behind it. Set it with the
+  real tool, and check the reading at rest in several orientations, not just one.
+- Long reorientations, such as wrist unwinds forced by a cable window, use up the
+  watchdog's margin even when nothing touches.
+
 ## 2026-11-03: The camera hit the robot's own forearm, twice, on paths the model called clear
 
 **What happened.** Marking E2 on its plate, the robot stopped twice on its way to the same
 tack (s0#2): once from the previous tack (9.1 N, over the 8 N limit), and once on the first
 move from home (8.1 N). Both times, the plug end of the wrist camera pressed against the
-end of the forearm, where the wrist_1 joint sits. The first guess was that the camera
-model was too narrow (90 mm against a 110 mm camera with its USB-C plug). It was not.
+end of the forearm, where the wrist_1 joint sits. A third stop in the marks archive (15:48,
+rule order, after 2 tacks, at the same place) was probably the same hit. The first guess
+was that the camera model was too narrow (90 mm against a 110 mm camera with its USB-C
+plug). It was not.
 
 **Evidence.**
 - Along the saved plan, which the robot followed (at the previous tack its joints matched

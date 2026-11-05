@@ -50,6 +50,16 @@ REG = {"parts": {
                "params": {"r_outer_mm": 25.0, "wall_mm": 4.0, "length_mm": 120.0,
                           "base_cut": {"kind": "cylinder", "point_local": [0.0, 0.0, -60.0],
                                        "axis_local": [1.0, 0.0, 0.0], "radius_mm": 50.0}}},
+    # the same branch tilted 20 deg along the run (a mitred fishmouth, as S60 of the real
+    # set): posed with _ry(20), the run's axis and point seen from the branch's frame
+    "branch_tilt": {"primitive": "tube", "T_cad_prim": I4,
+                    "params": {"r_outer_mm": 25.0, "wall_mm": 4.0, "length_mm": 120.0,
+                               "base_cut": {"kind": "cylinder",
+                                            "point_local": [60.0 * np.sin(np.radians(20.0)), 0.0,
+                                                            -60.0 * np.cos(np.radians(20.0))],
+                                            "axis_local": [np.cos(np.radians(20.0)), 0.0,
+                                                           np.sin(np.radians(20.0))],
+                                            "radius_mm": 50.0}}},
     "rr": {"primitive": "swept_slab", "T_cad_prim": I4,
            "params": {"spine": rounded_rect_curve([0, 0, 0], [1, 0, 0], [0, 1, 0],
                                                   64.0, 64.0, 12.0).to_parametric(),
@@ -177,6 +187,25 @@ def test_branch_on_run_pipe_is_the_saddle_with_the_gap_along_the_branch():
     pts = np.asarray(w["polyline_mm"])                        # on both outer walls
     assert np.hypot(pts[:, 1], pts[:, 2] + 60.0) == pytest.approx(50.0, abs=1e-6)
     assert np.hypot(pts[:, 0], pts[:, 1]) == pytest.approx(25.0, abs=1e-6)
+
+
+def test_tilted_branch_on_run_pipe_is_the_saddle_of_a_mitred_fishmouth():
+    """A branch leaning 20 deg along the run (weldgen's saddle family tilts 0-30 deg): the
+    cell takes the branch's own axis and its cut, so nothing is special-cased."""
+    run = ("run.ply", _pose([-90.0, 0.0, -60.0], _ry(90.0)))
+    R = _ry(20.0)
+    branch = ("branch_tilt.ply", _pose(1.5 * R[:, 2], R))     # 1.5 mm out along its axis
+    _, seams = _seams(run, branch)
+    (w,) = _by_role(seams, "weld")
+    assert w["weldable"] and w["closed"] and w["face_pair"] == ["A:lateral+", "B:lateral+"]
+    assert w["fitup_mm"]["B"] == pytest.approx([1.5, 1.5], abs=1e-6)
+    # at the toe the joint closes to 90 - 20 deg (and opens to 90 + 20 at the heel)
+    assert w["dihedral_deg_range"][0] == pytest.approx(70.0, abs=0.5)
+    pts = np.asarray(w["polyline_mm"])
+    assert np.hypot(pts[:, 1], pts[:, 2] + 60.0) == pytest.approx(50.0, abs=1e-6)  # run wall
+    d = pts - 1.5 * R[:, 2]
+    radial = d - np.outer(d @ R[:, 2], R[:, 2])
+    assert np.linalg.norm(radial, axis=1) == pytest.approx(25.0, abs=1e-6)          # branch wall
 
 
 def test_printed_s3_on_r2_as_designed():

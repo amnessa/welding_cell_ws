@@ -444,9 +444,10 @@ measured gap pick the first tack.
   tack_marks.json.
 - [ ] Run on the bench: O1 against O3 (and O2), 3 runs each, then the measured step times
   into the heat model (plan steps 5–7).
-  - 2026-11-03: the T (test_objv2_base + SP3), 1 run of each order, all 4 reachable marks
-    placed (results in plan step 7). To do: 2 more runs of each order on the T, then the two
-    other assemblies, the orders interleaved.
+  - 2026-11-03: SP3 (the T), C1 and E2, 1 run of each order (2 of O3 on E2), every
+    reachable mark placed after the arm-model fix (results in plan step 7). To do: ≥ 3 runs
+    of each order (E2 needs them most: APS varies the transits), and check C1's 8–9 mm gaps
+    (its parts registered upside down).
   - [x] Every order's record is scored on the same sites (r_k, hold step, predicted rise,
     transit), not only `sequenced` (2026-11-03).
 
@@ -602,9 +603,28 @@ measured gap pick the first tack.
 
 ## OPEN — parts, data, paper
 
-- **Phase 9 real subset** (on hold until the metal arrives): `label_real_scan.py`, the view
-  planner (`multiview.py` can serve), a fiducial-board pose bound, `d435i_measured`
-  (README §16), a 3-configuration pilot.
+- **Phase 9 real subset** (the metal arrived 2026-10-27; build plan
+  `weld_generator/notes/phase9_real_set_plan.md`, everything cut by hand since 2026-11-05, a
+  Turkish cut list beside it): `label_real_scan.py`, the view planner (`multiview.py` can
+  serve), a fiducial-board pose bound, `d435i_measured` (README §16), a 3-configuration pilot.
+- [ ] **weldgen: two new strata for box profiles** (decided 2026-11-05; the parts are cut now,
+  as real-only extensions, and labelled once these exist):
+  - **T rect. tube cut:** a rectangular tube standing tilted on a plate with a mitred end.
+    This is family #5 with a tilt, as #3 does for pipes (10–40°). The seam is the plate
+    plane ∩ the tilted rounded-rectangle prism: lines and elliptical arcs. Real parts: RM60
+    (20°), RM80 (15°), RM50 (30°).
+  - **T box saddle:** a rectangular tube on a pipe, square or tilted along the run (as #4
+    tilts its branch 0–30°), with a fishmouthed end. A new family. Real parts: RF50, RF60
+    (square), RF60T (20°).
+  - Each needs the D29 curve, a band primitive with a cut end (a plane or a cylinder, as
+    the tube's `base_cut`), the D4 access rule, the tack rule, the renderer, and rows in the
+    draw-range table that `label_real_scan.py` flags from.
+  - Tilted pipe saddles need nothing new: the tube's cylinder base cut takes any main axis,
+    so S42 (15°) and S60 (20°) are inside #4.
+- [ ] **The cell, for the same box profiles:** the band's cut end (as the tube's
+  `base_height`, settled like `settle_cut_spins`) and a band-on-pipe rule in
+  `curved_seams.pair_seams` (now `_unsupported`), with tests; then their registry entries
+  from `make_real_parts.py`. Needed before the 12 extension configurations are captured.
 - **weld_generator:** commit the final ICRA figures/PDF/zip from the desktop; notebook 16; a
   training script on `train_v1`; pin numpy; annotator repeat; lap-overlap citation; the
   advisor's written no-welding scope.

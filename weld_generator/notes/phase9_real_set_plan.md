@@ -24,8 +24,9 @@ capture), and a cut list made for what was delivered.*
   then all carbon steel and every other scene all stainless, so each scene stays one stock, as
   the renderer's `materials-1.1` assumes. Its tier-2 twin uses the renderer's `mild_steel`
   (iron F0), the nearest of its seven alloys.
-- **The CNC is a router, bed at least 600×600** (2026-10-27). What that means for 3 mm
-  stainless is under Risks.
+- **Everything is cut by hand with power tools** (2026-11-05): the lab's router may not cut
+  steel. The flat parts are cut along 1:1 printed templates and the pipes along wrap-around
+  templates (both below). Hand-cutting risks are under Risks.
 - **304 is (practically) non-magnetic.** Magnets do not hold it. Fix parts with clamps, wedges,
   putty or double-sided tape, and clamp the base plate to the table. The carbon steel is
   magnetic, so magnets do hold the edge pairs.
@@ -38,7 +39,9 @@ capture), and a cut list made for what was delivered.*
   - S76 on Ø101.6: r/R 0.75 against at most 0.7;
   - RR50: 50 against 60–160. Probably every RHS corner radius too, since the generator draws
     8 mm and up: measure them;
-  - the Ø76.1 stiffener arc: span ≈ 110 against 120–300.
+  - the Ø76.1 stiffener arc: span ≈ 110 against 120–300;
+  - the mitred and fishmouthed box profiles (2026-11-05): no generator family has them yet.
+    They form two extension strata, cut now and labelled once weldgen has them (todo).
 
   Inside: Ø60.3 (outer radius 30.15 against 30, so its measured OD decides), the mitres and the
   saddle run, 3 mm in the plate strata (1–12) and in the butt arc (3–10, so a sheet measuring
@@ -49,21 +52,26 @@ capture), and a cut list made for what was delivered.*
 
 ## Scope: 11 strata × 6 configurations = 66 configurations, 330 views
 
+Plus two **extension strata** of box profiles (2026-11-05): mitred on a plate, and
+fishmouthed on the run pipe, one of them mitred too. That is 12 more configurations, outside
+the 66 until weldgen has the families.
+
 - **The 6 configurations:** 3 part geometries × 2 fit-ups (nominal, and off-nominal by gap or
   angle). That is the smallest matrix that keeps the "≥ 3 geometries" rule (the held-out
   geometry split) and one fit-up axis.
 - **Growing later:** to the original 10 per stratum, by adding fit-ups to the same parts. No new
   cutting.
 - **Excluded:** butt grooved, as decided on 2026-09-21.
-- **Butt arc is in (2026-10-27):** its plate pairs are cut on the router, together with every
-  other flat part (below).
+- **Butt arc is in (2026-10-27):** each pair is cut from one plate along one arc line, so the
+  two edges match and the kerf is the gap (below).
 - **Plates are polygons, as in the corpus (D28).** In `bench_phase4`, none of the 180 corner, butt
   and edge plate scenes has a rectangular part, and each of the 120 T-line and lap scenes has
   exactly one (the lower plate). Rectangles let "the seam runs parallel to a plate edge" pass for
   seam finding, the shortcut D28 removed on purpose. A rectangular real set would give that
   shortcut back to the methods that use it, and confound real vs synthetic.
-  - On the router a polygon costs the same as a rectangle, so every flat part except the two
-    bases B1 and B2 is cut from the **generator's own outlines** (DXF from `outline_uv`).
+  - Every flat part except the two bases B1 and B2 is cut from the **generator's own
+    outlines** (from `outline_uv`, printed 1:1). By hand, a polygon costs a few more straight
+    cuts than a rectangle (about 80 in all), and that keeps D28.
   - Every T and lap placement also gets a measured in-plane yaw, the corpus's other mechanism.
 
 **Every part is used several times:**
@@ -79,18 +87,24 @@ capture), and a cut list made for what was delivered.*
 | the Ø101.6 run + fishmouthed branches | T saddle |
 | pipe rings cut to arcs | T swept stiffener: the pipe *is* the arc, so nothing is rolled |
 | RHS stubs | T rect. tube |
+| mitred RHS stubs | T rect. tube cut (extension) |
+| fishmouthed RHS branches | T box saddle (extension) |
 
-## Cut list (≈ 25 cuts, most by hand)
+## Cut list (all by hand: ≈ 35 pipe and tube cuts, ≈ 80 straight sheet cuts, 3 arcs)
+
+A Turkish version with each term explained is in `phase9_kesim_listesi_tr.md`.
 
 | stock | pieces (mm) | left over |
 |---|---|---|
-| Ø101.6 pipe | C101 stub 120; E101 mitre (tilt 15°) ~140; R101 run 250; 2 rings × 70 → a 170° arc and a 150° arc from one, the other spare | ~300 (spares) |
-| Ø76.1 pipe | C76 stub 120; E76 mitre (tilt 20°) ~150; ring 70 → a 170° arc; S76 branch 120 (fishmouth to Ø101.6; r/R 0.75 = extension) | ~520 |
-| Ø60.3 pipe | C60 stub 120; E60 mitre (tilt 30°) ~160; S60 branch 120 (fishmouth to Ø101.6) | ~550 |
-| Ø42.4 pipe | C42 stub 120 (r 21.2 = extension); S42 branch 120 (fishmouth to Ø101.6) | ~700 |
-| RHS 60×60, 80×80, 50×100 | RR60 100, RR80 120, RR50 120 (50 wide = extension) | ~850 each |
-| 3 mm sheet, **on the router** from DXF | B1 300×240 and B2 200×200 (the only rectangles: shear or grind them instead if router time is short); P1, P2, P3: three standing polygons for T line; pairs A, B, C: three polygon pairs with matching seam edges; butt-arc pairs R200, R250, R300, spans ≤ 200, cut at a 0.5 mm gap | — |
-| 1–2 mm carbon steel, **on the router** from DXF | edge pairs D, E, F; one pair of dissimilar thickness if both gauges are there | — |
+| Ø101.6 pipe | C101 stub 120; E101 mitre (tilt 15°), long side ~140, short ~113; R101 run 250; 2 rings × 70 → a 170° arc and a 150° arc from one, the other spare | ~300 (spares) |
+| Ø76.1 pipe | C76 stub 120; E76 mitre (tilt 20°), long ~150, short ~122; ring 70 → a 170° arc; S76 branch 120 (fishmouth to Ø101.6; r/R 0.75 = extension) | ~520 |
+| Ø60.3 pipe | C60 stub 120; E60 mitre (tilt 30°), long ~160, short ~125; S60 branch ~140, a mitred fishmouth to Ø101.6 (tilt 20° along the run; its long side 22 mm longer than its short side) | ~530 |
+| Ø42.4 pipe | C42 stub 120 (r 21.2 = extension); S42 branch ~130, a mitred fishmouth to Ø101.6 (tilt 15°; its long side 11 mm longer than its short side) | ~690 |
+| RHS 60×60 | RR60 100; RM60 mitre (tilt 20°), long ~120, short ~98; RF60 branch 120, fishmouth to Ø101.6; RF60T branch, mitred fishmouth to Ø101.6 (tilt 20° along the run), long side ~140 | ~500 |
+| RHS 80×80 | RR80 120; RM80 mitre (tilt 15°), long ~130, short ~109 | ~740 |
+| RHS 50×100 | RR50 120 (50 wide = extension); RM50 mitre (tilt 30°, leaning toward a 100 mm face), long ~130, short ~101; RF50 branch 120, fishmouth to Ø101.6 with the 50 side across the run | ~620 |
+| 3 mm sheet, **by hand** along 1:1 templates | B1 300×240 and B2 200×200 (the only rectangles); P1, P2, P3: three standing polygons for T line; pairs A, B, C: three polygon pairs with matching seam edges; butt-arc pairs R200, R250, R300, spans ≤ 200, each pair cut from one plate along one arc (the kerf, ~1–1.5 mm, is the gap) | — |
+| 1–2 mm carbon steel, **by hand** along 1:1 templates | edge pairs D, E, F; one pair of dissimilar thickness if both gauges are there | — |
 
 **Mitre tilts and stiffener arcs sit inside the generator's draws:**
 - The mitre family draws tilts of 10–40°, so E101 is at 15°, off the floor.
@@ -101,23 +115,30 @@ capture), and a cut list made for what was delivered.*
 **The flat parts come from the generator, so each real part is a corpus part:**
 - A script runs the generator's own layout code for the plate strata and the butt arc: at t = 3
   for the stainless, at the measured t for the thin steel. It keeps outlines that fit the
-  router's bed with a clamp margin and, for T and lap, fit on B1, and writes them as DXF. The
+  measured sheets and, for T and lap, fit on B1, and writes them as 1:1 templates and DXF. The
   fit test matters: a drawn outline can be up to 2.1 times its seam length across (a trapezoid
   whose far edge overhangs both ends).
-- The outlines are convex, so there are no inside corners to round. The butt-arc concave edge
-  (R ≥ 200) is far larger than any cutter radius.
-- **For the router:** each seam edge goes on its own DXF layer, so the CAM keeps the holding
-  tabs off it; tabs go on free edges and are filed flush. Deburr without chamfering a seam edge.
+- The outlines are convex, so every cut is a straight line from edge to edge, with no inside
+  corners. The butt arcs (R ≥ 200) are gentle enough for a jigsaw, or a grinder in short passes.
+- **The seam edges are the ones that matter.** The template marks them bold. Cut a little
+  outside the line, file to it, and check it straight with a steel rule and square to the face
+  with a try square. Deburr without chamfering a seam edge.
 - The lap's upper plates are chosen 100–200 mm deep, so the 30–60 mm overlaps are 0.15–0.60 of
   the depth, as the generator draws them.
-- Measure after cutting, as for the hand-cut parts: the seam edge and one diagonal with
-  calipers, and t at 4 points. The truth outline is the DXF outline, checked by these.
+- Measure after cutting: every edge, one diagonal, and t at 4 points. The truth outline is the
+  template's, checked by these; where an edge is off by more than 0.5 mm, the truth uses the
+  measured outline.
 
 **How the pipe cuts are made accurately by hand:**
 - A small script prints **wrap-around templates** for every non-square cut from the primitive
   that will model it:
   - the mitre's unrolled ellipse, z(φ) = r·tan τ·cos φ;
-  - the saddle's fishmouth, z(φ) = R − √(R² − r² sin² φ).
+  - the saddle's fishmouth, z(φ) = R − √(R² − r² sin² φ), and, tilted by θ along the run,
+    the cut at h(φ) = [√(R² − r² sin² φ) − r sin θ cos φ]/cos θ along the branch. The
+    templates are drawn from the tube primitive's own `base_height`, which takes the tilt
+    (a cylinder base cut along any main axis), so the paper and the truth are the same shape;
+  - the box profiles' cuts: each point of the profile's outline traced along its axis onto
+    the plate plane or the run cylinder, unrolled along the outline.
 - Print them at 1:1, wrap them round the pipe, mark, then cut with the grinder and file.
 - 3D-print the angle wedges (75°, 110°) and a spare mitre guide on the K1 Max.
 - **After cutting, measure what was made:**
@@ -136,23 +157,25 @@ capture), and a cut list made for what was delivered.*
 | T line | P1, P2, P3 polygons on B1, each at a measured yaw | P1 90°/gap 0, P1 75°/gap 1; P2 90°/0, P2 110°/0; P3 90°/0, P3 90°/2 |
 | T pipe (circle) | C42, C60, C76, C101 on B2 | each at gap ~0.2 (4); C60 and C101 at gap ~1 (2) |
 | T pipe (cut) | E60, E76, E101 on B2 | each at gap ~0.2 and ~1 |
-| T saddle | S42, S60, S76 on R101 | each at gap ~0.2 and ~1 |
+| T saddle | S42 tilted 15° and S60 tilted 20° (mitred fishmouths, inside the family's 0–30° tilt), S76 square, on R101 | each at gap ~0.2 and ~1 |
 | T rect. tube | RR60, RR80, RR50 on B2 | each at gap ~0.2 and ~1 |
+| T rect. tube cut (extension) | RM60, RM80, RM50 on B2 | each at gap ~0.2 and ~1 |
+| T box saddle (extension) | RF50 and RF60 square, RF60T tilted 20°, on R101 | each at gap ~0.2 and ~1 |
 | T swept stiffener | 170° and 150° arcs of Ø101.6, 170° arc of Ø76.1, on B2 | each at gap ~0.2 and ~1 |
 | corner | polygon pairs A, B, C | A 90°, A 75°, B 90°, B 110°, C 90°, A 90° with gap 1 |
 | butt square | polygon pairs A, B, C | A gap 0 / 1 / 3, A misaligned ~1 mm (0.3 t), B gap 0, C gap 1 |
 | lap | one plate of A, B, C on B1, each at a measured yaw | A overlap 30 / 60, A 30 with a 1 mm shim, B 40, B 40 + shim, C 40 |
 | edge | thin pairs D, E, F | D flush / offset 5 / gap 1, E flush / offset 5, F flush |
-| butt arc | R200, R250, R300 pairs (router) | each concentric at 0.5, and at ~1.5 with the inner plate moved 1 mm toward the arc's centre |
+| butt arc | R200, R250, R300 pairs, each cut from one plate | each concentric (gap = the kerf, ~1–1.5), and with one plate moved ~0.7 mm toward the other (≈ 0.5 in the middle) |
 
 **Fit-up:**
 - gaps from feeler gauges, or shims at 3 points under a standing part; angles from the printed
   wedges;
 - **inside the generator's gap ranges:** the plate strata draw 0–2 mm with a tail to 3, the
   curved T families 0.1–1.2 and the butt arc 0.3–2.0. So the curved T fit-ups are ~0.2 and ~1
-  (shims), never contact, and the butt arcs 0.5 and ~1.5. The arc pairs are cut at 0.5. Moving
-  the inner plate 1 mm toward the centre makes the gap 1.5 in the middle and about 0.1 mm less
-  at the ends (spans ≤ 200, R ≥ 200), so no extra plates are cut;
+  (shims), never contact, and the butt arcs the kerf (~1–1.5) and ~0.5. Moving one plate
+  ~0.7 mm toward the other closes the middle by 0.7 and the ends by about 0.6 (spans ≤ 200,
+  R ≥ 200), so no extra plates are cut;
 - **measured afterwards** (feelers at both ends, a protractor) and stored as measured.
 
 **Speed-ups at capture:**
@@ -210,11 +233,16 @@ frame comes with exact masks.
 
 ## Software to write first (days 2–4, in parallel with the cutting)
 
-0. **`export_cnc_dxf.py`:** the generator's outlines (plate strata at t = 3, edge pairs at the
-   thin steel's measured t) and the butt-arc pairs, nested into 600×600 blanks. It writes DXF in
-   mm: outlines on a cut layer, seam edges on their own layer, part ids on a text layer. It also
-   writes a parts table with their primitives. ezdxf is not installed, so the script writes
-   plain DXF itself. Needed on day 1, because the router job is the longest single job.
+0. **`export_templates.py`** (planned as `export_cnc_dxf.py` for the router): the generator's
+   outlines (plate strata at t = 3, edge pairs at the thin steel's measured t) and the
+   butt-arc pairs, nested onto the measured sheets. It writes:
+   - 1:1 PDF templates to glue on the sheet, tiled on A4 with alignment marks, the seam edges
+     bold and labelled, part ids, and a 100 mm scale bar to check the print;
+   - the same outlines as DXF in mm, for a laser-cutting shop if hand cutting fails (ezdxf is
+     not installed, so the script writes plain DXF itself);
+   - a parts table with their primitives.
+
+   Needed on day 1, because the sheet cutting is the longest single job.
 1. **`make_real_parts.py`:** a table of measured dimensions → weldgen primitives (prism, slab, tube
    with a base cut, a closed rounded-rect band, an arc band). It writes the PLY meshes, the
    registry entries and the server's `CAD_DIR` copies. No CAD drawing at all.
@@ -234,11 +262,11 @@ frame comes with exact masks.
 
 | day | work |
 |---|---|
-| 1 | `export_cnc_dxf.py`; a router test cut in the 3 mm 304 (a 100 mm line and an R200 arc, through): minutes per metre, burr and tool wear decide router or laser shop; measure the stock; scan a raw pipe stub and a plate (specularity go/no-go); print the templates and wedges |
-| 2–3 | the router job (≈ 10 m of 3 mm outline, ≈ 4 m of thin); the pipe and RHS cuts; deburr and measure; generate the parts and copy them to the server |
+| 1 | `export_templates.py`; a hand test cut in the 3 mm 304 (a 100 mm straight edge and an R200 arc, through): time per edge, straightness after filing and disc wear decide hand or laser shop; measure the stock; scan a raw pipe stub and a plate (specularity go/no-go); print the templates and wedges |
+| 2–3 | the sheet cuts by hand (≈ 80 straight cuts and 3 arcs: ≈ 10 m of 3 mm, ≈ 4 m of thin); the pipe and RHS cuts; deburr and measure; generate the parts and copy them to the server |
 | 2–4 | the scripts above, with tests |
 | 4 | pilot: 3 configurations end to end (T pipe circle, T line, butt square), through the seven methods |
-| 5–7 | capture the 66 configurations, ~22 per day |
+| 5–7 | capture the 66 configurations, ~22 per day; the 12 extension ones once the cell models their cut ends (todo) |
 | 8 | the repeatability and touch subsets; QA; re-captures |
 | 9 | benchmark the real scenes and their tier-1 twins (same primitives, poses and camera poses); the first `notebooks/17_real_subset.ipynb` table |
 | later | the tier-2 twins on the desktop (same folders); growing to 10 configurations per stratum |
@@ -252,28 +280,32 @@ frame comes with exact masks.
   not truth accuracy. Spare stock allows a re-cut.
 - **Saddles.** If fishmouthing by template fails twice, ask the workshop for a pipe notcher, or
   drop the stratum and say so.
-- **The router on 304.** Stainless work-hardens where a tool rubs, and a router's light frame
-  and fast spindle make rubbing likely: expect shallow passes, cutting fluid and broken bits.
-  The day-1 test cut decides. If it needs more than about an hour per metre (≈ 10 m in all) or
-  bits keep breaking, send the same DXF to a laser-cutting shop. The polygons have only
-  straight edges, so a shear or a grinder can cut them too, measured afterwards; the butt arcs
-  are the only parts that need a machine.
+- **Hand cutting 3 mm 304.**
+  - Use thin (1 mm) stainless ("inox") cutting discs, kept for stainless only, so no carbon
+    steel is smeared onto it (rust spots).
+  - Cut slowly, without pressing, so the edge does not overheat (it work-hardens and
+    discolours).
+  - A hand cut wanders, so cut outside the line and file to it.
+  - Wear a face shield, gloves and ear protection. Keep the sparks off the camera and the robot.
+  - The day-1 test cut decides. If a seam edge cannot be made straight to about 0.3 mm (a
+    feeler under a steel rule), send the DXF to a laser-cutting shop for the polygons and the
+    arcs.
 - **The thin carbon steel.** It rusts quickly: keep it dry, wipe it before capture, and record
   its surface condition. Check each plate on the table: one that rocks by more than about
-  0.5 mm is not a flat slab, so flatten or re-cut it. Thin sheet lifts on a router, so hold it
-  down well. A nominal 2 mm sheet can measure over 2.0, the edge-joint limit: the measured value
-  goes into the truth, and the flag decides.
+  0.5 mm is not a flat slab, so flatten or re-cut it. Tin snips bend thin sheet: cut seam
+  edges with the grinder, or snip outside the line, file to it and flatten. A nominal 2 mm sheet
+  can measure over 2.0, the edge-joint limit: the measured value goes into the truth, and the
+  flag decides.
 
 ## Needed from you before day 1
 
-*Answered on 2026-10-27: the CNC is a router with a bed of at least 600×600, and 1–2 mm
-high-carbon steel sheet is available.*
+*Answered on 2026-10-27: 1–2 mm high-carbon steel sheet is available. On 2026-11-05: the
+lab's router may not cut steel, so everything is cut by hand with power tools.*
 
-- The size and number of the 3 mm sheets. If they are larger than the bed, they are cut into
-  600×600 blanks first (probably two or three).
+- The size and number of the 3 mm sheets, so the templates can be nested on them.
 - The thin steel: which gauges exactly (both 1 and 2 mm?), and the sheet size.
-- Which tools cut the pipes and RHS (band saw, metal chop saw, grinder).
-- Has the router cut steel before? How long does a job wait?
+- Which power tools exactly: an angle grinder (disc size?), a jigsaw, a metal chop or band saw,
+  files?
 - Whether a matte spray is acceptable if the raw scans fail.
 
 **The same parts also serve the thesis cell:** registration and tack marking on metal, and the
