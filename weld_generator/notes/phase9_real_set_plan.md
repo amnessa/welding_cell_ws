@@ -41,7 +41,12 @@ capture), and a cut list made for what was delivered.*
     8 mm and up: measure them;
   - the Ø76.1 stiffener arc: span ≈ 110 against 120–300;
   - the mitred and fishmouthed box profiles (2026-11-05): no generator family has them yet.
-    They form two extension strata, cut now and labelled once weldgen has them (todo).
+    They form two extension strata, cut now and labelled once weldgen has them (todo);
+  - E101's mitre, cut at 45° (2026-11-09) against the family's 10–40° tilt;
+  - the free ends of the combined parts (As cut, below): a part standing on one end has its
+    other, shaped end on top, where every corpus part has a flat one. The seam is not
+    affected; the cloud is. Recorded per configuration as `free_end`, and the tier-1 twin
+    has the same shape.
 
   Inside: Ø60.3 (outer radius 30.15 against 30, so its measured OD decides), the mitres and the
   saddle run, 3 mm in the plate strata (1–12) and in the butt arc (3–10, so a sheet measuring
@@ -92,7 +97,8 @@ the 66 until weldgen has the families.
 
 ## Cut list (all by hand: ≈ 35 pipe and tube cuts, ≈ 80 straight sheet cuts, 3 arcs)
 
-A Turkish version with each term explained is in `phase9_kesim_listesi_tr.md`.
+A Turkish version with each term explained is in `phase9_kesim_listesi_tr.md`. The pipe and
+tube rows are the plan; what was cut is under **As cut** below.
 
 | stock | pieces (mm) | left over |
 |---|---|---|
@@ -106,8 +112,41 @@ A Turkish version with each term explained is in `phase9_kesim_listesi_tr.md`.
 | 3 mm sheet, **by hand** along 1:1 templates | B1 300×240 and B2 200×200 (the only rectangles); P1, P2, P3: three standing polygons for T line; pairs A, B, C: three polygon pairs with matching seam edges; butt-arc pairs R200, R250, R300, spans ≤ 200, each pair cut from one plate along one arc (the kerf, ~1–1.5 mm, is the gap) | — |
 | 1–2 mm carbon steel, **by hand** along 1:1 templates | edge pairs D, E, F; one pair of dissimilar thickness if both gauges are there | — |
 
-**Mitre tilts and stiffener arcs sit inside the generator's draws:**
-- The mitre family draws tilts of 10–40°, so E101 is at 15°, off the floor.
+### As cut (2026-11-07 to 11-09; lengths and angles approximate until measured)
+
+The pipes and tubes were cut with **two roles per part**, one per end: a square end where a
+stub was planned and a shaped end on the other side. That saved material. Fifteen parts:
+
+| part | stock | end 1 | end 2 | length | roles (stratum) |
+|---|---|---|---|---|---|
+| E101 | Ø101.6 | square | mitre 45° | ~130 | C101 (T pipe circle) / E101 (T pipe cut, 45° = extension) |
+| R101 | Ø101.6 | square | square | 250 | the saddle run |
+| A101-170, A101-150 | Ø101.6, one 70 mm ring | — | — | 70 high | T swept stiffener |
+| E76 | Ø76.1 | square | mitre 20° | ~120 | C76 / E76 |
+| A76-170 | Ø76.1, 70 mm ring | — | — | 70 high | T swept stiffener (span ~110 = extension) |
+| S76 | Ø76.1 | fishmouth, square | square | 120 | T saddle |
+| E60 | Ø60.3 | square | mitre 30° | to measure | C60 / E60 |
+| S60 | Ø60.3 | fishmouth, tilted 20° | square | 120 | T saddle |
+| S42 | Ø42.4 | square | fishmouth, tilted 15° | to measure | C42 (r 21.2 = extension) / S42 |
+| RF50 | 50×100 | fishmouth, square | square | 120 | T box saddle (extension) |
+| RF60T | 60×60 | square | fishmouth, tilted 20° | 140 | RR60 (T rect. tube) / RF60T (T box saddle) |
+| RF60 | 60×60 | fishmouth, square | mitre 20° | 120 | RF60 (T box saddle) / RM60 (T rect. tube cut) |
+| RM50 | 50×100 | square | mitre 30° | 130 | RR50 (T rect. tube) / RM50 (T rect. tube cut) |
+| RR80 | 80×80 | square | mitre 15° | 120 | RR80 (T rect. tube) / RM80 (T rect. tube cut) |
+
+- The angles not restated on 2026-11-09 (E76, E60, S42, RM50, RR80) are the planned ones;
+  the measurement decides.
+- **The pipe parts** each have one shaped end and one flat end: weldgen's tube primitive as
+  it is (`base_cut` and a flat top). The cell tries both ends of a tube, so either can stand.
+- **The box profiles** each have one cut end, and RF60 has two. The band primitive has none,
+  and the regular T rect. tube stratum needs them too, because its parts' free ends are cut:
+  FoundationPose registers against the mesh, and the per-point labels use the true shape.
+- E101 at 45° is above the 10–40° draws, so one of T pipe cut's three geometries is flagged.
+  About 540 mm of Ø101.6 is left, enough for another mitre inside the range if wanted.
+
+**Mitre tilts and stiffener arcs sit inside the generator's draws** (as planned; E101 was cut
+at 45°, above):
+- The mitre family draws tilts of 10–40°, so E101 was planned at 15°, off the floor.
 - The stiffener family draws spans of 120–300 mm and at most a half circle (radius ≥ span/π).
   So the Ø101.6 arcs are 170° (148 mm along the mid-wall) and 150° (130 mm). The Ø76.1 arc
   (170°, 110 mm) is the one below range.
@@ -155,11 +194,11 @@ A Turkish version with each term explained is in `phase9_kesim_listesi_tr.md`.
 | stratum | 3 geometries | the 6 configurations |
 |---|---|---|
 | T line | P1, P2, P3 polygons on B1, each at a measured yaw | P1 90°/gap 0, P1 75°/gap 1; P2 90°/0, P2 110°/0; P3 90°/0, P3 90°/2 |
-| T pipe (circle) | C42, C60, C76, C101 on B2 | each at gap ~0.2 (4); C60 and C101 at gap ~1 (2) |
-| T pipe (cut) | E60, E76, E101 on B2 | each at gap ~0.2 and ~1 |
+| T pipe (circle) | the square ends of S42, E60, E76 and E101 (C42, C60, C76, C101) on B2 | each at gap ~0.2 (4); C60 and C101 at gap ~1 (2) |
+| T pipe (cut) | E60, E76, E101 (45°, flagged) on B2 | each at gap ~0.2 and ~1 |
 | T saddle | S42 tilted 15° and S60 tilted 20° (mitred fishmouths, inside the family's 0–30° tilt), S76 square, on R101 | each at gap ~0.2 and ~1 |
-| T rect. tube | RR60, RR80, RR50 on B2 | each at gap ~0.2 and ~1 |
-| T rect. tube cut (extension) | RM60, RM80, RM50 on B2 | each at gap ~0.2 and ~1 |
+| T rect. tube | the square ends of RF60T, RR80 and RM50 (RR60, RR80, RR50) on B2 | each at gap ~0.2 and ~1 |
+| T rect. tube cut (extension) | the mitred ends of RF60, RR80 and RM50 (RM60, RM80, RM50) on B2 | each at gap ~0.2 and ~1 |
 | T box saddle (extension) | RF50 and RF60 square, RF60T tilted 20°, on R101 | each at gap ~0.2 and ~1 |
 | T swept stiffener | 170° and 150° arcs of Ø101.6, 170° arc of Ø76.1, on B2 | each at gap ~0.2 and ~1 |
 | corner | polygon pairs A, B, C | A 90°, A 75°, B 90°, B 110°, C 90°, A 90° with gap 1 |
@@ -244,7 +283,8 @@ frame comes with exact masks.
 
    Needed on day 1, because the sheet cutting is the longest single job.
 1. **`make_real_parts.py`:** a table of measured dimensions → weldgen primitives (prism, slab, tube
-   with a base cut, a closed rounded-rect band, an arc band). It writes the PLY meshes, the
+   with a base cut, a closed rounded-rect band with a cut at either end (plane or cylinder;
+   new, see As cut), an arc band). It writes the PLY meshes, the
    registry entries and the server's `CAD_DIR` copies. No CAD drawing at all.
    - The cell's mode A takes prism faces since 2026-10-27.
      - Before, `_face_corners` read slab faces only, and a prism's side face raised

@@ -607,6 +607,9 @@ measured gap pick the first tack.
   `weld_generator/notes/phase9_real_set_plan.md`, everything cut by hand since 2026-11-05, a
   Turkish cut list beside it): `label_real_scan.py`, the view planner (`multiview.py` can
   serve), a fiducial-board pose bound, `d435i_measured` (README §16), a 3-configuration pilot.
+  - 2026-11-09: the pipes and box profiles are cut, as 15 two-role parts ("As cut" in the
+    plan). E101 is mitred at 45°, a flagged extension. The sheet parts wait for
+    `export_templates.py`.
 - [ ] **weldgen: two new strata for box profiles** (decided 2026-11-05; the parts are cut now,
   as real-only extensions, and labelled once these exist):
   - **T rect. tube cut:** a rectangular tube standing tilted on a plate with a mitred end.
@@ -621,10 +624,16 @@ measured gap pick the first tack.
     draw-range table that `label_real_scan.py` flags from.
   - Tilted pipe saddles need nothing new: the tube's cylinder base cut takes any main axis,
     so S42 (15°) and S60 (20°) are inside #4.
-- [ ] **The cell, for the same box profiles:** the band's cut end (as the tube's
-  `base_height`, settled like `settle_cut_spins`) and a band-on-pipe rule in
-  `curved_seams.pair_seams` (now `_unsupported`), with tests; then their registry entries
-  from `make_real_parts.py`. Needed before the 12 extension configurations are captured.
+- [ ] **The cell, for the same box profiles:**
+  - the band's cut ends, at **either end** (as the tube's `base_height`, settled like
+    `settle_cut_spins`; RF60 has both ends cut);
+  - a band-on-pipe rule in `curved_seams.pair_seams` (now `_unsupported`), with tests;
+  - then their registry entries from `make_real_parts.py`.
+
+  The cut ends are needed for the regular T rect. tube stratum too (2026-11-09). The parts
+  were cut with two roles each, so RF60T, RM50 and RR80 stand on their square ends with a
+  cut end on top: the registration mesh and the labels need the true shape. The band-on-pipe
+  rule is needed before the 12 extension configurations are captured.
 - **weld_generator:** commit the final ICRA figures/PDF/zip from the desktop; notebook 16; a
   training script on `train_v1`; pin numpy; annotator repeat; lap-overlap citation; the
   advisor's written no-welding scope.
