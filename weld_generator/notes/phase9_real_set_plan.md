@@ -55,11 +55,11 @@ capture), and a cut list made for what was delivered.*
 - **Stainless is specular** for an active-stereo camera. Day 1 decides whether it is scanned
   raw (see Risks).
 
-## Scope: 11 strata × 6 configurations = 66 configurations, 330 views
+## Scope: 10 strata × 6 configurations + 3 for the butt arc = 63 configurations, 315 views
 
 Plus two **extension strata** of box profiles (2026-11-05): mitred on a plate, and
 fishmouthed on the run pipe, one of them mitred too. That is 12 more configurations, outside
-the 66 until weldgen has the families.
+the 63 until weldgen has the families.
 
 - **The 6 configurations:** 3 part geometries × 2 fit-ups (nominal, and off-nominal by gap or
   angle). That is the smallest matrix that keeps the "≥ 3 geometries" rule (the held-out
@@ -67,8 +67,11 @@ the 66 until weldgen has the families.
 - **Growing later:** to the original 10 per stratum, by adding fit-ups to the same parts. No new
   cutting.
 - **Excluded:** butt grooved, as decided on 2026-09-21.
-- **Butt arc is in (2026-10-27):** each pair is cut from one plate along one arc line, so the
-  two edges match and the kerf is the gap (below).
+- **Butt arc is in, with one pair (decided 2026-11-10):** R200 only, because each pair takes
+  three concentric arc cuts by hand (Sheet parts, below). The stratum then has **one
+  geometry and 3 configurations** (three gaps). It is the one exception to the "≥ 3
+  geometries" rule: it stays out of the held-out-geometry split and is reported as a
+  single-geometry stratum.
 - **Plates are polygons, as in the corpus (D28).** In `bench_phase4`, none of the 180 corner, butt
   and edge plate scenes has a rectangular part, and each of the 120 T-line and lap scenes has
   exactly one (the lower plate). Rectangles let "the seam runs parallel to a plate edge" pass for
@@ -85,8 +88,8 @@ the 66 until weldgen has the families.
 |---|---|
 | base plate B1, 300×240×3 | T line and lap: 12 configurations. 240 wide because the plate strata draw widths of 50–250 |
 | base plate B2, 200×200×3 | T pipe circle, T pipe cut, T rect. tube, T swept: 24 configurations. The curved scenes' base is the seam's extent plus 50–170 mm (`_plate_for`), and 200 is inside that for every stub here |
-| polygon pairs A, B, C (each with a matching seam edge) | corner and butt square: the same two plates, placed two ways; one plate of a pair is the upper part of a lap on B1 |
-| thin polygon pairs D, E, F (1–2 mm carbon steel) | edge |
+| polygons P1, P2, P3 (3 mm) | T line and lap (each on B1); corner and butt square (in pairs: P1+P2, P2+P3, P1+P3) |
+| thin polygons T1, T2, T3 (1–2 mm carbon steel) | edge (in pairs: T1+T2, T2+T3, T1+T3) |
 | pipe stubs, square-cut | T pipe circle |
 | mitred stubs | T pipe cut |
 | the Ø101.6 run + fishmouthed branches | T saddle |
@@ -95,7 +98,7 @@ the 66 until weldgen has the families.
 | mitred RHS stubs | T rect. tube cut (extension) |
 | fishmouthed RHS branches | T box saddle (extension) |
 
-## Cut list (all by hand: ≈ 35 pipe and tube cuts, ≈ 80 straight sheet cuts, 3 arcs)
+## Cut list (all by hand: ≈ 35 pipe and tube cuts, ≈ 34 straight sheet cuts, 3 arcs)
 
 A Turkish version with each term explained is in `phase9_kesim_listesi_tr.md`. The pipe and
 tube rows are the plan; what was cut is under **As cut** below.
@@ -109,8 +112,58 @@ tube rows are the plan; what was cut is under **As cut** below.
 | RHS 60×60 | RR60 100; RM60 mitre (tilt 20°), long ~120, short ~98; RF60 branch 120, fishmouth to Ø101.6; RF60T branch, mitred fishmouth to Ø101.6 (tilt 20° along the run), long side ~140 | ~500 |
 | RHS 80×80 | RR80 120; RM80 mitre (tilt 15°), long ~130, short ~109 | ~740 |
 | RHS 50×100 | RR50 120 (50 wide = extension); RM50 mitre (tilt 30°, leaning toward a 100 mm face), long ~130, short ~101; RF50 branch 120, fishmouth to Ø101.6 with the 50 side across the run | ~620 |
-| 3 mm sheet, **by hand** along 1:1 templates | B1 300×240 and B2 200×200 (the only rectangles); P1, P2, P3: three standing polygons for T line; pairs A, B, C: three polygon pairs with matching seam edges; butt-arc pairs R200, R250, R300, spans ≤ 200, each pair cut from one plate along one arc (the kerf, ~1–1.5 mm, is the gap) | — |
-| 1–2 mm carbon steel, **by hand** along 1:1 templates | edge pairs D, E, F; one pair of dissimilar thickness if both gauges are there | — |
+| 3 mm sheet, **by hand** along 1:1 templates | B1 300×240 and B2 200×200 (the only rectangles); P1, P2, P3: three polygons, one seam edge each; the butt-arc pair R200: an arc band cut in two | — |
+| 1–2 mm carbon steel, **by hand** along 1:1 templates | T1, T2, T3: three thin polygons, one seam edge each; one of the other gauge if both are there | — |
+
+### Sheet parts (2026-11-10)
+
+The earlier list had three pairs A, B, C and three thin pairs D, E, F, each "with a matching
+seam edge". The generator does not need that: it draws the two plates' lengths independently
+(`plate_length_mm`, 80–400 each) and shifts one along the seam by up to 0.4 of the shorter
+(`min_overlap_frac` 0.6). So three plates, taken two at a time, give the three geometries a
+stratum needs, and 12 plates become 6.
+
+Outlines drawn by `layouts.sample_outline` at the chosen seam length and depth, rounded to
+1 mm. Coordinates in mm; the seam edge runs from (0, 0) to (L, 0).
+
+| part | sheet | shape | vertices | blank |
+|---|---|---|---|---|
+| P1 | 3 mm | quad | (0,0) (200,0) (139,70) (33,110) | 200×110 |
+| P2 | 3 mm | pentagon | (0,0) (160,0) (183,61) (66,130) (−9,95) | 192×130 |
+| P3 | 3 mm | triangle | (0,0) (120,0) (32,90) | 120×90 |
+| T1 | thin | trapezoid | (0,0) (180,0) (153,80) (84,80) | 180×80 |
+| T2 | thin | parallelogram | (0,0) (140,0) (105,100) (−35,100) | 175×100 |
+| T3 | thin | quad | (0,0) (110,0) (77,45) (18,70) | 110×70 |
+
+- The six cover the sampler's five shape classes.
+- **One seam edge per plate** has to be straight and square; the other edges are free.
+- **Lap** overlaps are 0.15–0.60 of the depth: P1 16–66, P2 20–78, P3 14–54 mm.
+- **Pairs** may be shifted along the seam by up to ±64 (P1+P2) or ±48 mm (the pairs with P3).
+- **Fixturing from the layouts:**
+  - corner: the standing plate's bottom edge is level with the flat plate's top face, so it
+    stands on a 3 mm spacer, just past the flat plate's seam edge;
+  - lap: the plate lies on B1 by its overlap and hangs over B1's edge, on a 3 mm spacer;
+  - edge: the thin plates lie face to face with their seam edges flush.
+- **Why thin plates for the edge joint:** the generator makes edge joints only at t ≤ 2 mm
+  (ISO 9692-1 ref 1.1). P1–P3 placed as edge joints would be a flagged extension.
+- **The cost of sharing:** a damaged seam edge on one P plate touches four strata, and the
+  plate strata share three real plates. A spare of one P is cheap insurance.
+
+**The butt-arc pair R200** (one pair, decided 2026-11-10). The generator's parts are arc
+bands (`SweptSlab`): the seam arc, a concentric free arc and two radial ends each. One
+183×110 blank, cut along three concentric arcs and two radial lines:
+
+| arc | radius | length | care |
+|---|---|---|---|
+| inner free edge | 150 | 112 | ±1 mm |
+| seam (its kerf is the gap) | 200 | 150 (43°) | cut once, steadily; do not file it |
+| outer free edge | 250 | 188 | ±1 mm |
+
+- Mark the three arcs from one centre: a strip with a pivot hole and scriber holes at 150, 200
+  and 250 mm. The two radial ends are lines through that centre, 43° apart.
+- Cut the free arcs and the ends first, the seam arc last.
+- R250 (190 / 250 / 300, span 160) and R300 (250 / 300 / 360, span 180) are the two further
+  geometries if the stratum is filled later.
 
 ### As cut (2026-11-07 to 11-09; lengths and angles approximate until measured)
 
@@ -158,12 +211,12 @@ at 45°, above):
   fit test matters: a drawn outline can be up to 2.1 times its seam length across (a trapezoid
   whose far edge overhangs both ends).
 - The outlines are convex, so every cut is a straight line from edge to edge, with no inside
-  corners. The butt arcs (R ≥ 200) are gentle enough for a jigsaw, or a grinder in short passes.
+  corners. The butt arcs (R ≥ 150) are gentle enough for a jigsaw, or a grinder in short passes.
 - **The seam edges are the ones that matter.** The template marks them bold. Cut a little
   outside the line, file to it, and check it straight with a steel rule and square to the face
   with a try square. Deburr without chamfering a seam edge.
-- The lap's upper plates are chosen 100–200 mm deep, so the 30–60 mm overlaps are 0.15–0.60 of
-  the depth, as the generator draws them.
+- The lap overlaps (30–60 mm on P1, 40 on P2 and P3) are 0.27–0.55 of each plate's depth,
+  inside the generator's 0.15–0.60.
 - Measure after cutting: every edge, one diagonal, and t at 4 points. The truth outline is the
   template's, checked by these; where an edge is off by more than 0.5 mm, the truth uses the
   measured outline.
@@ -201,20 +254,19 @@ at 45°, above):
 | T rect. tube cut (extension) | the mitred ends of RF60, RR80 and RM50 (RM60, RM80, RM50) on B2 | each at gap ~0.2 and ~1 |
 | T box saddle (extension) | RF50 and RF60 square, RF60T tilted 20°, on R101 | each at gap ~0.2 and ~1 |
 | T swept stiffener | 170° and 150° arcs of Ø101.6, 170° arc of Ø76.1, on B2 | each at gap ~0.2 and ~1 |
-| corner | polygon pairs A, B, C | A 90°, A 75°, B 90°, B 110°, C 90°, A 90° with gap 1 |
-| butt square | polygon pairs A, B, C | A gap 0 / 1 / 3, A misaligned ~1 mm (0.3 t), B gap 0, C gap 1 |
-| lap | one plate of A, B, C on B1, each at a measured yaw | A overlap 30 / 60, A 30 with a 1 mm shim, B 40, B 40 + shim, C 40 |
-| edge | thin pairs D, E, F | D flush / offset 5 / gap 1, E flush / offset 5, F flush |
-| butt arc | R200, R250, R300 pairs, each cut from one plate | each concentric (gap = the kerf, ~1–1.5), and with one plate moved ~0.7 mm toward the other (≈ 0.5 in the middle) |
+| corner | P1+P2, P2+P3, P1+P3 (one flat, one standing) | P1+P2 90°, 75° and 90° with gap 1; P2+P3 90° and 110°; P1+P3 90° |
+| butt square | P1+P2, P2+P3, P1+P3 | P1+P2 gap 0 / 1 / 3 and misaligned ~1 mm (0.3 t); P2+P3 gap 0; P1+P3 gap 1 |
+| lap | P1, P2, P3 on B1, each at a measured yaw | P1 overlap 30 / 60, P1 30 with a 1 mm shim, P2 40, P2 40 + shim, P3 40 |
+| edge | T1+T2, T2+T3, T1+T3 | T1+T2 flush / shifted 5 along the seam / gap 1; T2+T3 flush / shifted 5; T1+T3 flush |
+| butt arc (1 geometry, 3 configurations) | the R200 pair | concentric (gap = the kerf, ~1–1.5); one plate moved ~0.7 mm toward the other (≈ 0.5); moved ~0.7 mm away (≈ 1.9) |
 
 **Fit-up:**
 - gaps from feeler gauges, or shims at 3 points under a standing part; angles from the printed
   wedges;
 - **inside the generator's gap ranges:** the plate strata draw 0–2 mm with a tail to 3, the
   curved T families 0.1–1.2 and the butt arc 0.3–2.0. So the curved T fit-ups are ~0.2 and ~1
-  (shims), never contact, and the butt arcs the kerf (~1–1.5) and ~0.5. Moving one plate
-  ~0.7 mm toward the other closes the middle by 0.7 and the ends by about 0.6 (spans ≤ 200,
-  R ≥ 200), so no extra plates are cut;
+  (shims), never contact, and the butt arc the kerf (~1–1.5), ~0.5 and ~1.9. Moving one plate
+  0.7 mm changes the gap by 0.7 in the middle and 0.65 at the ends (a 43° span);
 - **measured afterwards** (feelers at both ends, a protractor) and stored as measured.
 
 **Speed-ups at capture:**
@@ -306,7 +358,7 @@ frame comes with exact masks.
 | 2–3 | the sheet cuts by hand (≈ 80 straight cuts and 3 arcs: ≈ 10 m of 3 mm, ≈ 4 m of thin); the pipe and RHS cuts; deburr and measure; generate the parts and copy them to the server |
 | 2–4 | the scripts above, with tests |
 | 4 | pilot: 3 configurations end to end (T pipe circle, T line, butt square), through the seven methods |
-| 5–7 | capture the 66 configurations, ~22 per day; the 12 extension ones once the cell models their cut ends (todo) |
+| 5–7 | capture the 63 configurations, ~21 per day; the 12 extension ones once the cell models their cut ends (todo) |
 | 8 | the repeatability and touch subsets; QA; re-captures |
 | 9 | benchmark the real scenes and their tier-1 twins (same primitives, poses and camera poses); the first `notebooks/17_real_subset.ipynb` table |
 | later | the tier-2 twins on the desktop (same folders); growing to 10 configurations per stratum |

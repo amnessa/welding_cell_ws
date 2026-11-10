@@ -32,7 +32,7 @@ olmalı: boru uçları masada sallanmadan durmalı, sac kenarları çelik cetvel
 - **Avuç taşlama (spiral), 1 mm inox kesme diski** (115 veya 125 mm). Diskleri **sadece
   paslanmazda** kullanın: karbon çelikte kullanılmış disk paslanmaza demir bulaştırır ve pas
   lekesi yapar.
-- **Dekupaj testere**, paslanmaz için bimetal bıçak: yay çiftleri (R200, R250, R300) için.
+- **Dekupaj testere**, paslanmaz için bimetal bıçak: R200 yay çifti için.
 - **Varsa metal kesme makinesi (daire veya şerit testere):** boruların ve kutu profillerin dik
   kesimleri için, elle taşlamadan çok daha düz ve dik keser.
 - Eğeler (yassı, yarım yuvarlak), çapak için flap disk (zımpara diski).
@@ -121,27 +121,50 @@ Kalan boylar (yaklaşık): 60×60 ~500, 80×80 ~740, 50×100 ~620 mm.
 |---|---|---|
 | **B1** 300×240 | taban plakası (T dikiş ve bindirme testleri) | dikdörtgen |
 | **B2** 200×200 | taban plakası (boru, profil ve yay testleri) | dikdörtgen |
-| **P1, P2, P3** | T dikişi için plakaya dik duran 3 çokgen plaka | şekiller script'ten |
-| **A, B, C çiftleri** | her çiftte birbirine uyan bir dikiş kenarı: köşe, alın ve bindirme testleri | şekiller script'ten |
-| **R200, R250, R300 çiftleri** | yay kenarlı alın birleştirme: yarıçap 200, 250, 300 mm | her çift **tek plakadan, tek yay çizgisi boyunca** kesilir |
+| **P1** | dörtgen | köşeler (0,0) (200,0) (139,70) (33,110); 200×110'luk parçadan |
+| **P2** | beşgen | köşeler (0,0) (160,0) (183,61) (66,130) (−9,95); 192×130'luk parçadan |
+| **P3** | üçgen | köşeler (0,0) (120,0) (32,90); 120×90'lık parçadan |
+| **R200 çifti** | yay kenarlı alın birleştirme (tek çift) | aşağıda |
 
-- **Çokgen plakaların ölçüleri henüz yok.** Generator'ın kendi şekillerinden üretilecek (plan
-  maddesi `export_templates.py`). A4'e bölünmüş **1:1 şablonlar** basılacak: dikiş kenarları
-  kalın çizgiyle ve etiketli, kontrol için 100 mm'lik bir ölçek çizgisi var. Baskıdan sonra
-  ölçek çizgisini cetvelle kontrol edin, sonra şablonu saca yapıştırın.
+- **Köşe koordinatları mm cinsindendir.** Her plakanın **dikiş kenarı** (0,0)'dan (L,0)'a
+  giden ilk kenardır: düz ve dik olması gereken tek kenar odur. Diğer kenarlar serbesttir.
+- **P1, P2, P3 dört test için kullanılır:** T dikişi (B1 üstünde dik durur), bindirme (B1
+  üstüne yatar), köşe ve alın (ikişer ikişer: P1+P2, P2+P3, P1+P3). Ayrı A, B, C çiftlerine
+  gerek kalmadı.
+- İsterseniz **1:1 şablon** da basılır (dikiş kenarı kalın çizgili, kontrol için 100 mm'lik
+  ölçek çizgisi var); köşeleri saca doğrudan işaretlemek de olur.
 - Tüm kenarlar düz çizgi, iç köşe yok. Kesimi çizginin biraz dışından yapın, çizgiye kadar
   eğeleyin. **Dikiş kenarını** çelik cetvelle düzlüğe, gönyeyle sacın yüzüne dikliğe kontrol
   edin.
-- **Yay çiftleri:** tek plakayı yay çizgisi boyunca kesince çıkan iki parçanın kenarları
-  birbirine tam uyar. Aradaki **kesim payı (~1–1.5 mm) kök aralığı olur**, ki bu tam istenen
-  aralıktadır (0.3–2.0 mm). Dekupaj testere eğriyi en iyi izler; taşlamayla kısa geçişlerle de
-  olur.
+- **R200 yay çifti** (tek çift): 183×110 mm'lik tek parçadan kesilir. Parça, **aynı merkezli üç
+  yay** ve iki düz uç kesimiyle iki yay şeridine ayrılır:
+
+  | yay | yarıçap | boy | özen |
+  |---|---|---|---|
+  | iç serbest kenar | 150 | 112 | ±1 mm yeter |
+  | **dikiş yayı** (kesim payı kök aralığı olur) | 200 | 150 (43°) | tek seferde, sakin kesin; eğelemeyin |
+  | dış serbest kenar | 250 | 188 | ±1 mm yeter |
+
+  - Üç yayı **tek merkezden** çizin: bir çıtaya bir pivot deliği ve 150, 200, 250 mm'de çizici
+    delikleri açın. İki düz uç, o merkezden geçen ve aralarında 43° olan iki çizgidir.
+  - Önce serbest yayları ve uçları, **en son dikiş yayını** kesin.
+  - Dikiş yayını kesince çıkan iki kenar birbirine tam uyar ve **kesim payı (~1–1.5 mm) kök
+    aralığı olur** (istenen aralık 0.3–2.0 mm).
 
 ## 4. 1–2 mm karbon çelik sac
 
 | parça | ne | not |
 |---|---|---|
-| **D, E, F çiftleri** | kenar birleştirme (edge joint) | şekiller script'ten; hem 1 hem 2 mm varsa bir çift farklı kalınlıkta |
+| **T1** | yamuk | köşeler (0,0) (180,0) (153,80) (84,80) |
+| **T2** | paralelkenar | köşeler (0,0) (140,0) (105,100) (−35,100) |
+| **T3** | dörtgen | köşeler (0,0) (110,0) (77,45) (18,70) |
+
+- Kenar birleştirme (edge joint) testi içindir: iki ince sac yüz yüze konur, dikiş kenarları
+  aynı hizada. İkişer ikişer kullanılır (T1+T2, T2+T3, T1+T3); D, E, F çiftlerine gerek
+  kalmadı.
+- Hem 1 hem 2 mm sac varsa birini diğer kalınlıktan kesin.
+- Generator kenar birleştirmeyi sadece 2 mm ve altında üretir; bu yüzden 3 mm'lik P plakaları
+  bu test için kullanılmıyor.
 
 - Sac makası ince sacın kenarını büker. Dikiş kenarlarını taşlamayla kesin, ya da makasla
   çizginin dışından kesip eğeleyin ve sonra düzeltin.
@@ -153,6 +176,6 @@ Kalan boylar (yaklaşık): 60×60 ~500, 80×80 ~740, 50×100 ~620 mm.
 - **Borular:** uç yüksekliği 4 noktada, dış çap 3 farklı açıda, et kalınlığı.
 - **Kutu profiller:** dış ölçüler ve köşe yarıçapı.
 - **Saclar:** her kenar, bir köşegen, kalınlık 4 noktada.
-- **Yay çiftleri:** iki parça yan yana dururken aralık, sentille 3 noktada.
+- **Yay çifti:** iki parça yan yana dururken aralık, sentille 3 noktada.
 
 Ölçümler bir tabloya yazılır. Script parçaları bu ölçülerden üretir.
